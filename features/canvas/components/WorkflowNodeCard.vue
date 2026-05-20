@@ -31,6 +31,7 @@ const showFullscreen = ref(false)
 
 const isScriptNode = computed(() => workflowNode.value?.type === 'script')
 const isGeneratedScriptNode = computed(() => Boolean(isScriptNode.value && workflowNode.value?.nodeConfig.scriptGenerated))
+const isStoryboardSelectionMode = computed(() => storyboardStore.scriptWorkMode === 'storyboard')
 
 const nodeActionMap: Record<WorkflowNodeType, NodeActionItem[]> = {
   text: [
@@ -78,6 +79,11 @@ const actionItems = computed(() => {
 })
 
 const scriptTableRows = computed(() => [...storyboardRows.value].sort((a, b) => a.shotNo - b.shotNo))
+const allShotIds = computed(() => scriptTableRows.value.map((row) => row.id))
+const isAllShotsSelected = computed(() => {
+  if (!allShotIds.value.length) return false
+  return allShotIds.value.every((id) => storyboardStore.selectedShotIds.includes(id))
+})
 
 function switchScriptView(mode: 'table' | 'creative'): void {
   scriptViewMode.value = mode
@@ -97,11 +103,45 @@ function switchToRewriteMode(): void {
 
 function switchToStoryboardMode(): void {
   storyboardStore.switchWorkMode('storyboard')
+  // 切换“生成分镜”时默认全选所有镜头，和产品交互保持一致
+  storyboardStore.setTotalShotCount(scriptTableRows.value.length)
+  storyboardStore.replaceSelectedShots(allShotIds.value)
 }
 
 function chooseScriptInputMode(mode: 'plot' | 'videoRef' | 'roleRef'): void {
   storyboardStore.switchScriptInputMode(mode)
 }
+
+function toggleSelectAllShots(): void {
+  if (isAllShotsSelected.value) {
+    storyboardStore.replaceSelectedShots([])
+    return
+  }
+
+  storyboardStore.replaceSelectedShots(allShotIds.value)
+}
+
+function toggleShotSelection(shotId: string): void {
+  storyboardStore.toggleShotSelection(shotId)
+}
+
+function isShotSelected(shotId: string): boolean {
+  return storyboardStore.selectedShotIds.includes(shotId)
+}
+
+watch(
+  scriptTableRows,
+  (rows) => {
+    // 兜底：分镜模式下若尚未选择任何镜头，默认全选一次
+    if (!isStoryboardSelectionMode.value) return
+    if (!rows.length) return
+    if (storyboardStore.selectedShotIds.length > 0) return
+
+    storyboardStore.setTotalShotCount(rows.length)
+    storyboardStore.replaceSelectedShots(rows.map((row) => row.id))
+  },
+  { immediate: true }
+)
 
 const LONG_PRESS_MS = 320
 let plusPressTimer: ReturnType<typeof setTimeout> | null = null
@@ -222,10 +262,18 @@ function handlePlusMouseUp(): void {
         </div>
       </header>
 
-      <div v-if="scriptViewMode === 'table'" class="nowheel nodrag nopan max-h-[360px] overflow-auto rounded-xl border border-borderSoft">
-        <table class="min-w-[1200px] table-fixed border-collapse text-xs">
+      <div v-if="scriptViewMode === 'table'" class="nowheel nodrag nopan h-[360px] w-full overflow-auto rounded-xl border border-borderSoft">
+        <table class="w-full table-fixed border-collapse text-xs">
           <thead class="sticky top-0 bg-[#2f3136] text-left text-textMuted">
             <tr>
+              <th v-if="isStoryboardSelectionMode" class="w-10 whitespace-nowrap border-b border-borderSoft px-2 py-2">
+                <input
+                  type="checkbox"
+                  class="h-4 w-4 accent-cyan-400"
+                  :checked="isAllShotsSelected"
+                  @change.stop="toggleSelectAllShots"
+                >
+              </th>
               <th class="w-16 whitespace-nowrap border-b border-borderSoft px-3 py-2">镜号</th>
               <th class="w-16 whitespace-nowrap border-b border-borderSoft px-3 py-2">时长</th>
               <th class="whitespace-nowrap border-b border-borderSoft px-3 py-2">画面描述</th>
@@ -238,6 +286,14 @@ function handlePlusMouseUp(): void {
           </thead>
           <tbody>
             <tr v-for="row in scriptTableRows" :key="row.id" class="border-b border-borderSoft/70 align-top">
+              <td v-if="isStoryboardSelectionMode" class="px-2 py-2">
+                <input
+                  type="checkbox"
+                  class="h-4 w-4 accent-cyan-400"
+                  :checked="isShotSelected(row.id)"
+                  @change.stop="toggleShotSelection(row.id)"
+                >
+              </td>
               <td class="px-3 py-2">{{ row.shotNo }}</td>
               <td class="px-3 py-2">{{ row.durationSec }}s</td>
               <td class="px-3 py-2">{{ row.sceneDescription }}</td>
@@ -251,11 +307,20 @@ function handlePlusMouseUp(): void {
         </table>
       </div>
 
-      <div v-else class="nowheel nodrag nopan max-h-[360px] overflow-auto rounded-xl border border-borderSoft p-3">
+      <div v-else class="nowheel nodrag nopan h-[360px] overflow-auto rounded-xl border border-borderSoft p-3">
         <div class="grid grid-cols-2 gap-3 xl:grid-cols-4">
           <article v-for="row in scriptTableRows" :key="row.id" class="rounded-xl border border-borderSoft bg-panelSoft p-3 text-left">
             <div class="mb-2 flex items-center justify-between">
-              <span class="rounded-full bg-black px-2 py-1 text-xs">{{ row.shotNo }}</span>
+              <div class="flex items-center gap-2">
+                <input
+                  v-if="isStoryboardSelectionMode"
+                  type="checkbox"
+                  class="h-4 w-4 accent-cyan-400"
+                  :checked="isShotSelected(row.id)"
+                  @change.stop="toggleShotSelection(row.id)"
+                >
+                <span class="rounded-full bg-black px-2 py-1 text-xs">{{ row.shotNo }}</span>
+              </div>
               <span class="rounded-md bg-black px-2 py-1 text-xs">{{ row.durationSec.toFixed(2) }}s</span>
             </div>
             <div class="h-20 rounded-lg border border-white/10 bg-black/20" />
@@ -336,9 +401,17 @@ function handlePlusMouseUp(): void {
         </header>
 
         <div v-if="scriptViewMode === 'table'" class="nowheel nodrag nopan flex-1 overflow-auto rounded-xl border border-borderSoft">
-          <table class="min-w-[1400px] table-fixed border-collapse text-xs">
+          <table class="w-full table-fixed border-collapse text-xs">
             <thead class="sticky top-0 bg-[#2f3136] text-left text-textMuted">
               <tr>
+                <th v-if="isStoryboardSelectionMode" class="w-10 whitespace-nowrap border-b border-borderSoft px-2 py-2">
+                  <input
+                    type="checkbox"
+                    class="h-4 w-4 accent-cyan-400"
+                    :checked="isAllShotsSelected"
+                    @change.stop="toggleSelectAllShots"
+                  >
+                </th>
                 <th class="w-16 whitespace-nowrap border-b border-borderSoft px-3 py-2">镜号</th>
                 <th class="w-16 whitespace-nowrap border-b border-borderSoft px-3 py-2">时长</th>
                 <th class="whitespace-nowrap border-b border-borderSoft px-3 py-2">画面描述</th>
@@ -351,6 +424,14 @@ function handlePlusMouseUp(): void {
             </thead>
             <tbody>
               <tr v-for="row in scriptTableRows" :key="`full-${row.id}`" class="border-b border-borderSoft/70 align-top">
+                <td v-if="isStoryboardSelectionMode" class="px-2 py-2">
+                  <input
+                    type="checkbox"
+                    class="h-4 w-4 accent-cyan-400"
+                    :checked="isShotSelected(row.id)"
+                    @change.stop="toggleShotSelection(row.id)"
+                  >
+                </td>
                 <td class="px-3 py-2">{{ row.shotNo }}</td>
                 <td class="px-3 py-2">{{ row.durationSec }}s</td>
                 <td class="px-3 py-2">{{ row.sceneDescription }}</td>
@@ -368,7 +449,16 @@ function handlePlusMouseUp(): void {
           <div class="grid grid-cols-5 gap-3">
             <article v-for="row in scriptTableRows" :key="`creative-${row.id}`" class="rounded-xl border border-borderSoft bg-panelSoft p-3 text-left">
               <div class="mb-2 flex items-center justify-between">
-                <span class="rounded-full bg-black px-2 py-1 text-xs">{{ row.shotNo }}</span>
+                <div class="flex items-center gap-2">
+                  <input
+                    v-if="isStoryboardSelectionMode"
+                    type="checkbox"
+                    class="h-4 w-4 accent-cyan-400"
+                    :checked="isShotSelected(row.id)"
+                    @change.stop="toggleShotSelection(row.id)"
+                  >
+                  <span class="rounded-full bg-black px-2 py-1 text-xs">{{ row.shotNo }}</span>
+                </div>
                 <span class="rounded-md bg-black px-2 py-1 text-xs">{{ row.durationSec.toFixed(2) }}s</span>
               </div>
               <div class="h-24 rounded-lg border border-white/10 bg-black/20" />

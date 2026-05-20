@@ -17,7 +17,7 @@ const emit = defineEmits<{
     </div>
 
     <nav class="hidden items-center gap-3 md:flex">
-      <NuxtLink to="/studio" class="rounded-full border border-borderSoft bg-panelSoft px-4 py-2 text-sm hover:border-neon/60">
+      <NuxtLink to="/studio?new=1" class="rounded-full border border-borderSoft bg-panelSoft px-4 py-2 text-sm hover:border-neon/60">
         开始创作
       </NuxtLink>
       <button

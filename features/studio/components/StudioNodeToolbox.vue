@@ -1,6 +1,7 @@
 ﻿<script setup lang="ts">
-import { nodeTypeOrder, nodeTypePreset } from '~/shared/constants/canvas'
+import { nodeTypeOrder } from '~/shared/constants/canvas'
 import type { WorkflowNodeType } from '~/entities/canvas/types'
+import StudioNodeTypeMenu from '~/features/studio/components/StudioNodeTypeMenu.vue'
 
 const emit = defineEmits<{
   addNode: [type: WorkflowNodeType]
@@ -10,10 +11,7 @@ const showNodeMenu = ref(false)
 const showHelpMenu = ref(false)
 const showContactMenu = ref(false)
 
-// 基础节点分组：脚本节点属于“添加节点”，方便按你的工作流先写脚本再下游生成
-const basicNodeList = computed(() => nodeTypeOrder.filter((type) => ['text', 'image', 'video', 'videoCompose', 'audio', 'script'].includes(type)))
-// 资源分组首期只保留素材类节点；分镜工作区改为全局面板，不再单独作为节点添加
-const resourceNodeList = computed(() => nodeTypeOrder.filter((type) => ['resource'].includes(type)))
+const menuTypes = computed(() => nodeTypeOrder.filter((type) => ['text', 'image', 'video', 'videoCompose', 'audio', 'script', 'resource'].includes(type)))
 
 function addNode(type: WorkflowNodeType): void {
   emit('addNode', type)
@@ -54,39 +52,8 @@ function addNode(type: WorkflowNodeType): void {
       </button>
     </div>
 
-    <div
-      v-if="showNodeMenu"
-      class="panel-glass absolute left-[62px] top-0 w-[240px] rounded-2xl px-4 py-3"
-      @mouseleave="showNodeMenu = false"
-    >
-      <p class="mb-2 text-sm text-textMuted">添加节点</p>
-      <div class="space-y-1">
-        <button
-          v-for="nodeType in basicNodeList"
-          :key="nodeType"
-          class="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left transition hover:bg-white/10"
-          @click="addNode(nodeType)"
-        >
-          <span class="flex h-8 w-8 items-center justify-center rounded-md bg-white/10 text-xs text-neon">{{ nodeTypePreset[nodeType].icon }}</span>
-          <span>
-            <span class="block text-sm font-semibold">{{ nodeTypePreset[nodeType].label }}</span>
-            <small class="text-xs text-textMuted">{{ nodeTypePreset[nodeType].description }}</small>
-          </span>
-        </button>
-      </div>
-
-      <p class="mb-2 mt-3 text-sm text-textMuted">添加资源</p>
-      <div class="space-y-1">
-        <button
-          v-for="nodeType in resourceNodeList"
-          :key="nodeType"
-          class="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left transition hover:bg-white/10"
-          @click="addNode(nodeType)"
-        >
-          <span class="flex h-8 w-8 items-center justify-center rounded-md bg-white/10 text-xs text-neon">{{ nodeTypePreset[nodeType].icon }}</span>
-          <span class="text-sm font-semibold">{{ nodeTypePreset[nodeType].label }}</span>
-        </button>
-      </div>
+    <div v-if="showNodeMenu" class="absolute left-[62px] top-0" @mouseleave="showNodeMenu = false">
+      <StudioNodeTypeMenu :allowed-types="menuTypes" title="添加节点" @select="addNode" />
     </div>
 
     <div

@@ -9,8 +9,11 @@ const storyboardStore = useStoryboardStudioStore()
 const selectedNode = computed(() => canvasStore.nodes.find((node) => node.id === canvasStore.selectedNodeId))
 const isScriptNode = computed(() => selectedNode.value?.type === 'script')
 const isGeneratedScriptNode = computed(() => Boolean(isScriptNode.value && selectedNode.value?.nodeConfig.scriptGenerated))
+const isTextNode = computed(() => selectedNode.value?.type === 'text')
 const selectedDisplayCount = computed(() => storyboardStore.selectedShotCount)
 const totalDisplayCount = computed(() => storyboardStore.totalShotCount || storyboardStore.selectedShotCount || 10)
+const panelWidthClass = computed(() => (isScriptNode.value ? 'w-[860px]' : 'w-[560px]'))
+const showPanelHeader = computed(() => Boolean(isScriptNode.value))
 
 const promptDraft = ref('')
 const showStyleLibrary = ref(false)
@@ -140,14 +143,25 @@ function applyCameraPreset(preset: string): void {
 function switchScriptInputMode(mode: 'plot' | 'videoRef' | 'roleRef'): void {
   storyboardStore.switchScriptInputMode(mode)
 }
+
+const nonScriptPlaceholder = computed(() => {
+  if (isTextNode.value) {
+    return '写下你想讲的故事、场景或角色设定。例如：一个来自未来的机器人，在城市屋顶看星星。'
+  }
+
+  return '根据当前节点输入配置内容'
+})
 </script>
 
 <template>
   <section
     v-if="selectedNode"
-    class="panel-glass nodrag nopan nowheel pointer-events-auto w-[860px] rounded-2xl p-4"
+    class="node-config-panel-root panel-glass nodrag nopan nowheel pointer-events-auto rounded-2xl p-4"
+    :class="panelWidthClass"
+    @pointerdown.stop
+    @click.stop
   >
-    <div class="mb-2 flex items-center gap-3">
+    <div v-if="showPanelHeader" class="mb-2 flex items-center gap-3">
       <span class="flex h-10 w-10 items-center justify-center rounded-xl bg-white/20 text-sm">{{ selectedNode.nodeMeta.icon }}</span>
       <div>
         <p class="text-sm font-semibold">{{ selectedNode.nodeConfig.title }}</p>
@@ -301,7 +315,7 @@ function switchScriptInputMode(mode: 'plot' | 'videoRef' | 'roleRef'): void {
       <textarea
         v-model="promptDraft"
         class="h-36 w-full rounded-xl border border-borderSoft bg-panelSoft p-3 text-sm outline-none focus:border-neon"
-        placeholder="根据当前节点输入配置内容"
+        :placeholder="nonScriptPlaceholder"
       />
 
       <div class="mt-2 flex items-center justify-between text-xs text-textMuted">

@@ -74,6 +74,16 @@ export const useCanvasStore = defineStore('canvas', {
   }),
 
   actions: {
+    initializeEmptyGraph() {
+      // 新建创作入口：清空节点并重置视口，确保进入的是空画布初始态
+      this.nodes = []
+      this.edges = []
+      this.viewport = { x: 0, y: 0, zoom: 1 }
+      this.selectedNodeId = ''
+      this.resetHistory()
+      this.persistToLocal()
+    },
+
     snapshotGraph(): CanvasGraph {
       return {
         version: 1,
@@ -302,6 +312,14 @@ export const useCanvasStore = defineStore('canvas', {
 
       target.position = { x, y }
       this.persistToLocal()
+    },
+
+    syncNodePosition(nodeId: string, x: number, y: number) {
+      const target = this.nodes.find((node) => node.id === nodeId)
+      if (!target) return
+
+      // 拖拽中的实时位置同步：只更新内存坐标，不持久化，避免频繁写 localStorage 导致掉帧
+      target.position = { x, y }
     },
 
     setViewport(x: number, y: number, zoom: number) {
