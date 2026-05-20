@@ -1,0 +1,51 @@
+﻿@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body,
+#__nuxt {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+  background:
+    radial-gradient(circle at 20% 10%, rgba(58, 117, 255, 0.16), transparent 32%),
+    radial-gradient(circle at 80% 0%, rgba(0, 206, 255, 0.15), transparent 25%),
+    var(--color-bg);
+  color: var(--color-text-main);
+}
+
+/* 画布点阵背景：用于创作页沉浸感 */
+.canvas-dot-bg {
+  background-color: #090d16;
+  background-image: radial-gradient(circle at center, rgba(98, 145, 255, 0.35) 1px, transparent 1px);
+  background-size: 22px 22px;
+}
+
+.panel-glass {
+  background: var(--color-panel);
+  border: 1px solid var(--color-border-soft);
+  box-shadow: var(--shadow-panel);
+  backdrop-filter: blur(10px);
+}
+
+.neon-border {
+  box-shadow: var(--shadow-neon);
+}
+
+::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(20, 28, 45, 0.6);
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(98, 143, 233, 0.45);
+  border-radius: 100px;
+}

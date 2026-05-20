@@ -1,0 +1,62 @@
+﻿import { useRuntimeConfig } from '#imports'
+import { ApiClientError } from '~/shared/api/errors'
+import { mockAdapter } from '~/shared/api/adapters/mockAdapter'
+import type { ApiAdapter, ApiResponse } from '~/shared/api/types'
+
+const failureCounter = new Map<string, number>()
+
+function pickAdapter(): ApiAdapter {
+  const config = useRuntimeConfig()
+
+  // 首期默认 mock，后续接真实阿里网关时只需要新增适配器并切换配置
+  if (config.public.apiAdapter === 'mock') {
+    return mockAdapter
+  }
+
+  return mockAdapter
+}
+
+function markFailure(endpoint: string, error: unknown): void {
+  const currentCount = (failureCounter.get(endpoint) ?? 0) + 1
+  failureCounter.set(endpoint, currentCount)
+
+  // 同一接口连续失败达到阈值时，主动输出详细日志并给出协助提示
+  if (currentCount >= 3) {
+    // eslint-disable-next-line no-console
+    console.error('[livliv] 接口重复失败日志', {
+      endpoint,
+      count: currentCount,
+      error
+    })
+
+    // eslint-disable-next-line no-console
+    console.warn('[livliv] 该接口已连续失败多次，可把以上日志提供给我，我可以继续协助定位问题。')
+  }
+}
+
+function resetFailure(endpoint: string): void {
+  failureCounter.set(endpoint, 0)
+}
+
+export async function callApi<T>(endpoint: string, task: (adapter: ApiAdapter) => Promise<ApiResponse<T>>): Promise<T> {
+  const adapter = pickAdapter()
+
+  try {
+    const response = await task(adapter)
+
+    if (!response.success) {
+      throw new ApiClientError(response.message || '接口返回失败', 'BIZ_ERROR')
+    }
+
+    resetFailure(endpoint)
+    return response.data
+  } catch (error) {
+    markFailure(endpoint, error)
+
+    if (error instanceof ApiClientError) {
+      throw error
+    }
+
+    throw new ApiClientError('网络异常，请稍后重试', 'NETWORK_ERROR')
+  }
+}

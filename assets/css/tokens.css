@@ -1,0 +1,30 @@
+﻿:root {
+  /* 主背景：深色电影感基调 */
+  --color-bg: #07090f;
+  /* 面板背景：卡片/弹窗/工具栏统一色 */
+  --color-panel: rgba(16, 21, 34, 0.88);
+  /* 次级面板背景：用于弱层级容器 */
+  --color-panel-soft: rgba(19, 26, 40, 0.62);
+  /* 主文本色 */
+  --color-text-main: #e9edf7;
+  /* 次文本色 */
+  --color-text-muted: #95a4c4;
+  /* 霓虹主色：交互高亮 */
+  --color-neon: #45d7ff;
+  /* 霓虹柔和色：边框和阴影过渡 */
+  --color-neon-soft: rgba(69, 215, 255, 0.35);
+  /* 柔和边框色 */
+  --color-border-soft: rgba(137, 170, 235, 0.2);
+
+  /* 圆角令牌：中大型卡片统一 */
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+
+  /* 阴影令牌：面板层级与霓虹高亮 */
+  --shadow-panel: 0 16px 60px rgba(0, 0, 0, 0.35);
+  --shadow-neon: 0 0 0 1px rgba(69, 215, 255, 0.45), 0 12px 40px rgba(69, 215, 255, 0.18);
+
+  /* 动效时长：交互统一节奏 */
+  --motion-fast: 0.2s;
+  --motion-normal: 0.35s;
+}
