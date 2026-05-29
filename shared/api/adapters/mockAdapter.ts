@@ -2,7 +2,8 @@
 import { defaultNodes } from '~/shared/constants/canvas'
 import { mockProjects } from '~/shared/constants/landing'
 import { mockStoryboardRows } from '~/shared/constants/storyboard'
-import type { ApiAdapter, ApiResponse, WechatLoginTicket } from '~/shared/api/types'
+import { setStoryboardCache } from '~/shared/api/storyboardCache'
+import type { ApiAdapter, ApiResponse, StoryboardGeneratePayload, WechatLoginTicket, WorkflowRunCreatePayload } from '~/shared/api/types'
 
 const mockTicketState = new Map<string, { startTime: number; done: boolean }>()
 
@@ -41,6 +42,23 @@ export const mockAdapter: ApiAdapter = {
     const result = category && category !== '全部' ? mockProjects.filter((project) => project.category === category) : mockProjects
 
     return ok(result)
+  },
+
+  async createProject(payload) {
+    await sleep(200)
+
+    const now = new Date().toISOString()
+    const project = {
+      id: `p-${Date.now()}`,
+      title: payload.title || '未命名项目',
+      coverUrl: 'linear-gradient(140deg, #1f2b3f, #c27f86)',
+      status: 'draft' as const,
+      category: payload.category || 'AI漫剧',
+      author: '创作导演',
+      updatedAt: now
+    }
+
+    return ok(project, 'created')
   },
 
   async getWechatLoginTicket() {
@@ -98,5 +116,50 @@ export const mockAdapter: ApiAdapter = {
   async getStoryboardRows() {
     await sleep(260)
     return ok(mockStoryboardRows)
+  },
+
+  async generateStoryboard(payload: StoryboardGeneratePayload) {
+    await sleep(320)
+
+    const titleLine = payload.content.trim().split('\n')[0] || '未命名镜头'
+    const rows = Array.from({ length: payload.shotCount }).map((_, index) => ({
+      id: `${payload.nodeId}-shot-${index + 1}`,
+      shotNo: index + 1,
+      durationSec: 4,
+      sceneDescription: `${titleLine} - 镜头 ${index + 1}`,
+      role: '主角',
+      shotType: '中景（Medium Shot）',
+      action: '推动剧情',
+      mood: '紧张',
+      soundFx: '环境声',
+      storyboardPrompt: '电影感、戏剧化、角色清晰',
+      cameraPrompt: '平稳推进，轻微摇镜'
+    }))
+
+    setStoryboardCache(payload.projectId, rows)
+    return ok(rows, 'generated')
+  },
+
+  async createWorkflowRun(payload: WorkflowRunCreatePayload) {
+    await sleep(180)
+    return ok({
+      runId: `run-${Date.now()}`,
+      status: 'success',
+      outputSnapshot: {
+        mock: true,
+        triggerNodeId: payload.triggerNodeId
+      }
+    })
+  },
+
+  async getWorkflowRun(runId: string) {
+    await sleep(120)
+    return ok({
+      runId,
+      status: 'success',
+      outputSnapshot: {
+        mock: true
+      }
+    })
   }
 }

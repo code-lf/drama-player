@@ -1,10 +1,14 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
+import { useQueryClient } from '@tanstack/vue-query'
 import { useCanvasStore } from '~/features/canvas/store/useCanvasStore'
 import { useStoryboardStudioStore } from '~/features/storyboard/store/useStoryboardStudioStore'
-import { aspectRatioPresets, cameraPresets, modelPresets, resolutionPresets, stylePresets } from '~/shared/constants/storyboard-presets'
+import { storyboardService } from '~/shared/api/services/storyboardService'
+import { workflowService } from '~/shared/api/services/workflowService'
+import { cameraPresets, modelPresets, resolutionPresets, stylePresets } from '~/shared/constants/storyboard-presets'
 
 const canvasStore = useCanvasStore()
 const storyboardStore = useStoryboardStudioStore()
+const queryClient = useQueryClient()
 
 const selectedNode = computed(() => canvasStore.nodes.find((node) => node.id === canvasStore.selectedNodeId))
 const isScriptNode = computed(() => selectedNode.value?.type === 'script')
@@ -20,6 +24,9 @@ const showStyleLibrary = ref(false)
 const showModelPanel = ref(false)
 const showResolutionPanel = ref(false)
 const showCameraPanel = ref(false)
+const isGeneratingStoryboard = ref(false)
+const isSubmittingWorkflow = ref(false)
+const activeRunId = ref('')
 
 watch(
   selectedNode,
@@ -65,59 +72,177 @@ function removeReferenceNode(referenceNodeId: string): void {
 
 function savePrompt(): void {
   if (!selectedNode.value) return
-
   canvasStore.updateNodePrompt(selectedNode.value.id, promptDraft.value)
 }
 
-function regenerateScript(): void {
+function buildScriptPromptByMode(): string {
+  const basePrompt = promptDraft.value.trim()
+  if (!basePrompt) return ''
+
+  if (storyboardStore.scriptInputMode === 'videoRef') {
+    const refs = linkedVideoNodes.value.map((node) => node.nodeConfig.title).join('、') || '无'
+    return `[视频参考:${refs}]\n${basePrompt}`
+  }
+
+  if (storyboardStore.scriptInputMode === 'roleRef') {
+    const refs = linkedRoleNodes.value.map((node) => node.nodeConfig.title).join('、') || '无'
+    return `[角色参考:${refs}]\n${basePrompt}`
+  }
+
+  return basePrompt
+}
+
+async function generateStoryboardFromPrompt(): Promise<void> {
+  if (!selectedNode.value || !canvasStore.projectId) return
+
+  const finalPrompt = buildScriptPromptByMode()
+  if (!finalPrompt) return
+
+  isGeneratingStoryboard.value = true
+  canvasStore.setNodeRuntimeState(selectedNode.value.id, { status: 'running', errorCode: '', errorMessage: '' })
+
+  try {
+    const rows = await storyboardService.generateStoryboard({
+      projectId: canvasStore.projectId,
+      nodeId: selectedNode.value.id,
+      content: finalPrompt,
+      shotCount: 10,
+      model: storyboardStore.modelName,
+      provider: storyboardStore.videoProvider,
+      resolution: storyboardStore.videoResolution,
+      style: storyboardStore.styleName,
+      cameraPreset: storyboardStore.cameraPreset,
+      scriptInputMode: storyboardStore.scriptInputMode
+    })
+
+    storyboardStore.setTotalShotCount(rows.length)
+    storyboardStore.replaceSelectedShots(rows.map((row) => row.id))
+    storyboardStore.switchWorkMode('rewrite')
+
+    canvasStore.updateNodePrompt(selectedNode.value.id, finalPrompt)
+    canvasStore.updateNodeTitle(selectedNode.value.id, finalPrompt.split('\n')[0].slice(0, 18) || '我在盛唐写天下')
+    canvasStore.updateNodeGenerationConfig(selectedNode.value.id, {
+      model: storyboardStore.modelName,
+      provider: storyboardStore.videoProvider,
+      resolution: storyboardStore.videoResolution
+    })
+    canvasStore.setScriptGenerated(selectedNode.value.id, true)
+    canvasStore.setNodeRuntimeState(selectedNode.value.id, { status: 'success' })
+
+    // 触发数据库分镜行查询刷新，避免页面仍停留在旧缓存。
+    await queryClient.invalidateQueries({ queryKey: ['storyboard-rows', canvasStore.projectId] })
+  } catch (error) {
+    canvasStore.setNodeRuntimeState(selectedNode.value.id, {
+      status: 'error',
+      errorCode: 'STORYBOARD_GENERATE_FAILED',
+      errorMessage: error instanceof Error ? error.message : '分镜生成失败'
+    })
+
+    // eslint-disable-next-line no-console
+    console.error('[livliv] 分镜生成失败', {
+      projectId: canvasStore.projectId,
+      nodeId: selectedNode.value.id,
+      provider: storyboardStore.videoProvider,
+      model: storyboardStore.modelName,
+      resolution: storyboardStore.videoResolution,
+      error
+    })
+  } finally {
+    isGeneratingStoryboard.value = false
+  }
+}
+
+async function regenerateScript(): Promise<void> {
   if (!selectedNode.value) return
 
   storyboardStore.switchWorkMode('rewrite')
   storyboardStore.setRewritePrompt(promptDraft.value)
-  canvasStore.updateNodePrompt(selectedNode.value.id, promptDraft.value)
+  await generateStoryboardFromPrompt()
+}
 
-  const generatedTitle = promptDraft.value.trim().split('\n')[0] || '我在盛唐写天下'
-  canvasStore.updateNodeTitle(selectedNode.value.id, generatedTitle.slice(0, 18))
-  canvasStore.setScriptGenerated(selectedNode.value.id, true)
+async function pollWorkflowRun(runId: string, nodeId: string): Promise<void> {
+  const maxPollCount = 60
+  const pollIntervalMs = 2_000
 
-  // eslint-disable-next-line no-console
-  console.info('[livliv] 重新生成脚本（前端占位）', {
-    prompt: storyboardStore.rewritePrompt,
-    model: storyboardStore.modelName
+  for (let i = 0; i < maxPollCount; i += 1) {
+    const runInfo = await workflowService.getRun(runId)
+
+    if (runInfo.status === 'success') {
+      canvasStore.setNodeRuntimeState(nodeId, { status: 'success', taskId: runId, errorCode: '', errorMessage: '' })
+      return
+    }
+
+    if (runInfo.status === 'failed') {
+      canvasStore.setNodeRuntimeState(nodeId, {
+        status: 'error',
+        taskId: runId,
+        errorCode: runInfo.errorCode || 'WORKFLOW_FAILED',
+        errorMessage: runInfo.errorMessage || '工作流执行失败'
+      })
+      return
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs))
+  }
+
+  canvasStore.setNodeRuntimeState(nodeId, {
+    status: 'error',
+    taskId: runId,
+    errorCode: 'WORKFLOW_TIMEOUT',
+    errorMessage: '工作流执行超时，请稍后重试'
   })
 }
 
-function submitStoryboardGenerate(): void {
-  if (!selectedNode.value) return
+async function submitStoryboardGenerate(): Promise<void> {
+  if (!selectedNode.value || !canvasStore.projectId) return
 
   storyboardStore.markStoryboardGenerated()
   canvasStore.setScriptGenerated(selectedNode.value.id, true)
+  canvasStore.setNodeRuntimeState(selectedNode.value.id, { status: 'running', errorCode: '', errorMessage: '' })
+  isSubmittingWorkflow.value = true
 
-  // eslint-disable-next-line no-console
-  console.info('[livliv] 生成分镜（前端占位）', {
-    style: storyboardStore.styleName,
-    model: storyboardStore.modelName,
-    resolution: storyboardStore.resolution,
-    camera: storyboardStore.cameraPreset,
-    selectedShots: storyboardStore.selectedShotCount
-  })
+  try {
+    const run = await workflowService.createRun({
+      projectId: canvasStore.projectId,
+      triggerNodeId: selectedNode.value.id,
+      inputSnapshot: {
+        provider: storyboardStore.videoProvider,
+        model: storyboardStore.modelName,
+        resolution: storyboardStore.videoResolution,
+        style: storyboardStore.styleName,
+        cameraPreset: storyboardStore.cameraPreset,
+        selectedShotIds: storyboardStore.selectedShotIds,
+        selectedShotCount: storyboardStore.selectedShotCount,
+        prompt: promptDraft.value
+      }
+    })
+
+    activeRunId.value = run.runId
+    canvasStore.setNodeRuntimeState(selectedNode.value.id, { status: 'running', taskId: run.runId })
+    await pollWorkflowRun(run.runId, selectedNode.value.id)
+  } catch (error) {
+    canvasStore.setNodeRuntimeState(selectedNode.value.id, {
+      status: 'error',
+      errorCode: 'WORKFLOW_SUBMIT_FAILED',
+      errorMessage: error instanceof Error ? error.message : '工作流提交失败'
+    })
+
+    // eslint-disable-next-line no-console
+    console.error('[livliv] 工作流提交失败', {
+      projectId: canvasStore.projectId,
+      nodeId: selectedNode.value.id,
+      provider: storyboardStore.videoProvider,
+      model: storyboardStore.modelName,
+      error
+    })
+  } finally {
+    isSubmittingWorkflow.value = false
+  }
 }
 
-function submitScriptMethod(): void {
+async function submitScriptMethod(): Promise<void> {
   if (!selectedNode.value) return
-
-  canvasStore.updateNodePrompt(selectedNode.value.id, promptDraft.value)
-  canvasStore.setScriptGenerated(selectedNode.value.id, true)
-  const generatedTitle = promptDraft.value.trim().split('\n')[0] || '我在盛唐写天下'
-  canvasStore.updateNodeTitle(selectedNode.value.id, generatedTitle.slice(0, 18))
-
-  // eslint-disable-next-line no-console
-  console.info('[livliv] 脚本节点分镜脚本生成（前端占位）', {
-    mode: storyboardStore.scriptInputMode,
-    prompt: promptDraft.value,
-    linkedVideos: linkedVideoNodes.value.map((node) => node.id),
-    linkedRoles: linkedRoleNodes.value.map((node) => node.id)
-  })
+  await generateStoryboardFromPrompt()
 }
 
 function applyStyle(style: string): void {
@@ -127,11 +252,17 @@ function applyStyle(style: string): void {
 
 function applyModel(model: string): void {
   storyboardStore.setModelName(model)
+  if (selectedNode.value) {
+    canvasStore.updateNodeGenerationConfig(selectedNode.value.id, { model })
+  }
   showModelPanel.value = false
 }
 
-function applyResolution(resolution: string, ratio: string): void {
-  storyboardStore.setResolution(`${ratio} · ${resolution}`)
+function applyResolution(resolution: string): void {
+  storyboardStore.setVideoResolution(resolution as '360p' | '540p' | '720p' | '1080p')
+  if (selectedNode.value) {
+    canvasStore.updateNodeGenerationConfig(selectedNode.value.id, { resolution })
+  }
   showResolutionPanel.value = false
 }
 
@@ -142,6 +273,13 @@ function applyCameraPreset(preset: string): void {
 
 function switchScriptInputMode(mode: 'plot' | 'videoRef' | 'roleRef'): void {
   storyboardStore.switchScriptInputMode(mode)
+}
+
+function applyVideoProvider(provider: 'bytedance' | 'alibaba'): void {
+  storyboardStore.setVideoProvider(provider)
+  if (selectedNode.value) {
+    canvasStore.updateNodeGenerationConfig(selectedNode.value.id, { provider })
+  }
 }
 
 const nonScriptPlaceholder = computed(() => {
@@ -239,15 +377,21 @@ const nonScriptPlaceholder = computed(() => {
       </div>
 
       <div class="mt-2 flex items-center justify-between text-xs text-textMuted">
-        <button class="rounded-lg border border-borderSoft px-3 py-1.5 transition hover:border-neon" @click="showModelPanel = true">
-          模型：{{ storyboardStore.modelName }}
-        </button>
+        <div class="flex items-center gap-2">
+          <button class="rounded-lg border border-borderSoft px-3 py-1.5 transition hover:border-neon" @click="showModelPanel = true">
+            模型：{{ storyboardStore.modelName }}
+          </button>
+          <button class="rounded-lg border border-borderSoft px-3 py-1.5 transition hover:border-neon" @click="applyVideoProvider('bytedance')" :class="storyboardStore.videoProvider === 'bytedance' ? 'border-neon text-neon' : ''">字节</button>
+          <button class="rounded-lg border border-borderSoft px-3 py-1.5 transition hover:border-neon" @click="applyVideoProvider('alibaba')" :class="storyboardStore.videoProvider === 'alibaba' ? 'border-neon text-neon' : ''">阿里</button>
+        </div>
         <button
-          class="flex h-11 w-11 items-center justify-center rounded-full bg-neon text-xl font-bold text-slate-950"
+          class="flex h-11 w-11 items-center justify-center rounded-full bg-neon text-xl font-bold text-slate-950 disabled:cursor-not-allowed disabled:opacity-60"
           title="提交"
+          :disabled="isGeneratingStoryboard"
           @click="submitScriptMethod"
         >
-          ↑
+          <span v-if="isGeneratingStoryboard" class="text-sm">...</span>
+          <span v-else>↑</span>
         </button>
       </div>
     </template>
@@ -265,17 +409,19 @@ const nonScriptPlaceholder = computed(() => {
             模型：{{ storyboardStore.modelName }}
           </button>
           <button
-            class="flex h-11 w-11 items-center justify-center rounded-full bg-neon text-xl font-bold text-slate-950"
+            class="flex h-11 w-11 items-center justify-center rounded-full bg-neon text-xl font-bold text-slate-950 disabled:cursor-not-allowed disabled:opacity-60"
             title="提交重生"
+            :disabled="isGeneratingStoryboard"
             @click="regenerateScript"
           >
-            ↑
+            <span v-if="isGeneratingStoryboard" class="text-sm">...</span>
+            <span v-else>↑</span>
           </button>
         </div>
       </template>
 
       <template v-else>
-        <div class="grid grid-cols-5 gap-2 text-xs">
+        <div class="grid grid-cols-6 gap-2 text-xs">
           <button class="rounded-lg border border-borderSoft bg-panelSoft px-2 py-2 text-left" @click="showStyleLibrary = true">
             <p class="text-textMuted">风格</p>
             <p class="mt-1 truncate text-sm">{{ storyboardStore.styleName }}</p>
@@ -285,27 +431,33 @@ const nonScriptPlaceholder = computed(() => {
             <p class="mt-1 truncate text-sm">{{ storyboardStore.modelName }}</p>
           </button>
           <button class="rounded-lg border border-borderSoft bg-panelSoft px-2 py-2 text-left" @click="showResolutionPanel = true">
-            <p class="text-textMuted">分辨率</p>
-            <p class="mt-1 truncate text-sm">{{ storyboardStore.resolution }}</p>
+            <p class="text-textMuted">画质</p>
+            <p class="mt-1 truncate text-sm">{{ storyboardStore.videoResolution }}</p>
           </button>
           <button class="rounded-lg border border-borderSoft bg-panelSoft px-2 py-2 text-left" @click="showCameraPanel = true">
             <p class="text-textMuted">摄像机</p>
             <p class="mt-1 truncate text-sm">{{ storyboardStore.cameraPreset }}</p>
           </button>
-          <div class="rounded-lg border border-borderSoft bg-panelSoft px-2 py-2 text-left">
-            <p class="text-textMuted">已选脚本</p>
-            <p class="mt-1 truncate text-sm">{{ selectedDisplayCount }}/{{ totalDisplayCount }}</p>
-          </div>
+          <button class="rounded-lg border border-borderSoft bg-panelSoft px-2 py-2 text-left" @click="applyVideoProvider('bytedance')" :class="storyboardStore.videoProvider === 'bytedance' ? 'border-neon text-neon' : ''">
+            <p class="text-textMuted">供应商</p>
+            <p class="mt-1 truncate text-sm">字节</p>
+          </button>
+          <button class="rounded-lg border border-borderSoft bg-panelSoft px-2 py-2 text-left" @click="applyVideoProvider('alibaba')" :class="storyboardStore.videoProvider === 'alibaba' ? 'border-neon text-neon' : ''">
+            <p class="text-textMuted">供应商</p>
+            <p class="mt-1 truncate text-sm">阿里</p>
+          </button>
         </div>
 
         <div class="mt-2 flex items-center justify-between text-xs text-textMuted">
-          <span>生成将按镜头卡片输出，可继续批量生成视频。</span>
+          <span>已选镜头 {{ selectedDisplayCount }}/{{ totalDisplayCount }} · Run: {{ activeRunId || '未开始' }}</span>
           <button
-            class="flex h-11 w-11 items-center justify-center rounded-full bg-neon text-xl font-bold text-slate-950"
+            class="flex h-11 w-11 items-center justify-center rounded-full bg-neon text-xl font-bold text-slate-950 disabled:cursor-not-allowed disabled:opacity-60"
             title="开始生成"
+            :disabled="isSubmittingWorkflow"
             @click="submitStoryboardGenerate"
           >
-            ↑
+            <span v-if="isSubmittingWorkflow" class="text-sm">...</span>
+            <span v-else>↑</span>
           </button>
         </div>
       </template>
@@ -375,27 +527,15 @@ const nonScriptPlaceholder = computed(() => {
 
   <div v-if="showResolutionPanel" class="fixed inset-0 z-40" @click.self="showResolutionPanel = false">
     <section class="panel-glass absolute bottom-28 right-20 w-[420px] rounded-xl p-4">
-      <h4 class="mb-2 text-sm text-textMuted">分辨率</h4>
-      <div class="mb-3 grid grid-cols-3 gap-2">
+      <h4 class="mb-2 text-sm text-textMuted">视频画质</h4>
+      <div class="grid grid-cols-2 gap-2">
         <button
           v-for="item in resolutionPresets"
           :key="item"
           class="rounded-lg border border-borderSoft px-3 py-2 text-sm transition hover:border-neon"
-          @click="applyResolution(item, storyboardStore.resolution.split(' · ')[0] || '16:9')"
+          @click="applyResolution(item)"
         >
           {{ item }}
-        </button>
-      </div>
-
-      <h4 class="mb-2 text-sm text-textMuted">比例</h4>
-      <div class="grid grid-cols-5 gap-2">
-        <button
-          v-for="ratio in aspectRatioPresets"
-          :key="ratio"
-          class="rounded-lg border border-borderSoft px-2 py-2 text-xs transition hover:border-neon"
-          @click="applyResolution(storyboardStore.resolution.split(' · ')[1] || '2K', ratio)"
-        >
-          {{ ratio }}
         </button>
       </div>
     </section>

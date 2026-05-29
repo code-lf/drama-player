@@ -16,6 +16,10 @@ interface StoryboardStudioState {
   // 生成分镜参数
   styleName: string
   modelName: string
+  // 视频供应商：首期默认字节，后续可切阿里视频。
+  videoProvider: 'bytedance' | 'alibaba'
+  // 视频画质档位：前期默认最低画质压缩成本。
+  videoResolution: '360p' | '540p' | '720p' | '1080p'
   resolution: string
   cameraPreset: string
   selectedShotIds: string[]
@@ -32,8 +36,11 @@ export const useStoryboardStudioStore = defineStore('storyboard-studio', {
     hasGeneratedStoryboard: false,
     arrangeMode: 'grid',
     styleName: '默认风格',
-    modelName: 'Lib Nano Pro',
-    resolution: '16:9 · 2K',
+    // 前期默认切到性价比模型，先压低单位成本再做质量迭代。
+    modelName: 'Doubao-Seedance-1.0-pro-fast',
+    videoProvider: 'bytedance',
+    videoResolution: '360p',
+    resolution: '360p',
     cameraPreset: '基础镜头',
     selectedShotIds: [],
     totalShotCount: 0,
@@ -63,6 +70,15 @@ export const useStoryboardStudioStore = defineStore('storyboard-studio', {
 
     setModelName(model: string) {
       this.modelName = model
+    },
+
+    setVideoProvider(provider: 'bytedance' | 'alibaba') {
+      this.videoProvider = provider
+    },
+
+    setVideoResolution(resolution: '360p' | '540p' | '720p' | '1080p') {
+      this.videoResolution = resolution
+      this.resolution = resolution
     },
 
     setResolution(resolution: string) {

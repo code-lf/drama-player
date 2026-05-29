@@ -5,6 +5,7 @@ import { storyboardService } from '~/shared/api/services/storyboardService'
 export function useStoryboardRows(projectId: Ref<string>) {
   return useQuery({
     queryKey: computed(() => ['storyboard-rows', projectId.value]),
-    queryFn: () => storyboardService.getStoryboardRows(projectId.value)
+    queryFn: () => storyboardService.getStoryboardRows(projectId.value),
+    enabled: computed(() => Boolean(projectId.value))
   })
 }

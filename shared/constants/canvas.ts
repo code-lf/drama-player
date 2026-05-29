@@ -20,7 +20,7 @@ export const defaultNodes: WorkflowNode[] = [
     type: 'script',
     position: { x: 100, y: 110 },
     nodeMeta: { label: '脚本节点', description: '根据输入主题生成剧情脚本', icon: 'S' },
-    nodeConfig: { title: '脚本生成器', model: 'Qwen-Max', prompt: '', duration: 60, scriptGenerated: false },
+    nodeConfig: { title: '脚本生成器', model: 'Qwen-Plus', provider: 'alibaba', resolution: '360p', prompt: '', duration: 60, scriptGenerated: false },
     ioPorts: [
       { id: 'script-in', name: '输入', direction: 'input' },
       { id: 'script-out', name: '输出', direction: 'output' }
@@ -33,7 +33,7 @@ export const defaultNodes: WorkflowNode[] = [
     type: 'text',
     position: { x: 100, y: 460 },
     nodeMeta: { label: '文本节点', description: '可继续拆分脚本并生成提示词', icon: 'T' },
-    nodeConfig: { title: '文本节点 2', model: 'Qwen-Plus' },
+    nodeConfig: { title: '文本节点 2', model: 'Qwen-Plus', provider: 'alibaba', resolution: '360p' },
     ioPorts: [
       { id: 'text-2-in', name: '输入', direction: 'input' },
       { id: 'text-2-out', name: '输出', direction: 'output' }
@@ -46,7 +46,7 @@ export const defaultNodes: WorkflowNode[] = [
     type: 'text',
     position: { x: 500, y: 540 },
     nodeMeta: { label: '文本节点', description: '用于生成多版本提示词', icon: 'T' },
-    nodeConfig: { title: '文本节点 3', model: 'Qwen-Plus' },
+    nodeConfig: { title: '文本节点 3', model: 'Qwen-Plus', provider: 'alibaba', resolution: '360p' },
     ioPorts: [
       { id: 'text-3-in', name: '输入', direction: 'input' },
       { id: 'text-3-out', name: '输出', direction: 'output' }
@@ -59,7 +59,7 @@ export const defaultNodes: WorkflowNode[] = [
     type: 'audio',
     position: { x: 1030, y: 470 },
     nodeMeta: { label: '音频节点', description: '为脚本匹配配乐和音效', icon: 'A' },
-    nodeConfig: { title: '音频生成', model: 'Qwen-Omni' },
+    nodeConfig: { title: '音频生成', model: 'Qwen-Omni', provider: 'alibaba', resolution: '360p' },
     ioPorts: [
       { id: 'audio-in', name: '输入', direction: 'input' },
       { id: 'audio-out', name: '输出', direction: 'output' }

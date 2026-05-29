@@ -1,6 +1,7 @@
-﻿import { useRuntimeConfig } from '#imports'
-import { ApiClientError } from '~/shared/api/errors'
+import { useRuntimeConfig } from '#imports'
+import { httpAdapter } from '~/shared/api/adapters/httpAdapter'
 import { mockAdapter } from '~/shared/api/adapters/mockAdapter'
+import { ApiClientError } from '~/shared/api/errors'
 import type { ApiAdapter, ApiResponse } from '~/shared/api/types'
 
 const failureCounter = new Map<string, number>()
@@ -8,19 +9,19 @@ const failureCounter = new Map<string, number>()
 function pickAdapter(): ApiAdapter {
   const config = useRuntimeConfig()
 
-  // 首期默认 mock，后续接真实阿里网关时只需要新增适配器并切换配置
+  // 适配器切换只依赖 runtime config，页面层不关心 mock / real 的差异。
   if (config.public.apiAdapter === 'mock') {
     return mockAdapter
   }
 
-  return mockAdapter
+  return httpAdapter
 }
 
 function markFailure(endpoint: string, error: unknown): void {
   const currentCount = (failureCounter.get(endpoint) ?? 0) + 1
   failureCounter.set(endpoint, currentCount)
 
-  // 同一接口连续失败达到阈值时，主动输出详细日志并给出协助提示
+  // 同一接口连续失败达到阈值时，主动输出详细日志并给出协助提示。
   if (currentCount >= 3) {
     // eslint-disable-next-line no-console
     console.error('[livliv] 接口重复失败日志', {

@@ -12,8 +12,12 @@ interface CanvasState {
   historyFuture: CanvasGraph[]
 }
 
-const CANVAS_CACHE_KEY = 'livliv-canvas-cache'
+const CANVAS_CACHE_KEY_PREFIX = 'livliv-canvas-cache'
 const MAX_HISTORY_STEPS = 80
+
+function getCanvasCacheKey(projectId: string): string {
+  return `${CANVAS_CACHE_KEY_PREFIX}:${projectId}`
+}
 
 function randomId(prefix: string): string {
   return `${prefix}-${Math.random().toString(36).slice(2, 10)}`
@@ -51,6 +55,8 @@ function createNode(type: WorkflowNodeType, x: number, y: number): WorkflowNode 
     nodeConfig: {
       title: `${preset.label}节点`,
       model: 'Qwen-Plus',
+      provider: 'alibaba',
+      resolution: '360p',
       prompt: ''
     },
     ioPorts: [
@@ -64,7 +70,8 @@ function createNode(type: WorkflowNodeType, x: number, y: number): WorkflowNode 
 
 export const useCanvasStore = defineStore('canvas', {
   state: (): CanvasState => ({
-    projectId: 'project-demo-1',
+    // 项目 ID 由路由参数初始化，避免误写到演示 ID。
+    projectId: '',
     nodes: [],
     edges: [],
     viewport: { x: 0, y: 0, zoom: 1 },
@@ -74,6 +81,11 @@ export const useCanvasStore = defineStore('canvas', {
   }),
 
   actions: {
+    setProjectId(projectId: string) {
+      // 项目切换时同步更新 projectId，避免保存/读取误写到旧项目。
+      this.projectId = projectId
+    },
+
     initializeEmptyGraph() {
       // 新建创作入口：清空节点并重置视口，确保进入的是空画布初始态
       this.nodes = []
@@ -288,6 +300,17 @@ export const useCanvasStore = defineStore('canvas', {
       this.persistToLocal()
     },
 
+    updateNodeGenerationConfig(nodeId: string, payload: { model?: string; provider?: 'bytedance' | 'alibaba'; resolution?: string }) {
+      const target = this.nodes.find((node) => node.id === nodeId)
+      if (!target) return
+
+      this.pushHistory()
+      if (payload.model) target.nodeConfig.model = payload.model
+      if (payload.provider) target.nodeConfig.provider = payload.provider
+      if (payload.resolution) target.nodeConfig.resolution = payload.resolution
+      this.persistToLocal()
+    },
+
     updateNodeTitle(nodeId: string, title: string) {
       const target = this.nodes.find((node) => node.id === nodeId)
       if (!target) return
@@ -303,6 +326,25 @@ export const useCanvasStore = defineStore('canvas', {
 
       this.pushHistory()
       target.nodeConfig.scriptGenerated = generated
+      this.persistToLocal()
+    },
+
+    setNodeRuntimeState(
+      nodeId: string,
+      state: {
+        status: 'idle' | 'running' | 'success' | 'error'
+        taskId?: string
+        errorCode?: string
+        errorMessage?: string
+      }
+    ) {
+      const target = this.nodes.find((node) => node.id === nodeId)
+      if (!target) return
+
+      target.runtimeState = {
+        ...target.runtimeState,
+        ...state
+      }
       this.persistToLocal()
     },
 
@@ -329,6 +371,7 @@ export const useCanvasStore = defineStore('canvas', {
 
     persistToLocal() {
       if (!import.meta.client) return
+      if (!this.projectId) return
 
       const payload: CanvasGraph = {
         version: 1,
@@ -337,13 +380,14 @@ export const useCanvasStore = defineStore('canvas', {
         viewport: this.viewport
       }
 
-      localStorage.setItem(CANVAS_CACHE_KEY, JSON.stringify(payload))
+      localStorage.setItem(getCanvasCacheKey(this.projectId), JSON.stringify(payload))
     },
 
     restoreFromLocal() {
       if (!import.meta.client) return false
+      if (!this.projectId) return false
 
-      const raw = localStorage.getItem(CANVAS_CACHE_KEY)
+      const raw = localStorage.getItem(getCanvasCacheKey(this.projectId))
       if (!raw) return false
 
       try {

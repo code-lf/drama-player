@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import type { Project } from '~/entities/project/types'
 
 defineProps<{ projects: Project[]; loading: boolean }>()
@@ -16,9 +16,10 @@ function statusLabel(status: Project['status']): string {
   </div>
 
   <div v-else class="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-    <article
+    <NuxtLink
       v-for="project in projects"
       :key="project.id"
+      :to="`/studio?projectId=${encodeURIComponent(project.id)}`"
       class="overflow-hidden rounded-2xl border border-borderSoft bg-panelSoft transition duration-300 hover:-translate-y-1 hover:border-neon/50"
     >
       <div class="h-[180px] w-full" :style="{ background: project.coverUrl }" />
@@ -29,6 +30,6 @@ function statusLabel(status: Project['status']): string {
         </div>
         <p class="text-sm text-textMuted">{{ project.author }} · {{ project.category }}</p>
       </div>
-    </article>
+    </NuxtLink>
   </div>
 </template>

@@ -31,6 +31,8 @@ export interface WorkflowNodeConfig {
   title: string
   prompt?: string
   model?: string
+  provider?: 'bytedance' | 'alibaba'
+  resolution?: string
   duration?: number
   // 脚本节点是否已经完成一次生成，生成后节点主体切换为分镜大卡片
   scriptGenerated?: boolean

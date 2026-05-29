@@ -13,11 +13,13 @@ export default defineNuxtConfig({
     '/studio/**': { ssr: false }
   },
 
-  // 运行时配置：当前使用 mock 适配器
+  // 运行时配置：
+  // - 默认指向本地后端 `ai-create-video-api`
+  // - 通过环境变量可切换 mock/http，联调时无需改业务代码
   runtimeConfig: {
     public: {
-      apiBase: '/api',
-      apiAdapter: 'mock'
+      apiBase: process.env.NUXT_PUBLIC_API_BASE || 'http://127.0.0.1:8000/api',
+      apiAdapter: process.env.NUXT_PUBLIC_API_ADAPTER || 'http'
     }
   },
 

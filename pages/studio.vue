@@ -8,6 +8,7 @@ import { useCanvasStore } from '~/features/canvas/store/useCanvasStore'
 import { useCanvasGraph } from '~/composables/queries/useCanvasGraph'
 import { useStoryboardRows } from '~/composables/queries/useStoryboardRows'
 import { canvasService } from '~/shared/api/services/canvasService'
+import { projectService } from '~/shared/api/services/projectService'
 import NodeConfigPanel from '~/features/studio/components/NodeConfigPanel.vue'
 import StudioNodeToolbox from '~/features/studio/components/StudioNodeToolbox.vue'
 import StudioNodeTypeMenu from '~/features/studio/components/StudioNodeTypeMenu.vue'
@@ -17,10 +18,12 @@ import type { WorkflowNodeType } from '~/entities/canvas/types'
 
 const canvasStore = useCanvasStore()
 const route = useRoute()
+const router = useRouter()
 
 const { zoomIn, zoomOut, fitView, viewport } = useVueFlow()
 
 const projectIdRef = computed(() => canvasStore.projectId)
+const projectTitle = ref('未命名项目')
 const zoomPercent = ref(100)
 
 const isDesktop = ref(true)
@@ -129,7 +132,49 @@ onBeforeUnmount(() => {
 const { data: graphData } = useCanvasGraph(projectIdRef)
 const { data: storyboardRows } = useStoryboardRows(projectIdRef)
 const createNewMode = computed(() => route.query.new === '1')
+const routeProjectId = computed(() => (typeof route.query.projectId === 'string' ? route.query.projectId : ''))
 const showQuickCanvasStarter = computed(() => canvasStore.nodes.length === 0)
+
+async function ensureProjectContext(): Promise<void> {
+  const routeProjectId = typeof route.query.projectId === 'string' ? route.query.projectId : ''
+  if (routeProjectId) {
+    canvasStore.setProjectId(routeProjectId)
+    return
+  }
+
+  // 兼容直接访问 /studio：自动创建项目并写回 URL，避免后续保存时报 project_id 非法。
+  const created = await projectService.createProject({ title: '未命名项目', category: 'AI漫剧' })
+  canvasStore.setProjectId(created.id)
+  projectTitle.value = created.title
+
+  await router.replace({
+    query: {
+      ...route.query,
+      projectId: created.id,
+      new: '1'
+    }
+  })
+}
+
+onMounted(async () => {
+  try {
+    await ensureProjectContext()
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error('[livliv] 创作页项目上下文初始化失败', error)
+  }
+})
+
+watch(
+  routeProjectId,
+  (projectId) => {
+    if (!projectId) return
+    if (projectId === canvasStore.projectId) return
+    // 路由切换项目时同步 store 上下文，后续查询键会自动切换。
+    canvasStore.setProjectId(projectId)
+  },
+  { immediate: true }
+)
 
 watch(
   graphData,
@@ -157,13 +202,18 @@ watch(
 )
 
 const saveMutation = useMutation({
-  mutationFn: () =>
-    canvasService.saveCanvasGraph(canvasStore.projectId, {
+  mutationFn: () => {
+    if (!canvasStore.projectId) {
+      throw new Error('projectId is empty')
+    }
+
+    return canvasService.saveCanvasGraph(canvasStore.projectId, {
       version: 1,
       nodes: canvasStore.nodes,
       edges: canvasStore.edges,
       viewport: canvasStore.viewport
-    }),
+    })
+  },
   onSuccess: () => {
     // eslint-disable-next-line no-console
     console.info('[livliv] 画布保存成功')
@@ -481,7 +531,7 @@ watch(
 
 <template>
   <main class="relative h-screen overflow-hidden canvas-dot-bg">
-    <StudioTopBar title="未命名项目" @save="saveWorkflow" />
+    <StudioTopBar :title="projectTitle" @save="saveWorkflow" />
 
     <template v-if="!isDesktop">
       <div class="flex h-full items-center justify-center px-6">

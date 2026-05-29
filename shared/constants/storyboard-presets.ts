@@ -32,15 +32,17 @@ export const stylePresets: StylePreset[] = [
 ]
 
 export const modelPresets: ModelPreset[] = [
-  { id: 'm-1', name: 'Lib Nano Pro', description: '最强图片编辑模型，一致性好', sec: 50 },
-  { id: 'm-2', name: 'Lib Image', description: '平衡质量与速度', sec: 60 },
-  { id: 'm-3', name: 'Lib Nano 2', description: '稳定生成，资源消耗低', sec: 25 },
-  { id: 'm-4', name: 'Seedream 5.0 Lite', description: '轻量级版本', sec: 20 },
-  { id: 'm-5', name: 'Seedream 4.5', description: '限时折扣模型', sec: 15 }
+  { id: 'm-1', name: 'Doubao-Seedance-1.0-pro-fast', description: '前期推荐：价格友好，质量与速度平衡', sec: 18 },
+  { id: 'm-2', name: 'Doubao-Seedance-1.0-lite-t2v', description: '文生视频低成本方案', sec: 15 },
+  { id: 'm-3', name: 'Doubao-Seedance-1.0-lite-i2v', description: '图生视频低成本方案', sec: 14 },
+  { id: 'm-6', name: 'pixverse/pixverse-v6-t2v', description: '阿里生态视频模型（可切换）', sec: 16 },
+  { id: 'm-4', name: 'Qwen-Plus', description: '阿里文本脚本经济款', sec: 8 },
+  { id: 'm-5', name: 'wanx2.1-t2i-turbo', description: '阿里图像快速经济款', sec: 12 }
 ]
 
-export const resolutionPresets = ['1K', '2K', '4K']
-export const aspectRatioPresets = ['自适应', '1:1', '9:16', '16:9', '3:4', '4:3', '3:2', '2:3', '4:5', '5:4', '21:9']
+// 视频画质改为业务常用档位，便于直接映射供应商参数与成本估算。
+export const resolutionPresets = ['360p', '540p', '720p', '1080p']
+export const aspectRatioPresets = ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9']
 
 export const cameraPresets: CameraPreset[] = [
   { id: 'c-1', name: 'Sony Venice', lens: 'Zeiss Ultra Prime', focal: '8mm', aperture: 'f/1.4' },
