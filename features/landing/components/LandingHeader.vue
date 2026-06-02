@@ -1,4 +1,6 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
+import { useThemeStore } from '~/features/ui/store/useThemeStore'
+
 defineProps<{
   loggedIn: boolean
   nickname: string
@@ -7,6 +9,8 @@ defineProps<{
 const emit = defineEmits<{
   openLogin: []
 }>()
+
+const themeStore = useThemeStore()
 </script>
 
 <template>
@@ -17,9 +21,12 @@ const emit = defineEmits<{
     </div>
 
     <nav class="hidden items-center gap-3 md:flex">
-      <NuxtLink to="/studio?new=1" class="rounded-full border border-borderSoft bg-panelSoft px-4 py-2 text-sm hover:border-neon/60">
-        开始创作
+      <NuxtLink to="/dashboard" class="rounded-full border border-borderSoft bg-panelSoft px-4 py-2 text-sm hover:border-neon/60">
+        控制台
       </NuxtLink>
+      <button class="rounded-full border border-borderSoft bg-panelSoft px-4 py-2 text-sm hover:border-neon/60" @click="themeStore.toggleMode()">
+        {{ themeStore.mode === 'dark' ? '浅色模式' : '深色模式' }}
+      </button>
       <button
         v-if="!loggedIn"
         class="rounded-full bg-white px-5 py-2 text-sm font-semibold text-slate-900"

@@ -1,4 +1,4 @@
-﻿@tailwind base;
+@tailwind base;
 @tailwind components;
 @tailwind utilities;
 
@@ -12,10 +12,21 @@ body {
   margin: 0;
   font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
   background:
-    radial-gradient(circle at 20% 10%, rgba(58, 117, 255, 0.16), transparent 32%),
-    radial-gradient(circle at 80% 0%, rgba(0, 206, 255, 0.15), transparent 25%),
+    radial-gradient(circle at 16% 8%, rgba(82, 128, 255, 0.16), transparent 28%),
+    radial-gradient(circle at 78% 2%, rgba(0, 206, 255, 0.12), transparent 22%),
+    radial-gradient(circle at 50% 100%, rgba(54, 83, 150, 0.12), transparent 30%),
     var(--color-bg);
   color: var(--color-text-main);
+  transition: background var(--motion-normal), color var(--motion-fast);
+  background-attachment: fixed;
+}
+
+[data-theme='light'] body {
+  background:
+    radial-gradient(circle at 12% 12%, rgba(125, 165, 255, 0.18), transparent 22%),
+    radial-gradient(circle at 86% 6%, rgba(137, 204, 255, 0.16), transparent 18%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(242, 246, 255, 0.94)),
+    var(--color-bg);
 }
 
 /* 画布点阵背景：用于创作页沉浸感 */
@@ -23,6 +34,11 @@ body {
   background-color: #090d16;
   background-image: radial-gradient(circle at center, rgba(98, 145, 255, 0.35) 1px, transparent 1px);
   background-size: 22px 22px;
+}
+
+[data-theme='light'] .canvas-dot-bg {
+  background-color: #eef3ff;
+  background-image: radial-gradient(circle at center, rgba(70, 104, 186, 0.18) 1px, transparent 1px);
 }
 
 .panel-glass {

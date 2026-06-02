@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { useMutation } from '@tanstack/vue-query'
 import LoginDialog from '~/features/auth/components/LoginDialog.vue'
 import CategoryTabs from '~/features/landing/components/CategoryTabs.vue'
 import HeroCarousel from '~/features/landing/components/HeroCarousel.vue'
@@ -7,7 +6,6 @@ import LandingHeader from '~/features/landing/components/LandingHeader.vue'
 import ProjectCardGrid from '~/features/landing/components/ProjectCardGrid.vue'
 import { useAuthStore } from '~/features/auth/store/useAuthStore'
 import { useLandingProjects } from '~/composables/queries/useLandingProjects'
-import { projectService } from '~/shared/api/services/projectService'
 
 const authStore = useAuthStore()
 const router = useRouter()
@@ -16,7 +14,6 @@ const category = ref('全部')
 const loginVisible = ref(false)
 
 const { data: projects, isLoading } = useLandingProjects(category)
-// 最近项目：按更新时间倒序展示，首页只保留少量卡片避免信息过载
 const recentProjects = computed(() => {
   const source = projects.value ?? []
   return [...source]
@@ -32,20 +29,8 @@ function openLoginDialog(): void {
   loginVisible.value = true
 }
 
-const createProjectMutation = useMutation({
-  mutationFn: () => projectService.createProject({ title: '未命名项目', category: 'AI漫剧' }),
-  onSuccess: (project) => {
-    router.push(`/studio?projectId=${encodeURIComponent(project.id)}&new=1`)
-  },
-  onError: (error) => {
-    // eslint-disable-next-line no-console
-    console.error('[livliv] 首页创建项目失败', error)
-  }
-})
-
 function startCreateFromHome(): void {
-  if (createProjectMutation.isPending.value) return
-  createProjectMutation.mutate()
+  router.push('/dashboard')
 }
 </script>
 
@@ -65,7 +50,6 @@ function startCreateFromHome(): void {
         <NuxtLink to="/projects" class="text-base text-textMuted transition hover:text-neon">全部项目 ></NuxtLink>
       </div>
 
-      <!-- 最近项目卡片：大屏固定四列，避免卡片被拉伸过大 -->
       <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <button
           class="group overflow-hidden rounded-2xl border border-neon/35 bg-panelSoft transition hover:border-neon hover:shadow-[0_0_40px_rgba(72,214,255,0.22)]"
@@ -75,12 +59,12 @@ function startCreateFromHome(): void {
           <div class="flex h-[180px] items-center justify-center bg-gradient-to-br from-white/10 to-[#121723]">
             <div class="text-center">
               <span class="mb-2 block text-5xl text-white/90">+</span>
-              <span class="text-3xl font-semibold">{{ createProjectMutation.isPending ? '创建中...' : '开始创作' }}</span>
+              <span class="text-3xl font-semibold">开始创作</span>
             </div>
           </div>
           <div class="space-y-2 p-4">
             <h4 class="line-clamp-1 text-xl font-semibold">创建新项目</h4>
-            <p class="text-sm text-textMuted">Seedance2.0</p>
+            <p class="text-sm text-textMuted">短剧控制台</p>
           </div>
         </button>
 
@@ -107,7 +91,7 @@ function startCreateFromHome(): void {
           type="button"
           @click="startCreateFromHome"
         >
-          {{ createProjectMutation.isPending ? '创建中...' : '+ 开始创作' }}
+          + 开始创作
         </button>
       </div>
 

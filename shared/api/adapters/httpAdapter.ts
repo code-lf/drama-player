@@ -1,9 +1,19 @@
 import type { CanvasGraph } from '~/entities/canvas/types'
+import type { DramaAssetItem, DramaProjectDetail, DramaRuntimeConfig } from '~/entities/drama/types'
 import type { Project } from '~/entities/project/types'
 import type { StoryboardRow } from '~/entities/storyboard/types'
 import type { AuthSession } from '~/entities/auth/types'
 import { getStoryboardCache, setStoryboardCache } from '~/shared/api/storyboardCache'
-import type { ApiAdapter, ApiResponse, StoryboardGeneratePayload, WorkflowRunCreatePayload } from '~/shared/api/types'
+import type {
+  ApiAdapter,
+  ApiResponse,
+  DramaAssetGeneratePayload,
+  DramaProjectCreatePayload,
+  DramaScriptIngestPayload,
+  DramaStoryboardGeneratePayload,
+  StoryboardGeneratePayload,
+  WorkflowRunCreatePayload,
+} from '~/shared/api/types'
 
 interface BackendProjectItem {
   id: string
@@ -47,6 +57,78 @@ interface BackendStoryboardGenerateResponse {
 
 interface BackendStoryboardRowsResponse {
   rows: BackendStoryboardRow[]
+}
+
+interface BackendRuntimeModelOption {
+  provider: 'alibaba' | 'bytedance'
+  model: string
+  label: string
+  description: string
+}
+
+interface BackendRuntimeConfigResponse {
+  theme_modes: Array<'dark' | 'light'>
+  video_resolutions: string[]
+  defaults: Record<string, string>
+  text_models: BackendRuntimeModelOption[]
+  image_models: BackendRuntimeModelOption[]
+  video_models: BackendRuntimeModelOption[]
+}
+
+interface BackendDramaAssetItem {
+  id: string
+  image_url: string
+  prompt: string
+  status: string
+  meta: Record<string, unknown>
+}
+
+interface BackendDramaRole {
+  key: string
+  name: string
+  age_identity: string
+  personality: string
+  appearance: string
+  voice_ref: string
+  prompt: string
+  assets: BackendDramaAssetItem[]
+}
+
+interface BackendDramaScene {
+  key: string
+  name: string
+  description: string
+  prompt: string
+  asset: BackendDramaAssetItem | null
+}
+
+interface BackendDramaProp {
+  key: string
+  name: string
+  description: string
+  prompt: string
+  asset: BackendDramaAssetItem | null
+}
+
+interface BackendDramaDetailResponse {
+  id: string
+  project_id: string
+  title: string
+  current_stage: string
+  status: string
+  theme_mode: 'dark' | 'light'
+  source_script_text: string
+  source_file_name: string
+  analysis: {
+    title: string
+    genre: string
+    logline: string
+    synopsis: string
+    roles: BackendDramaRole[]
+    scenes: BackendDramaScene[]
+    props: BackendDramaProp[]
+  }
+  storyboards: BackendStoryboardRow[]
 }
 
 interface BackendWorkflowRunCreateResponse {
@@ -109,6 +191,60 @@ function mapStoryboardRows(projectId: string, nodeId: string, rows: BackendStory
     storyboardPrompt: row.storyboard_prompt,
     cameraPrompt: row.camera_motion_prompt
   }))
+}
+
+function mapDramaAsset(raw: BackendDramaAssetItem): DramaAssetItem {
+  return {
+    id: raw.id,
+    imageUrl: raw.image_url,
+    prompt: raw.prompt,
+    status: raw.status,
+    meta: raw.meta || {}
+  }
+}
+
+function mapDramaDetail(raw: BackendDramaDetailResponse): DramaProjectDetail {
+  return {
+    id: raw.id,
+    projectId: raw.project_id,
+    title: raw.title,
+    currentStage: raw.current_stage,
+    status: raw.status,
+    themeMode: raw.theme_mode,
+    sourceScriptText: raw.source_script_text,
+    sourceFileName: raw.source_file_name,
+    analysis: {
+      title: raw.analysis?.title || '',
+      genre: raw.analysis?.genre || '',
+      logline: raw.analysis?.logline || '',
+      synopsis: raw.analysis?.synopsis || '',
+      roles: (raw.analysis?.roles || []).map((role) => ({
+        key: role.key,
+        name: role.name,
+        ageIdentity: role.age_identity,
+        personality: role.personality,
+        appearance: role.appearance,
+        voiceRef: role.voice_ref,
+        prompt: role.prompt,
+        assets: (role.assets || []).map(mapDramaAsset)
+      })),
+      scenes: (raw.analysis?.scenes || []).map((scene) => ({
+        key: scene.key,
+        name: scene.name,
+        description: scene.description,
+        prompt: scene.prompt,
+        asset: scene.asset ? mapDramaAsset(scene.asset) : null
+      })),
+      props: (raw.analysis?.props || []).map((prop) => ({
+        key: prop.key,
+        name: prop.name,
+        description: prop.description,
+        prompt: prop.prompt,
+        asset: prop.asset ? mapDramaAsset(prop.asset) : null
+      }))
+    },
+    storyboards: mapStoryboardRows(raw.project_id, `drama-${raw.project_id}`, raw.storyboards || [])
+  }
 }
 
 function createEmptyGraph(): CanvasGraph {
@@ -179,6 +315,19 @@ export const httpAdapter: ApiAdapter = {
     }
 
     return ok(session)
+  },
+
+  async getRuntimeConfig() {
+    const response = await request<BackendRuntimeConfigResponse>('/config/runtime')
+    const data: DramaRuntimeConfig = {
+      themeModes: response.theme_modes,
+      videoResolutions: response.video_resolutions,
+      defaults: response.defaults,
+      textModels: response.text_models,
+      imageModels: response.image_models,
+      videoModels: response.video_models
+    }
+    return ok(data)
   },
 
   async getCanvasGraph(projectId) {
@@ -264,5 +413,92 @@ export const httpAdapter: ApiAdapter = {
       errorMessage: response.error_message || '',
       outputSnapshot: response.output_snapshot || {}
     })
+  },
+
+  async createDramaProject(payload: DramaProjectCreatePayload) {
+    const response = await request<BackendDramaDetailResponse>('/drama/projects', {
+      method: 'POST',
+      body: {
+        title: payload.title || '未命名短剧项目',
+        theme_mode: payload.themeMode || 'dark'
+      }
+    })
+    return ok(mapDramaDetail(response), 'created')
+  },
+
+  async getDramaProject(projectId: string) {
+    const response = await request<BackendDramaDetailResponse>(`/drama/projects/${projectId}`)
+    return ok(mapDramaDetail(response))
+  },
+
+  async ingestDramaScript(projectId: string, payload: DramaScriptIngestPayload) {
+    const response = await request<BackendDramaDetailResponse>(`/drama/projects/${projectId}/script-ingest`, {
+      method: 'POST',
+      body: {
+        content: payload.content,
+        file_name: payload.fileName || ''
+      }
+    })
+    return ok(mapDramaDetail(response))
+  },
+
+  async analyzeDrama(projectId: string, payload?: { model?: string }) {
+    const response = await request<BackendDramaDetailResponse>(`/drama/projects/${projectId}/analyze`, {
+      method: 'POST',
+      body: {
+        model: payload?.model || ''
+      }
+    })
+    return ok(mapDramaDetail(response))
+  },
+
+  async generateDramaRoleAssets(projectId: string, payload?: DramaAssetGeneratePayload) {
+    const response = await request<BackendDramaDetailResponse>(`/drama/projects/${projectId}/assets/roles/generate`, {
+      method: 'POST',
+      body: {
+        model: payload?.model || '',
+        style: payload?.style || '',
+        overwrite: payload?.overwrite ?? true
+      }
+    })
+    return ok(mapDramaDetail(response))
+  },
+
+  async generateDramaSceneAssets(projectId: string, payload?: DramaAssetGeneratePayload) {
+    const response = await request<BackendDramaDetailResponse>(`/drama/projects/${projectId}/assets/scenes/generate`, {
+      method: 'POST',
+      body: {
+        model: payload?.model || '',
+        style: payload?.style || '',
+        overwrite: payload?.overwrite ?? true
+      }
+    })
+    return ok(mapDramaDetail(response))
+  },
+
+  async generateDramaPropAssets(projectId: string, payload?: DramaAssetGeneratePayload) {
+    const response = await request<BackendDramaDetailResponse>(`/drama/projects/${projectId}/assets/props/generate`, {
+      method: 'POST',
+      body: {
+        model: payload?.model || '',
+        style: payload?.style || '',
+        overwrite: payload?.overwrite ?? true
+      }
+    })
+    return ok(mapDramaDetail(response))
+  },
+
+  async generateDramaStoryboards(projectId: string, payload?: DramaStoryboardGeneratePayload) {
+    const response = await request<BackendDramaDetailResponse>(`/drama/projects/${projectId}/storyboards/generate`, {
+      method: 'POST',
+      body: {
+        model: payload?.model || '',
+        shot_count: payload?.shotCount || 12,
+        style: payload?.style || '',
+        provider: payload?.provider || 'bytedance',
+        resolution: payload?.resolution || '360p'
+      }
+    })
+    return ok(mapDramaDetail(response))
   }
 }

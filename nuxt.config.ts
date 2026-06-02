@@ -1,6 +1,21 @@
+import { fileURLToPath } from 'node:url'
+
+// 统一收口 Nuxt 生成目录，默认走 `.nuxt-app`，同时允许通过环境变量切换到独立目录。
+// 这样在“dev 正在运行”时，我们可以把校验构建切到别的目录，避免两个 Nuxt 进程互相清理生成物。
+const nuxtBuildDir = process.env.NUXT_BUILD_DIR || '.nuxt-app'
+
+// Nuxt 3.21 在部分 Windows + Vite dev 场景下会出现 `#app-manifest` 无法被预解析的问题。
+// 这里不再依赖 `.nuxt-app/manifest/meta/dev.json` 这类会在热更新时被重建的文件，
+// 而是改成一个仓库内稳定存在的本地模块，彻底切断和临时生成目录的耦合。
+const devAppManifestPath = fileURLToPath(new URL('./app-manifest-dev.mjs', import.meta.url))
+const isProductionBuild = process.env.NODE_ENV === 'production'
+
 export default defineNuxtConfig({
   // 关闭 devtools，保持演示界面简洁
   devtools: { enabled: false },
+
+  // 显式指定 Nuxt 生成目录，绕开当前 `.nuxt` 在本机上的不稳定目录状态。
+  buildDir: nuxtBuildDir,
 
   // 全局样式：设计令牌、基础样式、Vue Flow 样式
   css: ['~/assets/css/tokens.css', '~/assets/css/main.css', '@vue-flow/core/dist/style.css', '@vue-flow/core/dist/theme-default.css'],
@@ -22,6 +37,34 @@ export default defineNuxtConfig({
       apiAdapter: process.env.NUXT_PUBLIC_API_ADAPTER || 'http'
     }
   },
+
+  // 开发环境显式补齐 `#app-manifest`，用于规避 Nuxt/Vite 在本地预转换阶段的别名解析缺失。
+  alias: isProductionBuild
+    ? {}
+    : {
+        '#app-manifest': devAppManifestPath
+      },
+
+  // 这里额外把别名同步给 Vite。
+  // 原因是当前报错发生在 `vite:import-analysis` 阶段，仅配置 Nuxt alias 还不够稳定。
+  vite: isProductionBuild
+    ? undefined
+    : {
+        resolve: {
+          alias: {
+            '#app-manifest': devAppManifestPath
+          }
+        }
+      },
+
+  // Nitro 也同步一份，避免服务端构建链在极端重启时走到另一套解析逻辑。
+  nitro: isProductionBuild
+    ? undefined
+    : {
+        alias: {
+          '#app-manifest': devAppManifestPath
+        }
+      },
 
   // TypeScript 严格模式
   typescript: {

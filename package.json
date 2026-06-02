@@ -9,7 +9,7 @@
     "preview": "nuxt preview",
     "lint": "eslint .",
     "dev:local": "nuxt dev",
-    "dev:host": "nuxt dev --host --port 3000"
+    "dev:host": "nuxt dev --host 0.0.0.0 --port 3000"
   },
   "dependencies": {
     "@pinia/nuxt": "^0.11.3",
