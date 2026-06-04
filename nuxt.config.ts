@@ -9,6 +9,13 @@ const nuxtBuildDir = process.env.NUXT_BUILD_DIR || '.nuxt-app'
 // 而是改成一个仓库内稳定存在的本地模块，彻底切断和临时生成目录的耦合。
 const devAppManifestPath = fileURLToPath(new URL('./app-manifest-dev.mjs', import.meta.url))
 const isProductionBuild = process.env.NODE_ENV === 'production'
+// 本地开发默认走 Nuxt 同源代理，直接绕开浏览器跨域预检。
+// 如果后续接正式环境或远端测试环境，仍然可以通过 `NUXT_PUBLIC_API_BASE` 显式覆盖。
+const defaultApiBase = process.env.NUXT_PUBLIC_API_BASE || (isProductionBuild ? 'http://127.0.0.1:8000/api' : '/api')
+// Nuxt dev 代理的后端目标地址统一收口到配置项，便于后续切换后端端口或机器地址。
+// 这里要显式带上 `/api` 前缀，否则浏览器请求 `/api/config/runtime` 时会被转发成后端的 `/config/runtime`，
+// 最终命中不到 FastAPI 已挂载的 `/api` 路由树。
+const localApiProxyTarget = process.env.NUXT_LOCAL_API_PROXY_TARGET || 'http://127.0.0.1:8000/api'
 
 export default defineNuxtConfig({
   // 关闭 devtools，保持演示界面简洁
@@ -33,7 +40,7 @@ export default defineNuxtConfig({
   // - 通过环境变量可切换 mock/http，联调时无需改业务代码
   runtimeConfig: {
     public: {
-      apiBase: process.env.NUXT_PUBLIC_API_BASE || 'http://127.0.0.1:8000/api',
+      apiBase: defaultApiBase,
       apiAdapter: process.env.NUXT_PUBLIC_API_ADAPTER || 'http'
     }
   },
@@ -63,6 +70,13 @@ export default defineNuxtConfig({
     : {
         alias: {
           '#app-manifest': devAppManifestPath
+        },
+        // 开发期把同源 `/api` 请求代理到本地 FastAPI，避免浏览器因为端口不同反复做 CORS 预检。
+        devProxy: {
+          '/api': {
+            target: localApiProxyTarget,
+            changeOrigin: true
+          }
         }
       },
 

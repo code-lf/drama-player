@@ -124,9 +124,49 @@ interface BackendDramaDetailResponse {
     genre: string
     logline: string
     synopsis: string
+    total_episodes: number
+    current_episode_no: number
+    display_meta: {
+      aspect_ratio: string
+      resolution: string
+      style: string
+    }
+    tags: string[]
+    cover_prompt: string
+    cover_image_url: string
+    outline: string
+    background_traits: string
+    character_bios: Array<{
+      key: string
+      name: string
+      identity: string
+      summary: string
+      traits: string[]
+    }>
+    episode_summaries: Array<{
+      episode_no: number
+      title: string
+      summary: string
+    }>
+    episode_details: Array<{
+      episode_no: number
+      title: string
+      content: string
+    }>
     roles: BackendDramaRole[]
     scenes: BackendDramaScene[]
     props: BackendDramaProp[]
+  }
+  analysis_run: {
+    status: string
+    current_stage: string
+    stage_statuses: Record<string, string>
+    stage_progresses: Record<string, number>
+    cover_status: string
+    started_at: string
+    updated_at: string
+    finished_at: string
+    error_message: string
   }
   storyboards: BackendStoryboardRow[]
 }
@@ -218,6 +258,35 @@ function mapDramaDetail(raw: BackendDramaDetailResponse): DramaProjectDetail {
       genre: raw.analysis?.genre || '',
       logline: raw.analysis?.logline || '',
       synopsis: raw.analysis?.synopsis || '',
+      totalEpisodes: raw.analysis?.total_episodes || 1,
+      currentEpisodeNo: raw.analysis?.current_episode_no || 1,
+      displayMeta: {
+        aspectRatio: raw.analysis?.display_meta?.aspect_ratio || '',
+        resolution: raw.analysis?.display_meta?.resolution || '',
+        style: raw.analysis?.display_meta?.style || ''
+      },
+      tags: raw.analysis?.tags || [],
+      coverPrompt: raw.analysis?.cover_prompt || '',
+      coverImageUrl: raw.analysis?.cover_image_url || '',
+      outline: raw.analysis?.outline || '',
+      backgroundTraits: raw.analysis?.background_traits || '',
+      characterBios: (raw.analysis?.character_bios || []).map((item) => ({
+        key: item.key,
+        name: item.name,
+        identity: item.identity,
+        summary: item.summary,
+        traits: item.traits || []
+      })),
+      episodeSummaries: (raw.analysis?.episode_summaries || []).map((item) => ({
+        episodeNo: item.episode_no,
+        title: item.title,
+        summary: item.summary
+      })),
+      episodeDetails: (raw.analysis?.episode_details || []).map((item) => ({
+        episodeNo: item.episode_no,
+        title: item.title,
+        content: item.content
+      })),
       roles: (raw.analysis?.roles || []).map((role) => ({
         key: role.key,
         name: role.name,
@@ -243,6 +312,17 @@ function mapDramaDetail(raw: BackendDramaDetailResponse): DramaProjectDetail {
         asset: prop.asset ? mapDramaAsset(prop.asset) : null
       }))
     },
+    analysisRun: {
+      status: raw.analysis_run?.status || 'idle',
+      currentStage: raw.analysis_run?.current_stage || '',
+      stageStatuses: raw.analysis_run?.stage_statuses || {},
+      stageProgresses: raw.analysis_run?.stage_progresses || {},
+      coverStatus: raw.analysis_run?.cover_status || 'idle',
+      startedAt: raw.analysis_run?.started_at || '',
+      updatedAt: raw.analysis_run?.updated_at || '',
+      finishedAt: raw.analysis_run?.finished_at || '',
+      errorMessage: raw.analysis_run?.error_message || ''
+    },
     storyboards: mapStoryboardRows(raw.project_id, `drama-${raw.project_id}`, raw.storyboards || [])
   }
 }
@@ -261,11 +341,7 @@ async function request<T>(path: string, options?: Parameters<typeof $fetch<T>>[1
   const baseUrl = config.public.apiBase as string
 
   return $fetch<T>(`${baseUrl}${path}`, {
-    ...options,
-    headers: {
-      'X-User-Id': '00000000-0000-0000-0000-000000000001',
-      ...(options?.headers || {})
-    }
+    ...options
   })
 }
 
@@ -442,11 +518,14 @@ export const httpAdapter: ApiAdapter = {
     return ok(mapDramaDetail(response))
   },
 
-  async analyzeDrama(projectId: string, payload?: { model?: string }) {
+  async analyzeDrama(projectId: string, payload?: { model?: string; aspectRatio?: string; resolution?: string; style?: string }) {
     const response = await request<BackendDramaDetailResponse>(`/drama/projects/${projectId}/analyze`, {
       method: 'POST',
       body: {
-        model: payload?.model || ''
+        model: payload?.model || '',
+        aspect_ratio: payload?.aspectRatio || '',
+        resolution: payload?.resolution || '',
+        style: payload?.style || ''
       }
     })
     return ok(mapDramaDetail(response))

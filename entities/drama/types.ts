@@ -35,11 +35,60 @@ export interface DramaPropProfile {
   asset: DramaAssetItem | null
 }
 
+export interface DramaDisplayMeta {
+  aspectRatio: string
+  resolution: string
+  style: string
+}
+
+export interface DramaCharacterBio {
+  key: string
+  name: string
+  identity: string
+  summary: string
+  traits: string[]
+}
+
+export interface DramaEpisodeSummary {
+  episodeNo: number
+  title: string
+  summary: string
+}
+
+export interface DramaEpisodeDetail {
+  episodeNo: number
+  title: string
+  content: string
+}
+
+export interface DramaAnalysisRunState {
+  status: string
+  currentStage: string
+  stageStatuses: Record<string, string>
+  stageProgresses: Record<string, number>
+  coverStatus: string
+  startedAt: string
+  updatedAt: string
+  finishedAt: string
+  errorMessage: string
+}
+
 export interface DramaAnalysis {
   title: string
   genre: string
   logline: string
   synopsis: string
+  totalEpisodes: number
+  currentEpisodeNo: number
+  displayMeta: DramaDisplayMeta
+  tags: string[]
+  coverPrompt: string
+  coverImageUrl: string
+  outline: string
+  backgroundTraits: string
+  characterBios: DramaCharacterBio[]
+  episodeSummaries: DramaEpisodeSummary[]
+  episodeDetails: DramaEpisodeDetail[]
   roles: DramaRoleProfile[]
   scenes: DramaSceneProfile[]
   props: DramaPropProfile[]
@@ -55,6 +104,7 @@ export interface DramaProjectDetail {
   sourceScriptText: string
   sourceFileName: string
   analysis: DramaAnalysis
+  analysisRun: DramaAnalysisRunState
   storyboards: StoryboardRow[]
 }
 

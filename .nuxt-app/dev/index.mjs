@@ -656,7 +656,7 @@ const _inlineRuntimeConfig = {
     }
   },
   "public": {
-    "apiBase": "http://127.0.0.1:8000/api",
+    "apiBase": "/api",
     "apiAdapter": "http"
   }
 };
@@ -2151,16 +2151,16 @@ _wH6JrtIxmaSoA8lCPWFnE9z4lQeXW6H5z3l5aymEQw
 const assets = {
   "/index.mjs": {
     "type": "text/javascript; charset=utf-8",
-    "etag": "\"1a90a-CqgBeqMFEtwsAyJFNFHILNLHxaA\"",
-    "mtime": "2026-06-02T09:21:53.084Z",
-    "size": 108810,
+    "etag": "\"1a8f5-9QJHR3CZNXicCHxiU2EieG3mD9g\"",
+    "mtime": "2026-06-04T09:42:03.956Z",
+    "size": 108789,
     "path": "index.mjs"
   },
   "/index.mjs.map": {
     "type": "application/json",
-    "etag": "\"6a4a0-foefAHaK1L8giPU0vBjt4oSmIAg\"",
-    "mtime": "2026-06-02T09:21:53.084Z",
-    "size": 435360,
+    "etag": "\"6a437-CjLE+VB7ZrLhHkufmbb3mk9y9Qw\"",
+    "mtime": "2026-06-04T09:42:03.956Z",
+    "size": 435255,
     "path": "index.mjs.map"
   }
 };

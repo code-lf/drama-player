@@ -53,6 +53,13 @@ export interface DramaScriptIngestPayload {
   fileName?: string
 }
 
+export interface DramaAnalyzePayload {
+  model?: string
+  aspectRatio?: string
+  resolution?: string
+  style?: string
+}
+
 export interface DramaAssetGeneratePayload {
   model?: string
   style?: string
@@ -82,7 +89,7 @@ export interface ApiAdapter {
   createDramaProject(payload: DramaProjectCreatePayload): Promise<ApiResponse<DramaProjectDetail>>
   getDramaProject(projectId: string): Promise<ApiResponse<DramaProjectDetail>>
   ingestDramaScript(projectId: string, payload: DramaScriptIngestPayload): Promise<ApiResponse<DramaProjectDetail>>
-  analyzeDrama(projectId: string, payload?: { model?: string }): Promise<ApiResponse<DramaProjectDetail>>
+  analyzeDrama(projectId: string, payload?: DramaAnalyzePayload): Promise<ApiResponse<DramaProjectDetail>>
   generateDramaRoleAssets(projectId: string, payload?: DramaAssetGeneratePayload): Promise<ApiResponse<DramaProjectDetail>>
   generateDramaSceneAssets(projectId: string, payload?: DramaAssetGeneratePayload): Promise<ApiResponse<DramaProjectDetail>>
   generateDramaPropAssets(projectId: string, payload?: DramaAssetGeneratePayload): Promise<ApiResponse<DramaProjectDetail>>

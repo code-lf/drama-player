@@ -240,24 +240,7 @@ async function bootstrapDashboard(): Promise<void> {
     runtimeConfig.value = config
     applyRuntimeDefaults(config)
     await loadProjectDirectory()
-
-    const queryProjectId = typeof route.query.dramaProjectId === 'string' ? route.query.dramaProjectId : ''
-    if (queryProjectId) {
-      loadingText.value = '正在读取短剧项目...'
-      const project = await dramaService.getProject(queryProjectId)
-      currentDramaProject.value = project
-      scriptDraft.value = project.sourceScriptText
-      scriptFileName.value = project.sourceFileName
-      return
-    }
-
-    loadingText.value = '正在创建新的短剧项目...'
-    const project = await dramaService.createProject({
-      title: '未命名短剧项目',
-      themeMode: themeStore.mode
-    })
-    currentDramaProject.value = project
-    await router.replace({ query: { ...route.query, dramaProjectId: project.projectId } })
+    loadingText.value = '输入剧本后即可开始生成短剧项目。'
   } catch (error) {
     // eslint-disable-next-line no-console
     console.error('[livliv] 控制台初始化失败', error)
@@ -286,29 +269,55 @@ async function runAction<T>(key: string, action: () => Promise<T>, successMessag
   }
 }
 
+function buildDramaProjectTitle(): string {
+  // 入口页先用剧本首行生成一个可读标题，后续解析完成后仍以后端返回标题为准。
+  const firstMeaningfulLine = scriptDraft.value
+    .split('\n')
+    .map((line) => line.trim())
+    .find(Boolean)
+
+  return firstMeaningfulLine?.slice(0, 24) || '未命名短剧项目'
+}
+
 async function ingestAndAnalyze(): Promise<void> {
-  if (!currentDramaProject.value || !scriptDraft.value.trim()) return
+  if (!scriptDraft.value.trim()) return
+
+  const created = await runAction(
+    'create-drama',
+    () =>
+      dramaService.createProject({
+        title: buildDramaProjectTitle(),
+        themeMode: themeStore.mode
+      }),
+    '短剧项目已创建。'
+  )
+  if (!created) return
 
   const ingested = await runAction(
     'ingest',
     () =>
-      dramaService.ingestScript(currentDramaProject.value!.projectId, {
+      dramaService.ingestScript(created.projectId, {
         content: scriptDraft.value.trim(),
         fileName: scriptFileName.value
       }),
-    '剧本已上传，开始解析。'
+    '剧本已上传，正在进入流程页。'
   )
   if (!ingested) return
-  currentDramaProject.value = ingested
 
-  const analyzed = await runAction(
-    'analyze',
-    () => dramaService.analyze(currentDramaProject.value!.projectId, { model: selectedTextModel.value }),
-    'AI 已完成剧本解析。'
-  )
-  if (analyzed) {
-    currentDramaProject.value = analyzed
-  }
+  currentDramaProject.value = ingested
+  await router.push({
+    path: `/drama/${created.projectId}`,
+    query: {
+      autostart: '1',
+      textModel: selectedTextModel.value,
+      imageModel: selectedImageModel.value,
+      videoModel: selectedVideoModel.value,
+      videoProvider: selectedVideoProvider.value,
+      resolution: selectedResolution.value,
+      aspectRatio: selectedAspectRatio.value,
+      style: effectiveVisualStyle.value
+    }
+  })
 }
 
 async function generateRoleAssets(): Promise<void> {
@@ -676,24 +685,20 @@ onMounted(async () => {
                 </div>
 
                 <div
-                  class="mt-8 rounded-[28px] border border-borderSoft bg-gradient-to-b from-white/[0.05] to-transparent p-4 shadow-[0_20px_60px_rgba(92,114,255,0.08)] transition"
-                  :class="isDraggingFile ? 'border-neon/55 bg-neon/5' : ''"
+                  class="mt-8 rounded-[28px] border bg-gradient-to-b from-white/[0.05] to-transparent px-7 py-6 shadow-[0_20px_60px_rgba(92,114,255,0.08)] transition"
+                  :class="isDraggingFile ? 'border-neon/55 bg-neon/5' : 'border-borderSoft'"
                   @dragenter.prevent="isDraggingFile = true"
                   @dragover.prevent="isDraggingFile = true"
                   @dragleave.prevent="isDraggingFile = false"
                   @drop="handleDroppedFile"
                 >
-                  <div
-                    class="rounded-[24px] border border-dashed px-4 py-4 transition"
-                    :class="isDraggingFile ? 'border-neon/60 bg-neon/6' : 'border-neon/22 bg-white/[0.02]'"
-                  >
-                    <UiBaseTextarea
-                      v-model="scriptDraft"
-                      :placeholder="isDraggingFile ? '松开鼠标即可导入 TXT 剧本' : '写下你想讲的故事、场景或角色设定，也可以把 TXT 文件直接拖进这里。'"
-                      full
-                      size="lg"
-                    />
-                  </div>
+                  <UiBaseTextarea
+                    v-model="scriptDraft"
+                    :placeholder="isDraggingFile ? '松开鼠标即可导入 TXT 剧本' : '写下你想讲的故事、场景或角色设定，也可以把 TXT 文件直接拖进这里。'"
+                    frame="plain"
+                    full
+                    size="lg"
+                  />
                 </div>
 
                 <div class="mt-4 rounded-[22px] border border-borderSoft bg-panelSoft/70 px-4 py-3">
@@ -865,7 +870,13 @@ onMounted(async () => {
                       <p class="mt-3 text-sm text-textMuted">{{ role.personality }} / {{ role.appearance }}</p>
                       <div class="mt-4 grid grid-cols-2 gap-3">
                         <div v-for="asset in role.assets" :key="asset.id" class="overflow-hidden rounded-2xl border border-borderSoft bg-white/5">
-                          <img :src="asset.imageUrl" :alt="role.name" class="h-44 w-full object-cover" />
+                          <UiFluidImage
+                            :src="asset.imageUrl"
+                            :alt="role.name"
+                            img-class="h-44 object-cover"
+                            wrapper-class="h-44 w-full"
+                            loading-label="生成中"
+                          />
                           <div class="px-3 py-2 text-xs text-textMuted">{{ String(asset.meta.view_name || '视图') }}</div>
                         </div>
                       </div>
@@ -889,7 +900,14 @@ onMounted(async () => {
                   <div class="mt-5 grid gap-4 xl:grid-cols-2">
                     <article v-for="scene in currentDramaProject?.analysis.scenes || []" :key="scene.key" class="rounded-3xl border border-borderSoft bg-panel p-4">
                       <div class="h-48 overflow-hidden rounded-2xl border border-borderSoft bg-white/5">
-                        <img v-if="scene.asset" :src="scene.asset.imageUrl" :alt="scene.name" class="h-full w-full object-cover" />
+                        <UiFluidImage
+                          v-if="scene.asset"
+                          :src="scene.asset.imageUrl"
+                          :alt="scene.name"
+                          img-class="object-cover"
+                          wrapper-class="h-full w-full"
+                          loading-label="生成中"
+                        />
                       </div>
                       <h4 class="mt-4 text-lg font-semibold">{{ scene.name }}</h4>
                       <p class="mt-2 text-sm leading-6 text-textMuted">{{ scene.description }}</p>
@@ -911,7 +929,14 @@ onMounted(async () => {
                   <div class="mt-5 grid gap-4 xl:grid-cols-3">
                     <article v-for="prop in currentDramaProject?.analysis.props || []" :key="prop.key" class="rounded-3xl border border-borderSoft bg-panel p-4">
                       <div class="h-56 overflow-hidden rounded-2xl border border-borderSoft bg-white/5">
-                        <img v-if="prop.asset" :src="prop.asset.imageUrl" :alt="prop.name" class="h-full w-full object-cover" />
+                        <UiFluidImage
+                          v-if="prop.asset"
+                          :src="prop.asset.imageUrl"
+                          :alt="prop.name"
+                          img-class="object-cover"
+                          wrapper-class="h-full w-full"
+                          loading-label="生成中"
+                        />
                       </div>
                       <h4 class="mt-4 text-lg font-semibold">{{ prop.name }}</h4>
                       <p class="mt-2 text-sm leading-6 text-textMuted">{{ prop.description }}</p>

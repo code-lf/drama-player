@@ -8,13 +8,15 @@ interface Props {
   placeholder?: string
   full?: boolean
   size?: 'md' | 'lg' | 'xl'
+  frame?: 'default' | 'plain'
 }
 
 const props = withDefaults(defineProps<Props>(), {
   modelValue: '',
   placeholder: '',
   full: false,
-  size: 'xl'
+  size: 'xl',
+  frame: 'default'
 })
 
 const emit = defineEmits<{
@@ -32,10 +34,19 @@ const textareaHeightClassName = computed(() => {
   if (props.size === 'lg') return 'min-h-[180px]'
   return 'min-h-[220px]'
 })
+
+const containerClassName = computed(() => {
+  // 入口页需要更简洁的单层输入框，因此提供无边框外壳模式复用。
+  if (props.frame === 'plain') {
+    return 'rounded-none border-none bg-transparent px-0 py-0 shadow-none'
+  }
+
+  return 'rounded-[22px] border border-borderSoft bg-transparent px-5 py-5 transition focus-within:border-neon/60'
+})
 </script>
 
 <template>
-  <div class="rounded-[22px] border border-borderSoft bg-transparent px-5 py-5 transition focus-within:border-neon/60" :class="full ? 'w-full' : ''">
+  <div :class="[containerClassName, full ? 'w-full' : '']">
     <textarea
       v-bind="$attrs"
       v-model="model"

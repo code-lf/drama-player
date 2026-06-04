@@ -1,5 +1,6 @@
 import { callApi } from '~/shared/api/client'
 import type {
+  DramaAnalyzePayload,
   DramaAssetGeneratePayload,
   DramaProjectCreatePayload,
   DramaScriptIngestPayload,
@@ -23,7 +24,7 @@ export const dramaService = {
     return callApi('drama/ingestScript', (adapter) => adapter.ingestDramaScript(projectId, payload))
   },
 
-  async analyze(projectId: string, payload?: { model?: string }) {
+  async analyze(projectId: string, payload?: DramaAnalyzePayload) {
     return callApi('drama/analyze', (adapter) => adapter.analyzeDrama(projectId, payload))
   },
 

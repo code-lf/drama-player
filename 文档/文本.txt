@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>水墨晕染浮动光圈动画</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;}
+body{
+    padding:30px;
+    background:#ffffff;
+}
+.wrap-card{
+    width:820px;
+    height:460px;
+    border-radius:18px;
+    overflow:hidden;
+    position:relative;
+    background:#f5faff;
+}
+.tag{
+    position:absolute;
+    top:18px;
+    left:18px;
+    z-index:9;
+    background:rgba(150,180,215,0.4);
+    padding:7px 15px;
+    border-radius:8px;
+    color:#222;
+    font-size:16px;
+}
+/* 水墨雾球基础样式 */
+.ink-ball{
+    position:absolute;
+    border-radius:50%;
+    filter: blur(32px);
+    opacity:0.72;
+}
+/* 普通移动小球 尺寸缩小、颜色加深 */
+.ball1{
+    width:220px;height:220px;
+    background:#63b8ff;
+    animation: float1 5.5s ease-in-out infinite alternate;
+}
+.ball2{
+    width:250px;height:250px;
+    background:#489fff;
+    animation: float2 6s ease-in-out infinite alternate;
+}
+.ball3{
+    width:190px;height:190px;
+    background:#82bfff;
+    animation: float3 4.8s ease-in-out infinite alternate;
+}
+/* 光圈：从小到大再从大变小伸缩动画 */
+.ring-ball{
+    width:210px;height:210px;
+    background:#3690e8;
+    filter: blur(36px);
+    opacity:0.68;
+    position:absolute;
+    border-radius:50%;
+    animation: ringScale 7s ease-in-out infinite;
+    left:350px;
+    top:120px;
+}
+/* 位移动画 速度加快 */
+@keyframes float1 {
+    0%{left:-40px;top:-30px;transform:scale(1);}
+    100%{left:580px;top:140px;transform:scale(1.15);}
+}
+@keyframes float2 {
+    0%{left:500px;top:10px;transform:scale(0.92);}
+    100%{left:20px;top:230px;transform:scale(1.08);}
+}
+@keyframes float3 {
+    0%{left:250px;top:200px;transform:scale(1.2);}
+    100%{left:600px;top:20px;transform:scale(0.82);}
+}
+/* 光圈缩放动画：小→大→小循环 */
+@keyframes ringScale {
+    0%{transform:scale(0.4);opacity:0.3;}
+    50%{transform:scale(1.6);opacity:0.75;}
+    100%{transform:scale(0.4);opacity:0.3;}
+}
+.text-wrap{
+    margin-top:24px;
+}
+h2{
+    font-size:32px;
+    margin-bottom:12px;
+}
+p{
+    font-size:20px;
+    color:#333;
+    line-height:1.6;
+}
+</style>
+</head>
+<body>
+    <div class="wrap-card">
+        <div class="tag">生成中_</div>
+        <div class="ink-ball ball1"></div>
+        <div class="ink-ball ball2"></div>
+        <div class="ink-ball ball3"></div>
+        <!--伸缩光圈元素-->
+        <div class="ring-ball"></div>
+    </div>
+    <div class="text-wrap">
+        <h2>神魔陵园</h2>
+        <p>广阔的陵园，绿草如茵，鲜花芬芳，成片高大的墓碑林立。外围环绕着高大的雪枫树，枝叶郁郁葱葱。白天仙气...</p>
+    </div>
+</body>
+</html>

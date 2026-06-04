@@ -19,6 +19,57 @@ import type {
 const mockTicketState = new Map<string, { startTime: number; done: boolean }>()
 const mockDramaProjectMap = new Map<string, DramaProjectDetail>()
 
+function createEmptyDramaAnalysis() {
+  return {
+    title: '',
+    genre: '',
+    logline: '',
+    synopsis: '',
+    totalEpisodes: 1,
+    currentEpisodeNo: 1,
+    displayMeta: {
+      aspectRatio: '16:9',
+      resolution: '720p',
+      style: '写实通用'
+    },
+    tags: [],
+    coverPrompt: '',
+    coverImageUrl: '',
+    outline: '',
+    backgroundTraits: '',
+    characterBios: [],
+    episodeSummaries: [],
+    episodeDetails: [],
+    roles: [],
+    scenes: [],
+    props: []
+  }
+}
+
+function createIdleAnalysisRun() {
+  return {
+    status: 'idle',
+    currentStage: '',
+    stageStatuses: {
+      global_understanding: 'pending',
+      episode_split: 'pending',
+      outline_refine: 'pending',
+      role_scene_identify: 'pending'
+    },
+    stageProgresses: {
+      global_understanding: 0,
+      episode_split: 0,
+      outline_refine: 0,
+      role_scene_identify: 0
+    },
+    coverStatus: 'idle',
+    startedAt: '',
+    updatedAt: '',
+    finishedAt: '',
+    errorMessage: ''
+  }
+}
+
 async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms))
 }
@@ -208,7 +259,8 @@ export const mockAdapter: ApiAdapter = {
       themeMode: payload.themeMode || 'dark',
       sourceScriptText: '',
       sourceFileName: '',
-      analysis: { title: '', genre: '', logline: '', synopsis: '', roles: [], scenes: [], props: [] },
+      analysis: createEmptyDramaAnalysis(),
+      analysisRun: createIdleAnalysisRun(),
       storyboards: []
     }
     mockDramaProjectMap.set(projectId, detail)
@@ -227,7 +279,9 @@ export const mockAdapter: ApiAdapter = {
       ...current,
       sourceScriptText: payload.content,
       sourceFileName: payload.fileName || '',
-      currentStage: 'input'
+      currentStage: 'input',
+      analysis: createEmptyDramaAnalysis(),
+      analysisRun: createIdleAnalysisRun()
     }
     mockDramaProjectMap.set(projectId, next)
     return ok(next)
@@ -241,10 +295,33 @@ export const mockAdapter: ApiAdapter = {
       title: '我在盛唐写天下',
       currentStage: 'analysis',
       analysis: {
+        ...createEmptyDramaAnalysis(),
         title: '我在盛唐写天下',
         genre: '古风穿越短剧',
         logline: '现代打工人穿越大唐，被迫卷入朝堂风波并改写命运。',
         synopsis: '主角在压抑的现代生活中意外穿越到盛唐，凭借现代认知和胆识在危机四伏的权谋旋涡中求生，逐步从小人物走向舞台中央。',
+        totalEpisodes: 1,
+        currentEpisodeNo: 1,
+        displayMeta: {
+          aspectRatio: '16:9',
+          resolution: '720p',
+          style: '3D仙侠'
+        },
+        tags: ['古风', '穿越', '权谋', '热血', '成长'],
+        coverPrompt: '古风玄幻海报，主角立于大唐宫阙前，金色天光，史诗感构图',
+        coverImageUrl: 'https://placehold.co/720x1080/3b2f1d/e9edf7.png?text=%E6%88%91%E5%9C%A8%E7%9B%9B%E5%94%90%E5%86%99%E5%A4%A9%E4%B8%8B',
+        outline: '现代打工人误入盛唐权谋风暴，在自保与求真之间逐步成长，最终撬动更大的时代暗流。',
+        backgroundTraits: '盛唐宫廷与市井并行，权力压迫感与浪漫传奇色彩并存，世界层次鲜明。',
+        characterBios: [
+          { key: 'shen-zhaozhao', name: '沈昭昭', identity: '28岁，现代打工人', summary: '误入盛唐后凭借现代思维与韧劲求生，逐渐从局外人变成破局者。', traits: ['坚韧', '敏锐', '成长型'] },
+          { key: 'huangdi', name: '皇帝', identity: '中年帝王', summary: '坐镇权力中心，对局势高度警惕，是决定主角命运走向的重要角色。', traits: ['威压', '克制', '多疑'] }
+        ],
+        episodeSummaries: [
+          { episodeNo: 1, title: '第1集 意外入局', summary: '主角在现实困境中意外穿越到盛唐，并被迫卷入一场朝堂风波。' }
+        ],
+        episodeDetails: [
+          { episodeNo: 1, title: '第1集 意外入局', content: '主角在现实生活中压抑疲惫，某次意外之后穿越至盛唐权力中心边缘。她一边试图确认自身处境，一边被更大的阴谋裹挟，凭借现代认知与应变能力，艰难完成第一次自救。' }
+        ],
         roles: [
           { key: 'shen-zhaozhao', name: '沈昭昭', ageIdentity: '28岁，现代打工人', personality: '坚韧、敏锐、嘴硬心软', appearance: '清秀锐利，现代与唐装皆有辨识度', voiceRef: '', prompt: '', assets: [] },
           { key: 'huangdi', name: '皇帝', ageIdentity: '中年帝王', personality: '威压、克制、多疑', appearance: '金色龙袍，仪态威严', voiceRef: '', prompt: '', assets: [] }
@@ -257,6 +334,24 @@ export const mockAdapter: ApiAdapter = {
           { key: 'phone', name: '手机', description: '穿越前后呼应的关键现代物件', prompt: '', asset: null },
           { key: 'imperial-edict', name: '圣旨', description: '推动朝堂冲突升级的核心道具', prompt: '', asset: null }
         ]
+      },
+      analysisRun: {
+        ...createIdleAnalysisRun(),
+        status: 'completed',
+        stageStatuses: {
+          global_understanding: 'done',
+          episode_split: 'done',
+          outline_refine: 'done',
+          role_scene_identify: 'done'
+        },
+        stageProgresses: {
+          global_understanding: 100,
+          episode_split: 100,
+          outline_refine: 100,
+          role_scene_identify: 100
+        },
+        coverStatus: 'done',
+        finishedAt: new Date().toISOString()
       }
     }
     mockDramaProjectMap.set(projectId, next)

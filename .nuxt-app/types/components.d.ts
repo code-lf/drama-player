@@ -17,6 +17,7 @@ interface _GlobalComponents {
   UiBaseInput: typeof import("../../components/ui/BaseInput.vue")['default']
   UiBaseSelect: typeof import("../../components/ui/BaseSelect.vue")['default']
   UiBaseTextarea: typeof import("../../components/ui/BaseTextarea.vue")['default']
+  UiFluidImage: typeof import("../../components/ui/FluidImage.vue")['default']
   NuxtWelcome: typeof import("../../node_modules/.pnpm/nuxt@3.21.6_@parcel+watcher_54b562c7d7dfe1010574b423f3a829cb/node_modules/nuxt/dist/app/components/welcome.vue")['default']
   NuxtLayout: typeof import("../../node_modules/.pnpm/nuxt@3.21.6_@parcel+watcher_54b562c7d7dfe1010574b423f3a829cb/node_modules/nuxt/dist/app/components/nuxt-layout")['default']
   NuxtErrorBoundary: typeof import("../../node_modules/.pnpm/nuxt@3.21.6_@parcel+watcher_54b562c7d7dfe1010574b423f3a829cb/node_modules/nuxt/dist/app/components/nuxt-error-boundary.vue")['default']
@@ -43,6 +44,7 @@ interface _GlobalComponents {
   LazyUiBaseInput: LazyComponent<typeof import("../../components/ui/BaseInput.vue")['default']>
   LazyUiBaseSelect: LazyComponent<typeof import("../../components/ui/BaseSelect.vue")['default']>
   LazyUiBaseTextarea: LazyComponent<typeof import("../../components/ui/BaseTextarea.vue")['default']>
+  LazyUiFluidImage: LazyComponent<typeof import("../../components/ui/FluidImage.vue")['default']>
   LazyNuxtWelcome: LazyComponent<typeof import("../../node_modules/.pnpm/nuxt@3.21.6_@parcel+watcher_54b562c7d7dfe1010574b423f3a829cb/node_modules/nuxt/dist/app/components/welcome.vue")['default']>
   LazyNuxtLayout: LazyComponent<typeof import("../../node_modules/.pnpm/nuxt@3.21.6_@parcel+watcher_54b562c7d7dfe1010574b423f3a829cb/node_modules/nuxt/dist/app/components/nuxt-layout")['default']>
   LazyNuxtErrorBoundary: LazyComponent<typeof import("../../node_modules/.pnpm/nuxt@3.21.6_@parcel+watcher_54b562c7d7dfe1010574b423f3a829cb/node_modules/nuxt/dist/app/components/nuxt-error-boundary.vue")['default']>
