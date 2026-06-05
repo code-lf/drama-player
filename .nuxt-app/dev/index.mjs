@@ -2152,14 +2152,14 @@ const assets = {
   "/index.mjs": {
     "type": "text/javascript; charset=utf-8",
     "etag": "\"1a8f5-9QJHR3CZNXicCHxiU2EieG3mD9g\"",
-    "mtime": "2026-06-04T09:42:03.956Z",
+    "mtime": "2026-06-05T08:09:02.924Z",
     "size": 108789,
     "path": "index.mjs"
   },
   "/index.mjs.map": {
     "type": "application/json",
     "etag": "\"6a437-CjLE+VB7ZrLhHkufmbb3mk9y9Qw\"",
-    "mtime": "2026-06-04T09:42:03.956Z",
+    "mtime": "2026-06-05T08:09:02.924Z",
     "size": 435255,
     "path": "index.mjs.map"
   }

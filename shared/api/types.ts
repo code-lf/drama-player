@@ -1,6 +1,6 @@
 import type { AuthSession } from '~/entities/auth/types'
 import type { CanvasGraph } from '~/entities/canvas/types'
-import type { DramaProjectDetail, DramaRuntimeConfig } from '~/entities/drama/types'
+import type { DramaProjectCard, DramaProjectDetail, DramaProjectPage, DramaRuntimeConfig } from '~/entities/drama/types'
 import type { Project } from '~/entities/project/types'
 import type { StoryboardRow } from '~/entities/storyboard/types'
 
@@ -74,6 +74,10 @@ export interface DramaStoryboardGeneratePayload {
   resolution?: string
 }
 
+export interface DramaDeleteResult {
+  deletedIds: string[]
+}
+
 export interface ApiAdapter {
   getLandingProjects(category?: string): Promise<ApiResponse<Project[]>>
   createProject(payload: { title?: string; category?: string }): Promise<ApiResponse<Project>>
@@ -87,6 +91,9 @@ export interface ApiAdapter {
   createWorkflowRun(payload: WorkflowRunCreatePayload): Promise<ApiResponse<WorkflowRunInfo>>
   getWorkflowRun(runId: string): Promise<ApiResponse<WorkflowRunInfo>>
   createDramaProject(payload: DramaProjectCreatePayload): Promise<ApiResponse<DramaProjectDetail>>
+  getDramaProjects(page?: number, pageSize?: number): Promise<ApiResponse<DramaProjectPage>>
+  deleteDramaProject(projectId: string): Promise<ApiResponse<DramaDeleteResult>>
+  batchDeleteDramaProjects(ids: string[]): Promise<ApiResponse<DramaDeleteResult>>
   getDramaProject(projectId: string): Promise<ApiResponse<DramaProjectDetail>>
   ingestDramaScript(projectId: string, payload: DramaScriptIngestPayload): Promise<ApiResponse<DramaProjectDetail>>
   analyzeDrama(projectId: string, payload?: DramaAnalyzePayload): Promise<ApiResponse<DramaProjectDetail>>

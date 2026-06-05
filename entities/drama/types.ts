@@ -108,6 +108,26 @@ export interface DramaProjectDetail {
   storyboards: StoryboardRow[]
 }
 
+export interface DramaProjectCard {
+  id: string
+  projectId: string
+  title: string
+  status: string
+  currentStage: string
+  coverImageUrl: string
+  genre: string
+  tags: string[]
+  updatedAt: string
+  createdAt: string
+}
+
+export interface DramaProjectPage {
+  items: DramaProjectCard[]
+  total: number
+  page: number
+  pageSize: number
+}
+
 export interface RuntimeModelOption {
   provider: 'alibaba' | 'bytedance'
   model: string

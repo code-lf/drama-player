@@ -1,5 +1,5 @@
 import type { AuthSession } from '~/entities/auth/types'
-import type { DramaProjectDetail, DramaRuntimeConfig } from '~/entities/drama/types'
+import type { DramaProjectCard, DramaProjectDetail, DramaRuntimeConfig } from '~/entities/drama/types'
 import { defaultNodes } from '~/shared/constants/canvas'
 import { mockProjects } from '~/shared/constants/landing'
 import { mockStoryboardRows } from '~/shared/constants/storyboard'
@@ -265,6 +265,42 @@ export const mockAdapter: ApiAdapter = {
     }
     mockDramaProjectMap.set(projectId, detail)
     return ok(detail, 'created')
+  },
+
+  async getDramaProjects(page = 1, pageSize = 10) {
+    await sleep(120)
+    const allItems: DramaProjectCard[] = Array.from(mockDramaProjectMap.values()).map((item) => ({
+      id: item.projectId,
+      dramaId: item.id,
+      projectId: item.projectId,
+      title: item.analysis.title || item.title,
+      status: item.status,
+      currentStage: item.currentStage,
+      coverImageUrl: item.analysis.coverImageUrl || '',
+      genre: item.analysis.genre || '',
+      tags: item.analysis.tags || [],
+      updatedAt: item.analysisRun.updatedAt || '',
+      createdAt: item.analysisRun.startedAt || ''
+    }))
+    const startIndex = (page - 1) * pageSize
+    return ok({
+      items: allItems.slice(startIndex, startIndex + pageSize),
+      total: allItems.length,
+      page,
+      pageSize
+    })
+  },
+
+  async deleteDramaProject(projectId: string) {
+    await sleep(120)
+    mockDramaProjectMap.delete(projectId)
+    return ok({ deletedIds: [projectId] })
+  },
+
+  async batchDeleteDramaProjects(ids: string[]) {
+    await sleep(160)
+    ids.forEach((id) => mockDramaProjectMap.delete(id))
+    return ok({ deletedIds: ids })
   },
 
   async getDramaProject(projectId: string) {

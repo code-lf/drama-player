@@ -2,6 +2,7 @@ import { callApi } from '~/shared/api/client'
 import type {
   DramaAnalyzePayload,
   DramaAssetGeneratePayload,
+  DramaDeleteResult,
   DramaProjectCreatePayload,
   DramaScriptIngestPayload,
   DramaStoryboardGeneratePayload,
@@ -14,6 +15,18 @@ export const dramaService = {
 
   async createProject(payload?: DramaProjectCreatePayload) {
     return callApi('drama/createProject', (adapter) => adapter.createDramaProject(payload ?? {}))
+  },
+
+  async getProjects(page = 1, pageSize = 10) {
+    return callApi('drama/getProjects', (adapter) => adapter.getDramaProjects(page, pageSize))
+  },
+
+  async deleteProject(projectId: string): Promise<DramaDeleteResult> {
+    return callApi('drama/deleteProject', (adapter) => adapter.deleteDramaProject(projectId))
+  },
+
+  async batchDeleteProjects(ids: string[]): Promise<DramaDeleteResult> {
+    return callApi('drama/batchDeleteProjects', (adapter) => adapter.batchDeleteDramaProjects(ids))
   },
 
   async getProject(projectId: string) {

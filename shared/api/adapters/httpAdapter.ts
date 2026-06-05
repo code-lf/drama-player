@@ -1,5 +1,5 @@
 import type { CanvasGraph } from '~/entities/canvas/types'
-import type { DramaAssetItem, DramaProjectDetail, DramaRuntimeConfig } from '~/entities/drama/types'
+import type { DramaAssetItem, DramaProjectCard, DramaProjectDetail, DramaRuntimeConfig } from '~/entities/drama/types'
 import type { Project } from '~/entities/project/types'
 import type { StoryboardRow } from '~/entities/storyboard/types'
 import type { AuthSession } from '~/entities/auth/types'
@@ -8,6 +8,7 @@ import type {
   ApiAdapter,
   ApiResponse,
   DramaAssetGeneratePayload,
+  DramaDeleteResult,
   DramaProjectCreatePayload,
   DramaScriptIngestPayload,
   DramaStoryboardGeneratePayload,
@@ -204,6 +205,26 @@ function ok<T>(data: T, message = 'ok'): ApiResponse<T> {
   }
 }
 
+interface BackendDramaProjectCardResponse {
+  id: string
+  project_id: string
+  title: string
+  status: string
+  current_stage: string
+  cover_image_url: string
+  genre: string
+  tags: string[]
+  updated_at: string
+  created_at: string
+}
+
+interface BackendDramaProjectPageResponse {
+  items: BackendDramaProjectCardResponse[]
+  total: number
+  page: number
+  page_size: number
+}
+
 function mapProject(raw: BackendProjectItem): Project {
   return {
     id: raw.id,
@@ -214,6 +235,21 @@ function mapProject(raw: BackendProjectItem): Project {
     // 后端首期暂未返回作者字段，这里给统一展示占位，避免页面渲染分支过多。
     author: '创作导演',
     updatedAt: raw.updated_at
+  }
+}
+
+function mapDramaProjectCard(raw: BackendDramaProjectCardResponse): DramaProjectCard {
+  return {
+    id: raw.id,
+    projectId: raw.project_id,
+    title: raw.title,
+    status: raw.status,
+    currentStage: raw.current_stage,
+    coverImageUrl: raw.cover_image_url || '',
+    genre: raw.genre || '',
+    tags: raw.tags || [],
+    updatedAt: raw.updated_at || '',
+    createdAt: raw.created_at || ''
   }
 }
 
@@ -363,6 +399,37 @@ export const httpAdapter: ApiAdapter = {
     })
 
     return ok(mapProject(created), 'created')
+  },
+
+  async getDramaProjects(page = 1, pageSize = 10) {
+    const response = await request<BackendDramaProjectPageResponse>(`/drama/projects?page=${page}&page_size=${pageSize}`)
+    return ok({
+      items: (response.items || []).map(mapDramaProjectCard),
+      total: response.total || 0,
+      page: response.page || page,
+      pageSize: response.page_size || pageSize
+    })
+  },
+
+  async deleteDramaProject(projectId) {
+    const response = await request<{ deleted_ids: string[] }>(`/drama/projects/${projectId}`, {
+      method: 'DELETE'
+    })
+    const result: DramaDeleteResult = {
+      deletedIds: response.deleted_ids || []
+    }
+    return ok(result)
+  },
+
+  async batchDeleteDramaProjects(ids) {
+    const response = await request<{ deleted_ids: string[] }>('/drama/projects/batch-delete', {
+      method: 'POST',
+      body: { ids }
+    })
+    const result: DramaDeleteResult = {
+      deletedIds: response.deleted_ids || []
+    }
+    return ok(result)
   },
 
   async getWechatLoginTicket() {

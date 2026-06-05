@@ -1,11 +1,9 @@
 <script setup lang="ts">
-import type { DramaProjectDetail, DramaRuntimeConfig } from '~/entities/drama/types'
+import type { DramaProjectCard, DramaProjectDetail, DramaRuntimeConfig } from '~/entities/drama/types'
 import { useThemeStore } from '~/features/ui/store/useThemeStore'
-import { projectService } from '~/shared/api/services/projectService'
 import { dramaService } from '~/shared/api/services/dramaService'
-import type { Project } from '~/entities/project/types'
 
-type DashboardMenuKey = 'drama' | 'product'
+type DashboardMenuKey = 'drama' | 'product' | 'canvas'
 type DashboardWorkspaceView = 'console' | 'projects'
 type DashboardOption = {
   label: string
@@ -52,8 +50,16 @@ const busyKey = ref('')
 const errorMessage = ref('')
 const infoMessage = ref('')
 const isDraggingFile = ref(false)
-const projectItems = ref<Project[]>([])
+const projectItems = ref<DramaProjectCard[]>([])
+const projectTotalCount = ref(0)
 const isCreatingWorkspaceProject = ref(false)
+const isBatchSelectingProjects = ref(false)
+const selectedProjectIds = ref<string[]>([])
+const pendingDeleteProjectIds = ref<string[]>([])
+const pendingDeleteTitle = ref('')
+const isDeletingProjects = ref(false)
+const currentProjectPage = ref(1)
+const projectPageSize = 9
 
 // 初始化先给一个安全默认值，确保即便配置接口暂时异常，下拉也能立即进入可用状态。
 const selectedTextModel = ref(fallbackTextModelCatalog[0]?.value || '')
@@ -172,21 +178,38 @@ const resolutionOptions = computed<DashboardOption[]>(() => {
     value: item
   }))
 })
-const sortedProjectItems = computed<Project[]>(() => {
-  // 项目列表按最近更新时间倒序展示，确保页内卡片墙和首页的“最近项目”感知一致。
-  return [...projectItems.value].sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime())
+const totalProjectPages = computed(() => Math.max(1, Math.ceil(projectTotalCount.value / projectPageSize)))
+const workspaceProjectCards = computed<DramaProjectCard[]>(() => {
+  // 当前页项目直接取后端返回结果，避免前端再做一层假分页。
+  return projectItems.value
 })
-const workspaceProjectCards = computed<Project[]>(() => {
-  return sortedProjectItems.value.slice(0, 8)
+const selectedProjectCount = computed(() => selectedProjectIds.value.length)
+const hasSelectedProjects = computed(() => selectedProjectCount.value > 0)
+const isAllCurrentPageSelected = computed(() => {
+  // 批量操作时默认只针对当前页做全选，避免用户一次误选太多项目。
+  const currentPageIds = workspaceProjectCards.value.map((project) => project.id)
+  if (currentPageIds.length === 0) return false
+  return currentPageIds.every((projectId) => selectedProjectIds.value.includes(projectId))
 })
 const projectOverviewLabel = computed(() => {
-  if (workspaceProjectCards.value.length === 0) return '还没有项目，先创建一个试试'
-  return `共 ${workspaceProjectCards.value.length} 个项目`
+  if (projectTotalCount.value === 0) return '还没有项目，先创建一个试试'
+  return `共 ${projectTotalCount.value} 个项目，第 ${currentProjectPage.value} / ${totalProjectPages.value} 页`
+})
+const deleteDialogVisible = computed(() => pendingDeleteProjectIds.value.length > 0)
+const pageNumberList = computed(() => {
+  // 分页按钮最多展示 5 个页码，避免页数多时横向撑开太长。
+  const total = totalProjectPages.value
+  const current = currentProjectPage.value
+  const start = Math.max(1, current - 2)
+  const end = Math.min(total, start + 4)
+  const normalizedStart = Math.max(1, end - 4)
+  return Array.from({ length: end - normalizedStart + 1 }, (_, index) => normalizedStart + index)
 })
 
-function projectStatusLabel(status: Project['status']): string {
+function projectStatusLabel(status: string): string {
   if (status === 'published') return '已发布'
   if (status === 'generating') return '生成中'
+  if (status === 'analyzing') return '解析中'
   return '草稿'
 }
 
@@ -217,16 +240,120 @@ function applyRuntimeDefaults(config: DramaRuntimeConfig): void {
 
 function formatProjectDate(value?: string): string {
   if (!value) return '最近更新'
-  return value.slice(0, 10)
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) return value.slice(0, 16).replace('T', ' ')
+
+  // 卡片里直接展示到分钟，方便用户判断最近一次编辑时间。
+  return new Intl.DateTimeFormat('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false
+  }).format(parsed)
 }
 
 async function loadProjectDirectory(): Promise<void> {
   try {
-    const projects = await projectService.getLandingProjects()
-    projectItems.value = projects.slice(0, 8)
+    // “我的项目”现在走后端真实分页，页面只负责展示当前页结果。
+    const pageResult = await dramaService.getProjects(currentProjectPage.value, projectPageSize)
+    projectItems.value = pageResult.items
+    projectTotalCount.value = pageResult.total
+    currentProjectPage.value = Math.min(pageResult.page, Math.max(1, Math.ceil(Math.max(pageResult.total, 1) / pageResult.pageSize)))
   } catch (error) {
     // eslint-disable-next-line no-console
     console.error('[livliv] 项目目录加载失败', error)
+  }
+}
+
+function isProjectSelected(projectId: string): boolean {
+  return selectedProjectIds.value.includes(projectId)
+}
+
+function toggleBatchSelectionMode(): void {
+  isBatchSelectingProjects.value = !isBatchSelectingProjects.value
+  if (!isBatchSelectingProjects.value) {
+    selectedProjectIds.value = []
+  }
+}
+
+function goToProjectPage(page: number): void {
+  // 统一收口分页跳转，避免页码越界导致空白页。
+  currentProjectPage.value = Math.min(Math.max(1, page), totalProjectPages.value)
+  selectedProjectIds.value = []
+  loadProjectDirectory()
+}
+
+function toggleProjectSelection(projectId: string): void {
+  if (!isBatchSelectingProjects.value) return
+
+  if (isProjectSelected(projectId)) {
+    selectedProjectIds.value = selectedProjectIds.value.filter((id) => id !== projectId)
+    return
+  }
+
+  selectedProjectIds.value = [...selectedProjectIds.value, projectId]
+}
+
+function toggleSelectAllProjects(): void {
+  // 这里做“当前页全选/取消全选”，和分页逻辑保持一致，用户感知更稳定。
+  const currentPageIds = workspaceProjectCards.value.map((project) => project.id)
+  if (currentPageIds.length === 0) return
+
+  if (isAllCurrentPageSelected.value) {
+    selectedProjectIds.value = selectedProjectIds.value.filter((id) => !currentPageIds.includes(id))
+    return
+  }
+
+  selectedProjectIds.value = Array.from(new Set([...selectedProjectIds.value, ...currentPageIds]))
+}
+
+function askDeleteSingleProject(project: DramaProjectCard): void {
+  pendingDeleteProjectIds.value = [project.id]
+  pendingDeleteTitle.value = `确定删除「${project.title}」吗？`
+}
+
+function askDeleteBatchProjects(): void {
+  if (!hasSelectedProjects.value) return
+  pendingDeleteProjectIds.value = [...selectedProjectIds.value]
+  pendingDeleteTitle.value = `确定删除已选中的 ${selectedProjectCount.value} 个项目吗？`
+}
+
+function closeDeleteDialog(): void {
+  pendingDeleteProjectIds.value = []
+  pendingDeleteTitle.value = ''
+}
+
+async function confirmDeleteProjects(): Promise<void> {
+  if (pendingDeleteProjectIds.value.length === 0 || isDeletingProjects.value) return
+
+  isDeletingProjects.value = true
+  errorMessage.value = ''
+  infoMessage.value = ''
+
+  try {
+    const targetIds = [...pendingDeleteProjectIds.value]
+    const result = targetIds.length === 1
+      ? await dramaService.deleteProject(targetIds[0])
+      : await dramaService.batchDeleteProjects(targetIds)
+
+    const deletedSet = new Set(result.deletedIds)
+    const totalAfterDelete = Math.max(0, projectTotalCount.value - result.deletedIds.length)
+    const maxPageAfterDelete = Math.max(1, Math.ceil(Math.max(totalAfterDelete, 1) / projectPageSize))
+    currentProjectPage.value = Math.min(currentProjectPage.value, maxPageAfterDelete)
+    selectedProjectIds.value = selectedProjectIds.value.filter((id) => !deletedSet.has(id))
+    if (selectedProjectIds.value.length === 0) {
+      isBatchSelectingProjects.value = false
+    }
+    await loadProjectDirectory()
+    infoMessage.value = targetIds.length === 1 ? '项目已删除。' : `已删除 ${result.deletedIds.length} 个项目。`
+    closeDeleteDialog()
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error('[livliv] 删除短剧项目失败', error)
+    errorMessage.value = error instanceof Error ? error.message : '删除项目失败，请稍后重试'
+  } finally {
+    isDeletingProjects.value = false
   }
 }
 
@@ -398,13 +525,20 @@ async function handleDroppedFile(event: DragEvent): Promise<void> {
 }
 
 function switchMenu(menu: DashboardMenuKey): void {
-  // 切回创作功能时，主内容区也同步回到控制台视图，避免左侧菜单和右侧内容割裂。
-  activeMenu.value = menu
-  activeWorkspaceView.value = 'console'
+  // 左侧入口改成真实路由页面，刷新浏览器后仍停留在当前工作区。
+  if (menu === 'product') {
+    router.push('/dashboard-product')
+    return
+  }
+  if (menu === 'canvas') {
+    router.push('/dashboard-canvas')
+    return
+  }
+  router.push('/dashboard')
 }
 
 function openProjectsView(): void {
-  activeWorkspaceView.value = 'projects'
+  router.push('/dashboard-projects')
 }
 
 async function createWorkspaceProject(): Promise<void> {
@@ -415,15 +549,16 @@ async function createWorkspaceProject(): Promise<void> {
   infoMessage.value = ''
 
   try {
-    // 项目卡片墙里的“创建项目”直接走标准项目创建接口，创建后进入画布继续编辑。
-    const project = await projectService.createProject({
-      title: '未命名项目',
-      category: 'AI漫剧'
+    // 项目列表里的“创建项目”统一创建短剧项目，并直接进入短剧工作流页面。
+    const project = await dramaService.createProject({
+      title: '未命名短剧项目',
+      themeMode: themeStore.mode
     })
 
     await loadProjectDirectory()
-    infoMessage.value = '已创建新项目，正在进入画布。'
-    await router.push(`/studio?projectId=${encodeURIComponent(project.id)}`)
+    // 新建项目后先回到“文本创建短剧”输入台，方便用户立刻继续粘贴/提交剧本内容。
+    infoMessage.value = '已创建短剧项目，正在进入剧本输入台。'
+    await router.push(`/dashboard?dramaProjectId=${encodeURIComponent(project.projectId)}`)
   } catch (error) {
     // eslint-disable-next-line no-console
     console.error('[livliv] 项目卡片创建失败', error)
@@ -434,8 +569,39 @@ async function createWorkspaceProject(): Promise<void> {
 }
 
 function openCanvas(): void {
-  if (!currentDramaProject.value) return
-  router.push(`/studio?projectId=${encodeURIComponent(currentDramaProject.value.projectId)}`)
+  router.push('/dashboard-canvas')
+}
+
+function openDramaProject(projectId: string): void {
+  if (isBatchSelectingProjects.value) {
+    toggleProjectSelection(projectId)
+    return
+  }
+  router.push(`/drama/${encodeURIComponent(projectId)}`)
+}
+
+function syncWorkspaceRouteState(path: string): void {
+  // 根据当前路由恢复左侧菜单高亮与主内容区，保证浏览器刷新后仍停在原页面。
+  if (path === '/dashboard-projects') {
+    activeMenu.value = 'drama'
+    activeWorkspaceView.value = 'projects'
+    return
+  }
+
+  if (path === '/dashboard-product') {
+    activeMenu.value = 'product'
+    activeWorkspaceView.value = 'console'
+    return
+  }
+
+  if (path === '/dashboard-canvas') {
+    activeMenu.value = 'canvas'
+    activeWorkspaceView.value = 'console'
+    return
+  }
+
+  activeMenu.value = 'drama'
+  activeWorkspaceView.value = 'console'
 }
 
 watch(videoModelOptions, (options) => {
@@ -445,10 +611,21 @@ watch(videoModelOptions, (options) => {
 }, { immediate: true })
 
 watch(
+  () => route.path,
+  (path) => {
+    syncWorkspaceRouteState(path)
+  },
+  { immediate: true }
+)
+
+watch(
   () => route.query.dramaProjectId,
   async (projectId) => {
     if (typeof projectId !== 'string' || !projectId) return
     if (currentDramaProject.value?.projectId === projectId) return
+    // 只要 URL 上带了 dramaProjectId，就说明用户要继续文本短剧工作流，主视图切回输入台。
+    activeMenu.value = 'drama'
+    activeWorkspaceView.value = 'console'
     const project = await dramaService.getProject(projectId)
     currentDramaProject.value = project
     scriptDraft.value = project.sourceScriptText
@@ -525,10 +702,16 @@ onMounted(async () => {
           </button>
 
           <button
-            class="group flex w-full items-center gap-3 rounded-[20px] border border-transparent px-4 py-4 text-left text-textMuted transition-all duration-200 hover:border-borderSoft hover:bg-panelSoft/70 hover:text-textMain"
+            class="group flex w-full items-center gap-3 rounded-[20px] border px-4 py-4 text-left transition-all duration-200"
+            :class="activeMenu === 'canvas'
+              ? 'border-neon/30 bg-white/80 text-[#0f172a] shadow-[0_18px_38px_rgba(69,215,255,0.08)]'
+              : 'border-transparent bg-transparent text-textMuted hover:border-borderSoft hover:bg-panelSoft/70 hover:text-textMain'"
             @click="openCanvas"
           >
-            <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-borderSoft bg-panelSoft">
+            <div
+              class="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border transition"
+              :class="activeMenu === 'canvas' ? 'border-[#cfe0ff] bg-[#edf4ff] text-[#2463ff]' : 'border-borderSoft bg-panelSoft text-textMuted group-hover:text-textMain'"
+            >
               <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.8">
                 <path d="M5 12h14M12 5v14" stroke-linecap="round" />
                 <rect x="4" y="4" width="16" height="16" rx="3" />
@@ -536,6 +719,7 @@ onMounted(async () => {
             </div>
             <div>
               <p class="text-[15px] font-semibold">无限画布</p>
+              <p class="mt-1 text-xs text-textMuted">暂停使用</p>
             </div>
           </button>
         </nav>
@@ -607,60 +791,167 @@ onMounted(async () => {
           </div>
 
           <div v-if="activeWorkspaceView === 'projects'" class="space-y-6">
-            <section class="max-w-[1180px] rounded-[28px] border border-borderSoft bg-panel p-5 shadow-panel">
+            <section class="w-full rounded-[28px] border border-borderSoft bg-panel p-5 shadow-panel">
               <div class="mb-6 flex flex-wrap items-center justify-between gap-4">
                 <div>
                   <h2 class="text-2xl font-bold">项目列表</h2>
                   <p class="mt-2 text-sm text-textMuted">{{ projectOverviewLabel }}</p>
                 </div>
 
-                <button
-                  class="rounded-full bg-gradient-to-r from-[#8dc2ff] to-[#8b7dff] px-5 py-3 text-sm font-semibold text-slate-950 transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
-                  :disabled="isCreatingWorkspaceProject"
-                  @click="createWorkspaceProject"
-                >
-                  {{ isCreatingWorkspaceProject ? '创建中...' : '创建项目' }}
-                </button>
+                <div class="flex flex-wrap items-center gap-3">
+                  <button
+                    class="rounded-full border border-borderSoft bg-white/80 px-5 py-3 text-sm font-semibold text-textMain transition hover:border-neon/45 hover:text-neon"
+                    @click="toggleBatchSelectionMode"
+                  >
+                    {{ isBatchSelectingProjects ? '取消批量操作' : '批量操作' }}
+                  </button>
+                  <button
+                    v-if="isBatchSelectingProjects"
+                    class="rounded-full border border-borderSoft bg-white/90 px-5 py-3 text-sm font-semibold text-textMain transition hover:border-neon/45 hover:text-neon"
+                    @click="toggleSelectAllProjects"
+                  >
+                    {{ isAllCurrentPageSelected ? '取消全选' : '全选当前页' }}
+                  </button>
+                  <button
+                    v-if="isBatchSelectingProjects"
+                    class="rounded-full border border-rose-500 bg-rose-500 px-5 py-3 text-sm font-semibold text-white shadow-[0_10px_24px_rgba(244,63,94,0.18)] transition hover:border-rose-600 hover:bg-rose-600 disabled:cursor-not-allowed disabled:border-rose-200 disabled:bg-rose-100 disabled:text-rose-300 disabled:shadow-none"
+                    :disabled="!hasSelectedProjects || isDeletingProjects"
+                    @click="askDeleteBatchProjects"
+                  >
+                    批量删除<span v-if="hasSelectedProjects">（{{ selectedProjectCount }}）</span>
+                  </button>
+                  <button
+                    class="rounded-full bg-gradient-to-r from-[#b9dcff] via-[#dbeafe] to-[#cbbdff] px-5 py-3 text-sm font-semibold text-slate-950 transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-60"
+                    :disabled="isCreatingWorkspaceProject"
+                    @click="createWorkspaceProject"
+                  >
+                    {{ isCreatingWorkspaceProject ? '创建中...' : '创建项目' }}
+                  </button>
+                </div>
               </div>
 
-              <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
+              <div class="grid grid-cols-[repeat(auto-fill,minmax(250px,1fr))] gap-4">
                 <button
                   class="group overflow-hidden rounded-2xl border border-neon/35 bg-panelSoft transition hover:border-neon hover:shadow-[0_0_40px_rgba(72,214,255,0.22)]"
                   type="button"
                   :disabled="isCreatingWorkspaceProject"
                   @click="createWorkspaceProject"
                 >
-                  <div class="flex h-[148px] items-center justify-center bg-gradient-to-br from-white/10 to-[#121723]">
+                  <div class="flex h-[148px] items-center justify-center bg-gradient-to-br from-[#dff1ff] via-[#c9e2ff] to-[#cfc5ff] text-[#10213f]">
                     <div class="text-center">
-                      <span class="mb-2 block text-4xl text-white/90">+</span>
+                      <span class="mb-2 block text-4xl text-[#2454ff]/80">+</span>
                       <span class="text-2xl font-semibold">开始创作</span>
                     </div>
                   </div>
                   <div class="space-y-1.5 p-4 text-left">
                     <h4 class="line-clamp-1 text-lg font-semibold">创建新项目</h4>
-                    <p class="text-xs text-textMuted">进入画布继续编辑</p>
+                    <p class="text-xs text-textMuted">进入短剧剧本页继续编辑</p>
                   </div>
                 </button>
 
-                <NuxtLink
+                <div
                   v-for="project in workspaceProjectCards"
                   :key="project.id"
-                  :to="`/studio?projectId=${encodeURIComponent(project.id)}`"
-                  class="overflow-hidden rounded-2xl border border-borderSoft bg-panelSoft transition duration-300 hover:-translate-y-1 hover:border-neon/50"
+                  class="group relative overflow-hidden rounded-2xl border border-borderSoft bg-panelSoft text-left transition duration-300 hover:-translate-y-1 hover:border-neon/50"
+                  role="button"
+                  tabindex="0"
+                  @click="openDramaProject(project.id)"
+                  @keydown.enter.prevent="openDramaProject(project.id)"
+                  @keydown.space.prevent="openDramaProject(project.id)"
                 >
-                  <div class="h-[148px] w-full" :style="{ background: project.coverUrl }" />
-                  <div class="space-y-1.5 p-4">
-                    <div class="flex items-center justify-between gap-3">
-                      <h4 class="truncate text-[15px] font-bold">{{ project.title }}</h4>
-                      <span class="rounded-full border border-borderSoft px-2 py-0.5 text-xs text-neon">{{ projectStatusLabel(project.status) }}</span>
-                    </div>
-                    <p class="text-xs text-textMuted">{{ project.author }} · {{ project.category }}</p>
+                  <button
+                    v-if="isBatchSelectingProjects"
+                    class="absolute left-3 top-3 z-20 flex h-7 w-7 items-center justify-center rounded-full border border-[#2454ff]/35 bg-white text-[#2454ff] shadow-md ring-1 ring-white/80"
+                    type="button"
+                    @click.stop="toggleProjectSelection(project.id)"
+                  >
+                    <svg v-if="isProjectSelected(project.id)" viewBox="0 0 20 20" class="h-4 w-4" fill="currentColor">
+                      <path fill-rule="evenodd" d="M16.704 5.29a1 1 0 0 1 .006 1.414l-7.2 7.26a1 1 0 0 1-1.42 0l-3.8-3.83a1 1 0 1 1 1.42-1.408l3.09 3.116 6.49-6.544a1 1 0 0 1 1.414-.008Z" clip-rule="evenodd" />
+                    </svg>
+                  </button>
+                  <button
+                    v-else
+                    class="absolute right-3 top-3 z-20 flex h-8 w-8 items-center justify-center rounded-full border border-white/85 bg-white/95 text-[#475569] shadow-sm backdrop-blur transition opacity-0 pointer-events-none group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 hover:border-rose-300/70 hover:text-rose-400"
+                    type="button"
+                    @click.stop="askDeleteSingleProject(project)"
+                  >
+                    <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8">
+                      <path d="M4 7h16M10 11v6M14 11v6M7 7l1 11a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2l1-11M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" stroke-linecap="round" stroke-linejoin="round" />
+                    </svg>
+                  </button>
+                  <div class="relative h-[164px] w-full overflow-hidden bg-[#edf4ff]">
+                    <UiFluidImage
+                      :src="project.coverImageUrl"
+                      :alt="project.title"
+                      wrapper-class="h-full w-full"
+                      img-class="object-cover"
+                      fallback-text=""
+                      loading-label=""
+                    />
                   </div>
-                </NuxtLink>
+                  <div class="space-y-2 p-4">
+                    <div class="flex items-center justify-between gap-3">
+                      <h4 class="min-w-0 flex-1 truncate text-[15px] font-bold">{{ project.title }}</h4>
+                      <span class="shrink-0 whitespace-nowrap rounded-full border border-borderSoft px-2.5 py-1 text-xs leading-none text-neon">{{ projectStatusLabel(project.status) }}</span>
+                    </div>
+                    <div class="flex flex-wrap items-center gap-2">
+                      <span class="rounded-full border border-borderSoft bg-white/80 px-2.5 py-1 text-[11px] text-textMuted">
+                        {{ project.genre || '短剧项目' }}
+                      </span>
+                      <span
+                        v-for="tag in project.tags.slice(0, 2)"
+                        :key="`${project.id}-${tag}`"
+                        class="rounded-full border border-neon/20 bg-neon/5 px-2.5 py-1 text-[11px] text-neon"
+                      >
+                        {{ tag }}
+                      </span>
+                    </div>
+                    <p class="text-xs text-textMuted">创建于 {{ formatProjectDate(project.createdAt) }}</p>
+                  </div>
+                </div>
               </div>
 
               <div v-if="workspaceProjectCards.length === 0" class="mt-6 rounded-3xl border border-dashed border-borderSoft bg-panelSoft/60 px-6 py-10 text-center text-textMuted">
                 当前还没有项目，点击上面的创建卡片就可以开始。
+              </div>
+
+              <div
+                v-if="totalProjectPages > 1"
+                class="mt-6 flex flex-wrap items-center justify-between gap-4 rounded-[22px] border border-borderSoft bg-panelSoft/55 px-4 py-3"
+              >
+                <p class="text-sm text-textMuted">
+                  当前显示第 {{ currentProjectPage }} 页，共 {{ totalProjectPages }} 页
+                </p>
+
+                <div class="flex flex-wrap items-center gap-2">
+                  <button
+                    class="rounded-full border border-borderSoft bg-white/80 px-3 py-2 text-sm text-textMuted transition hover:border-neon/45 hover:text-neon disabled:cursor-not-allowed disabled:opacity-45"
+                    :disabled="currentProjectPage === 1"
+                    @click="goToProjectPage(currentProjectPage - 1)"
+                  >
+                    上一页
+                  </button>
+
+                  <button
+                    v-for="pageNo in pageNumberList"
+                    :key="`project-page-${pageNo}`"
+                    class="flex h-10 min-w-10 items-center justify-center rounded-full border px-3 text-sm font-semibold transition"
+                    :class="pageNo === currentProjectPage
+                      ? 'border-neon/45 bg-neon/10 text-neon'
+                      : 'border-borderSoft bg-white/80 text-textMuted hover:border-neon/45 hover:text-neon'"
+                    @click="goToProjectPage(pageNo)"
+                  >
+                    {{ pageNo }}
+                  </button>
+
+                  <button
+                    class="rounded-full border border-borderSoft bg-white/80 px-3 py-2 text-sm text-textMuted transition hover:border-neon/45 hover:text-neon disabled:cursor-not-allowed disabled:opacity-45"
+                    :disabled="currentProjectPage === totalProjectPages"
+                    @click="goToProjectPage(currentProjectPage + 1)"
+                  >
+                    下一页
+                  </button>
+                </div>
               </div>
             </section>
           </div>
@@ -671,6 +962,16 @@ onMounted(async () => {
               <h2 class="mt-2 text-2xl font-bold">下一阶段入口已预留</h2>
               <p class="mt-3 max-w-3xl text-sm leading-7 text-textMuted">
                 这一页先保留为占位，但模型、主题、供应商切换会复用当前控制台的配置中心。后面我们可以直接在这里接电商主图、详情图、卖点图的整套生成流程。
+              </p>
+            </section>
+          </div>
+
+          <div v-else-if="activeMenu === 'canvas'" class="space-y-5">
+            <section class="rounded-3xl border border-borderSoft bg-panel p-6 shadow-panel">
+              <p class="text-sm uppercase tracking-[0.24em] text-textMuted">无限画布</p>
+              <h2 class="mt-2 text-2xl font-bold">当前入口暂停使用</h2>
+              <p class="mt-3 max-w-3xl text-sm leading-7 text-textMuted">
+                这一页先单独保留为路由占位，方便刷新后仍停留在当前模块。后续恢复无限画布时，我们会直接在这里接回完整工作流。
               </p>
             </section>
           </div>
@@ -1018,6 +1319,42 @@ onMounted(async () => {
           </div>
         </template>
       </section>
+    </div>
+
+    <div
+      v-if="deleteDialogVisible"
+      class="fixed inset-0 z-[120] flex items-center justify-center bg-[#0f172a]/48 px-4 backdrop-blur-sm"
+      @click.self="closeDeleteDialog"
+    >
+      <div class="w-full max-w-[420px] rounded-[28px] border border-borderSoft bg-panel p-6 shadow-[0_30px_80px_rgba(15,23,42,0.22)]">
+        <div class="flex items-start justify-between gap-4">
+          <div>
+            <p class="text-lg font-semibold text-textMain">确认删除</p>
+            <p class="mt-3 text-sm leading-7 text-textMuted">{{ pendingDeleteTitle }}</p>
+            <p class="mt-2 text-xs text-textMuted">删除后项目剧本、封面和后续设定数据都会一并清理。</p>
+          </div>
+          <button class="rounded-full border border-borderSoft px-3 py-1 text-sm text-textMuted transition hover:text-textMain" type="button" @click="closeDeleteDialog">
+            关闭
+          </button>
+        </div>
+        <div class="mt-6 flex justify-end gap-3">
+          <button
+            class="rounded-full border border-borderSoft px-4 py-2 text-sm font-semibold text-textMuted transition hover:text-textMain"
+            type="button"
+            @click="closeDeleteDialog"
+          >
+            取消
+          </button>
+          <button
+            class="rounded-full border border-rose-500 bg-rose-500 px-5 py-2 text-sm font-semibold text-white shadow-[0_10px_24px_rgba(244,63,94,0.22)] transition hover:border-rose-600 hover:bg-rose-600 disabled:cursor-not-allowed disabled:border-rose-300/60 disabled:bg-rose-200 disabled:text-white/80 disabled:shadow-none disabled:opacity-100"
+            type="button"
+            :disabled="isDeletingProjects"
+            @click="confirmDeleteProjects"
+          >
+            {{ isDeletingProjects ? '删除中...' : '确认删除' }}
+          </button>
+        </div>
+      </div>
     </div>
   </main>
 </template>

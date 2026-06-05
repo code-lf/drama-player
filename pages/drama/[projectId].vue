@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type {
+  DramaAnalysis,
   DramaAnalysisRunState,
   DramaProjectDetail,
   DramaRuntimeConfig,
@@ -36,6 +37,30 @@ type DramaAnalysisEventPayload = {
     updated_at: string
     finished_at: string
     error_message: string
+  }
+  analysis?: {
+    title?: string
+    genre?: string
+    logline?: string
+    synopsis?: string
+    total_episodes?: number
+    current_episode_no?: number
+    display_meta?: {
+      aspect_ratio?: string
+      resolution?: string
+      style?: string
+    }
+    tags?: string[]
+    cover_prompt?: string
+    cover_image_url?: string
+    outline?: string
+    background_traits?: string
+    character_bios?: Array<{ key: string; name: string; identity: string; summary: string; traits: string[] }>
+    episode_summaries?: Array<{ episode_no: number; title: string; summary: string }>
+    episode_details?: Array<{ episode_no: number; title: string; content: string }>
+    roles?: Array<Record<string, unknown>>
+    scenes?: Array<Record<string, unknown>>
+    props?: Array<Record<string, unknown>>
   }
   at: string
 }
@@ -98,6 +123,7 @@ const busyKey = ref<'boot' | 'analyze' | 'roles' | 'scenes' | 'props' | 'storybo
 const errorMessage = ref('')
 const infoMessage = ref('')
 const analysisStatusMessage = ref('准备开始解析剧本…')
+const coverPreviewVisible = ref(false)
 const selectedTextModel = ref(fallbackTextModelCatalog[0]?.value || '')
 const selectedImageModel = ref('')
 const selectedVideoModel = ref('')
@@ -148,6 +174,7 @@ const hasSceneAssets = computed(() => (projectDetail.value?.analysis.scenes || [
 const hasPropAssets = computed(() => (projectDetail.value?.analysis.props || []).some((prop) => Boolean(prop.asset)))
 const hasStoryboards = computed(() => (projectDetail.value?.storyboards || []).length > 0)
 const isCoverGenerating = computed(() => ['queued', 'running'].includes(currentAnalysisRun.value.coverStatus))
+const canPreviewScriptCover = computed(() => Boolean(scriptCoverUrl.value) && !isCoverGenerating.value)
 const resolvedVisualStyle = computed(() => {
   return selectedVisualStyle.value === '自定义风格' ? customVisualStyle.value.trim() || '电影感写实短剧' : selectedVisualStyle.value
 })
@@ -213,17 +240,19 @@ const scriptProgressItems = computed(() => {
   return scriptProgressStages.map((stage) => {
     const stageStatus = currentAnalysisRun.value.stageStatuses?.[stage.key] || 'pending'
     const stageProgress = currentAnalysisRun.value.stageProgresses?.[stage.key]
+    const targetProgress = typeof stageProgress === 'number'
+      ? stageProgress
+      : stageStatus === 'done'
+        ? 100
+        : stageStatus === 'running'
+          ? 15
+          : 0
     return {
       key: stage.key,
       label: stage.label,
       status: stageStatus,
-      progress: typeof stageProgress === 'number'
-        ? stageProgress
-        : stageStatus === 'done'
-          ? 100
-          : stageStatus === 'running'
-            ? 15
-            : 0
+      progress: targetProgress,
+      targetProgress
     }
   })
 })
@@ -249,7 +278,21 @@ const showScriptProgressPanel = computed(() => {
   return isAnalysisActive.value || (!isScriptAnalysisReady.value && currentAnalysisRun.value.status === 'failed')
 })
 const isAnalysisStagesFullyDone = computed(() => {
-  return scriptProgressItems.value.every((item) => item.status === 'done' && item.progress >= 100)
+  return scriptProgressItems.value.every((item) => item.status === 'done' && item.targetProgress >= 100)
+})
+const isAnalysisResultOrganizing = computed(() => {
+  return isAnalysisStagesFullyDone.value && !isScriptAnalysisReady.value && currentAnalysisRun.value.status !== 'failed'
+})
+const scriptProgressTitle = computed(() => {
+  if (currentAnalysisRun.value.status === 'failed') return '剧本解析失败'
+  if (isAnalysisResultOrganizing.value) return '解析结果整理中'
+  return '当前剧集解析中'
+})
+const scriptProgressSubtitle = computed(() => {
+  if (currentAnalysisRun.value.status === 'failed') return '请查看后端日志后重新发起解析。'
+  if (isAnalysisResultOrganizing.value) return '正在整理结构化结果，即将进入剧本页'
+  const runningItem = scriptProgressItems.value.find((item) => item.status === 'running')
+  return runningItem ? `${runningItem.label}进行中` : '正在准备解析任务'
 })
 const showFloatingConfirmButton = computed(() => {
   if (activeStep.value === 'script') return isScriptAnalysisReady.value
@@ -386,10 +429,128 @@ function closeAnalysisEventStream(): void {
   analysisEventSource = null
 }
 
+function openCoverPreview(): void {
+  // 仅真实封面图可预览，占位图和生成中态不弹大图。
+  if (!canPreviewScriptCover.value) return
+  coverPreviewVisible.value = true
+}
+
+function closeCoverPreview(): void {
+  coverPreviewVisible.value = false
+}
+
+function mapAnalysisFromEvent(raw: NonNullable<DramaAnalysisEventPayload['analysis']>): DramaAnalysis {
+  // SSE 事件直接携带后端 snake_case 结构，这里只做字段名转换，不改业务内容。
+  const roles = (raw.roles || []).map((item) => {
+    const role = item as Record<string, unknown>
+    return {
+      key: String(role.key || ''),
+      name: String(role.name || ''),
+      ageIdentity: String(role.age_identity || ''),
+      personality: String(role.personality || ''),
+      appearance: String(role.appearance || ''),
+      voiceRef: String(role.voice_ref || ''),
+      prompt: String(role.prompt || ''),
+      assets: Array.isArray(role.assets)
+        ? role.assets.map((asset) => {
+          const assetItem = asset as Record<string, unknown>
+          return {
+            id: String(assetItem.id || ''),
+            imageUrl: String(assetItem.image_url || ''),
+            prompt: String(assetItem.prompt || ''),
+            status: String(assetItem.status || ''),
+            meta: (assetItem.meta || {}) as Record<string, unknown>
+          }
+        })
+        : []
+    }
+  })
+  const scenes = (raw.scenes || []).map((item) => {
+    const scene = item as Record<string, unknown>
+    const asset = scene.asset as Record<string, unknown> | null | undefined
+    return {
+      key: String(scene.key || ''),
+      name: String(scene.name || ''),
+      description: String(scene.description || ''),
+      prompt: String(scene.prompt || ''),
+      asset: asset
+        ? {
+          id: String(asset.id || ''),
+          imageUrl: String(asset.image_url || ''),
+          prompt: String(asset.prompt || ''),
+          status: String(asset.status || ''),
+          meta: (asset.meta || {}) as Record<string, unknown>
+        }
+        : null
+    }
+  })
+  const props = (raw.props || []).map((item) => {
+    const prop = item as Record<string, unknown>
+    const asset = prop.asset as Record<string, unknown> | null | undefined
+    return {
+      key: String(prop.key || ''),
+      name: String(prop.name || ''),
+      description: String(prop.description || ''),
+      prompt: String(prop.prompt || ''),
+      asset: asset
+        ? {
+          id: String(asset.id || ''),
+          imageUrl: String(asset.image_url || ''),
+          prompt: String(asset.prompt || ''),
+          status: String(asset.status || ''),
+          meta: (asset.meta || {}) as Record<string, unknown>
+        }
+        : null
+    }
+  })
+
+  return {
+    title: raw.title || '',
+    genre: raw.genre || '',
+    logline: raw.logline || '',
+    synopsis: raw.synopsis || '',
+    totalEpisodes: raw.total_episodes || 1,
+    currentEpisodeNo: raw.current_episode_no || 1,
+    displayMeta: {
+      aspectRatio: raw.display_meta?.aspect_ratio || '',
+      resolution: raw.display_meta?.resolution || '',
+      style: raw.display_meta?.style || ''
+    },
+    tags: raw.tags || [],
+    coverPrompt: raw.cover_prompt || '',
+    coverImageUrl: raw.cover_image_url || '',
+    outline: raw.outline || '',
+    backgroundTraits: raw.background_traits || '',
+    characterBios: (raw.character_bios || []).map((item) => ({
+      key: item.key,
+      name: item.name,
+      identity: item.identity,
+      summary: item.summary,
+      traits: item.traits || []
+    })),
+    episodeSummaries: (raw.episode_summaries || []).map((item) => ({
+      episodeNo: item.episode_no,
+      title: item.title,
+      summary: item.summary
+    })),
+    episodeDetails: (raw.episode_details || []).map((item) => ({
+      episodeNo: item.episode_no,
+      title: item.title,
+      content: item.content
+    })),
+    // 这里必须直接接住后端事件里的 roles/scenes/props，
+    // 否则用户在“剧本完成 -> 立刻进设定”这一步会看到空数据，只能依赖额外刷新才能恢复。
+    roles,
+    scenes,
+    props
+  }
+}
+
 function patchAnalysisRunFromEvent(payload: DramaAnalysisEventPayload): void {
   if (!projectDetail.value) return
   projectDetail.value = {
     ...projectDetail.value,
+    analysis: payload.analysis ? mapAnalysisFromEvent(payload.analysis) : projectDetail.value.analysis,
     analysisRun: {
       status: payload.analysis_run?.status || 'idle',
       currentStage: payload.analysis_run?.current_stage || '',
@@ -402,6 +563,22 @@ function patchAnalysisRunFromEvent(payload: DramaAnalysisEventPayload): void {
       errorMessage: payload.analysis_run?.error_message || ''
     }
   }
+
+  if (payload.analysis && projectDetail.value) {
+    // SSE 完成事件会直接携带结构化 analysis，这里立刻同步选集和步骤可达状态，
+    // 避免前端等下一次 GET 才从“整理中”切到剧本结果页。
+    syncSelectionsFromAnalysis(projectDetail.value)
+    syncConfirmedStepIndex()
+  }
+}
+
+async function refreshProjectDetailUntilReady(attempt = 0): Promise<void> {
+  await refreshProjectDetail()
+  if (isScriptAnalysisReady.value || attempt >= 8) return
+
+  window.setTimeout(() => {
+    refreshProjectDetailUntilReady(attempt + 1)
+  }, 450)
 }
 
 async function connectAnalysisEventStream(): Promise<void> {
@@ -416,17 +593,22 @@ async function connectAnalysisEventStream(): Promise<void> {
   eventSource.onmessage = async (event) => {
     try {
       const payload = JSON.parse(event.data) as DramaAnalysisEventPayload
-      analysisStatusMessage.value = payload.message || analysisStatusMessage.value
+      if (payload.event !== 'analysis_stream_progress') {
+        analysisStatusMessage.value = payload.message || analysisStatusMessage.value
+      }
       patchAnalysisRunFromEvent(payload)
 
+      if (payload.event === 'analysis_completed' && !payload.analysis) {
+        await refreshProjectDetailUntilReady()
+      }
+
       if (
-        payload.event === 'analysis_completed'
-        || payload.event === 'cover_queued'
+        payload.event === 'cover_queued'
         || payload.event === 'cover_running'
         || payload.event === 'cover_done'
         || payload.event === 'cover_failed'
       ) {
-        await refreshProjectDetail()
+        await refreshProjectDetailUntilReady()
       }
 
       if (!shouldTrackAnalysisStream(projectDetail.value)) {
@@ -788,7 +970,7 @@ watch(
     // 这样页面能尽快从“解析中”切到结果页，而不是让用户盯着 100% 的进度卡片等待。
     if (!allDone || ready || busy === 'boot') return
     analysisStatusMessage.value = '解析结果整理中…'
-    await refreshProjectDetail()
+    await refreshProjectDetailUntilReady()
   }
 )
 
@@ -901,9 +1083,9 @@ onBeforeUnmount(() => {
                 <path d="M12 3a9 9 0 1 1-9 9" stroke-linecap="round" />
               </svg>
             </div>
-            <h2 class="mt-8 text-[34px] font-semibold tracking-[-0.04em]">当前剧集解析中</h2>
+            <h2 class="mt-8 text-[34px] font-semibold tracking-[-0.04em]">{{ scriptProgressTitle }}</h2>
             <p class="mt-3 text-base text-[#64748b]">
-              {{ currentAnalysisRun.status === 'failed' ? '剧本解析失败，请查看后端日志后重新发起解析。' : analysisStatusMessage }}
+              {{ scriptProgressSubtitle }}
             </p>
 
             <div class="mt-10 grid w-full max-w-[760px] gap-4 md:grid-cols-4">
@@ -922,7 +1104,7 @@ onBeforeUnmount(() => {
                         ? 'border-[#fecaca] bg-[#fff1f2] text-[#dc2626]'
                         : 'border-[#e2e8f0] bg-white text-[#94a3b8]'"
                 >
-                  {{ item.progress }}%
+                  {{ item.status === 'failed' ? '失败' : `${item.progress}%` }}
                 </div>
                 <p class="mt-3 text-sm font-medium text-[#334155]">{{ item.label }}</p>
                 <p class="mt-1 text-xs text-[#94a3b8]">
@@ -958,34 +1140,51 @@ onBeforeUnmount(() => {
 
             <template v-else>
               <div class="space-y-7">
-                <div class="rounded-[30px] border border-[#e7ebf4] bg-[#fbfcff] p-6">
-                  <div class="grid gap-6 xl:grid-cols-[220px_minmax(0,1fr)]">
-                    <div class="overflow-hidden rounded-[26px] bg-[#edf5ff]">
-                      <div class="relative h-full min-h-[292px] overflow-hidden rounded-[26px]">
+                <div class="rounded-[30px] border border-[#e7ebf4] bg-[#fbfcff] p-5">
+                  <div class="grid items-stretch gap-5 xl:grid-cols-[160px_minmax(0,1fr)]">
+                    <div class="overflow-hidden rounded-[22px] bg-transparent">
+                      <div class="group relative h-full min-h-[230px] overflow-hidden rounded-[22px]">
                         <UiFluidImage
-                          v-if="scriptCoverUrl"
+                          v-if="scriptCoverUrl && !isCoverGenerating"
                           :src="scriptCoverUrl"
                           :alt="projectDetail?.analysis.title || currentTitle"
-                          img-class="min-h-[292px] object-cover"
-                          wrapper-class="h-full min-h-[292px] w-full rounded-[26px]"
+                          img-class="min-h-[230px] object-cover"
+                          wrapper-class="h-full min-h-[230px] w-full rounded-[22px]"
                           fallback-text="封面加载失败，稍后可重新解析或重试生成。"
                           loading-label="封面加载中"
                         />
-                        <div v-else class="h-full min-h-[292px]" />
+                        <UiFluidImage
+                          v-else
+                          :src="''"
+                          :alt="projectDetail?.analysis.title || currentTitle"
+                          img-class="min-h-[230px] object-cover"
+                          wrapper-class="h-full min-h-[230px] w-full rounded-[22px]"
+                        />
                         <div
                           v-if="isCoverGenerating"
                           class="absolute left-3 top-3 rounded-full border border-white/15 bg-[rgba(148,163,184,0.46)] px-3 py-1 text-xs font-semibold text-white shadow-[0_10px_24px_rgba(15,23,42,0.12)] backdrop-blur"
                         >
                           封面生成中
                         </div>
+                        <button
+                          v-if="canPreviewScriptCover"
+                          type="button"
+                          class="absolute inset-0 flex items-end justify-end bg-[linear-gradient(180deg,rgba(15,23,42,0)_0%,rgba(15,23,42,0.18)_100%)] p-3 opacity-0 transition duration-200 group-hover:opacity-100"
+                          aria-label="预览封面大图"
+                          @click="openCoverPreview"
+                        >
+                          <span class="rounded-full border border-white/20 bg-[rgba(15,23,42,0.42)] px-3 py-1 text-xs font-semibold text-white backdrop-blur">
+                            预览大图
+                          </span>
+                        </button>
                       </div>
                     </div>
 
-                    <div class="rounded-[26px] border border-[#e7ebf4] bg-white p-6">
-                      <div class="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
-                        <div>
+                    <div class="flex h-full min-h-[230px] flex-col justify-between rounded-[24px] border border-[#e7ebf4] bg-white p-5">
+                      <div class="flex items-start justify-between gap-5">
+                        <div class="min-w-0">
                           <div class="flex flex-wrap items-center gap-3">
-                            <h3 class="text-[34px] font-semibold tracking-[-0.04em]">{{ projectDetail?.analysis.title || currentTitle }}</h3>
+                            <h3 class="text-[30px] font-semibold tracking-[-0.04em] xl:text-[32px]">{{ projectDetail?.analysis.title || currentTitle }}</h3>
                             <span class="rounded-full bg-[#eef2ff] px-3 py-1 text-sm font-medium text-[#4f46e5]">
                               {{ projectDetail?.analysis.genre || '等待解析' }}
                             </span>
@@ -997,35 +1196,35 @@ onBeforeUnmount(() => {
                             <span class="rounded-full border border-[#d7dfef] bg-white px-3 py-1">{{ projectDetail?.analysis.displayMeta.resolution || selectedResolution }}</span>
                             <span class="rounded-full border border-[#d7dfef] bg-white px-3 py-1">{{ projectDetail?.analysis.displayMeta.style || resolvedVisualStyle }}</span>
                           </div>
-
-                          <div class="mt-5 flex items-start justify-between gap-4">
-                            <div class="flex flex-1 flex-wrap gap-2">
-                              <span
-                                v-for="(tag, index) in scriptTagList"
-                                :key="`${tag}-${index}`"
-                                class="rounded-full border px-3 py-1 text-sm font-medium"
-                                :class="tagToneClass(index)"
-                              >
-                                {{ tag }}
-                              </span>
-                            </div>
-                            <button
-                              type="button"
-                              class="shrink-0 rounded-full border border-[#d7dfef] bg-white px-3 py-1 text-sm font-semibold text-[#4f46e5] transition hover:border-[#a5b4fc] hover:text-[#4338ca]"
-                            >
-                              查看剧本
-                            </button>
-                          </div>
                         </div>
 
-                        <button
-                          type="button"
-                          class="rounded-full border border-[#d7dfef] bg-white px-4 py-2 text-sm font-medium text-[#475569] transition hover:border-[#94a3b8]"
-                          :disabled="isBusy"
-                          @click="analyzeScript"
+                        <div class="flex shrink-0 items-center gap-2">
+                          <button
+                            type="button"
+                            class="rounded-full border border-[#d7dfef] bg-white px-4 py-2 text-sm font-medium text-[#475569] transition hover:border-[#94a3b8]"
+                            :disabled="isBusy"
+                            @click="analyzeScript"
+                          >
+                            重新解析
+                          </button>
+                          <button
+                            type="button"
+                            class="rounded-full border border-[#d7dfef] bg-white px-4 py-2 text-sm font-semibold text-[#4f46e5] transition hover:border-[#a5b4fc] hover:text-[#4338ca]"
+                          >
+                            查看剧本
+                          </button>
+                        </div>
+                      </div>
+
+                      <div class="flex flex-wrap gap-2 pt-5">
+                        <span
+                          v-for="(tag, index) in scriptTagList"
+                          :key="`${tag}-${index}`"
+                          class="rounded-full border px-3 py-1 text-sm font-medium"
+                          :class="tagToneClass(index)"
                         >
-                          重新解析
-                        </button>
+                          {{ tag }}
+                        </span>
                       </div>
                     </div>
                   </div>
@@ -1555,6 +1754,32 @@ onBeforeUnmount(() => {
         >
           {{ floatingConfirmButtonLabel }}
         </button>
+      </div>
+    </div>
+
+    <div
+      v-if="coverPreviewVisible && scriptCoverUrl"
+      class="fixed inset-0 z-[80] flex items-center justify-center bg-[rgba(15,23,42,0.72)] px-6 py-10 backdrop-blur-sm"
+      @click.self="closeCoverPreview"
+    >
+      <div class="relative w-full max-w-[960px]">
+        <button
+          type="button"
+          class="absolute right-3 top-3 z-10 rounded-full border border-white/20 bg-[rgba(15,23,42,0.5)] px-3 py-1.5 text-sm font-semibold text-white backdrop-blur transition hover:bg-[rgba(15,23,42,0.68)]"
+          @click="closeCoverPreview"
+        >
+          关闭
+        </button>
+        <div class="overflow-hidden rounded-[28px] bg-white/6 p-3 shadow-[0_30px_120px_rgba(15,23,42,0.35)]">
+          <UiFluidImage
+            :src="scriptCoverUrl"
+            :alt="projectDetail?.analysis.title || currentTitle"
+            img-class="max-h-[82vh] w-full object-contain"
+            wrapper-class="w-full overflow-hidden rounded-[22px] bg-[rgba(255,255,255,0.04)]"
+            fallback-text="封面预览加载失败。"
+            loading-label="封面预览加载中"
+          />
+        </div>
       </div>
     </div>
   </main>
