@@ -2,8 +2,10 @@ import { callApi } from '~/shared/api/client'
 import type {
   DramaAnalyzePayload,
   DramaAssetGeneratePayload,
+  DramaCoverRegeneratePayload,
   DramaDeleteResult,
   DramaProjectCreatePayload,
+  DramaRoleCreatePayload,
   DramaScriptIngestPayload,
   DramaStoryboardGeneratePayload,
 } from '~/shared/api/types'
@@ -39,6 +41,14 @@ export const dramaService = {
 
   async analyze(projectId: string, payload?: DramaAnalyzePayload) {
     return callApi('drama/analyze', (adapter) => adapter.analyzeDrama(projectId, payload))
+  },
+
+  async regenerateCover(projectId: string, payload?: DramaCoverRegeneratePayload) {
+    return callApi('drama/regenerateCover', (adapter) => adapter.regenerateDramaCover(projectId, payload))
+  },
+
+  async createRole(projectId: string, payload: DramaRoleCreatePayload) {
+    return callApi('drama/createRole', (adapter) => adapter.createDramaRole(projectId, payload))
   },
 
   async generateRoleAssets(projectId: string, payload?: DramaAssetGeneratePayload) {

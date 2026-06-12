@@ -64,6 +64,22 @@ export interface DramaAssetGeneratePayload {
   model?: string
   style?: string
   overwrite?: boolean
+  roleKeys?: string[]
+  sceneKeys?: string[]
+  propKeys?: string[]
+}
+
+export interface DramaCoverRegeneratePayload {
+  style?: string
+}
+
+export interface DramaRoleCreatePayload {
+  name: string
+  ageIdentity: string
+  gender: string
+  voiceRef?: string
+  prompt?: string
+  description?: string
 }
 
 export interface DramaStoryboardGeneratePayload {
@@ -97,6 +113,8 @@ export interface ApiAdapter {
   getDramaProject(projectId: string): Promise<ApiResponse<DramaProjectDetail>>
   ingestDramaScript(projectId: string, payload: DramaScriptIngestPayload): Promise<ApiResponse<DramaProjectDetail>>
   analyzeDrama(projectId: string, payload?: DramaAnalyzePayload): Promise<ApiResponse<DramaProjectDetail>>
+  regenerateDramaCover(projectId: string, payload?: DramaCoverRegeneratePayload): Promise<ApiResponse<DramaProjectDetail>>
+  createDramaRole(projectId: string, payload: DramaRoleCreatePayload): Promise<ApiResponse<DramaProjectDetail>>
   generateDramaRoleAssets(projectId: string, payload?: DramaAssetGeneratePayload): Promise<ApiResponse<DramaProjectDetail>>
   generateDramaSceneAssets(projectId: string, payload?: DramaAssetGeneratePayload): Promise<ApiResponse<DramaProjectDetail>>
   generateDramaPropAssets(projectId: string, payload?: DramaAssetGeneratePayload): Promise<ApiResponse<DramaProjectDetail>>

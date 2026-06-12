@@ -95,7 +95,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div ref="rootRef" class="relative" :class="full ? 'w-full' : ''">
+  <div ref="rootRef" class="relative" :class="[full ? 'w-full' : '', isOpen ? 'z-[140]' : 'z-[1]']">
     <button
       type="button"
       class="flex w-full items-center justify-between gap-3 text-left"
@@ -146,7 +146,7 @@ onBeforeUnmount(() => {
     >
       <div
         v-if="isOpen"
-        class="absolute top-[calc(100%+10px)] z-50 min-w-full overflow-hidden rounded-3xl border border-borderSoft bg-panel/95 p-2 shadow-[0_28px_64px_rgba(0,0,0,0.32)] backdrop-blur-xl"
+        class="absolute top-[calc(100%+10px)] z-[160] min-w-full overflow-hidden rounded-3xl border border-borderSoft bg-panel/95 p-2 shadow-[0_28px_64px_rgba(0,0,0,0.32)] backdrop-blur-xl"
         :class="align === 'right' ? 'right-0' : 'left-0'"
       >
         <button

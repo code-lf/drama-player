@@ -92,6 +92,9 @@ interface BackendDramaRole {
   appearance: string
   voice_ref: string
   prompt: string
+  generation_status: string
+  generation_progress: number
+  generation_error_message: string
   assets: BackendDramaAssetItem[]
 }
 
@@ -331,6 +334,9 @@ function mapDramaDetail(raw: BackendDramaDetailResponse): DramaProjectDetail {
         appearance: role.appearance,
         voiceRef: role.voice_ref,
         prompt: role.prompt,
+        generationStatus: role.generation_status || 'idle',
+        generationProgress: role.generation_progress || 0,
+        generationErrorMessage: role.generation_error_message || '',
         assets: (role.assets || []).map(mapDramaAsset)
       })),
       scenes: (raw.analysis?.scenes || []).map((scene) => ({
@@ -598,13 +604,39 @@ export const httpAdapter: ApiAdapter = {
     return ok(mapDramaDetail(response))
   },
 
+  async regenerateDramaCover(projectId: string, payload?: { style?: string }) {
+    const response = await request<BackendDramaDetailResponse>(`/drama/projects/${projectId}/cover-regenerate`, {
+      method: 'POST',
+      body: {
+        style: payload?.style || ''
+      }
+    })
+    return ok(mapDramaDetail(response))
+  },
+
+  async createDramaRole(projectId: string, payload: { name: string; ageIdentity: string; gender: string; voiceRef?: string; prompt?: string; description?: string }) {
+    const response = await request<BackendDramaDetailResponse>(`/drama/projects/${projectId}/roles`, {
+      method: 'POST',
+      body: {
+        name: payload.name,
+        age_identity: payload.ageIdentity,
+        gender: payload.gender,
+        voice_ref: payload.voiceRef || '',
+        prompt: payload.prompt || '',
+        description: payload.description || ''
+      }
+    })
+    return ok(mapDramaDetail(response))
+  },
+
   async generateDramaRoleAssets(projectId: string, payload?: DramaAssetGeneratePayload) {
     const response = await request<BackendDramaDetailResponse>(`/drama/projects/${projectId}/assets/roles/generate`, {
       method: 'POST',
       body: {
         model: payload?.model || '',
         style: payload?.style || '',
-        overwrite: payload?.overwrite ?? true
+        overwrite: payload?.overwrite ?? true,
+        role_keys: payload?.roleKeys || []
       }
     })
     return ok(mapDramaDetail(response))
@@ -616,7 +648,8 @@ export const httpAdapter: ApiAdapter = {
       body: {
         model: payload?.model || '',
         style: payload?.style || '',
-        overwrite: payload?.overwrite ?? true
+        overwrite: payload?.overwrite ?? true,
+        scene_keys: payload?.sceneKeys || []
       }
     })
     return ok(mapDramaDetail(response))
@@ -628,7 +661,8 @@ export const httpAdapter: ApiAdapter = {
       body: {
         model: payload?.model || '',
         style: payload?.style || '',
-        overwrite: payload?.overwrite ?? true
+        overwrite: payload?.overwrite ?? true,
+        prop_keys: payload?.propKeys || []
       }
     })
     return ok(mapDramaDetail(response))

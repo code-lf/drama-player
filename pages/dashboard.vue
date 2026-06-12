@@ -59,7 +59,8 @@ const pendingDeleteProjectIds = ref<string[]>([])
 const pendingDeleteTitle = ref('')
 const isDeletingProjects = ref(false)
 const currentProjectPage = ref(1)
-const projectPageSize = 9
+// 项目列表默认每页 10 条，与后端分页接口保持一致，避免前后端分页口径不一致。
+const projectPageSize = 10
 
 // 初始化先给一个安全默认值，确保即便配置接口暂时异常，下拉也能立即进入可用状态。
 const selectedTextModel = ref(fallbackTextModelCatalog[0]?.value || '')
@@ -257,6 +258,15 @@ async function loadProjectDirectory(): Promise<void> {
   try {
     // “我的项目”现在走后端真实分页，页面只负责展示当前页结果。
     const pageResult = await dramaService.getProjects(currentProjectPage.value, projectPageSize)
+    // 这个日志专门用于排查“页面卡片和后端实际数据不一致”的情况。
+    // 如果后续还出现删除失败，把这里的 ids 和删除日志一起贴出来就能很快定位。
+    // eslint-disable-next-line no-console
+    console.info('[livliv] 项目列表加载结果', {
+      page: pageResult.page,
+      pageSize: pageResult.pageSize,
+      total: pageResult.total,
+      ids: pageResult.items.map((item) => item.id)
+    })
     projectItems.value = pageResult.items
     projectTotalCount.value = pageResult.total
     currentProjectPage.value = Math.min(pageResult.page, Math.max(1, Math.ceil(Math.max(pageResult.total, 1) / pageResult.pageSize)))
@@ -333,9 +343,25 @@ async function confirmDeleteProjects(): Promise<void> {
 
   try {
     const targetIds = [...pendingDeleteProjectIds.value]
+    // eslint-disable-next-line no-console
+    console.info('[livliv] 准备删除项目', {
+      targetIds,
+      mode: targetIds.length === 1 ? 'single' : 'batch'
+    })
     const result = targetIds.length === 1
       ? await dramaService.deleteProject(targetIds[0])
       : await dramaService.batchDeleteProjects(targetIds)
+
+    // 后端如果一条都没删掉，这里直接按失败处理，避免界面静默显示“好像成功但列表没变化”。
+    if (result.deletedIds.length === 0) {
+      throw new Error('没有删除到任何项目，请刷新列表后重试')
+    }
+
+    // eslint-disable-next-line no-console
+    console.info('[livliv] 删除项目结果', {
+      targetIds,
+      deletedIds: result.deletedIds
+    })
 
     const deletedSet = new Set(result.deletedIds)
     const totalAfterDelete = Math.max(0, projectTotalCount.value - result.deletedIds.length)
@@ -524,23 +550,6 @@ async function handleDroppedFile(event: DragEvent): Promise<void> {
   scriptFileName.value = file.name
 }
 
-function switchMenu(menu: DashboardMenuKey): void {
-  // 左侧入口改成真实路由页面，刷新浏览器后仍停留在当前工作区。
-  if (menu === 'product') {
-    router.push('/dashboard-product')
-    return
-  }
-  if (menu === 'canvas') {
-    router.push('/dashboard-canvas')
-    return
-  }
-  router.push('/dashboard')
-}
-
-function openProjectsView(): void {
-  router.push('/dashboard-projects')
-}
-
 async function createWorkspaceProject(): Promise<void> {
   if (isCreatingWorkspaceProject.value) return
 
@@ -566,10 +575,6 @@ async function createWorkspaceProject(): Promise<void> {
   } finally {
     isCreatingWorkspaceProject.value = false
   }
-}
-
-function openCanvas(): void {
-  router.push('/dashboard-canvas')
 }
 
 function openDramaProject(projectId: string): void {
@@ -659,12 +664,12 @@ onMounted(async () => {
         </div>
 
         <nav class="space-y-2">
-          <button
+          <NuxtLink
+            to="/dashboard"
             class="group flex w-full items-center gap-3 rounded-[20px] border px-4 py-4 text-left transition-all duration-200"
             :class="activeMenu === 'drama'
               ? 'border-neon/30 bg-white/80 text-[#0f172a] shadow-[0_18px_38px_rgba(69,215,255,0.08)]'
               : 'border-transparent bg-transparent text-textMuted hover:border-borderSoft hover:bg-panelSoft/70 hover:text-textMain'"
-            @click="switchMenu('drama')"
           >
             <div
               class="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border transition"
@@ -677,14 +682,14 @@ onMounted(async () => {
             <div>
               <p class="text-[15px] font-semibold">文本创建短剧</p>
             </div>
-          </button>
+          </NuxtLink>
 
-          <button
+          <NuxtLink
+            to="/dashboard-product"
             class="group flex w-full items-center gap-3 rounded-[20px] border px-4 py-4 text-left transition-all duration-200"
             :class="activeMenu === 'product'
               ? 'border-neon/30 bg-white/80 text-[#0f172a] shadow-[0_18px_38px_rgba(69,215,255,0.08)]'
               : 'border-transparent bg-transparent text-textMuted hover:border-borderSoft hover:bg-panelSoft/70 hover:text-textMain'"
-            @click="switchMenu('product')"
           >
             <div
               class="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border transition"
@@ -699,14 +704,14 @@ onMounted(async () => {
             <div>
               <p class="text-[15px] font-semibold">商品图生成</p>
             </div>
-          </button>
+          </NuxtLink>
 
-          <button
+          <NuxtLink
+            to="/dashboard-canvas"
             class="group flex w-full items-center gap-3 rounded-[20px] border px-4 py-4 text-left transition-all duration-200"
             :class="activeMenu === 'canvas'
               ? 'border-neon/30 bg-white/80 text-[#0f172a] shadow-[0_18px_38px_rgba(69,215,255,0.08)]'
               : 'border-transparent bg-transparent text-textMuted hover:border-borderSoft hover:bg-panelSoft/70 hover:text-textMain'"
-            @click="openCanvas"
           >
             <div
               class="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border transition"
@@ -721,7 +726,7 @@ onMounted(async () => {
               <p class="text-[15px] font-semibold">无限画布</p>
               <p class="mt-1 text-xs text-textMuted">暂停使用</p>
             </div>
-          </button>
+          </NuxtLink>
         </nav>
 
         <div class="mt-8 px-3">
@@ -729,12 +734,12 @@ onMounted(async () => {
         </div>
 
         <div class="mt-3">
-          <button
+          <NuxtLink
+            to="/dashboard-projects"
             class="group flex w-full items-center gap-3 rounded-[18px] border px-3.5 py-3 text-left transition-all duration-200"
             :class="activeWorkspaceView === 'projects'
               ? 'border-neon/35 bg-white/80 text-[#0f172a] shadow-[0_18px_38px_rgba(69,215,255,0.08)]'
               : 'border-borderSoft bg-panelSoft/75 text-textMain hover:border-neon/45 hover:bg-panelSoft'"
-            @click="openProjectsView"
           >
             <div
               class="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border transition"
@@ -748,7 +753,7 @@ onMounted(async () => {
             </div>
 
             <p class="text-[14px] font-semibold">项目</p>
-          </button>
+          </NuxtLink>
         </div>
 
         <div class="mt-auto space-y-3 pt-8">

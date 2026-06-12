@@ -21,6 +21,32 @@ export default defineNuxtConfig({
   // 关闭 devtools，保持演示界面简洁
   devtools: { enabled: false },
 
+  // 在 Nuxt 挂载前先同步本地主题到 `html[data-theme]`，
+  // 这样浏览器首屏绘制就能直接命中正确主题，避免出现“先黑一下再白一下”的闪烁。
+  app: {
+    head: {
+      script: [
+        {
+          id: 'livliv-theme-bootstrap',
+          innerHTML: `
+            (() => {
+              try {
+                const storageKey = 'livliv-theme-mode';
+                const cachedMode = window.localStorage.getItem(storageKey);
+                const mode = cachedMode === 'dark' || cachedMode === 'light' ? cachedMode : 'light';
+                document.documentElement.dataset.theme = mode;
+                document.documentElement.style.colorScheme = mode;
+              } catch (error) {
+                document.documentElement.dataset.theme = 'light';
+                document.documentElement.style.colorScheme = 'light';
+              }
+            })();
+          `
+        }
+      ]
+    }
+  },
+
   // 显式指定 Nuxt 生成目录，绕开当前 `.nuxt` 在本机上的不稳定目录状态。
   buildDir: nuxtBuildDir,
 

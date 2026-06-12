@@ -9,7 +9,7 @@ import type {
   DramaPropProfile
 } from '~/entities/drama/types'
 import type { StoryboardRow } from '~/entities/storyboard/types'
-import type { DramaAnalyzePayload, WorkflowRunInfo } from '~/shared/api/types'
+import type { DramaAnalyzePayload, DramaRoleCreatePayload, WorkflowRunInfo } from '~/shared/api/types'
 import { dramaService } from '~/shared/api/services/dramaService'
 import { workflowService } from '~/shared/api/services/workflowService'
 
@@ -77,13 +77,26 @@ const fallbackAspectRatioCatalog: PageOption[] = [
   { label: '9:16', value: '9:16', preview: '9:16' },
   { label: '21:9', value: '21:9', preview: '21:9' }
 ]
-const visualStyleCatalog = ['写实通用', '写实都市', '写实电影感', '2D日漫', '3D仙侠', '3D国风', '自定义风格'] as const
+// 这里必须和首页配置页、后端提示词支持范围保持一致，避免项目详情页回显时丢失合法风格。
+const visualStyleCatalog = ['写实通用', '写实都市', '写实电影感', '2D日漫', '2D韩漫', '3D仙侠', '3D国风', '自定义风格'] as const
 const voiceToneCatalog: PageOption[] = [
   { label: '温柔女声', value: '温柔女声' },
   { label: '清冷女声', value: '清冷女声' },
   { label: '青年男声', value: '青年男声' },
   { label: '成熟男声', value: '成熟男声' },
   { label: '沧桑长者', value: '沧桑长者' }
+]
+const roleAgeCatalog: PageOption[] = [
+  { label: '儿童', value: '儿童' },
+  { label: '少年', value: '少年' },
+  { label: '青年', value: '青年' },
+  { label: '中年', value: '中年' },
+  { label: '老年', value: '老年' }
+]
+const roleGenderCatalog: PageOption[] = [
+  { label: '男', value: '男' },
+  { label: '女', value: '女' },
+  { label: '中性', value: '中性' }
 ]
 
 const workflowSteps: Array<{ key: WorkflowStepKey; label: string; hint: string }> = [
@@ -124,6 +137,9 @@ const errorMessage = ref('')
 const infoMessage = ref('')
 const analysisStatusMessage = ref('准备开始解析剧本…')
 const coverPreviewVisible = ref(false)
+const sourceScriptPreviewVisible = ref(false)
+const roleDialogVisible = ref(false)
+const rolePreviewTarget = ref<{ name: string; imageUrl: string; prompt: string } | null>(null)
 const selectedTextModel = ref(fallbackTextModelCatalog[0]?.value || '')
 const selectedImageModel = ref('')
 const selectedVideoModel = ref('')
@@ -134,6 +150,30 @@ const selectedVisualStyle = ref('写实通用')
 const customVisualStyle = ref('')
 const roleVoiceSelections = ref<Record<string, string>>({})
 const roleAudioFileNames = ref<Record<string, string>>({})
+const autoRoleGenerationProjectId = ref('')
+// 记录“设定”页回访时，场景自动补生成是否已经为当前项目触发过，避免重复排队。
+const autoSceneGenerationProjectId = ref('')
+// 记录“设定”页回访时，道具自动补生成是否已经为当前项目触发过，避免重复排队。
+const autoPropGenerationProjectId = ref('')
+// 流程自动化开关：
+// - 自动分镜：从“设定”确认进入“分镜”后，是否立即创建分镜表
+// - 自动视频：从“分镜”确认进入“视频”后，是否立即创建视频工作流
+// 当前先默认“自动分镜=true、自动视频=false”，用于控制视频模型成本。
+const autoGenerateStoryboardOnEnterStoryboard = ref(true)
+const autoGenerateVideoOnEnterVideo = ref(false)
+// 记录当前正在生成的场景 key，用于同步请求期间也能立即显示局部加载态。
+const pendingSceneKeys = ref<string[]>([])
+// 记录当前正在生成的道具 key，避免场景/道具接口同步返回期间页面没有任何加载反馈。
+const pendingPropKeys = ref<string[]>([])
+// 新增角色弹框表单：用于“设定”步骤直接补角色并立刻触发四视图生成。
+const roleForm = ref<DramaRoleCreatePayload>({
+  name: '',
+  ageIdentity: '',
+  gender: '',
+  voiceRef: '',
+  prompt: '',
+  description: ''
+})
 let workflowPollTimer: ReturnType<typeof setTimeout> | null = null
 let analysisEventSource: EventSource | null = null
 
@@ -169,9 +209,21 @@ const isScriptAnalysisReady = computed(() => {
   return currentAnalysisRun.value.status === 'completed' && Boolean(projectDetail.value?.analysis.title || projectDetail.value?.analysis.outline)
 })
 const hasAnalysis = computed(() => isScriptAnalysisReady.value)
-const hasRoleAssets = computed(() => (projectDetail.value?.analysis.roles || []).some((role) => role.assets.length > 0))
-const hasSceneAssets = computed(() => (projectDetail.value?.analysis.scenes || []).some((scene) => Boolean(scene.asset)))
-const hasPropAssets = computed(() => (projectDetail.value?.analysis.props || []).some((prop) => Boolean(prop.asset)))
+const hasRoleAssets = computed(() => {
+  const roles = projectDetail.value?.analysis.roles || []
+  if (roles.length === 0) return false
+  return roles.every((role) => role.assets.length > 0 || role.generationStatus === 'success')
+})
+const hasSceneAssets = computed(() => {
+  const scenes = projectDetail.value?.analysis.scenes || []
+  if (scenes.length === 0) return false
+  return scenes.every((scene) => Boolean(scene.asset))
+})
+const hasPropAssets = computed(() => {
+  const props = projectDetail.value?.analysis.props || []
+  if (props.length === 0) return false
+  return props.every((prop) => Boolean(prop.asset))
+})
 const hasStoryboards = computed(() => (projectDetail.value?.storyboards || []).length > 0)
 const isCoverGenerating = computed(() => ['queued', 'running'].includes(currentAnalysisRun.value.coverStatus))
 const canPreviewScriptCover = computed(() => Boolean(scriptCoverUrl.value) && !isCoverGenerating.value)
@@ -193,13 +245,6 @@ const textModelOptions = computed<PageOption[]>(() => {
   if (models.length === 0) return fallbackTextModelCatalog
   return models.map((model) => ({ label: model.label, value: model.model }))
 })
-const imageModelOptions = computed<PageOption[]>(() => {
-  return (runtimeConfig.value?.imageModels || []).map((model) => ({
-    label: model.label,
-    value: model.model,
-    description: model.description
-  }))
-})
 const videoModelOptions = computed<PageOption[]>(() => {
   const models = runtimeConfig.value?.videoModels || []
   const matchedModels = models.filter((model) => model.provider === selectedVideoProvider.value)
@@ -215,25 +260,33 @@ const resolutionOptions = computed<PageOption[]>(() => {
   return values.map((item) => ({ label: item, value: item }))
 })
 const aspectRatioOptions = computed<PageOption[]>(() => fallbackAspectRatioCatalog)
-const visualStyleOptions = computed<PageOption[]>(() => visualStyleCatalog.map((item) => ({ label: item, value: item })))
 const videoProviderOptions = computed<PageOption[]>(() => [
   { label: '字节引擎', value: 'bytedance', description: '适合当前视频工作流' },
   { label: '阿里引擎', value: 'alibaba', description: '后续可切阿里视频' }
 ])
 const roleCountSummary = computed(() => {
-  const total = projectDetail.value?.analysis.roles.length || 0
-  const completed = (projectDetail.value?.analysis.roles || []).filter((role) => role.assets.length > 0).length
-  return { total, completed, generating: Math.max(total - completed, 0) }
+  const roles = projectDetail.value?.analysis.roles || []
+  const total = roles.length
+  const completed = roles.filter((role) => role.assets.length > 0 || role.generationStatus === 'success').length
+  const generating = roles.filter((role) => ['queued', 'running'].includes(role.generationStatus)).length
+  const failed = roles.filter((role) => role.generationStatus === 'failed').length
+  return { total, completed, generating, failed }
 })
 const sceneCountSummary = computed(() => {
-  const total = projectDetail.value?.analysis.scenes.length || 0
-  const completed = (projectDetail.value?.analysis.scenes || []).filter((scene) => Boolean(scene.asset)).length
-  return { total, completed, generating: Math.max(total - completed, 0) }
+  const scenes = projectDetail.value?.analysis.scenes || []
+  const total = scenes.length
+  const pendingKeySet = new Set(pendingSceneKeys.value)
+  const completed = scenes.filter((scene) => Boolean(scene.asset) && !pendingKeySet.has(scene.key)).length
+  const generating = scenes.filter((scene) => pendingKeySet.has(scene.key)).length
+  return { total, completed, generating }
 })
 const propCountSummary = computed(() => {
-  const total = projectDetail.value?.analysis.props.length || 0
-  const completed = (projectDetail.value?.analysis.props || []).filter((prop) => Boolean(prop.asset)).length
-  return { total, completed, generating: Math.max(total - completed, 0) }
+  const props = projectDetail.value?.analysis.props || []
+  const total = props.length
+  const pendingKeySet = new Set(pendingPropKeys.value)
+  const completed = props.filter((prop) => Boolean(prop.asset) && !pendingKeySet.has(prop.key)).length
+  const generating = props.filter((prop) => pendingKeySet.has(prop.key)).length
+  return { total, completed, generating }
 })
 const areSettingsReady = computed(() => hasRoleAssets.value && hasSceneAssets.value && hasPropAssets.value)
 const scriptProgressItems = computed(() => {
@@ -262,7 +315,6 @@ const headerInfoItems = computed(() => [
   projectDetail.value?.analysis.displayMeta.resolution || selectedResolution.value,
   projectDetail.value?.analysis.displayMeta.style || resolvedVisualStyle.value
 ])
-const activeStepIndex = computed(() => workflowSteps.findIndex((step) => step.key === activeStep.value))
 const confirmedStepIndex = ref(0)
 const scriptCoverUrl = computed(() => projectDetail.value?.analysis.coverImageUrl || '')
 const scriptTagList = computed(() => projectDetail.value?.analysis.tags || [])
@@ -282,6 +334,10 @@ const isAnalysisStagesFullyDone = computed(() => {
 })
 const isAnalysisResultOrganizing = computed(() => {
   return isAnalysisStagesFullyDone.value && !isScriptAnalysisReady.value && currentAnalysisRun.value.status !== 'failed'
+})
+const shouldPreferAnalysisResultView = computed(() => {
+  // 只要事件流已经把完整 analysis 带回来，就直接进结果页，不再额外卡“整理中”。
+  return isScriptAnalysisReady.value || (isAnalysisStagesFullyDone.value && Boolean(projectDetail.value?.analysis.outline || projectDetail.value?.analysis.title))
 })
 const scriptProgressTitle = computed(() => {
   if (currentAnalysisRun.value.status === 'failed') return '剧本解析失败'
@@ -311,6 +367,16 @@ const floatingConfirmButtonLabel = computed(() => {
   if (activeStep.value === 'setting') return '已确认，进入分镜'
   if (activeStep.value === 'storyboard') return '已确认，进入视频'
   return '继续'
+})
+const activeSettingPrimaryButtonLabel = computed(() => {
+  if (activeSettingTab.value === 'roles') return busyKey.value === 'roles' ? '生成中...' : '新增角色'
+  if (activeSettingTab.value === 'scenes') return busyKey.value === 'scenes' ? '生成中...' : '生成场景'
+  return busyKey.value === 'props' ? '生成中...' : '生成道具'
+})
+const refreshCurrentSettingButtonLabel = computed(() => {
+  if (activeSettingTab.value === 'roles') return busyKey.value === 'roles' ? '刷新中...' : '刷新角色'
+  if (activeSettingTab.value === 'scenes') return busyKey.value === 'scenes' ? '刷新中...' : '刷新场景'
+  return busyKey.value === 'props' ? '刷新中...' : '刷新道具'
 })
 
 function getWorkflowProgressStorageKey(): string {
@@ -368,6 +434,8 @@ function applyRuntimeDefaults(config: DramaRuntimeConfig): void {
   selectedVideoModel.value = getQueryValue('videoModel') || config.defaults.video_model || config.videoModels[0]?.model || ''
   selectedResolution.value = getQueryValue('resolution') || config.defaults.video_resolution || config.videoResolutions[0] || fallbackResolutionCatalog[0]
   selectedAspectRatio.value = getQueryValue('aspectRatio') || fallbackAspectRatioCatalog[0].value
+  autoGenerateStoryboardOnEnterStoryboard.value = (config.defaults.auto_generate_storyboard_on_enter_storyboard || 'true') === 'true'
+  autoGenerateVideoOnEnterVideo.value = (config.defaults.auto_generate_video_on_enter_video || 'false') === 'true'
   const routeStyle = getQueryValue('style')
   if (routeStyle && !visualStyleCatalog.includes(routeStyle as typeof visualStyleCatalog[number])) {
     selectedVisualStyle.value = '自定义风格'
@@ -410,9 +478,11 @@ function normalizeStreamUrl(path: string): string {
    const analysisStatus = project.analysisRun.status
    const coverStatus = project.analysisRun.coverStatus
    const hasCoverImage = Boolean(project.analysis.coverImageUrl)
+   const hasRunningRoleGeneration = (project.analysis.roles || []).some((role) => ['queued', 'running'].includes(role.generationStatus))
 
    // 解析阶段运行中时必须持续订阅。
    if (['queued', 'running'].includes(analysisStatus)) return true
+   if (hasRunningRoleGeneration) return true
 
    // 解析完成后，封面图生成仍然可能在 analysis_completed 事件之后才入队。
    // 这里如果已经完成文本解析、但还没有封面地址，也继续保持 SSE，不然会错过 cover_queued。
@@ -439,6 +509,46 @@ function closeCoverPreview(): void {
   coverPreviewVisible.value = false
 }
 
+function openSourceScriptPreview(): void {
+  if (!projectDetail.value?.sourceScriptText.trim()) return
+  sourceScriptPreviewVisible.value = true
+}
+
+function closeSourceScriptPreview(): void {
+  sourceScriptPreviewVisible.value = false
+}
+
+function openRolePreview(role: DramaRoleProfile): void {
+  // 角色预览只针对已经落库的四视图资产，避免生成中占位图被误认为真实结果。
+  const imageUrl = primaryRoleAssetUrl(role)
+  if (!imageUrl) return
+  rolePreviewTarget.value = {
+    name: role.name,
+    imageUrl,
+    prompt: role.assets[0]?.prompt || role.prompt || ''
+  }
+}
+
+function closeRolePreview(): void {
+  rolePreviewTarget.value = null
+}
+
+function openRoleDialog(): void {
+  roleForm.value = {
+    name: '',
+    ageIdentity: '',
+    gender: '',
+    voiceRef: '',
+    prompt: '',
+    description: ''
+  }
+  roleDialogVisible.value = true
+}
+
+function closeRoleDialog(): void {
+  roleDialogVisible.value = false
+}
+
 function mapAnalysisFromEvent(raw: NonNullable<DramaAnalysisEventPayload['analysis']>): DramaAnalysis {
   // SSE 事件直接携带后端 snake_case 结构，这里只做字段名转换，不改业务内容。
   const roles = (raw.roles || []).map((item) => {
@@ -451,6 +561,9 @@ function mapAnalysisFromEvent(raw: NonNullable<DramaAnalysisEventPayload['analys
       appearance: String(role.appearance || ''),
       voiceRef: String(role.voice_ref || ''),
       prompt: String(role.prompt || ''),
+      generationStatus: String(role.generation_status || 'idle'),
+      generationProgress: Number(role.generation_progress || 0),
+      generationErrorMessage: String(role.generation_error_message || ''),
       assets: Array.isArray(role.assets)
         ? role.assets.map((asset) => {
           const assetItem = asset as Record<string, unknown>
@@ -548,14 +661,22 @@ function mapAnalysisFromEvent(raw: NonNullable<DramaAnalysisEventPayload['analys
 
 function patchAnalysisRunFromEvent(payload: DramaAnalysisEventPayload): void {
   if (!projectDetail.value) return
+  const stageStatuses = payload.analysis_run?.stage_statuses || {}
+  const stageProgresses = payload.analysis_run?.stage_progresses || {}
+  const allStagesDone = scriptProgressStages.every((stage) => {
+    return stageStatuses?.[stage.key] === 'done' || Number(stageProgresses?.[stage.key] || 0) >= 100
+  })
+
   projectDetail.value = {
     ...projectDetail.value,
     analysis: payload.analysis ? mapAnalysisFromEvent(payload.analysis) : projectDetail.value.analysis,
     analysisRun: {
-      status: payload.analysis_run?.status || 'idle',
+      // 如果事件已经带着完整 analysis 回来了，同时四个节点也都到 100，
+      // 前端直接视为 completed，避免页面还短暂停在“整理中”。
+      status: payload.analysis && allStagesDone ? 'completed' : payload.analysis_run?.status || 'idle',
       currentStage: payload.analysis_run?.current_stage || '',
-      stageStatuses: payload.analysis_run?.stage_statuses || {},
-      stageProgresses: payload.analysis_run?.stage_progresses || {},
+      stageStatuses,
+      stageProgresses,
       coverStatus: payload.analysis_run?.cover_status || 'idle',
       startedAt: payload.analysis_run?.started_at || '',
       updatedAt: payload.analysis_run?.updated_at || '',
@@ -724,7 +845,7 @@ async function analyzeScript(): Promise<void> {
   }
 }
 
-async function generateRoleAssets(): Promise<void> {
+async function generateRoleAssets(options?: { overwrite?: boolean; successMessage?: string; roleKeys?: string[] }): Promise<void> {
   if (!projectDetail.value) return
   const result = await runPageAction(
     'roles',
@@ -732,29 +853,80 @@ async function generateRoleAssets(): Promise<void> {
       dramaService.generateRoleAssets(projectDetail.value!.projectId, {
         model: selectedImageModel.value,
         style: resolvedVisualStyle.value,
-        overwrite: true
+        overwrite: options?.overwrite ?? true,
+        roleKeys: options?.roleKeys || []
       }),
-    '角色设定生成完成。'
+    options?.successMessage || '角色设定已加入生成队列。'
   )
   if (result) {
     projectDetail.value = result
     syncConfirmedStepIndex()
     activeSettingTab.value = 'roles'
+    await connectAnalysisEventStream()
   }
 }
 
-async function generateSceneAssets(): Promise<void> {
+async function regenerateCoverOnly(): Promise<void> {
   if (!projectDetail.value) return
+  const result = await runPageAction(
+    'analyze',
+    () =>
+      dramaService.regenerateCover(projectDetail.value!.projectId, {
+        style: resolvedVisualStyle.value
+      }),
+    '封面图已重新加入生成队列。'
+  )
+  if (result) {
+    projectDetail.value = result
+    await connectAnalysisEventStream()
+  }
+}
+
+async function submitNewRole(): Promise<void> {
+  if (!projectDetail.value) return
+  const payload = roleForm.value
+  if (!payload.name.trim() || !payload.ageIdentity.trim() || !payload.gender.trim()) {
+    errorMessage.value = '请先填写名称、年龄和性别。'
+    return
+  }
+
+  const created = await runPageAction(
+    'roles',
+    () => dramaService.createRole(projectDetail.value!.projectId, payload),
+    '角色已加入设定列表，正在生成四视图。'
+  )
+  if (!created) return
+
+  projectDetail.value = created
+  const latestRole = [...(created.analysis.roles || [])].reverse().find((role) => role.name === payload.name.trim())
+  roleDialogVisible.value = false
+  activeSettingTab.value = 'roles'
+  await generateRoleAssets({
+    overwrite: false,
+    roleKeys: latestRole?.key ? [latestRole.key] : [],
+    successMessage: '新增角色已加入四视图生成队列。'
+  })
+}
+
+async function generateSceneAssets(options?: { overwrite?: boolean; successMessage?: string; sceneKeys?: string[] }): Promise<void> {
+  if (!projectDetail.value) return
+  const sceneKeys = options?.sceneKeys?.length
+    ? options.sceneKeys
+    : (projectDetail.value.analysis.scenes || []).map((scene) => scene.key)
+
+  pendingSceneKeys.value = sceneKeys
   const result = await runPageAction(
     'scenes',
     () =>
       dramaService.generateSceneAssets(projectDetail.value!.projectId, {
         model: selectedImageModel.value,
         style: resolvedVisualStyle.value,
-        overwrite: true
+        overwrite: options?.overwrite ?? true,
+        sceneKeys
       }),
-    '场景设定生成完成。'
+    options?.successMessage || '场景设定生成完成。'
   )
+  pendingSceneKeys.value = []
   if (result) {
     projectDetail.value = result
     syncConfirmedStepIndex()
@@ -762,18 +934,25 @@ async function generateSceneAssets(): Promise<void> {
   }
 }
 
-async function generatePropAssets(): Promise<void> {
+async function generatePropAssets(options?: { overwrite?: boolean; successMessage?: string; propKeys?: string[] }): Promise<void> {
   if (!projectDetail.value) return
+  const propKeys = options?.propKeys?.length
+    ? options.propKeys
+    : (projectDetail.value.analysis.props || []).map((prop) => prop.key)
+
+  pendingPropKeys.value = propKeys
   const result = await runPageAction(
     'props',
     () =>
       dramaService.generatePropAssets(projectDetail.value!.projectId, {
         model: selectedImageModel.value,
         style: resolvedVisualStyle.value,
-        overwrite: true
+        overwrite: options?.overwrite ?? true,
+        propKeys
       }),
-    '道具设定生成完成。'
+    options?.successMessage || '道具设定生成完成。'
   )
+  pendingPropKeys.value = []
   if (result) {
     projectDetail.value = result
     syncConfirmedStepIndex()
@@ -781,10 +960,19 @@ async function generatePropAssets(): Promise<void> {
   }
 }
 
-async function generateAllSettings(): Promise<void> {
-  // 一键生成时按“角色 -> 场景 -> 道具”顺序串行执行，避免当前后端占位接口同时跑时状态难以判断。
-  await generateRoleAssets()
-  await generateSceneAssets()
+async function refreshCurrentSettingTab(): Promise<void> {
+  // 刷新按钮默认只重刷当前标签，避免一键把角色/场景/道具全量重跑。
+  if (activeSettingTab.value === 'roles') {
+    await generateRoleAssets({
+      overwrite: true,
+      successMessage: '角色设定已刷新。'
+    })
+    return
+  }
+  if (activeSettingTab.value === 'scenes') {
+    await generateSceneAssets()
+    return
+  }
   await generatePropAssets()
 }
 
@@ -868,23 +1056,24 @@ function selectStep(step: WorkflowStepKey): void {
   activeStep.value = step
 }
 
-function goNextStep(): void {
+async function goNextStep(): Promise<void> {
   const stepOrder: WorkflowStepKey[] = ['script', 'setting', 'storyboard', 'video']
-  const currentIndex = stepOrder.indexOf(activeStep.value)
+  const currentStep = activeStep.value
+  const currentIndex = stepOrder.indexOf(currentStep)
   const nextStep = stepOrder[currentIndex + 1]
   if (!nextStep) return
 
-  if (activeStep.value === 'script' && !isScriptAnalysisReady.value) {
+  if (currentStep === 'script' && !isScriptAnalysisReady.value) {
     infoMessage.value = '请先完成剧本解析，再进入设定步骤。'
     return
   }
 
-  if (activeStep.value === 'setting' && !areSettingsReady.value) {
+  if (currentStep === 'setting' && !areSettingsReady.value) {
     infoMessage.value = '请先完成角色、场景和道具设定，再进入分镜步骤。'
     return
   }
 
-  if (activeStep.value === 'storyboard' && !hasStoryboards.value) {
+  if (currentStep === 'storyboard' && !hasStoryboards.value) {
     infoMessage.value = '请先生成分镜表，再进入视频步骤。'
     return
   }
@@ -892,6 +1081,40 @@ function goNextStep(): void {
   confirmedStepIndex.value = Math.max(confirmedStepIndex.value, currentIndex + 1)
   persistConfirmedStepIndex()
   selectStep(nextStep)
+
+  // 从“剧本 -> 设定”确认后，直接触发角色四视图生成，让用户进入设定页就能看到生成过程。
+  if (currentStep === 'script' && nextStep === 'setting' && !hasRoleAssets.value) {
+    await generateRoleAssets({
+      overwrite: false,
+      successMessage: '已进入设定，角色四视图已开始排队生成。'
+    })
+  }
+  // 进入设定时，如果场景/道具还没有生成，也一并自动补齐，减少用户手动逐个触发。
+  if (currentStep === 'script' && nextStep === 'setting' && !hasSceneAssets.value) {
+    await generateSceneAssets({
+      overwrite: false,
+      successMessage: '已进入设定，场景图已开始生成。'
+    })
+  }
+  if (currentStep === 'script' && nextStep === 'setting' && !hasPropAssets.value) {
+    await generatePropAssets({
+      overwrite: false,
+      successMessage: '已进入设定，道具图已开始生成。'
+    })
+  }
+
+  // 从“设定 -> 分镜”时，允许通过配置自动创建分镜表。
+  // 这样用户点一次确认就能直接看到分镜结果，不需要再额外手点“生成分镜”。
+  if (currentStep === 'setting' && nextStep === 'storyboard' && autoGenerateStoryboardOnEnterStoryboard.value && !hasStoryboards.value) {
+    await generateStoryboards()
+    return
+  }
+
+  // 从“分镜 -> 视频”时，是否自动创建视频工作流由配置决定。
+  // 默认关闭，避免高成本视频模型在联调阶段被自动触发。
+  if (currentStep === 'storyboard' && nextStep === 'video' && autoGenerateVideoOnEnterVideo.value && !workflowRunInfo.value) {
+    await startVideoWorkflow()
+  }
 }
 
 function switchSettingTab(tab: SettingTabKey): void {
@@ -919,8 +1142,43 @@ function handleAudioUpload(roleKey: string, event: Event): void {
   }
 }
 
-function roleAssetPreviewList(role: DramaRoleProfile): string[] {
-  return role.assets.slice(0, 4).map((asset) => asset.imageUrl)
+function primaryRoleAssetUrl(role: DramaRoleProfile): string {
+  return role.assets[0]?.imageUrl || ''
+}
+
+function isRoleGenerating(role: DramaRoleProfile): boolean {
+  return ['queued', 'running'].includes(role.generationStatus)
+}
+
+function isRoleGenerationFailed(role: DramaRoleProfile): boolean {
+  return role.generationStatus === 'failed'
+}
+
+function resolvedRoleGenerationStatus(role: DramaRoleProfile): string {
+  // 历史项目里存在“资产已落库，但状态字段仍停留在 idle”的旧数据。
+  // 这里前端做一次兜底归一，避免用户看到“100% 但还是 idle”的混乱状态。
+  if ((role.assets?.length || 0) > 0 && (role.generationStatus || 'idle') === 'idle') {
+    return 'success'
+  }
+  return role.generationStatus || 'idle'
+}
+
+function roleGenerationStatusLabel(role: DramaRoleProfile): string {
+  const status = resolvedRoleGenerationStatus(role)
+  if (status === 'success') return '已完成'
+  if (status === 'failed') return '失败'
+  if (status === 'queued') return '排队中'
+  if (status === 'running') return '生成中'
+  return '待生成'
+}
+
+function roleGenerationText(role: DramaRoleProfile): string {
+  const status = resolvedRoleGenerationStatus(role)
+  if (status === 'success') return '四视图已生成'
+  if (status === 'failed') return role.generationErrorMessage || '生成失败，可稍后重试'
+  if (status === 'queued') return '已加入队列，等待生成'
+  if (status === 'running') return `四视图生成中 ${role.generationProgress}%`
+  return '待生成角色四视图'
 }
 
 function scenePreviewUrl(scene: DramaSceneProfile): string {
@@ -929,6 +1187,22 @@ function scenePreviewUrl(scene: DramaSceneProfile): string {
 
 function propPreviewUrl(prop: DramaPropProfile): string {
   return prop.asset?.imageUrl || ''
+}
+
+function isSceneGenerating(scene: DramaSceneProfile): boolean {
+  return pendingSceneKeys.value.includes(scene.key)
+}
+
+function isPropGenerating(prop: DramaPropProfile): boolean {
+  return pendingPropKeys.value.includes(prop.key)
+}
+
+function sceneGenerationText(scene: DramaSceneProfile): string {
+  return isSceneGenerating(scene) ? '场景图生成中' : '待生成场景图'
+}
+
+function propGenerationText(prop: DramaPropProfile): string {
+  return isPropGenerating(prop) ? '道具图生成中' : '待生成道具图'
 }
 
 function tagToneClass(index: number): string {
@@ -974,6 +1248,55 @@ watch(
   }
 )
 
+watch(
+  [() => activeStep.value, hasAnalysis, hasRoleAssets, roleCountSummary, () => busyKey.value],
+  async ([step, ready, roleReady, summary, busy]) => {
+    // 回访或刷新后如果已经停在“设定”步骤，但角色四视图还没进入生成队列，就自动补一次排队。
+    // 主入口仍然是 goNextStep，这里只是兜底，避免用户看到“待生成/idle”却还得手点刷新。
+    if (step !== 'setting' || !ready || roleReady || busy) return
+    if (!projectDetail.value || summary.total === 0 || summary.generating > 0) return
+    if (autoRoleGenerationProjectId.value === currentProjectId.value) return
+
+    autoRoleGenerationProjectId.value = currentProjectId.value
+    await generateRoleAssets({
+      overwrite: false,
+      successMessage: '角色四视图已自动加入生成队列。'
+    })
+  }
+)
+
+watch(
+  [() => activeStep.value, hasAnalysis, hasSceneAssets, sceneCountSummary, () => busyKey.value],
+  async ([step, ready, sceneReady, summary, busy]) => {
+    // 回访设定页时，如果场景图还没进入生成队列，就自动补一次，避免用户再手动点刷新。
+    if (step !== 'setting' || !ready || sceneReady || busy) return
+    if (!projectDetail.value || summary.total === 0 || summary.generating > 0) return
+    if (autoSceneGenerationProjectId.value === currentProjectId.value) return
+
+    autoSceneGenerationProjectId.value = currentProjectId.value
+    await generateSceneAssets({
+      overwrite: false,
+      successMessage: '场景图已自动加入生成队列。'
+    })
+  }
+)
+
+watch(
+  [() => activeStep.value, hasAnalysis, hasPropAssets, propCountSummary, () => busyKey.value],
+  async ([step, ready, propReady, summary, busy]) => {
+    // 回访设定页时，如果道具图还没进入生成队列，就自动补一次，避免用户再手动点刷新。
+    if (step !== 'setting' || !ready || propReady || busy) return
+    if (!projectDetail.value || summary.total === 0 || summary.generating > 0) return
+    if (autoPropGenerationProjectId.value === currentProjectId.value) return
+
+    autoPropGenerationProjectId.value = currentProjectId.value
+    await generatePropAssets({
+      overwrite: false,
+      successMessage: '道具图已自动加入生成队列。'
+    })
+  }
+)
+
 onMounted(async () => {
   await loadWorkflowPage()
 })
@@ -987,7 +1310,7 @@ onBeforeUnmount(() => {
 <template>
   <main class="min-h-screen bg-[#f5f7fb] text-[#0f172a]">
     <header class="sticky top-0 z-30 border-b border-[#e7ebf4] bg-white/92 backdrop-blur-xl">
-      <div class="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-4 px-6 py-3 xl:px-10">
+      <div class="grid grid-cols-[minmax(300px,1fr)_auto_minmax(300px,1fr)] items-center gap-4 px-6 py-3 xl:px-10">
         <div class="flex min-w-0 items-start gap-4 justify-self-start">
           <button
             type="button"
@@ -1013,7 +1336,7 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
-        <nav class="mx-auto flex w-full max-w-[560px] items-center justify-center gap-2.5 justify-self-center">
+        <nav class="mx-auto flex w-full max-w-[520px] items-center justify-center gap-3 justify-self-center">
           <template v-for="(step, index) in workflowSteps" :key="step.key">
             <button
               type="button"
@@ -1077,7 +1400,7 @@ onBeforeUnmount(() => {
           v-if="activeStep === 'script'"
           class="rounded-[32px] border border-[#e8edf5] bg-white p-8 shadow-[0_18px_60px_rgba(15,23,42,0.06)]"
         >
-          <div v-if="showScriptProgressPanel" class="flex min-h-[520px] flex-col items-center justify-center">
+          <div v-if="showScriptProgressPanel && !shouldPreferAnalysisResultView" class="flex min-h-[520px] flex-col items-center justify-center">
             <div class="flex h-20 w-20 items-center justify-center rounded-full bg-[#eef2ff] text-[#4f46e5]">
               <svg viewBox="0 0 24 24" class="h-9 w-9 animate-spin" fill="none" stroke="currentColor" stroke-width="1.8">
                 <path d="M12 3a9 9 0 1 1-9 9" stroke-linecap="round" />
@@ -1141,15 +1464,15 @@ onBeforeUnmount(() => {
             <template v-else>
               <div class="space-y-7">
                 <div class="rounded-[30px] border border-[#e7ebf4] bg-[#fbfcff] p-5">
-                  <div class="grid items-stretch gap-5 xl:grid-cols-[160px_minmax(0,1fr)]">
+                  <div class="grid items-stretch gap-5 xl:grid-cols-[132px_minmax(0,1fr)]">
                     <div class="overflow-hidden rounded-[22px] bg-transparent">
-                      <div class="group relative h-full min-h-[230px] overflow-hidden rounded-[22px]">
+                      <div class="group relative h-full min-h-[188px] overflow-hidden rounded-[22px]">
                         <UiFluidImage
                           v-if="scriptCoverUrl && !isCoverGenerating"
                           :src="scriptCoverUrl"
                           :alt="projectDetail?.analysis.title || currentTitle"
-                          img-class="min-h-[230px] object-cover"
-                          wrapper-class="h-full min-h-[230px] w-full rounded-[22px]"
+                          img-class="min-h-[188px] object-cover"
+                          wrapper-class="h-full min-h-[188px] w-full rounded-[22px]"
                           fallback-text="封面加载失败，稍后可重新解析或重试生成。"
                           loading-label="封面加载中"
                         />
@@ -1157,9 +1480,18 @@ onBeforeUnmount(() => {
                           v-else
                           :src="''"
                           :alt="projectDetail?.analysis.title || currentTitle"
-                          img-class="min-h-[230px] object-cover"
-                          wrapper-class="h-full min-h-[230px] w-full rounded-[22px]"
+                          img-class="min-h-[188px] object-cover"
+                          wrapper-class="h-full min-h-[188px] w-full rounded-[22px]"
                         />
+                        <button
+                          type="button"
+                          class="absolute right-3 top-3 z-10 flex h-9 w-9 items-center justify-center rounded-full border border-white/20 bg-[rgba(15,23,42,0.18)] text-white backdrop-blur transition hover:bg-[rgba(15,23,42,0.32)]"
+                          :disabled="isBusy"
+                          aria-label="重新生成封面"
+                          @click="regenerateCoverOnly"
+                        >
+                          ↻
+                        </button>
                         <div
                           v-if="isCoverGenerating"
                           class="absolute left-3 top-3 rounded-full border border-white/15 bg-[rgba(148,163,184,0.46)] px-3 py-1 text-xs font-semibold text-white shadow-[0_10px_24px_rgba(15,23,42,0.12)] backdrop-blur"
@@ -1180,7 +1512,7 @@ onBeforeUnmount(() => {
                       </div>
                     </div>
 
-                    <div class="flex h-full min-h-[230px] flex-col justify-between rounded-[24px] border border-[#e7ebf4] bg-white p-5">
+                    <div class="flex h-full min-h-[188px] flex-col justify-between rounded-[24px] border border-[#e7ebf4] bg-white p-5">
                       <div class="flex items-start justify-between gap-5">
                         <div class="min-w-0">
                           <div class="flex flex-wrap items-center gap-3">
@@ -1210,13 +1542,14 @@ onBeforeUnmount(() => {
                           <button
                             type="button"
                             class="rounded-full border border-[#d7dfef] bg-white px-4 py-2 text-sm font-semibold text-[#4f46e5] transition hover:border-[#a5b4fc] hover:text-[#4338ca]"
+                            @click="openSourceScriptPreview"
                           >
                             查看剧本
                           </button>
                         </div>
                       </div>
 
-                      <div class="flex flex-wrap gap-2 pt-5">
+                      <div class="flex flex-wrap items-center gap-2 pt-5">
                         <span
                           v-for="(tag, index) in scriptTagList"
                           :key="`${tag}-${index}`"
@@ -1323,53 +1656,24 @@ onBeforeUnmount(() => {
               </button>
             </div>
 
-            <div class="grid gap-3 md:grid-cols-4">
-              <UiBaseSelect v-model="selectedImageModel" :options="imageModelOptions" placeholder="图像模型" size="sm" class="min-w-[180px]" />
-              <UiBaseSelect v-model="selectedVisualStyle" :options="visualStyleOptions" placeholder="风格" size="sm" class="min-w-[160px]" />
+            <div class="grid gap-3 md:grid-cols-2">
               <button
                 type="button"
                 class="rounded-[16px] border border-[#d7dfef] bg-white px-5 py-2.5 text-sm font-semibold text-[#0f172a] transition hover:border-[#94a3b8]"
                 :disabled="isBusy"
-                @click="generateAllSettings"
+                @click="refreshCurrentSettingTab"
               >
-                一键生成设定
+                {{ refreshCurrentSettingButtonLabel }}
               </button>
               <button
-                v-if="activeSettingTab === 'roles'"
                 type="button"
                 class="rounded-[16px] bg-gradient-to-r from-[#2463ff] to-[#7c3aed] px-5 py-2.5 text-sm font-semibold text-white transition hover:brightness-110"
                 :disabled="isBusy"
-                @click="generateRoleAssets"
+                @click="activeSettingTab === 'roles' ? openRoleDialog() : activeSettingTab === 'scenes' ? generateSceneAssets() : generatePropAssets()"
               >
-                {{ busyKey === 'roles' ? '生成中...' : '生成角色' }}
-              </button>
-              <button
-                v-else-if="activeSettingTab === 'scenes'"
-                type="button"
-                class="rounded-[16px] bg-gradient-to-r from-[#2463ff] to-[#7c3aed] px-5 py-2.5 text-sm font-semibold text-white transition hover:brightness-110"
-                :disabled="isBusy"
-                @click="generateSceneAssets"
-              >
-                {{ busyKey === 'scenes' ? '生成中...' : '生成场景' }}
-              </button>
-              <button
-                v-else
-                type="button"
-                class="rounded-[16px] bg-gradient-to-r from-[#2463ff] to-[#7c3aed] px-5 py-2.5 text-sm font-semibold text-white transition hover:brightness-110"
-                :disabled="isBusy"
-                @click="generatePropAssets"
-              >
-                {{ busyKey === 'props' ? '生成中...' : '生成道具' }}
+                {{ activeSettingPrimaryButtonLabel }}
               </button>
             </div>
-          </div>
-
-          <div v-if="selectedVisualStyle === '自定义风格'" class="mt-4">
-            <UiBaseInput
-              v-model="customVisualStyle"
-              placeholder="输入自定义风格，例如：电影感写实、3D仙侠、赛博都市"
-              full
-            />
           </div>
 
           <template v-if="activeSettingTab === 'roles'">
@@ -1378,33 +1682,61 @@ onBeforeUnmount(() => {
               <span>总计 {{ roleCountSummary.total }}</span>
               <span>已完成 {{ roleCountSummary.completed }}</span>
               <span>生成中 {{ roleCountSummary.generating }}</span>
+              <span v-if="roleCountSummary.failed > 0">失败 {{ roleCountSummary.failed }}</span>
             </div>
 
             <div class="mt-6 grid gap-5 xl:grid-cols-3">
               <article
                 v-for="role in projectDetail?.analysis.roles || []"
                 :key="role.key"
-                class="overflow-hidden rounded-[28px] border border-[#e7ebf4] bg-[#fbfdff] shadow-[0_10px_28px_rgba(15,23,42,0.04)]"
+                class="relative z-[1] overflow-visible rounded-[28px] border border-[#e7ebf4] bg-[#fbfdff] shadow-[0_10px_28px_rgba(15,23,42,0.04)] transition hover:z-[6]"
               >
-                <div class="grid min-h-[250px] grid-cols-2 gap-2 border-b border-[#edf1f7] p-4">
+                <div class="border-b border-[#edf1f7] p-4">
                   <template v-if="role.assets.length > 0">
-                    <div
-                      v-for="imageUrl in roleAssetPreviewList(role)"
-                      :key="imageUrl"
-                      class="overflow-hidden rounded-[20px] bg-[#eef2f7]"
+                    <button
+                      type="button"
+                      class="group relative block w-full overflow-hidden rounded-[20px] bg-[#eef2f7] text-left"
+                      @click="openRolePreview(role)"
                     >
                       <UiFluidImage
-                        :src="imageUrl"
+                        :src="primaryRoleAssetUrl(role)"
                         :alt="role.name"
-                        img-class="object-cover"
-                        wrapper-class="h-full w-full"
+                        img-class="h-[220px] object-cover"
+                        wrapper-class="h-[220px] w-full"
                         loading-label="生成中"
                       />
-                    </div>
+                      <span
+                        v-if="isRoleGenerating(role)"
+                        class="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-2 bg-[rgba(15,23,42,0.36)] px-4 text-center"
+                      >
+                        <span class="rounded-full bg-white/18 px-4 py-1.5 text-base font-semibold text-white backdrop-blur-sm">
+                          {{ roleGenerationText(role) }}
+                        </span>
+                        <span class="text-sm font-medium text-white/90">{{ role.generationProgress || 0 }}%</span>
+                      </span>
+                      <span class="pointer-events-none absolute inset-0 flex items-end justify-end bg-[linear-gradient(180deg,rgba(15,23,42,0)_0%,rgba(15,23,42,0.20)_100%)] p-3 opacity-0 transition duration-200 group-hover:opacity-100">
+                        <span class="rounded-full border border-white/20 bg-[rgba(15,23,42,0.46)] px-3 py-1 text-xs font-semibold text-white backdrop-blur">
+                          预览大图
+                        </span>
+                      </span>
+                    </button>
                   </template>
                   <template v-else>
-                    <div class="col-span-2 flex min-h-[210px] items-center justify-center rounded-[24px] border border-dashed border-[#d7dfef] bg-white text-sm text-[#94a3b8]">
-                      待生成角色四视图
+                    <div class="relative flex min-h-[220px] items-center justify-center overflow-hidden rounded-[24px] bg-[linear-gradient(135deg,#eef6ff_0%,#d8e9ff_44%,#c6dcff_100%)] px-6 text-center text-sm text-[#5b6b85]">
+                      <div class="absolute inset-0 bg-[radial-gradient(circle_at_28%_24%,rgba(255,255,255,0.72),transparent_42%),radial-gradient(circle_at_72%_68%,rgba(191,219,254,0.55),transparent_38%)]" />
+                      <div class="relative z-[1]">
+                        <div
+                          class="mx-auto flex h-16 w-16 items-center justify-center rounded-full border text-base font-semibold"
+                          :class="isRoleGenerationFailed(role)
+                            ? 'border-[#fecaca] bg-[#fff1f2] text-[#dc2626]'
+                            : isRoleGenerating(role)
+                              ? 'border-[#c7d2fe] bg-[#eef2ff] text-[#4f46e5]'
+                              : 'border-[#dbeafe] bg-white/70 text-[#64748b]'"
+                        >
+                          {{ isRoleGenerationFailed(role) ? '!' : `${role.generationProgress || 0}%` }}
+                        </div>
+                        <p class="mt-4 text-lg font-semibold text-[#334155]">{{ roleGenerationText(role) }}</p>
+                      </div>
                     </div>
                   </template>
                 </div>
@@ -1417,9 +1749,9 @@ onBeforeUnmount(() => {
                     </div>
                     <button
                       type="button"
-                      class="rounded-full border border-[#d7dfef] bg-white px-3 py-1.5 text-xs font-semibold text-[#475569] transition hover:border-[#94a3b8]"
+                      class="whitespace-nowrap rounded-full border border-[#d7dfef] bg-white px-3 py-1.5 text-xs font-semibold text-[#475569] transition hover:border-[#94a3b8]"
                       :disabled="isBusy"
-                      @click="generateRoleAssets"
+                      @click="generateRoleAssets({ overwrite: true, roleKeys: [role.key], successMessage: `${role.name} 四视图已刷新。` })"
                     >
                       重绘
                     </button>
@@ -1427,13 +1759,18 @@ onBeforeUnmount(() => {
 
                   <p class="mt-4 text-sm leading-7 text-[#475569]">{{ role.personality }}，{{ role.appearance }}</p>
 
-                  <div class="mt-5 grid gap-3 md:grid-cols-2">
+                  <div class="mt-3 flex items-center justify-between text-xs text-[#64748b]">
+                    <span>状态：{{ roleGenerationStatusLabel(role) }}</span>
+                    <span>{{ role.generationProgress || 0 }}%</span>
+                  </div>
+
+                  <div class="relative z-[60] mt-5 grid gap-3 md:grid-cols-2">
                     <UiBaseSelect
                       v-model="roleVoiceSelections[role.key]"
                       :options="voiceToneCatalog"
                       placeholder="选择音色"
                       size="sm"
-                      class="min-w-[140px]"
+                      class="relative z-[80] min-w-[140px]"
                     />
                     <label class="flex cursor-pointer items-center justify-center rounded-[16px] border border-[#d7dfef] bg-white px-4 py-2.5 text-sm font-semibold text-[#0f172a] transition hover:border-[#94a3b8]">
                       上传音频
@@ -1464,16 +1801,27 @@ onBeforeUnmount(() => {
                 :key="scene.key"
                 class="overflow-hidden rounded-[28px] border border-[#e7ebf4] bg-[#fbfdff] shadow-[0_10px_28px_rgba(15,23,42,0.04)]"
               >
-                <div class="h-[220px] bg-[#eef2f7]">
+                <div class="relative h-[220px] bg-[#eef2f7]">
                   <UiFluidImage
-                    v-if="scenePreviewUrl(scene)"
+                    v-if="scenePreviewUrl(scene) && !isSceneGenerating(scene)"
                     :src="scenePreviewUrl(scene)"
                     :alt="scene.name"
                     img-class="object-cover"
                     wrapper-class="h-full w-full"
                     loading-label="生成中"
                   />
-                  <div v-else class="flex h-full items-center justify-center text-sm text-[#94a3b8]">待生成场景图</div>
+                  <div
+                    v-else
+                    class="relative flex h-full items-center justify-center overflow-hidden rounded-[24px] bg-[linear-gradient(135deg,#eef6ff_0%,#d8e9ff_44%,#c6dcff_100%)] px-6 text-center"
+                  >
+                    <div class="absolute inset-0 bg-[radial-gradient(circle_at_28%_24%,rgba(255,255,255,0.72),transparent_42%),radial-gradient(circle_at_72%_68%,rgba(191,219,254,0.55),transparent_38%)]" />
+                    <div class="relative z-[1]">
+                      <p class="text-[24px] font-semibold text-white drop-shadow-[0_8px_18px_rgba(15,23,42,0.18)]">
+                        {{ isSceneGenerating(scene) ? '生成中' : '待生成' }}
+                      </p>
+                      <p class="mt-2 text-sm font-medium text-white/90">{{ sceneGenerationText(scene) }}</p>
+                    </div>
+                  </div>
                 </div>
                 <div class="p-5">
                   <div class="flex items-start justify-between gap-3">
@@ -1483,9 +1831,9 @@ onBeforeUnmount(() => {
                     </div>
                     <button
                       type="button"
-                      class="rounded-full border border-[#d7dfef] bg-white px-3 py-1.5 text-xs font-semibold text-[#475569] transition hover:border-[#94a3b8]"
+                      class="whitespace-nowrap rounded-full border border-[#d7dfef] bg-white px-3 py-1.5 text-xs font-semibold text-[#475569] transition hover:border-[#94a3b8]"
                       :disabled="isBusy"
-                      @click="generateSceneAssets"
+                      @click="generateSceneAssets({ overwrite: true, sceneKeys: [scene.key], successMessage: `${scene.name} 场景图已刷新。` })"
                     >
                       重绘
                     </button>
@@ -1509,16 +1857,27 @@ onBeforeUnmount(() => {
                 :key="prop.key"
                 class="overflow-hidden rounded-[28px] border border-[#e7ebf4] bg-[#fbfdff] shadow-[0_10px_28px_rgba(15,23,42,0.04)]"
               >
-                <div class="h-[220px] bg-[#eef2f7]">
+                <div class="relative h-[220px] bg-[#eef2f7]">
                   <UiFluidImage
-                    v-if="propPreviewUrl(prop)"
+                    v-if="propPreviewUrl(prop) && !isPropGenerating(prop)"
                     :src="propPreviewUrl(prop)"
                     :alt="prop.name"
                     img-class="object-cover"
                     wrapper-class="h-full w-full"
                     loading-label="生成中"
                   />
-                  <div v-else class="flex h-full items-center justify-center text-sm text-[#94a3b8]">待生成道具图</div>
+                  <div
+                    v-else
+                    class="relative flex h-full items-center justify-center overflow-hidden rounded-[24px] bg-[linear-gradient(135deg,#eef6ff_0%,#d8e9ff_44%,#c6dcff_100%)] px-6 text-center"
+                  >
+                    <div class="absolute inset-0 bg-[radial-gradient(circle_at_28%_24%,rgba(255,255,255,0.72),transparent_42%),radial-gradient(circle_at_72%_68%,rgba(191,219,254,0.55),transparent_38%)]" />
+                    <div class="relative z-[1]">
+                      <p class="text-[24px] font-semibold text-white drop-shadow-[0_8px_18px_rgba(15,23,42,0.18)]">
+                        {{ isPropGenerating(prop) ? '生成中' : '待生成' }}
+                      </p>
+                      <p class="mt-2 text-sm font-medium text-white/90">{{ propGenerationText(prop) }}</p>
+                    </div>
+                  </div>
                 </div>
                 <div class="p-5">
                   <div class="flex items-start justify-between gap-3">
@@ -1528,9 +1887,9 @@ onBeforeUnmount(() => {
                     </div>
                     <button
                       type="button"
-                      class="rounded-full border border-[#d7dfef] bg-white px-3 py-1.5 text-xs font-semibold text-[#475569] transition hover:border-[#94a3b8]"
+                      class="whitespace-nowrap rounded-full border border-[#d7dfef] bg-white px-3 py-1.5 text-xs font-semibold text-[#475569] transition hover:border-[#94a3b8]"
                       :disabled="isBusy"
-                      @click="generatePropAssets"
+                      @click="generatePropAssets({ overwrite: true, propKeys: [prop.key], successMessage: `${prop.name} 道具图已刷新。` })"
                     >
                       重绘
                     </button>
@@ -1539,16 +1898,6 @@ onBeforeUnmount(() => {
               </article>
             </div>
           </template>
-
-          <div class="mt-8 flex justify-center">
-            <button
-              type="button"
-              class="rounded-full bg-[#0f172a] px-8 py-4 text-base font-semibold text-white shadow-[0_18px_42px_rgba(15,23,42,0.18)] transition hover:bg-[#111827]"
-              @click="goNextStep"
-            >
-              已确认，进入下一步
-            </button>
-          </div>
         </section>
 
         <section
@@ -1754,6 +2103,141 @@ onBeforeUnmount(() => {
         >
           {{ floatingConfirmButtonLabel }}
         </button>
+      </div>
+    </div>
+
+    <div
+      v-if="roleDialogVisible"
+      class="fixed inset-0 z-[70] flex items-center justify-center bg-[rgba(15,23,42,0.46)] px-4 py-8 backdrop-blur-sm"
+      @click.self="closeRoleDialog"
+    >
+      <div class="w-full max-w-[820px] rounded-[32px] border border-[#e7ebf4] bg-white p-7 shadow-[0_30px_90px_rgba(15,23,42,0.16)]">
+        <div class="flex items-start justify-between gap-4">
+          <div>
+            <h3 class="text-[28px] font-semibold tracking-[-0.03em]">新增角色</h3>
+            <p class="mt-2 text-sm leading-7 text-[#64748b]">填写基础人物信息后，系统会直接生成一张包含四视图的角色设定参考图。</p>
+          </div>
+          <button
+            type="button"
+            class="rounded-full border border-[#d7dfef] bg-white px-3 py-1.5 text-sm text-[#64748b] transition hover:text-[#0f172a]"
+            @click="closeRoleDialog"
+          >
+            关闭
+          </button>
+        </div>
+
+        <div class="mt-6 grid gap-4 md:grid-cols-2">
+          <div>
+            <p class="mb-2 text-sm font-semibold text-[#0f172a]"><span class="mr-1 text-[#f43f5e]">*</span>名称</p>
+            <UiBaseInput v-model="roleForm.name" placeholder="请输入" full />
+          </div>
+          <div>
+            <p class="mb-2 text-sm font-semibold text-[#0f172a]"><span class="mr-1 text-[#f43f5e]">*</span>性别</p>
+            <UiBaseSelect v-model="roleForm.gender" :options="roleGenderCatalog" placeholder="请选择" full />
+          </div>
+          <div>
+            <p class="mb-2 text-sm font-semibold text-[#0f172a]"><span class="mr-1 text-[#f43f5e]">*</span>年龄</p>
+            <UiBaseSelect v-model="roleForm.ageIdentity" :options="roleAgeCatalog" placeholder="请选择" full />
+          </div>
+          <div>
+            <p class="mb-2 text-sm font-semibold text-[#0f172a]">音色选择</p>
+            <UiBaseSelect v-model="roleForm.voiceRef" :options="voiceToneCatalog" placeholder="请选择音色" full />
+          </div>
+        </div>
+
+        <div class="mt-5">
+          <p class="mb-2 text-sm font-semibold text-[#0f172a]">提示词</p>
+          <UiBaseTextarea
+            v-model="roleForm.prompt"
+            placeholder="请输入人物发型、脸型、神态、服装、配饰、气质等关键信息。"
+            full
+            size="md"
+          />
+        </div>
+
+        <div class="mt-5">
+          <p class="mb-2 text-sm font-semibold text-[#0f172a]">角色描述</p>
+          <UiBaseTextarea
+            v-model="roleForm.description"
+            placeholder="补充人物背景、身份、行为气质、服装特色等，系统会一并写入四视图生成提示词。"
+            full
+            size="md"
+          />
+        </div>
+
+        <div class="mt-6 flex justify-end gap-3">
+          <button
+            type="button"
+            class="rounded-full border border-[#d7dfef] bg-white px-5 py-2.5 text-sm font-semibold text-[#475569] transition hover:border-[#94a3b8]"
+            @click="closeRoleDialog"
+          >
+            取消
+          </button>
+          <button
+            type="button"
+            class="rounded-full bg-gradient-to-r from-[#2463ff] to-[#7c3aed] px-6 py-2.5 text-sm font-semibold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+            :disabled="busyKey === 'roles'"
+            @click="submitNewRole"
+          >
+            {{ busyKey === 'roles' ? '提交中...' : '新增角色并生成四视图' }}
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div
+      v-if="sourceScriptPreviewVisible"
+      class="fixed inset-0 z-[75] flex items-center justify-center bg-[rgba(15,23,42,0.56)] px-4 py-8 backdrop-blur-sm"
+      @click.self="closeSourceScriptPreview"
+    >
+      <div class="w-full max-w-[980px] rounded-[32px] border border-[#e7ebf4] bg-white p-6 shadow-[0_30px_90px_rgba(15,23,42,0.16)]">
+        <div class="flex items-center justify-between gap-4">
+          <div>
+            <h3 class="text-[26px] font-semibold tracking-[-0.03em]">原始剧本</h3>
+            <p class="mt-2 text-sm text-[#64748b]">{{ projectDetail?.sourceFileName || '当前为手动输入剧本' }}</p>
+          </div>
+          <button
+            type="button"
+            class="rounded-full border border-[#d7dfef] bg-white px-3 py-1.5 text-sm text-[#64748b] transition hover:text-[#0f172a]"
+            @click="closeSourceScriptPreview"
+          >
+            关闭
+          </button>
+        </div>
+        <div class="mt-5 rounded-[24px] border border-[#e7ebf4] bg-[#fbfdff] p-5">
+          <div class="max-h-[68vh] overflow-y-auto whitespace-pre-line text-[15px] leading-8 text-[#334155]">
+            {{ projectDetail?.sourceScriptText || '当前暂无原始剧本内容。' }}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div
+      v-if="rolePreviewTarget"
+      class="fixed inset-0 z-[78] flex items-center justify-center bg-[rgba(15,23,42,0.72)] px-6 py-10 backdrop-blur-sm"
+      @click.self="closeRolePreview"
+    >
+      <div class="relative w-full max-w-[1080px]">
+        <button
+          type="button"
+          class="absolute right-3 top-3 z-10 rounded-full border border-white/20 bg-[rgba(15,23,42,0.5)] px-3 py-1.5 text-sm font-semibold text-white backdrop-blur transition hover:bg-[rgba(15,23,42,0.68)]"
+          @click="closeRolePreview"
+        >
+          关闭
+        </button>
+        <div class="overflow-hidden rounded-[28px] bg-white/6 p-3 shadow-[0_30px_120px_rgba(15,23,42,0.35)]">
+          <UiFluidImage
+            :src="rolePreviewTarget.imageUrl"
+            :alt="rolePreviewTarget.name"
+            img-class="max-h-[82vh] w-full object-contain"
+            wrapper-class="w-full overflow-hidden rounded-[22px] bg-[rgba(255,255,255,0.04)]"
+            fallback-text="角色四视图加载失败。"
+            loading-label="角色四视图加载中"
+          />
+        </div>
+        <p v-if="rolePreviewTarget.prompt" class="mt-3 line-clamp-2 rounded-[18px] bg-[rgba(15,23,42,0.56)] px-4 py-3 text-xs leading-5 text-white/75 backdrop-blur">
+          {{ rolePreviewTarget.prompt }}
+        </p>
       </div>
     </div>
 

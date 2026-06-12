@@ -16,6 +16,9 @@ export interface DramaRoleProfile {
   appearance: string
   voiceRef: string
   prompt: string
+  generationStatus: string
+  generationProgress: number
+  generationErrorMessage: string
   assets: DramaAssetItem[]
 }
 

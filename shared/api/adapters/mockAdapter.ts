@@ -394,9 +394,69 @@ export const mockAdapter: ApiAdapter = {
     return ok(next)
   },
 
+  async regenerateDramaCover(projectId: string) {
+    await sleep(180)
+    const current = mockDramaProjectMap.get(projectId)!
+    const next: DramaProjectDetail = {
+      ...current,
+      analysis: {
+        ...current.analysis,
+        coverImageUrl: current.analysis.coverImageUrl || `https://placehold.co/720x1080/dae9ff/0f172a.png?text=${encodeURIComponent(current.analysis.title || current.title)}`
+      },
+      analysisRun: {
+        ...current.analysisRun,
+        coverStatus: 'done',
+        updatedAt: new Date().toISOString()
+      }
+    }
+    mockDramaProjectMap.set(projectId, next)
+    return ok(next)
+  },
+
+  async createDramaRole(projectId: string, payload: { name: string; ageIdentity: string; gender: string; voiceRef?: string; prompt?: string; description?: string }) {
+    await sleep(180)
+    const current = mockDramaProjectMap.get(projectId)!
+    const roleKey = `${payload.name}-${Date.now()}`
+    const next: DramaProjectDetail = {
+      ...current,
+      analysis: {
+        ...current.analysis,
+        roles: [
+          ...current.analysis.roles,
+          {
+            key: roleKey,
+            name: payload.name,
+            ageIdentity: `${payload.ageIdentity} · ${payload.gender}`,
+            personality: payload.prompt || '待补充人物性格',
+            appearance: payload.description || payload.prompt || '待补充人物外观',
+            voiceRef: payload.voiceRef || '',
+            prompt: payload.prompt || '',
+            generationStatus: 'idle',
+            generationProgress: 0,
+            generationErrorMessage: '',
+            assets: []
+          }
+        ],
+        characterBios: [
+          ...current.analysis.characterBios,
+          {
+            key: roleKey,
+            name: payload.name,
+            identity: `${payload.ageIdentity} · ${payload.gender}`,
+            summary: payload.description || payload.prompt || '待补充人物小传。',
+            traits: [payload.gender, payload.ageIdentity]
+          }
+        ]
+      }
+    }
+    mockDramaProjectMap.set(projectId, next)
+    return ok(next)
+  },
+
   async generateDramaRoleAssets(projectId: string, payload?: DramaAssetGeneratePayload) {
     await sleep(280)
     const current = mockDramaProjectMap.get(projectId)!
+    const targetRoleKeys = new Set(payload?.roleKeys || [])
     const next: DramaProjectDetail = {
       ...current,
       currentStage: 'roles',
@@ -405,13 +465,20 @@ export const mockAdapter: ApiAdapter = {
         roles: current.analysis.roles.map((role, index) => ({
           ...role,
           prompt: `${payload?.style || '电影感写实'} ${role.name} 四视图角色设定`,
-          assets: ['正面', '左侧', '背面', '3/4视角'].map((viewName, viewIndex) => ({
-            id: `${role.key}-asset-${index}-${viewIndex}`,
-            imageUrl: `https://placehold.co/768x1024/131a28/e9edf7.png?text=${encodeURIComponent(`${role.name} ${viewName}`)}`,
-            prompt: `${payload?.style || '电影感写实'} ${role.name} 四视图角色设定`,
-            status: 'success',
-            meta: { drama_group: 'role', view_name: viewName }
-          }))
+          generationStatus: targetRoleKeys.size === 0 || targetRoleKeys.has(role.key) ? 'success' : role.generationStatus,
+          generationProgress: targetRoleKeys.size === 0 || targetRoleKeys.has(role.key) ? 100 : role.generationProgress,
+          generationErrorMessage: targetRoleKeys.size === 0 || targetRoleKeys.has(role.key) ? '' : role.generationErrorMessage,
+          assets: payload?.overwrite === false && role.assets.length > 0
+            ? role.assets
+            : targetRoleKeys.size > 0 && !targetRoleKeys.has(role.key)
+              ? role.assets
+              : [{
+              id: `${role.key}-asset-${index}`,
+              imageUrl: `https://placehold.co/1280x960/131a28/e9edf7.png?text=${encodeURIComponent(`${role.name} 四视图`)}`,
+              prompt: `${payload?.style || '电影感写实'} ${role.name} 四视图角色设定`,
+              status: 'success',
+              meta: { drama_group: 'role', view_name: '四视图设定图', layout: 'quad_sheet' }
+            }]
         }))
       }
     }
@@ -422,6 +489,7 @@ export const mockAdapter: ApiAdapter = {
   async generateDramaSceneAssets(projectId: string, payload?: DramaAssetGeneratePayload) {
     await sleep(260)
     const current = mockDramaProjectMap.get(projectId)!
+    const targetSceneKeys = new Set(payload?.sceneKeys || [])
     const next: DramaProjectDetail = {
       ...current,
       currentStage: 'scenes',
@@ -430,13 +498,15 @@ export const mockAdapter: ApiAdapter = {
         scenes: current.analysis.scenes.map((scene) => ({
           ...scene,
           prompt: `${payload?.style || '电影感场景图'} ${scene.name}`,
-          asset: {
-            id: `${scene.key}-asset`,
-            imageUrl: `https://placehold.co/1280x720/1b2236/e9edf7.png?text=${encodeURIComponent(scene.name)}`,
-            prompt: `${payload?.style || '电影感场景图'} ${scene.name}`,
-            status: 'success',
-            meta: { drama_group: 'scene' }
-          }
+          asset: targetSceneKeys.size > 0 && !targetSceneKeys.has(scene.key)
+            ? scene.asset
+            : {
+                id: `${scene.key}-asset`,
+                imageUrl: `https://placehold.co/1280x720/1b2236/e9edf7.png?text=${encodeURIComponent(scene.name)}`,
+                prompt: `${payload?.style || '电影感场景图'} ${scene.name}`,
+                status: 'success',
+                meta: { drama_group: 'scene' }
+              }
         }))
       }
     }
@@ -447,6 +517,7 @@ export const mockAdapter: ApiAdapter = {
   async generateDramaPropAssets(projectId: string, payload?: DramaAssetGeneratePayload) {
     await sleep(260)
     const current = mockDramaProjectMap.get(projectId)!
+    const targetPropKeys = new Set(payload?.propKeys || [])
     const next: DramaProjectDetail = {
       ...current,
       currentStage: 'props',
@@ -455,13 +526,15 @@ export const mockAdapter: ApiAdapter = {
         props: current.analysis.props.map((prop) => ({
           ...prop,
           prompt: `${payload?.style || '电影道具图'} ${prop.name}`,
-          asset: {
-            id: `${prop.key}-asset`,
-            imageUrl: `https://placehold.co/1024x1024/1d2438/e9edf7.png?text=${encodeURIComponent(prop.name)}`,
-            prompt: `${payload?.style || '电影道具图'} ${prop.name}`,
-            status: 'success',
-            meta: { drama_group: 'prop' }
-          }
+          asset: targetPropKeys.size > 0 && !targetPropKeys.has(prop.key)
+            ? prop.asset
+            : {
+                id: `${prop.key}-asset`,
+                imageUrl: `https://placehold.co/1024x1024/1d2438/e9edf7.png?text=${encodeURIComponent(prop.name)}`,
+                prompt: `${payload?.style || '电影道具图'} ${prop.name}`,
+                status: 'success',
+                meta: { drama_group: 'prop' }
+              }
         }))
       }
     }
