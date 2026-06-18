@@ -161,17 +161,17 @@ export const mockAdapter: ApiAdapter = {
         theme_mode: 'dark',
         text_provider: 'alibaba',
         image_provider: 'alibaba',
-        video_provider: 'bytedance',
+        video_provider: 'alibaba',
         text_model: 'Qwen-Plus',
         image_model: 'wanx2.1-t2i-turbo',
-        video_model: 'Doubao-Seedance-1.0-pro-fast',
+        video_model: 'wan2.7-r2v',
         video_resolution: '360p'
       },
       textModels: [{ provider: 'alibaba', model: 'Qwen-Plus', label: '阿里文本经济款', description: '适合剧情解析与分镜输出' }],
       imageModels: [{ provider: 'alibaba', model: 'wanx2.1-t2i-turbo', label: '阿里图像经济款', description: '角色与场景快速出图' }],
       videoModels: [
-        { provider: 'bytedance', model: 'Doubao-Seedance-1.0-pro-fast', label: '字节低成本视频', description: '前期默认视频模型' },
-        { provider: 'alibaba', model: 'pixverse/pixverse-v6-t2v', label: '阿里备选视频', description: '阿里生态视频模型' }
+        { provider: 'alibaba', model: 'wan2.7-r2v', label: 'wan2.7-r2v', description: '阿里默认参考生视频模型' },
+        { provider: 'bytedance', model: 'Doubao-Seedance-1.0-pro-fast', label: 'Doubao-Seedance-1.0-pro-fast', description: '字节视频备选模型' }
       ]
     }
     return ok(data)
@@ -567,5 +567,161 @@ export const mockAdapter: ApiAdapter = {
     }
     mockDramaProjectMap.set(projectId, next)
     return ok(next)
+  },
+
+  async listDramaStoryboards(projectId: string) {
+    await sleep(120)
+    const current = mockDramaProjectMap.get(projectId)!
+    return ok({
+      rows: current.storyboards || [],
+      run: current.storyboardRun || {
+        status: current.storyboards.length > 0 ? 'completed' : 'idle',
+        totalEpisodes: 1,
+        currentEpisodeNo: 1,
+        episodeStatuses: { '1': current.storyboards.length > 0 ? 'completed' : 'idle' },
+        episodeProgresses: { '1': current.storyboards.length > 0 ? 100 : 0 },
+        generatedCounts: { '1': current.storyboards.length },
+        expectedCounts: { '1': current.storyboards.length || 0 },
+        model: '',
+        style: '',
+        errorMessage: '',
+        updatedAt: new Date().toISOString()
+      }
+    })
+  },
+
+  async createDramaStoryboard(projectId: string, payload) {
+    await sleep(120)
+    const current = mockDramaProjectMap.get(projectId)!
+    const nextShotNo = (current.storyboards?.length || 0) + 1
+    const next = {
+      ...current,
+      storyboards: [
+        ...(current.storyboards || []),
+        {
+          id: `${projectId}-shot-${Date.now()}`,
+          sourceNodeId: `drama-${projectId}`,
+          episodeNo: payload.episodeNo || 1,
+          sortIndex: nextShotNo,
+          shotNo: nextShotNo,
+          durationSec: 5,
+          sceneDescription: '新分镜描述',
+          roleName: '',
+          shotType: '',
+          actionDesc: '',
+          moodDesc: '',
+          soundFx: '',
+          dialogue: '',
+          storyboardPrompt: '',
+          cameraMotionPrompt: '',
+          roleKeys: [],
+          sceneKeys: [],
+          propKeys: [],
+          videoPrompt: '',
+          videoModel: '',
+          videoDurationSec: 5,
+          videoStatus: 'idle',
+          videoProgress: 0,
+          videoTaskId: '',
+          videoUrl: '',
+          videoErrorMessage: '',
+          generationStatus: 'success',
+          generationProgress: 100,
+          generationErrorMessage: '',
+          extra: {}
+        }
+      ]
+    }
+    mockDramaProjectMap.set(projectId, next)
+    return ok(next)
+  },
+
+  async updateDramaStoryboard(projectId: string, rowId: string, payload) {
+    await sleep(120)
+    const current = mockDramaProjectMap.get(projectId)!
+    const next = {
+      ...current,
+      storyboards: (current.storyboards || []).map((row) => row.id !== rowId
+        ? row
+        : {
+            ...row,
+            sceneDescription: payload.sceneDescription ?? row.sceneDescription,
+            roleName: payload.roleName ?? row.roleName,
+            shotType: payload.shotType ?? row.shotType,
+            actionDesc: payload.actionDesc ?? row.actionDesc,
+            moodDesc: payload.moodDesc ?? row.moodDesc,
+            soundFx: payload.soundFx ?? row.soundFx,
+            dialogue: payload.dialogue ?? row.dialogue,
+            storyboardPrompt: payload.storyboardPrompt ?? row.storyboardPrompt,
+            cameraMotionPrompt: payload.cameraMotionPrompt ?? row.cameraMotionPrompt,
+            roleKeys: payload.roleKeys ?? row.roleKeys,
+            sceneKeys: payload.sceneKeys ?? row.sceneKeys,
+            propKeys: payload.propKeys ?? row.propKeys,
+            videoPrompt: payload.videoPrompt ?? row.videoPrompt,
+            videoModel: payload.videoModel ?? row.videoModel,
+            videoDurationSec: payload.videoDurationSec ?? row.videoDurationSec
+          })
+    }
+    mockDramaProjectMap.set(projectId, next)
+    return ok(next)
+  },
+
+  async copyDramaStoryboard(projectId: string, rowId: string) {
+    await sleep(120)
+    const current = mockDramaProjectMap.get(projectId)!
+    const target = (current.storyboards || []).find((row) => row.id === rowId)
+    if (!target) return ok(current)
+    const next = {
+      ...current,
+      storyboards: [
+        ...(current.storyboards || []),
+        {
+          ...target,
+          id: `${target.id}-copy-${Date.now()}`,
+          shotNo: (current.storyboards?.length || 0) + 1,
+          sortIndex: (current.storyboards?.length || 0) + 1
+        }
+      ]
+    }
+    mockDramaProjectMap.set(projectId, next)
+    return ok(next)
+  },
+
+  async deleteDramaStoryboard(projectId: string, rowId: string) {
+    await sleep(120)
+    const current = mockDramaProjectMap.get(projectId)!
+    const next = {
+      ...current,
+      storyboards: (current.storyboards || []).filter((row) => row.id !== rowId).map((row, index) => ({
+        ...row,
+        shotNo: index + 1,
+        sortIndex: index + 1
+      }))
+    }
+    mockDramaProjectMap.set(projectId, next)
+    return ok(next)
+  },
+
+  async generateStoryboardVideo(projectId: string, rowId: string) {
+    await sleep(80)
+    return ok({
+      storyboardRowId: rowId,
+      runId: `${projectId}-${rowId}-video-run`,
+      status: 'pending'
+    })
+  },
+
+  async batchGenerateStoryboardVideos(projectId: string, payload) {
+    await sleep(80)
+    const current = mockDramaProjectMap.get(projectId)!
+    return ok(
+      (current.storyboards || [])
+        .filter((row) => row.episodeNo === payload.episodeNo)
+        .map((row) => ({
+          storyboardRowId: row.id,
+          runId: `${projectId}-${row.id}-video-run`,
+          status: 'pending'
+        }))
+    )
   }
 }

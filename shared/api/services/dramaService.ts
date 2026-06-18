@@ -8,6 +8,10 @@ import type {
   DramaRoleCreatePayload,
   DramaScriptIngestPayload,
   DramaStoryboardGeneratePayload,
+  StoryboardCreatePayload,
+  StoryboardUpdatePayload,
+  StoryboardVideoBatchPayload,
+  StoryboardVideoGeneratePayload,
 } from '~/shared/api/types'
 
 export const dramaService = {
@@ -65,5 +69,33 @@ export const dramaService = {
 
   async generateStoryboards(projectId: string, payload?: DramaStoryboardGeneratePayload) {
     return callApi('drama/generateStoryboards', (adapter) => adapter.generateDramaStoryboards(projectId, payload))
+  },
+
+  async listStoryboards(projectId: string, episodeNo?: number) {
+    return callApi('drama/listStoryboards', (adapter) => adapter.listDramaStoryboards(projectId, episodeNo))
+  },
+
+  async createStoryboard(projectId: string, payload: StoryboardCreatePayload) {
+    return callApi('drama/createStoryboard', (adapter) => adapter.createDramaStoryboard(projectId, payload))
+  },
+
+  async updateStoryboard(projectId: string, rowId: string, payload: StoryboardUpdatePayload) {
+    return callApi('drama/updateStoryboard', (adapter) => adapter.updateDramaStoryboard(projectId, rowId, payload))
+  },
+
+  async copyStoryboard(projectId: string, rowId: string) {
+    return callApi('drama/copyStoryboard', (adapter) => adapter.copyDramaStoryboard(projectId, rowId))
+  },
+
+  async deleteStoryboard(projectId: string, rowId: string) {
+    return callApi('drama/deleteStoryboard', (adapter) => adapter.deleteDramaStoryboard(projectId, rowId))
+  },
+
+  async generateStoryboardVideo(projectId: string, rowId: string, payload?: StoryboardVideoGeneratePayload) {
+    return callApi('drama/generateStoryboardVideo', (adapter) => adapter.generateStoryboardVideo(projectId, rowId, payload))
+  },
+
+  async batchGenerateStoryboardVideos(projectId: string, payload: StoryboardVideoBatchPayload) {
+    return callApi('drama/batchGenerateStoryboardVideos', (adapter) => adapter.batchGenerateStoryboardVideos(projectId, payload))
   }
 }

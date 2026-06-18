@@ -70,10 +70,25 @@ export interface DramaAnalysisRunState {
   stageStatuses: Record<string, string>
   stageProgresses: Record<string, number>
   coverStatus: string
+  coverErrorMessage: string
   startedAt: string
   updatedAt: string
   finishedAt: string
   errorMessage: string
+}
+
+export interface DramaStoryboardRunState {
+  status: string
+  totalEpisodes: number
+  currentEpisodeNo: number
+  episodeStatuses: Record<string, string>
+  episodeProgresses: Record<string, number>
+  generatedCounts: Record<string, number>
+  expectedCounts: Record<string, number>
+  model: string
+  style: string
+  errorMessage: string
+  updatedAt: string
 }
 
 export interface DramaAnalysis {
@@ -108,6 +123,7 @@ export interface DramaProjectDetail {
   sourceFileName: string
   analysis: DramaAnalysis
   analysisRun: DramaAnalysisRunState
+  storyboardRun: DramaStoryboardRunState
   storyboards: StoryboardRow[]
 }
 

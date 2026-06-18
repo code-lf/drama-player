@@ -1,6 +1,11 @@
 import type { AuthSession } from '~/entities/auth/types'
 import type { CanvasGraph } from '~/entities/canvas/types'
-import type { DramaProjectCard, DramaProjectDetail, DramaProjectPage, DramaRuntimeConfig } from '~/entities/drama/types'
+import type {
+  DramaProjectCard,
+  DramaProjectDetail,
+  DramaProjectPage,
+  DramaRuntimeConfig
+} from '~/entities/drama/types'
 import type { Project } from '~/entities/project/types'
 import type { StoryboardRow } from '~/entities/storyboard/types'
 
@@ -90,6 +95,49 @@ export interface DramaStoryboardGeneratePayload {
   resolution?: string
 }
 
+export interface StoryboardCreatePayload {
+  episodeNo?: number
+  afterSortIndex?: number | null
+}
+
+export interface StoryboardUpdatePayload {
+  sceneDescription?: string
+  roleName?: string
+  shotType?: string
+  actionDesc?: string
+  moodDesc?: string
+  soundFx?: string
+  dialogue?: string
+  storyboardPrompt?: string
+  cameraMotionPrompt?: string
+  roleKeys?: string[]
+  sceneKeys?: string[]
+  propKeys?: string[]
+  videoPrompt?: string
+  videoModel?: string
+  videoDurationSec?: number
+}
+
+export interface StoryboardVideoGeneratePayload {
+  model?: string
+  durationSec?: number
+  resolution?: string
+  referenceUrls?: string[]
+}
+
+export interface StoryboardVideoRunInfo {
+  storyboardRowId: string
+  runId: string
+  status: string
+}
+
+export interface StoryboardVideoBatchPayload {
+  episodeNo: number
+  model?: string
+  durationSec?: number
+  resolution?: string
+}
+
 export interface DramaDeleteResult {
   deletedIds: string[]
 }
@@ -119,4 +167,11 @@ export interface ApiAdapter {
   generateDramaSceneAssets(projectId: string, payload?: DramaAssetGeneratePayload): Promise<ApiResponse<DramaProjectDetail>>
   generateDramaPropAssets(projectId: string, payload?: DramaAssetGeneratePayload): Promise<ApiResponse<DramaProjectDetail>>
   generateDramaStoryboards(projectId: string, payload?: DramaStoryboardGeneratePayload): Promise<ApiResponse<DramaProjectDetail>>
+  listDramaStoryboards(projectId: string, episodeNo?: number): Promise<ApiResponse<{ rows: StoryboardRow[]; run: DramaProjectDetail['storyboardRun'] }>>
+  createDramaStoryboard(projectId: string, payload: StoryboardCreatePayload): Promise<ApiResponse<DramaProjectDetail>>
+  updateDramaStoryboard(projectId: string, rowId: string, payload: StoryboardUpdatePayload): Promise<ApiResponse<DramaProjectDetail>>
+  copyDramaStoryboard(projectId: string, rowId: string): Promise<ApiResponse<DramaProjectDetail>>
+  deleteDramaStoryboard(projectId: string, rowId: string): Promise<ApiResponse<DramaProjectDetail>>
+  generateStoryboardVideo(projectId: string, rowId: string, payload?: StoryboardVideoGeneratePayload): Promise<ApiResponse<StoryboardVideoRunInfo>>
+  batchGenerateStoryboardVideos(projectId: string, payload: StoryboardVideoBatchPayload): Promise<ApiResponse<StoryboardVideoRunInfo[]>>
 }
