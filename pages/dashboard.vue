@@ -646,132 +646,104 @@ onMounted(async () => {
 <template>
   <main class="min-h-screen bg-bg text-textMain">
     <div class="flex min-h-screen">
-      <aside class="relative flex w-[282px] flex-col border-r border-borderSoft/90 bg-panel/90 px-4 py-5 backdrop-blur-xl">
-        <div class="mb-8 flex items-center gap-3 px-3">
-          <div class="flex h-11 w-11 items-center justify-center rounded-[18px] border border-neon/25 bg-gradient-to-br from-neon/30 to-transparent">
-            <svg viewBox="0 0 24 24" class="h-5 w-5 text-neon" fill="none" stroke="currentColor" stroke-width="1.8">
+      <aside class="relative flex w-[282px] flex-col border-r border-borderSoft bg-panelSoft/30 px-5 py-6">
+        <div class="mb-10 flex items-center gap-3.5 px-2">
+          <div class="flex h-10 w-10 items-center justify-center rounded-[14px] bg-neon text-white shadow-[0_4px_12px_rgba(69,215,255,0.25)]">
+            <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M5 12c0-3.866 3.134-7 7-7 2.76 0 5 2.24 5 5 0 2.209-1.791 4-4 4H9a3 3 0 1 0 0 6h4" stroke-linecap="round" stroke-linejoin="round" />
             </svg>
           </div>
           <div>
-            <p class="text-lg font-semibold tracking-[0.08em]">Livliv</p>
-            <p class="text-xs tracking-[0.22em] text-textMuted">SHORT DRAMA CONSOLE</p>
+            <p class="text-base font-bold text-textMain tracking-tight">Livliv</p>
+            <p class="text-[10px] font-semibold tracking-widest text-textMuted uppercase mt-0.5">Short Drama</p>
           </div>
         </div>
 
-        <div class="mb-4 px-3">
-          <p class="text-[11px] uppercase tracking-[0.28em] text-textMuted">创作</p>
+        <div class="mb-3 px-2">
+          <p class="text-[11px] font-semibold uppercase tracking-wider text-textMuted/70">Workspace</p>
         </div>
 
-        <nav class="space-y-2">
+        <nav class="space-y-1">
           <NuxtLink
             to="/dashboard"
-            class="group flex w-full items-center gap-3 rounded-[20px] border px-4 py-4 text-left transition-all duration-200"
+            class="group flex w-full items-center gap-3.5 rounded-2xl px-3 py-3 text-left transition-all duration-200"
             :class="activeMenu === 'drama'
-              ? 'border-neon/30 bg-white/80 text-[#0f172a] shadow-[0_18px_38px_rgba(69,215,255,0.08)]'
-              : 'border-transparent bg-transparent text-textMuted hover:border-borderSoft hover:bg-panelSoft/70 hover:text-textMain'"
+              ? 'bg-panel text-neon shadow-sm ring-1 ring-borderSoft'
+              : 'text-textMuted hover:bg-panelSoft/80 hover:text-textMain'"
           >
-            <div
-              class="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border transition"
-              :class="activeMenu === 'drama' ? 'border-[#cfe0ff] bg-[#edf4ff] text-[#2463ff]' : 'border-borderSoft bg-panelSoft text-textMuted group-hover:text-textMain'"
-            >
-              <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.8">
-                <path d="M7 6h10M7 12h10M7 18h6" stroke-linecap="round" />
-              </svg>
-            </div>
-            <div>
-              <p class="text-[15px] font-semibold">文本创建短剧</p>
-            </div>
+            <svg viewBox="0 0 24 24" class="h-5 w-5 transition-transform group-hover:scale-110" :class="activeMenu === 'drama' ? 'text-neon' : 'text-textMuted group-hover:text-textMain'" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M7 6h10M7 12h10M7 18h6" stroke-linecap="round" />
+            </svg>
+            <p class="text-[14px] font-semibold">剧本创作</p>
           </NuxtLink>
 
           <NuxtLink
             to="/dashboard-product"
-            class="group flex w-full items-center gap-3 rounded-[20px] border px-4 py-4 text-left transition-all duration-200"
+            class="group flex w-full items-center gap-3.5 rounded-2xl px-3 py-3 text-left transition-all duration-200"
             :class="activeMenu === 'product'
-              ? 'border-neon/30 bg-white/80 text-[#0f172a] shadow-[0_18px_38px_rgba(69,215,255,0.08)]'
-              : 'border-transparent bg-transparent text-textMuted hover:border-borderSoft hover:bg-panelSoft/70 hover:text-textMain'"
+              ? 'bg-panel text-neon shadow-sm ring-1 ring-borderSoft'
+              : 'text-textMuted hover:bg-panelSoft/80 hover:text-textMain'"
           >
-            <div
-              class="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border transition"
-              :class="activeMenu === 'product' ? 'border-[#cfe0ff] bg-[#edf4ff] text-[#2463ff]' : 'border-borderSoft bg-panelSoft text-textMuted group-hover:text-textMain'"
-            >
-              <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.8">
-                <path d="M5 19h14M7 16l3-4 3 3 2-2 2 3" stroke-linecap="round" stroke-linejoin="round" />
-                <path d="M8 8h.01" stroke-linecap="round" stroke-linejoin="round" />
-                <rect x="4" y="5" width="16" height="12" rx="3" />
-              </svg>
-            </div>
-            <div>
-              <p class="text-[15px] font-semibold">商品图生成</p>
-            </div>
+            <svg viewBox="0 0 24 24" class="h-5 w-5 transition-transform group-hover:scale-110" :class="activeMenu === 'product' ? 'text-neon' : 'text-textMuted group-hover:text-textMain'" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M5 19h14M7 16l3-4 3 3 2-2 2 3" stroke-linecap="round" stroke-linejoin="round" />
+              <path d="M8 8h.01" stroke-linecap="round" stroke-linejoin="round" />
+              <rect x="4" y="5" width="16" height="12" rx="3" />
+            </svg>
+            <p class="text-[14px] font-semibold">商品图生成</p>
           </NuxtLink>
 
           <NuxtLink
             to="/dashboard-canvas"
-            class="group flex w-full items-center gap-3 rounded-[20px] border px-4 py-4 text-left transition-all duration-200"
+            class="group flex w-full items-center gap-3.5 rounded-2xl px-3 py-3 text-left transition-all duration-200"
             :class="activeMenu === 'canvas'
-              ? 'border-neon/30 bg-white/80 text-[#0f172a] shadow-[0_18px_38px_rgba(69,215,255,0.08)]'
-              : 'border-transparent bg-transparent text-textMuted hover:border-borderSoft hover:bg-panelSoft/70 hover:text-textMain'"
+              ? 'bg-panel text-neon shadow-sm ring-1 ring-borderSoft'
+              : 'text-textMuted hover:bg-panelSoft/80 hover:text-textMain'"
           >
-            <div
-              class="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border transition"
-              :class="activeMenu === 'canvas' ? 'border-[#cfe0ff] bg-[#edf4ff] text-[#2463ff]' : 'border-borderSoft bg-panelSoft text-textMuted group-hover:text-textMain'"
-            >
-              <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.8">
-                <path d="M5 12h14M12 5v14" stroke-linecap="round" />
-                <rect x="4" y="4" width="16" height="16" rx="3" />
-              </svg>
-            </div>
-            <div>
-              <p class="text-[15px] font-semibold">无限画布</p>
-              <p class="mt-1 text-xs text-textMuted">暂停使用</p>
+            <svg viewBox="0 0 24 24" class="h-5 w-5 transition-transform group-hover:scale-110" :class="activeMenu === 'canvas' ? 'text-neon' : 'text-textMuted group-hover:text-textMain'" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M5 12h14M12 5v14" stroke-linecap="round" />
+              <rect x="4" y="4" width="16" height="16" rx="3" />
+            </svg>
+            <div class="flex flex-1 items-center justify-between">
+              <p class="text-[14px] font-semibold">无限画布</p>
+              <span class="rounded-md bg-panelSoft px-1.5 py-0.5 text-[10px] font-medium text-textMuted">Beta</span>
             </div>
           </NuxtLink>
         </nav>
 
-        <div class="mt-8 px-3">
-          <p class="text-[11px] uppercase tracking-[0.28em] text-textMuted">我的</p>
+        <div class="mt-8 mb-3 px-2">
+          <p class="text-[11px] font-semibold uppercase tracking-wider text-textMuted/70">Manage</p>
         </div>
 
-        <div class="mt-3">
+        <nav class="space-y-1">
           <NuxtLink
             to="/dashboard-projects"
-            class="group flex w-full items-center gap-3 rounded-[18px] border px-3.5 py-3 text-left transition-all duration-200"
+            class="group flex w-full items-center gap-3.5 rounded-2xl px-3 py-3 text-left transition-all duration-200"
             :class="activeWorkspaceView === 'projects'
-              ? 'border-neon/35 bg-white/80 text-[#0f172a] shadow-[0_18px_38px_rgba(69,215,255,0.08)]'
-              : 'border-borderSoft bg-panelSoft/75 text-textMain hover:border-neon/45 hover:bg-panelSoft'"
+              ? 'bg-panel text-neon shadow-sm ring-1 ring-borderSoft'
+              : 'text-textMuted hover:bg-panelSoft/80 hover:text-textMain'"
           >
-            <div
-              class="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border transition"
-              :class="activeWorkspaceView === 'projects'
-                ? 'border-[#cfe0ff] bg-[#edf4ff] text-[#2463ff]'
-                : 'border-borderSoft bg-white/40 text-textMuted group-hover:border-neon/45 group-hover:text-neon'"
-            >
-              <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.8">
-                <path d="M4 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z" stroke-linecap="round" stroke-linejoin="round" />
-              </svg>
-            </div>
-
-            <p class="text-[14px] font-semibold">项目</p>
+            <svg viewBox="0 0 24 24" class="h-5 w-5 transition-transform group-hover:scale-110" :class="activeWorkspaceView === 'projects' ? 'text-neon' : 'text-textMuted group-hover:text-textMain'" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M4 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+            <p class="text-[14px] font-semibold">我的项目</p>
           </NuxtLink>
-        </div>
+        </nav>
 
-        <div class="mt-auto space-y-3 pt-8">
-          <button class="flex w-full items-center gap-3 rounded-[18px] border border-borderSoft bg-panelSoft/60 px-4 py-3 text-left transition hover:border-neon/50" @click="themeStore.toggleMode()">
-            <div class="flex h-9 w-9 items-center justify-center rounded-2xl border border-borderSoft bg-white/40">
-              <svg v-if="themeStore.mode === 'dark'" viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.8">
-                <path d="M12 3v2.5M12 18.5V21M4.93 4.93l1.77 1.77M17.3 17.3l1.77 1.77M3 12h2.5M18.5 12H21M4.93 19.07l1.77-1.77M17.3 6.7l1.77-1.77M12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z" stroke-linecap="round" />
-              </svg>
-              <svg v-else viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.8">
-                <path d="M20 15.5A8.5 8.5 0 1 1 8.5 4a7 7 0 1 0 11.5 11.5Z" stroke-linecap="round" stroke-linejoin="round" />
-              </svg>
-            </div>
-            <div>
-              <p class="text-sm font-semibold">{{ themeStore.mode === 'dark' ? '切换浅色主题' : '切换深色主题' }}</p>
-            </div>
+        <div class="mt-auto space-y-2 pt-8">
+          <button class="flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left text-textMuted transition hover:bg-panelSoft/80 hover:text-textMain" @click="themeStore.toggleMode()">
+            <svg v-if="themeStore.mode === 'dark'" viewBox="0 0 24 24" class="h-5 w-5 text-textMuted" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 3v2.5M12 18.5V21M4.93 4.93l1.77 1.77M17.3 17.3l1.77 1.77M3 12h2.5M18.5 12H21M4.93 19.07l1.77-1.77M17.3 6.7l1.77-1.77M12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z" stroke-linecap="round" />
+            </svg>
+            <svg v-else viewBox="0 0 24 24" class="h-5 w-5 text-textMuted" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M20 15.5A8.5 8.5 0 1 1 8.5 4a7 7 0 1 0 11.5 11.5Z" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+            <p class="text-[14px] font-semibold">{{ themeStore.mode === 'dark' ? '浅色模式' : '深色模式' }}</p>
           </button>
-          <NuxtLink to="/" class="block rounded-[18px] border border-borderSoft px-4 py-3 text-sm text-textMuted transition hover:border-neon/50 hover:text-textMain">
-            返回首页
+          <NuxtLink to="/" class="flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left text-textMuted transition hover:bg-panelSoft/80 hover:text-textMain">
+            <svg viewBox="0 0 24 24" class="h-5 w-5 text-textMuted" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M10 19l-7-7m0 0l7-7m-7 7h18" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+            <p class="text-[14px] font-semibold">返回首页</p>
           </NuxtLink>
         </div>
       </aside>
@@ -796,68 +768,64 @@ onMounted(async () => {
           </div>
 
           <div v-if="activeWorkspaceView === 'projects'" class="space-y-6">
-            <section class="w-full rounded-[28px] border border-borderSoft bg-panel p-5 shadow-panel">
-              <div class="mb-6 flex flex-wrap items-center justify-between gap-4">
+            <section class="w-full">
+              <div class="mb-8 flex flex-wrap items-center justify-between gap-4">
                 <div>
-                  <h2 class="text-2xl font-bold">项目列表</h2>
-                  <p class="mt-2 text-sm text-textMuted">{{ projectOverviewLabel }}</p>
+                  <h2 class="text-[28px] font-bold tracking-tight text-textMain">项目列表</h2>
+                  <p class="mt-2 text-[15px] text-textMuted">{{ projectOverviewLabel }}</p>
                 </div>
 
                 <div class="flex flex-wrap items-center gap-3">
                   <button
-                    class="rounded-full border border-borderSoft bg-white/80 px-5 py-3 text-sm font-semibold text-textMain transition hover:border-neon/45 hover:text-neon"
+                    class="rounded-full bg-panel px-5 py-2.5 text-[14px] font-semibold text-textMain shadow-sm ring-1 ring-borderSoft transition hover:bg-panelSoft hover:text-neon"
                     @click="toggleBatchSelectionMode"
                   >
                     {{ isBatchSelectingProjects ? '取消批量操作' : '批量操作' }}
                   </button>
                   <button
                     v-if="isBatchSelectingProjects"
-                    class="rounded-full border border-borderSoft bg-white/90 px-5 py-3 text-sm font-semibold text-textMain transition hover:border-neon/45 hover:text-neon"
+                    class="rounded-full bg-panel px-5 py-2.5 text-[14px] font-semibold text-textMain shadow-sm ring-1 ring-borderSoft transition hover:bg-panelSoft hover:text-neon"
                     @click="toggleSelectAllProjects"
                   >
                     {{ isAllCurrentPageSelected ? '取消全选' : '全选当前页' }}
                   </button>
                   <button
                     v-if="isBatchSelectingProjects"
-                    class="rounded-full border border-rose-500 bg-rose-500 px-5 py-3 text-sm font-semibold text-white shadow-[0_10px_24px_rgba(244,63,94,0.18)] transition hover:border-rose-600 hover:bg-rose-600 disabled:cursor-not-allowed disabled:border-rose-200 disabled:bg-rose-100 disabled:text-rose-300 disabled:shadow-none"
+                    class="rounded-full bg-red-500/90 px-5 py-2.5 text-[14px] font-semibold text-white shadow-sm transition hover:bg-red-500 disabled:cursor-not-allowed disabled:bg-red-500/50 disabled:text-white/70 disabled:shadow-none"
                     :disabled="!hasSelectedProjects || isDeletingProjects"
                     @click="askDeleteBatchProjects"
                   >
                     批量删除<span v-if="hasSelectedProjects">（{{ selectedProjectCount }}）</span>
                   </button>
                   <button
-                    class="rounded-full bg-gradient-to-r from-[#b9dcff] via-[#dbeafe] to-[#cbbdff] px-5 py-3 text-sm font-semibold text-slate-950 transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-60"
+                    class="flex items-center gap-2 rounded-full bg-neon px-5 py-2.5 text-[14px] font-semibold text-bg shadow-sm transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
                     :disabled="isCreatingWorkspaceProject"
                     @click="createWorkspaceProject"
                   >
-                    {{ isCreatingWorkspaceProject ? '创建中...' : '创建项目' }}
+                    <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14m-7-7h14" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                    {{ isCreatingWorkspaceProject ? '创建中...' : '新建项目' }}
                   </button>
                 </div>
               </div>
 
-              <div class="grid grid-cols-[repeat(auto-fill,minmax(250px,1fr))] gap-4">
+              <div class="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-5">
                 <button
-                  class="group overflow-hidden rounded-2xl border border-neon/35 bg-panelSoft transition hover:border-neon hover:shadow-[0_0_40px_rgba(72,214,255,0.22)]"
+                  class="group flex h-[280px] flex-col items-center justify-center overflow-hidden rounded-[24px] bg-panelSoft ring-1 ring-borderSoft transition-all hover:bg-neonSoft/10 hover:ring-neon/30 hover:shadow-neon"
                   type="button"
                   :disabled="isCreatingWorkspaceProject"
                   @click="createWorkspaceProject"
                 >
-                  <div class="flex h-[148px] items-center justify-center bg-gradient-to-br from-[#dff1ff] via-[#c9e2ff] to-[#cfc5ff] text-[#10213f]">
-                    <div class="text-center">
-                      <span class="mb-2 block text-4xl text-[#2454ff]/80">+</span>
-                      <span class="text-2xl font-semibold">开始创作</span>
-                    </div>
+                  <div class="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-panel shadow-sm ring-1 ring-borderSoft transition-transform group-hover:scale-110 group-hover:text-neon">
+                    <svg viewBox="0 0 24 24" class="h-8 w-8 text-textMuted group-hover:text-neon" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14m-7-7h14" stroke-linecap="round" stroke-linejoin="round"/></svg>
                   </div>
-                  <div class="space-y-1.5 p-4 text-left">
-                    <h4 class="line-clamp-1 text-lg font-semibold">创建新项目</h4>
-                    <p class="text-xs text-textMuted">进入短剧剧本页继续编辑</p>
-                  </div>
+                  <h4 class="text-[16px] font-bold text-textMain">创建新项目</h4>
+                  <p class="mt-2 text-[13px] text-textMuted">进入创作工作流界面</p>
                 </button>
 
                 <div
                   v-for="project in workspaceProjectCards"
                   :key="project.id"
-                  class="group relative overflow-hidden rounded-2xl border border-borderSoft bg-panelSoft text-left transition duration-300 hover:-translate-y-1 hover:border-neon/50"
+                  class="group relative h-[280px] overflow-hidden rounded-[24px] bg-panel ring-1 ring-borderSoft transition-all hover:-translate-y-1 hover:shadow-panel hover:ring-neon/30"
                   role="button"
                   tabindex="0"
                   @click="openDramaProject(project.id)"
@@ -866,95 +834,109 @@ onMounted(async () => {
                 >
                   <button
                     v-if="isBatchSelectingProjects"
-                    class="absolute left-3 top-3 z-20 flex h-7 w-7 items-center justify-center rounded-full border border-[#2454ff]/35 bg-white text-[#2454ff] shadow-md ring-1 ring-white/80"
+                    class="absolute left-4 top-4 z-20 flex h-7 w-7 items-center justify-center rounded-full border border-borderSoft bg-panel shadow-sm transition"
+                    :class="isProjectSelected(project.id) ? 'border-neon bg-neon text-bg' : 'text-transparent hover:border-neon'"
                     type="button"
                     @click.stop="toggleProjectSelection(project.id)"
                   >
-                    <svg v-if="isProjectSelected(project.id)" viewBox="0 0 20 20" class="h-4 w-4" fill="currentColor">
+                    <svg viewBox="0 0 20 20" class="h-4 w-4" fill="currentColor">
                       <path fill-rule="evenodd" d="M16.704 5.29a1 1 0 0 1 .006 1.414l-7.2 7.26a1 1 0 0 1-1.42 0l-3.8-3.83a1 1 0 1 1 1.42-1.408l3.09 3.116 6.49-6.544a1 1 0 0 1 1.414-.008Z" clip-rule="evenodd" />
                     </svg>
                   </button>
                   <button
                     v-else
-                    class="absolute right-3 top-3 z-20 flex h-8 w-8 items-center justify-center rounded-full border border-white/85 bg-white/95 text-[#475569] shadow-sm backdrop-blur transition opacity-0 pointer-events-none group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 hover:border-rose-300/70 hover:text-rose-400"
+                    class="absolute right-4 top-4 z-20 flex h-8 w-8 items-center justify-center rounded-full bg-panelSoft/90 text-textMuted opacity-0 shadow-sm backdrop-blur ring-1 ring-borderSoft transition hover:bg-rose-500/20 hover:text-rose-400 hover:ring-rose-500/40 group-hover:opacity-100"
                     type="button"
                     @click.stop="askDeleteSingleProject(project)"
                   >
-                    <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8">
+                    <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2">
                       <path d="M4 7h16M10 11v6M14 11v6M7 7l1 11a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2l1-11M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" stroke-linecap="round" stroke-linejoin="round" />
                     </svg>
                   </button>
-                  <div class="relative h-[164px] w-full overflow-hidden bg-[#edf4ff]">
+
+                  <div class="relative h-[160px] w-full overflow-hidden bg-panelSoft">
                     <UiFluidImage
                       :src="project.coverImageUrl"
                       :alt="project.title"
                       wrapper-class="h-full w-full"
-                      img-class="object-cover"
+                      img-class="object-cover transition-transform duration-500 group-hover:scale-105"
                       fallback-text=""
                       loading-label=""
                     />
+                    <div class="absolute inset-0 bg-gradient-to-t from-bg/60 to-transparent opacity-0 transition-opacity duration-300 group-hover:opacity-100"></div>
                   </div>
-                  <div class="space-y-2 p-4">
-                    <div class="flex items-center justify-between gap-3">
-                      <h4 class="min-w-0 flex-1 truncate text-[15px] font-bold">{{ project.title }}</h4>
-                      <span class="shrink-0 whitespace-nowrap rounded-full border border-borderSoft px-2.5 py-1 text-xs leading-none text-neon">{{ projectStatusLabel(project.status) }}</span>
+
+                  <div class="flex h-[120px] flex-col justify-between p-5">
+                    <div>
+                      <div class="flex items-center justify-between gap-3">
+                        <h4 class="min-w-0 flex-1 truncate text-[16px] font-bold text-textMain">{{ project.title }}</h4>
+                        <span class="flex h-5 items-center rounded-md bg-neonSoft/20 px-2 text-[11px] font-semibold text-neon ring-1 ring-neon/20">
+                          {{ projectStatusLabel(project.status) }}
+                        </span>
+                      </div>
+                      <div class="mt-2 flex flex-wrap items-center gap-1.5">
+                        <span class="rounded-md bg-panelSoft px-2 py-0.5 text-[11px] font-medium text-textMuted">
+                          {{ project.genre || '短剧' }}
+                        </span>
+                        <span
+                          v-for="tag in project.tags.slice(0, 2)"
+                          :key="`${project.id}-${tag}`"
+                          class="rounded-md bg-panelSoft/50 px-2 py-0.5 text-[11px] font-medium text-textMuted ring-1 ring-borderSoft"
+                        >
+                          {{ tag }}
+                        </span>
+                      </div>
                     </div>
-                    <div class="flex flex-wrap items-center gap-2">
-                      <span class="rounded-full border border-borderSoft bg-white/80 px-2.5 py-1 text-[11px] text-textMuted">
-                        {{ project.genre || '短剧项目' }}
-                      </span>
-                      <span
-                        v-for="tag in project.tags.slice(0, 2)"
-                        :key="`${project.id}-${tag}`"
-                        class="rounded-full border border-neon/20 bg-neon/5 px-2.5 py-1 text-[11px] text-neon"
-                      >
-                        {{ tag }}
-                      </span>
-                    </div>
-                    <p class="text-xs text-textMuted">创建于 {{ formatProjectDate(project.createdAt) }}</p>
+                    <p class="text-[12px] font-medium text-textMuted/70">{{ formatProjectDate(project.createdAt) }}</p>
                   </div>
                 </div>
               </div>
 
-              <div v-if="workspaceProjectCards.length === 0" class="mt-6 rounded-3xl border border-dashed border-borderSoft bg-panelSoft/60 px-6 py-10 text-center text-textMuted">
-                当前还没有项目，点击上面的创建卡片就可以开始。
+              <div v-if="workspaceProjectCards.length === 0" class="mt-8 flex flex-col items-center justify-center rounded-[32px] border-2 border-dashed border-borderSoft bg-panelSoft/50 py-20 text-center">
+                <div class="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-panel shadow-sm ring-1 ring-borderSoft">
+                  <svg viewBox="0 0 24 24" class="h-8 w-8 text-textMuted/50" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </div>
+                <h3 class="text-[18px] font-bold text-textMain">还没有项目</h3>
+                <p class="mt-2 text-[14px] text-textMuted">点击上方按钮创建你的第一个短剧项目吧</p>
               </div>
 
               <div
                 v-if="totalProjectPages > 1"
-                class="mt-6 flex flex-wrap items-center justify-between gap-4 rounded-[22px] border border-borderSoft bg-panelSoft/55 px-4 py-3"
+                class="mt-10 flex items-center justify-between border-t border-borderSoft pt-6"
               >
-                <p class="text-sm text-textMuted">
-                  当前显示第 {{ currentProjectPage }} 页，共 {{ totalProjectPages }} 页
+                <p class="text-[14px] font-medium text-textMuted">
+                  第 {{ currentProjectPage }} / {{ totalProjectPages }} 页
                 </p>
 
-                <div class="flex flex-wrap items-center gap-2">
+                <div class="flex items-center gap-2">
                   <button
-                    class="rounded-full border border-borderSoft bg-white/80 px-3 py-2 text-sm text-textMuted transition hover:border-neon/45 hover:text-neon disabled:cursor-not-allowed disabled:opacity-45"
+                    class="flex h-10 w-10 items-center justify-center rounded-full bg-panel text-textMuted shadow-sm ring-1 ring-borderSoft transition hover:bg-panelSoft hover:text-textMain disabled:cursor-not-allowed disabled:opacity-50"
                     :disabled="currentProjectPage === 1"
                     @click="goToProjectPage(currentProjectPage - 1)"
                   >
-                    上一页
+                    <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6" stroke-linecap="round" stroke-linejoin="round"/></svg>
                   </button>
 
-                  <button
-                    v-for="pageNo in pageNumberList"
-                    :key="`project-page-${pageNo}`"
-                    class="flex h-10 min-w-10 items-center justify-center rounded-full border px-3 text-sm font-semibold transition"
-                    :class="pageNo === currentProjectPage
-                      ? 'border-neon/45 bg-neon/10 text-neon'
-                      : 'border-borderSoft bg-white/80 text-textMuted hover:border-neon/45 hover:text-neon'"
-                    @click="goToProjectPage(pageNo)"
-                  >
-                    {{ pageNo }}
-                  </button>
+                  <div class="flex items-center gap-1 px-2">
+                    <button
+                      v-for="pageNo in pageNumberList"
+                      :key="`project-page-${pageNo}`"
+                      class="flex h-9 min-w-9 items-center justify-center rounded-lg text-[14px] font-semibold transition"
+                      :class="pageNo === currentProjectPage
+                        ? 'bg-textMain text-bg'
+                        : 'text-textMuted hover:bg-panelSoft hover:text-textMain'"
+                      @click="goToProjectPage(pageNo)"
+                    >
+                      {{ pageNo }}
+                    </button>
+                  </div>
 
                   <button
-                    class="rounded-full border border-borderSoft bg-white/80 px-3 py-2 text-sm text-textMuted transition hover:border-neon/45 hover:text-neon disabled:cursor-not-allowed disabled:opacity-45"
+                    class="flex h-10 w-10 items-center justify-center rounded-full bg-panel text-textMuted shadow-sm ring-1 ring-borderSoft transition hover:bg-panelSoft hover:text-textMain disabled:cursor-not-allowed disabled:opacity-50"
                     :disabled="currentProjectPage === totalProjectPages"
                     @click="goToProjectPage(currentProjectPage + 1)"
                   >
-                    下一页
+                    <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6" stroke-linecap="round" stroke-linejoin="round"/></svg>
                   </button>
                 </div>
               </div>
@@ -981,60 +963,70 @@ onMounted(async () => {
             </section>
           </div>
 
-          <div v-else class="space-y-6">
-            <section class="mx-auto max-w-[1080px] rounded-[30px] border border-borderSoft bg-panel px-6 py-6 shadow-panel">
-              <div class="mx-auto max-w-[840px]">
-                <div class="text-center">
-                  <p class="text-[34px] font-semibold leading-none tracking-[-0.03em]">
-                    从灵感出发，生成<span class="bg-gradient-to-r from-[#6c79ff] via-[#6e7cff] to-[#8b78ff] bg-clip-text font-bold text-transparent">短剧方案</span>
-                  </p>
-                </div>
+          <div v-else class="space-y-8">
+            <section class="mx-auto max-w-[1080px]">
+              <div class="relative overflow-hidden rounded-[32px] bg-panel px-8 py-12 shadow-panel ring-1 ring-borderSoft transition-all">
+                <!-- 纯净的高级背景光晕 -->
+                <div class="pointer-events-none absolute -right-20 -top-20 h-[300px] w-[300px] rounded-full bg-gradient-to-br from-neonSoft/40 to-neonSoft/20 blur-[80px]"></div>
+                <div class="pointer-events-none absolute -bottom-20 -left-20 h-[300px] w-[300px] rounded-full bg-gradient-to-tr from-neonSoft/40 to-neonSoft/20 blur-[80px]"></div>
 
-                <div
-                  class="mt-8 rounded-[28px] border bg-gradient-to-b from-white/[0.05] to-transparent px-7 py-6 shadow-[0_20px_60px_rgba(92,114,255,0.08)] transition"
-                  :class="isDraggingFile ? 'border-neon/55 bg-neon/5' : 'border-borderSoft'"
-                  @dragenter.prevent="isDraggingFile = true"
-                  @dragover.prevent="isDraggingFile = true"
-                  @dragleave.prevent="isDraggingFile = false"
-                  @drop="handleDroppedFile"
-                >
-                  <UiBaseTextarea
-                    v-model="scriptDraft"
-                    :placeholder="isDraggingFile ? '松开鼠标即可导入 TXT 剧本' : '写下你想讲的故事、场景或角色设定，也可以把 TXT 文件直接拖进这里。'"
-                    frame="plain"
-                    full
-                    size="lg"
-                  />
-                </div>
+                <div class="relative z-10 mx-auto max-w-[840px]">
+                  <div class="text-center">
+                    <h2 class="text-[38px] font-bold tracking-tight text-textMain">
+                      从灵感出发，生成
+                      <span class="bg-gradient-to-r from-neon to-[#7a88ff] bg-clip-text text-transparent">短剧方案</span>
+                    </h2>
+                    <p class="mt-3 text-[15px] text-textMuted">输入剧情大纲或直接拖拽脚本文件，AI 将自动解析并生成结构化分镜。</p>
+                  </div>
 
-                <div class="mt-4 rounded-[22px] border border-borderSoft bg-panelSoft/70 px-4 py-3">
-                  <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                    <div class="flex flex-wrap items-center gap-2">
-                      <button class="rounded-xl border border-neon/35 bg-neon/12 px-3 py-1.5 text-sm font-semibold text-neon">Agent模式</button>
-                      <button class="rounded-xl border border-borderSoft bg-white/55 px-3 py-1.5 text-sm text-textMain">人工模式</button>
+                  <div
+                    class="group relative mt-10 overflow-hidden rounded-[24px] bg-panelSoft p-1.5 ring-1 ring-borderSoft transition-all duration-300"
+                    :class="isDraggingFile ? 'bg-neonSoft/20 ring-neon/40' : 'hover:bg-panelSoft/80 hover:ring-borderSoft/80'"
+                    @dragenter.prevent="isDraggingFile = true"
+                    @dragover.prevent="isDraggingFile = true"
+                    @dragleave.prevent="isDraggingFile = false"
+                    @drop="handleDroppedFile"
+                  >
+                    <div class="rounded-[20px] bg-panel px-6 py-5 shadow-sm ring-1 ring-borderSoft">
+                      <UiBaseTextarea
+                        v-model="scriptDraft"
+                        :placeholder="isDraggingFile ? '松开鼠标即可导入 TXT 剧本' : '写下你想讲的故事、场景或角色设定...'"
+                        frame="plain"
+                        full
+                        size="lg"
+                        class="min-h-[160px] resize-none text-[15px] leading-relaxed text-textMain placeholder:text-textMuted/60 bg-transparent focus:ring-0 focus:outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  <div class="mt-6 flex flex-col gap-4 rounded-[20px] bg-panel p-4 shadow-sm ring-1 ring-borderSoft lg:flex-row lg:items-center lg:justify-between">
+                    <div class="flex items-center gap-2 rounded-xl bg-panelSoft p-1">
+                      <button class="rounded-lg bg-panel px-4 py-1.5 text-sm font-semibold text-textMain shadow-sm ring-1 ring-borderSoft">Agent模式</button>
+                      <button class="rounded-lg px-4 py-1.5 text-sm font-medium text-textMuted transition-colors hover:text-textMain">人工模式</button>
                     </div>
 
-                    <div class="flex flex-wrap items-center gap-2 lg:justify-end">
+                    <div class="flex flex-wrap items-center gap-3 lg:justify-end">
                       <UiBaseSelect
                         v-model="selectedTextModel"
                         :options="textModelOptions"
                         placeholder="文本模型"
                         size="sm"
-                        class="min-w-[154px]"
+                        class="min-w-[140px]"
                       />
+                      <div class="h-4 w-px bg-borderSoft"></div>
                       <UiBaseSelect
                         v-model="selectedAspectRatio"
                         :options="aspectRatioOptions"
                         placeholder="比例"
                         size="sm"
-                        class="min-w-[96px]"
+                        class="min-w-[90px]"
                       />
                       <UiBaseSelect
                         v-model="selectedResolution"
                         :options="resolutionOptions"
                         placeholder="分辨率"
                         size="sm"
-                        class="min-w-[110px]"
+                        class="min-w-[100px]"
                       />
                       <UiBaseSelect
                         v-model="selectedVisualStyle"
@@ -1042,33 +1034,45 @@ onMounted(async () => {
                         placeholder="风格"
                         size="sm"
                         align="right"
-                        class="min-w-[138px]"
+                        class="min-w-[120px]"
                       />
                     </div>
                   </div>
 
-                  <div v-if="selectedVisualStyle === '自定义风格'" class="mt-3">
+                  <div v-if="selectedVisualStyle === '自定义风格'" class="mt-4">
                     <UiBaseInput
                       v-model="customVisualStyle"
                       placeholder="输入自定义风格，例如：电影感写实、霓虹都市、古风水墨"
                       full
+                      class="rounded-xl"
                     />
                   </div>
 
-                  <div class="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-textMuted">
-                    <span>{{ scriptFileName ? `已载入：${scriptFileName}` : stageLabel }}</span>
-                    <span>支持 txt 拖拽导入，后续可继续补 doc / docx / pdf</span>
+                  <div class="mt-5 flex flex-wrap items-center justify-between gap-2 px-2 text-[13px] text-textMuted">
+                    <span class="flex items-center gap-2">
+                      <span class="relative flex h-2 w-2">
+                        <span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-neon/80 opacity-75"></span>
+                        <span class="relative inline-flex h-2 w-2 rounded-full bg-neon"></span>
+                      </span>
+                      {{ scriptFileName ? `已载入：${scriptFileName}` : stageLabel }}
+                    </span>
+                    <span class="flex items-center gap-1.5">
+                      <svg viewBox="0 0 24 24" class="h-4 w-4 opacity-70" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                      支持 txt 拖拽导入
+                    </span>
                   </div>
-                </div>
 
-                <div class="mt-7 flex justify-center">
-                  <button
-                    class="min-w-[220px] rounded-full bg-gradient-to-r from-[#8dc2ff] to-[#8b7dff] px-8 py-4 text-base font-semibold text-slate-950 transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
-                    :disabled="isBusy || !scriptDraft.trim()"
-                    @click="ingestAndAnalyze"
-                  >
-                    {{ busyKey === 'ingest' || busyKey === 'analyze' ? '解析中...' : '创建短剧项目' }}
-                  </button>
+                  <div class="mt-10 flex justify-center">
+                    <button
+                      class="group relative inline-flex min-w-[200px] items-center justify-center gap-2 overflow-hidden rounded-full bg-textMain px-8 py-3.5 text-[15px] font-semibold text-bg shadow-md transition-all hover:brightness-110 hover:shadow-neon disabled:cursor-not-allowed disabled:opacity-50"
+                      :disabled="isBusy || !scriptDraft.trim()"
+                      @click="ingestAndAnalyze"
+                    >
+                      <svg v-if="busyKey === 'ingest' || busyKey === 'analyze'" class="h-4 w-4 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                      <svg v-else class="h-4 w-4 transition-transform group-hover:translate-x-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                      <span>{{ busyKey === 'ingest' || busyKey === 'analyze' ? '解析中...' : '开始创建' }}</span>
+                    </button>
+                  </div>
                 </div>
               </div>
             </section>
