@@ -868,7 +868,7 @@ function mapStoryboardRowFromEvent(row: DramaStoryboardEventPayload['storyboards
     propKeys: row.prop_keys || [],
     videoPrompt: row.video_prompt || '',
     videoModel: row.video_model || '',
-    videoDurationSec: Number(row.video_duration_sec || 5),
+    videoDurationSec: Number(row.video_duration_sec || row.duration_sec || 12),
     videoStatus: row.video_status || 'idle',
     videoProgress: Number(row.video_progress || 0),
     videoTaskId: row.video_task_id || '',
@@ -1337,13 +1337,18 @@ function storyboardEpisodeStatusLabel(status: string): string {
 
 function composeStoryboardVideoPrompt(row: StoryboardRow): string {
   const shotLabel = row.shotType || '中景'
-  const duration = Number(row.videoDurationSec || row.durationSec || 5)
+  const duration = Number(row.videoDurationSec || row.durationSec || 12)
   const roleText = row.roleKeys.map((item) => roleNameByKey(item)).join('、') || row.roleName || '无角色'
   const sceneText = row.sceneKeys.map((item) => sceneNameByKey(item)).join('、') || '未指定场景'
   const propText = row.propKeys.map((item) => propNameByKey(item)).join('、')
   const actionText = row.actionDesc || row.sceneDescription || '按分镜描述执行'
   const dialogueText = row.dialogue ? `对白：${row.dialogue}` : ''
   const propLine = propText ? `道具：${propText}` : ''
+
+  if (actionText.includes('镜头1')) {
+    return `分镜场景设定在: ${sceneText}\n分镜具体动作描述: ${actionText}${dialogueText ? `\n${dialogueText}` : ''}${propLine ? `\n${propLine}` : ''}`.trim()
+  }
+
   return `镜头1 [0-${duration}秒] ${shotLabel}：角色 ${roleText}，场景 ${sceneText}。${actionText}。${dialogueText}${propLine ? ` ${propLine}。` : ''}`.trim()
 }
 
@@ -1470,7 +1475,7 @@ async function generateSingleStoryboardVideo(row: StoryboardRow): Promise<void> 
   if (!projectDetail.value) return
   const payload: StoryboardVideoGeneratePayload = {
     model: row.videoModel || selectedVideoModel.value,
-    durationSec: row.videoDurationSec || 5,
+    durationSec: row.videoDurationSec || 12,
     resolution: selectedResolution.value
   }
   await runPageAction(
@@ -1488,7 +1493,7 @@ async function batchGenerateCurrentEpisodeVideos(): Promise<void> {
     () => dramaService.batchGenerateStoryboardVideos(projectDetail.value!.projectId, {
       episodeNo: selectedEpisodeNo.value,
       model: selectedVideoModel.value,
-      durationSec: 5,
+      durationSec: 12,
       resolution: selectedResolution.value
     }),
     `第 ${selectedEpisodeNo.value} 集可生成分镜已批量入队。`
@@ -1516,8 +1521,8 @@ function storyboardVideoStatusLabel(row: StoryboardRow): string {
   if (row.videoStatus === 'success') return '视频已生成'
   if (row.videoStatus === 'failed') return row.videoErrorMessage || '视频生成失败'
   if (row.videoStatus === 'running') return `视频生成中 ${row.videoProgress || 0}%`
-  if (row.videoStatus === 'queued') return '视频任务排队中'
-  return '待生成视频'
+  if (row.videoStatus === 'queued') return '视频排队中'
+  return '未生成'
 }
 
 function storyboardVideoStatusToneClass(status: string): string {
@@ -1927,7 +1932,7 @@ onBeforeUnmount(() => {
       </div>
     </header>
 
-    <section class="mx-auto max-w-[1480px] px-5 py-6 pb-28">
+    <section class="mx-auto w-full px-4 py-6 pb-28">
       <div v-if="errorMessage" class="mb-4 rounded-2xl border border-[#fecaca] bg-[#fff1f2] px-4 py-3 text-sm text-[#b91c1c]">
         {{ errorMessage }}
       </div>
@@ -2861,6 +2866,7 @@ onBeforeUnmount(() => {
                           class="flex h-[260px] flex-col items-center justify-center rounded-[22px] bg-[#111827] px-6 text-center text-white/72"
                         >
                           <div
+                            v-if="row.videoStatus !== 'idle'"
                             class="flex h-14 w-14 items-center justify-center rounded-full border text-base font-semibold"
                             :class="row.videoStatus === 'failed'
                               ? 'border-[#fecaca] bg-[#7f1d1d]/35 text-[#fecaca]'
@@ -2872,7 +2878,7 @@ onBeforeUnmount(() => {
                           >
                             {{ row.videoStatus === 'failed' ? '!' : `${row.videoProgress || 0}%` }}
                           </div>
-                          <p class="mt-4 text-lg font-semibold text-white">{{ storyboardVideoStatusLabel(row) }}</p>
+                          <p class="text-lg font-semibold text-white" :class="row.videoStatus !== 'idle' ? 'mt-4' : ''">{{ storyboardVideoStatusLabel(row) }}</p>
                           <p v-if="row.videoErrorMessage" class="mt-3 text-sm leading-7 text-[#fecaca]">
                             {{ row.videoErrorMessage }}
                           </p>
@@ -2881,7 +2887,8 @@ onBeforeUnmount(() => {
 
                       <div class="mt-5 rounded-[20px] border border-[#edf1f7] bg-[#fafcff] p-4 text-sm text-[#475569]">
                         <p>分镜策划状态：{{ storyboardGenerationStatusLabel(row) }}</p>
-                        <p class="mt-2">视频进度：{{ row.videoProgress || 0 }}%</p>
+                        <p class="mt-2" v-if="row.videoStatus !== 'idle'">视频进度：{{ row.videoProgress || 0 }}%</p>
+                        <p class="mt-2" v-else>视频进度：未生成</p>
                         <p class="mt-2">使用模型：{{ row.videoModel || selectedVideoModel || '未设置' }}</p>
                       </div>
                     </section>
