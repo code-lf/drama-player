@@ -104,7 +104,7 @@
         "../server/*"
       ],
       "#app-manifest": [
-        "./manifest/meta/dev.json"
+        "./manifest/meta/dev"
       ],
       "#app": [
         "../node_modules/.pnpm/nuxt@3.21.6_@parcel+watcher_54b562c7d7dfe1010574b423f3a829cb/node_modules/nuxt/dist/app"

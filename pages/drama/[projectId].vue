@@ -940,7 +940,8 @@ async function connectAnalysisEventStream(): Promise<void> {
   if (!import.meta.client || !currentProjectId.value) return
   if (!shouldTrackAnalysisStream(projectDetail.value)) return
 
-  closeAnalysisEventStream()
+  if (analysisEventSource) return
+
   const basePath = `${runtime.public.apiBase}/drama/projects/${currentProjectId.value}/analysis/events`
   const eventSource = new EventSource(normalizeStreamUrl(basePath))
   analysisEventSource = eventSource
@@ -983,7 +984,8 @@ async function connectStoryboardEventStream(): Promise<void> {
   if (!import.meta.client || !currentProjectId.value) return
   if (!shouldTrackStoryboardStream(projectDetail.value)) return
 
-  closeStoryboardEventStream()
+  if (storyboardEventSource) return
+
   const basePath = `${runtime.public.apiBase}/drama/projects/${currentProjectId.value}/storyboards/events`
   const eventSource = new EventSource(normalizeStreamUrl(basePath))
   storyboardEventSource = eventSource

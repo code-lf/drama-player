@@ -4,7 +4,6 @@ defineOptions({
 })
 
 interface Props {
-  modelValue?: string
   label?: string
   placeholder?: string
   full?: boolean
@@ -12,28 +11,18 @@ interface Props {
 }
 
 const props = withDefaults(defineProps<Props>(), {
-  modelValue: '',
   label: '',
   placeholder: '',
   full: false,
   tone: 'pill'
 })
 
-const emit = defineEmits<{
-  'update:modelValue': [value: string]
-}>()
-
-const model = computed({
-  get: () => props.modelValue,
-  set: (value: string) => emit('update:modelValue', value)
-})
+const model = defineModel<string>({ default: '' })
 
 const containerClassName = computed(() => {
-  // 输入框统一走组件外壳，后续不同页面不再直接拼裸 input 样式。
   if (props.tone === 'panel') {
     return 'rounded-2xl border border-borderSoft bg-panelSoft px-4 py-3 transition focus-within:border-neon/55 focus-within:shadow-[0_0_0_1px_rgba(69,215,255,0.18)]'
   }
-
   return 'rounded-full border border-borderSoft bg-white/40 px-4 py-2.5 backdrop-blur-sm transition focus-within:border-neon/55 focus-within:shadow-[0_0_0_1px_rgba(69,215,255,0.18)]'
 })
 </script>
