@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { nextTick, onBeforeUnmount, onMounted, ref, watch, computed } from 'vue'
+
 export interface BaseSelectOption {
   label: string
   value: string
@@ -38,7 +40,37 @@ const emit = defineEmits<{
 }>()
 
 const rootRef = ref<HTMLElement | null>(null)
+const menuRef = ref<HTMLElement | null>(null)
+const menuPlacement = ref<'bottom' | 'top'>('bottom')
 const isOpen = ref(false)
+
+watch(isOpen, async (newVal) => {
+  if (!newVal) return
+  await nextTick()
+  calculatePlacement()
+})
+
+function calculatePlacement() {
+  if (!rootRef.value) return
+
+  const triggerRect = rootRef.value.getBoundingClientRect()
+  const menuHeight = Math.min(menuRef.value?.getBoundingClientRect().height || 320, 320)
+  const gap = 10
+  const spaceBelow = window.innerHeight - triggerRect.bottom
+  const spaceAbove = triggerRect.top
+
+  if (spaceBelow < menuHeight + gap && spaceAbove > spaceBelow) {
+    menuPlacement.value = 'top'
+    return
+  }
+
+  menuPlacement.value = 'bottom'
+}
+
+function handleViewportChange(): void {
+  if (!isOpen.value) return
+  calculatePlacement()
+}
 
 const selectedOption = computed(() => {
   return props.options.find((option) => option.value === props.modelValue)
@@ -71,14 +103,14 @@ const triggerClassName = computed(() => {
   if (props.size === 'sm') {
     return [
       'min-h-[40px] rounded-[14px] px-3 py-2',
-      'border border-borderSoft bg-white/40 backdrop-blur-sm transition-all duration-200',
+      'border border-borderSoft bg-panelSoft/80 backdrop-blur-sm transition-all duration-200',
       isOpen.value ? 'border-neon/55 shadow-[0_0_0_1px_rgba(69,215,255,0.18)]' : 'hover:border-neon/35'
     ]
   }
 
   return [
     'min-h-[48px] rounded-full px-4 py-2.5',
-    'border border-borderSoft bg-white/40 backdrop-blur-sm transition-all duration-200',
+    'border border-borderSoft bg-panelSoft/80 backdrop-blur-sm transition-all duration-200',
     isOpen.value ? 'border-neon/55 shadow-[0_0_0_1px_rgba(69,215,255,0.18)]' : 'hover:border-neon/35'
   ]
 })
@@ -114,11 +146,15 @@ onMounted(() => {
   // 使用全局事件关闭浮层，解决点击外部区域后下拉无法收起的问题。
   window.addEventListener('pointerdown', handlePointerDown)
   window.addEventListener('keydown', handleKeyboard)
+  window.addEventListener('resize', handleViewportChange)
+  window.addEventListener('scroll', handleViewportChange, true)
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('pointerdown', handlePointerDown)
   window.removeEventListener('keydown', handleKeyboard)
+  window.removeEventListener('resize', handleViewportChange)
+  window.removeEventListener('scroll', handleViewportChange, true)
 })
 </script>
 
@@ -179,8 +215,12 @@ onBeforeUnmount(() => {
     >
       <div
         v-if="isOpen"
-        class="absolute top-[calc(100%+10px)] z-[160] min-w-full overflow-hidden rounded-3xl border border-borderSoft bg-panel/95 p-2 shadow-[0_28px_64px_rgba(0,0,0,0.32)] backdrop-blur-xl"
-        :class="align === 'right' ? 'right-0' : 'left-0'"
+        ref="menuRef"
+        class="absolute z-[160] min-w-full overflow-hidden rounded-3xl border border-borderSoft bg-panel/95 p-2 shadow-[0_28px_64px_rgba(0,0,0,0.32)] backdrop-blur-xl"
+        :class="[
+          align === 'right' ? 'right-0' : 'left-0',
+          menuPlacement === 'top' ? 'bottom-[calc(100%+10px)]' : 'top-[calc(100%+10px)]'
+        ]"
       >
         <div v-if="options.length === 0" class="px-3 py-5 text-center text-sm text-textMuted">
           {{ emptyText }}
@@ -195,7 +235,7 @@ onBeforeUnmount(() => {
             :class="[
               option.value === modelValue
                 ? 'bg-neon/12 text-textMain shadow-[inset_0_0_0_1px_rgba(69,215,255,0.18)]'
-                : 'text-textMuted hover:bg-white/6 hover:text-textMain',
+                : 'text-textMuted hover:bg-panelSoft/80 hover:text-textMain',
               option.disabled ? 'cursor-not-allowed opacity-45' : ''
             ]"
             :disabled="option.disabled"
@@ -211,7 +251,7 @@ onBeforeUnmount(() => {
                 <span class="truncate text-sm font-semibold">{{ option.label }}</span>
                 <span
                   v-if="option.badge"
-                  class="rounded-full border border-borderSoft/80 bg-white/5 px-2 py-0.5 text-[10px] text-textMuted"
+                  class="rounded-full border border-borderSoft/80 bg-panelSoft px-2 py-0.5 text-[10px] text-textMuted"
                 >
                   {{ option.badge }}
                 </span>

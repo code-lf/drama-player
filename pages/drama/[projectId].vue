@@ -11,9 +11,13 @@ import type {
 import type { StoryboardRow } from '~/entities/storyboard/types'
 import type {
   DramaAnalyzePayload,
+  DramaPropUpdatePayload,
   DramaRoleCreatePayload,
+  DramaRoleUpdatePayload,
+  DramaSceneUpdatePayload,
   StoryboardUpdatePayload,
   StoryboardVideoGeneratePayload,
+  StoryboardVideoPromptGeneratePayload,
   WorkflowRunInfo
 } from '~/shared/api/types'
 import { dramaService } from '~/shared/api/services/dramaService'
@@ -27,6 +31,15 @@ type PageOption = {
   value: string
   description?: string
   preview?: '16:9' | '4:3' | '3:4' | '9:16' | '21:9'
+}
+type SettingAssetType = 'role' | 'scene' | 'prop'
+type SettingEditorDraft = {
+  type: SettingAssetType
+  key: string
+  title: string
+  subtitle: string
+  description: string
+  prompt: string
 }
 type DramaAnalysisEventPayload = {
   event: string
@@ -128,6 +141,11 @@ const fallbackTextModelCatalog: PageOption[] = [
   { label: 'qwen-max', value: 'qwen-max' }
 ]
 const fallbackResolutionCatalog = ['360p', '540p', '720p', '1080p']
+const alibabaReferenceVideoModelCatalog = ['wan2.7-r2v', 'wan2.6-r2v-flash', 'wan2.6-r2v']
+const storyboardVideoAudioModeOptions: PageOption[] = [
+  { label: '有声', value: 'sound', description: '输出自带音频的视频' },
+  { label: '无声', value: 'silent', description: '输出无声视频，适合低成本联调' }
+]
 const fallbackAspectRatioCatalog: PageOption[] = [
   { label: '16:9', value: '16:9', preview: '16:9' },
   { label: '4:3', value: '4:3', preview: '4:3' },
@@ -235,6 +253,16 @@ const roleForm = ref<DramaRoleCreatePayload>({
   prompt: '',
   description: ''
 })
+const settingEditorVisible = ref(false)
+const settingEditorDraft = ref<SettingEditorDraft | null>(null)
+const assetUploadPreviewMap = ref<Record<string, { url: string; fileName: string }>>({})
+const storyboardKeyActionMenu = ref('')
+// 记录当前哪一条分镜正在调用后端重生成视频提示词，给用户明确的局部 loading 反馈。
+const regeneratingStoryboardPromptRowId = ref('')
+// 记录当前哪一条分镜正在提交视频任务，避免“点了没反应”的错觉。
+const submittingStoryboardVideoRowId = ref('')
+// 按分镜记录“有声/无声”选择，仅 flash 模型允许切成无声。
+const storyboardVideoAudioModeMap = ref<Record<string, 'sound' | 'silent'>>({})
 let workflowPollTimer: ReturnType<typeof setTimeout> | null = null
 let analysisEventSource: EventSource | null = null
 let storyboardEventSource: EventSource | null = null
@@ -344,7 +372,7 @@ const videoModelOptions = computed<PageOption[]>(() => {
   }))
 })
 const resolutionOptions = computed<PageOption[]>(() => {
-  const values = runtimeConfig.value?.videoResolutions?.length ? runtimeConfig.value.videoResolutions : fallbackResolutionCatalog
+  const values = getSupportedVideoResolutions(selectedVideoModel.value || runtimeConfig.value?.defaults.video_model || '')
   return values.map((item) => ({ label: item, value: item }))
 })
 const aspectRatioOptions = computed<PageOption[]>(() => fallbackAspectRatioCatalog)
@@ -366,7 +394,8 @@ const sceneCountSummary = computed(() => {
   const pendingKeySet = new Set(pendingSceneKeys.value)
   const completed = scenes.filter((scene) => Boolean(scene.asset) && !pendingKeySet.has(scene.key)).length
   const generating = scenes.filter((scene) => pendingKeySet.has(scene.key)).length
-  return { total, completed, generating }
+  const failed = Math.max(total - completed - generating, 0)
+  return { total, completed, generating, failed }
 })
 const propCountSummary = computed(() => {
   const props = projectDetail.value?.analysis.props || []
@@ -374,8 +403,14 @@ const propCountSummary = computed(() => {
   const pendingKeySet = new Set(pendingPropKeys.value)
   const completed = props.filter((prop) => Boolean(prop.asset) && !pendingKeySet.has(prop.key)).length
   const generating = props.filter((prop) => pendingKeySet.has(prop.key)).length
-  return { total, completed, generating }
+  const failed = Math.max(total - completed - generating, 0)
+  return { total, completed, generating, failed }
 })
+const settingTabStats = computed(() => ({
+  roles: roleCountSummary.value,
+  scenes: sceneCountSummary.value,
+  props: propCountSummary.value
+}))
 const areSettingsReady = computed(() => hasRoleAssets.value && hasSceneAssets.value && hasPropAssets.value)
 const scriptProgressItems = computed(() => {
   return scriptProgressStages.map((stage) => {
@@ -512,7 +547,8 @@ const refreshCurrentSettingButtonLabel = computed(() => {
   return busyKey.value === 'props' ? '刷新中...' : '刷新道具'
 })
 const selectedStoryboardVideoDurationOptions = computed(() => {
-  return Array.from({ length: 14 }).map((_, index) => {
+  const maxDuration = maxStoryboardVideoDuration(selectedVideoModel.value || runtimeConfig.value?.defaults.video_model || '')
+  return Array.from({ length: maxDuration - 1 }).map((_, index) => {
     const seconds = index + 2
     return {
       label: `${seconds}s`,
@@ -574,7 +610,10 @@ function applyRuntimeDefaults(config: DramaRuntimeConfig): void {
   selectedImageModel.value = getQueryValue('imageModel') || config.defaults.image_model || config.imageModels[0]?.model || ''
   selectedVideoProvider.value = (getQueryValue('videoProvider') as 'alibaba' | 'bytedance') || (config.defaults.video_provider as 'alibaba' | 'bytedance') || 'alibaba'
   selectedVideoModel.value = getQueryValue('videoModel') || config.defaults.video_model || config.videoModels[0]?.model || ''
-  selectedResolution.value = getQueryValue('resolution') || config.defaults.video_resolution || config.videoResolutions[0] || fallbackResolutionCatalog[0]
+  selectedResolution.value = normalizeStoryboardVideoResolution(
+    getQueryValue('resolution') || config.defaults.video_resolution || config.videoResolutions[0] || fallbackResolutionCatalog[0],
+    selectedVideoModel.value,
+  )
   selectedAspectRatio.value = getQueryValue('aspectRatio') || fallbackAspectRatioCatalog[0].value
   autoGenerateStoryboardOnEnterStoryboard.value = (config.defaults.auto_generate_storyboard_on_enter_storyboard || 'true') === 'true'
   autoGenerateVideoOnEnterVideo.value = (config.defaults.auto_generate_video_on_enter_video || 'false') === 'true'
@@ -595,7 +634,7 @@ function syncSelectionsFromAnalysis(project: DramaProjectDetail): void {
     selectedAspectRatio.value = displayMeta.aspectRatio
   }
   if (displayMeta.resolution) {
-    selectedResolution.value = displayMeta.resolution
+    selectedResolution.value = normalizeStoryboardVideoResolution(displayMeta.resolution, selectedVideoModel.value)
   }
   if (displayMeta.style) {
     if (visualStyleCatalog.includes(displayMeta.style as typeof visualStyleCatalog[number])) {
@@ -1341,22 +1380,221 @@ function composeStoryboardVideoPrompt(row: StoryboardRow): string {
   const roleText = row.roleKeys.map((item) => roleNameByKey(item)).join('、') || row.roleName || '无角色'
   const sceneText = row.sceneKeys.map((item) => sceneNameByKey(item)).join('、') || '未指定场景'
   const propText = row.propKeys.map((item) => propNameByKey(item)).join('、')
+  const sceneDescription = row.sceneDescription || sceneText
   const actionText = row.actionDesc || row.sceneDescription || '按分镜描述执行'
-  const dialogueText = row.dialogue ? `对白：${row.dialogue}` : ''
-  const propLine = propText ? `道具：${propText}` : ''
+  const extraSentence = [row.dialogue ? `通过表演传达对白情绪：${row.dialogue}` : '', propText ? `关键道具保持一致：${propText}` : '']
+    .filter(Boolean)
+    .join('，')
 
   if (actionText.includes('镜头1')) {
-    return `分镜场景设定在: ${sceneText}\n分镜具体动作描述: ${actionText}${dialogueText ? `\n${dialogueText}` : ''}${propLine ? `\n${propLine}` : ''}`.trim()
+    return normalizeStoryboardPromptToRanges(mergeSceneContextIntoPrompt(actionText, sceneDescription, propText), duration)
   }
 
-  return `镜头1 [0-${duration}秒] ${shotLabel}：角色 ${roleText}，场景 ${sceneText}。${actionText}。${dialogueText}${propLine ? ` ${propLine}。` : ''}`.trim()
+  const fallbackLine = `镜头1 0-${formatStoryboardPromptTime(duration)}s时间:日，[${shotLabel}/固定]角色 ${roleText} 在 ${sceneDescription} 中执行分镜动作：${actionText}${extraSentence ? `，${extraSentence}` : ''}。`
+  return normalizeStoryboardPromptToRanges(fallbackLine, duration)
 }
 
-function resetStoryboardVideoPrompt(row: StoryboardRow): void {
-  row.videoPrompt = composeStoryboardVideoPrompt(row)
-  queueStoryboardAutosave(row.id, {
-    videoPrompt: row.videoPrompt
+function mergeSceneContextIntoPrompt(prompt: string, sceneDescription: string, propText: string): string {
+  // 前端兜底时同样优先保住用户填写的“分镜描述”，避免只剩动作骨架丢失空间信息。
+  const shotBlocks = Array.from(prompt.matchAll(/镜头\d+[\s\S]*?(?=镜头\d+|$)/g))
+    .map((item) => item[0].replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+  if (!shotBlocks.length) return prompt
+
+  const sceneAnchor = sceneDescription
+    .split(/[，。；]/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .slice(0, 2)
+    .join('，')
+  if (sceneAnchor && !shotBlocks[0].includes(sceneAnchor)) {
+    shotBlocks[0] = `${shotBlocks[0]} 场景保持：${sceneAnchor}。`
+  }
+  if (propText && !shotBlocks.join('\n').includes(propText)) {
+    shotBlocks[0] = `${shotBlocks[0]} 关键道具保持一致：${propText}。`
+  }
+  return shotBlocks.join('\n')
+}
+
+function normalizeStoryboardPromptToRanges(prompt: string, targetDuration: number): string {
+  // 前端兜底时也强制只保留镜头行，并统一转成“起始-结束秒”格式，避免和后端结果表现不一致。
+  const shotBlocks = Array.from(prompt.matchAll(/镜头\d+[\s\S]*?(?=镜头\d+|$)/g))
+    .map((item) => item[0].replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+  if (shotBlocks.length === 0) return prompt.trim()
+
+  const parsed = shotBlocks.map((block) => {
+    const matched = block.match(/^镜头(\d+)\s+(?:(\d+(?:\.\d+)?)s-(\d+(?:\.\d+)?)s|(\d+(?:\.\d+)?)s)时间[:：]?([^\[,，]+)(.*)$/)
+    if (!matched) return { raw: block, duration: null as number | null }
+    const duration = matched[2] && matched[3]
+      ? Math.max(0, Number(matched[3]) - Number(matched[2]))
+      : Number(matched[4] || 0)
+    return {
+      index: matched[1],
+      duration,
+      timeLabel: (matched[5] || '日').trim(),
+      suffix: (matched[6] || '').trim(),
+      raw: block
+    }
   })
+
+  const durationItems = parsed.filter((item) => item.duration !== null)
+  const totalDuration = durationItems.reduce((sum, item) => sum + Number(item.duration || 0), 0)
+  if (!durationItems.length || totalDuration <= 0) return shotBlocks.join('\n')
+
+  let cursor = 0
+  let durationSeen = 0
+  const scale = targetDuration / totalDuration
+  return parsed.map((item) => {
+    if (item.duration === null) return item.raw
+    const scaledDuration = Number(item.duration) * scale
+    const isLast = durationSeen === durationItems.length - 1
+    const end = isLast ? targetDuration : cursor + scaledDuration
+    const startLabel = formatStoryboardPromptTime(cursor)
+    const endLabel = formatStoryboardPromptTime(end)
+    const line = `镜头${item.index} ${startLabel}-${endLabel}s时间:${item.timeLabel}${item.suffix}`
+    cursor = end
+    durationSeen += 1
+    return line
+  }).join('\n')
+}
+
+function formatStoryboardPromptTime(value: number): string {
+  if (Math.abs(value) < 0.000001) return '0'
+  if (Math.abs(value - Math.round(value)) < 0.000001) return String(Math.round(value))
+  return value.toFixed(1).replace(/\.0$/, '')
+}
+
+function isRowVideoPromptGenerating(rowId: string): boolean {
+  return regeneratingStoryboardPromptRowId.value === rowId
+}
+
+function isAlibabaReferenceVideoModel(model: string): boolean {
+  return alibabaReferenceVideoModelCatalog.includes(model)
+}
+
+function maxStoryboardVideoDuration(model: string): number {
+  return isAlibabaReferenceVideoModel(model) ? 10 : 15
+}
+
+function isSilentCapableStoryboardVideoModel(model: string): boolean {
+  return model === 'wan2.6-r2v-flash'
+}
+
+function normalizeStoryboardVideoDuration(duration: number, model: string): number {
+  const safeDuration = Number.isFinite(duration) ? duration : 5
+  return Math.max(2, Math.min(maxStoryboardVideoDuration(model), Math.round(safeDuration)))
+}
+
+function getSupportedVideoResolutions(model: string): string[] {
+  if (isAlibabaReferenceVideoModel(model)) return ['720p', '1080p']
+  return runtimeConfig.value?.videoResolutions?.length ? runtimeConfig.value.videoResolutions : fallbackResolutionCatalog
+}
+
+function normalizeStoryboardVideoResolution(resolution: string, model: string): string {
+  const supportedResolutions = getSupportedVideoResolutions(model)
+  return supportedResolutions.includes(resolution) ? resolution : (supportedResolutions[0] || '720p')
+}
+
+function resolvedStoryboardVideoDuration(row: StoryboardRow): number {
+  const activeModel = row.videoModel || selectedVideoModel.value || runtimeConfig.value?.defaults.video_model || ''
+  return normalizeStoryboardVideoDuration(Number(row.videoDurationSec || row.durationSec || 10), activeModel)
+}
+
+function storyboardVideoDurationOptions(row: StoryboardRow): PageOption[] {
+  const activeModel = row.videoModel || selectedVideoModel.value || runtimeConfig.value?.defaults.video_model || ''
+  return Array.from({ length: maxStoryboardVideoDuration(activeModel) - 1 }).map((_, index) => {
+    const seconds = index + 2
+    return {
+      label: `${seconds}s`,
+      value: String(seconds)
+    }
+  })
+}
+
+function buildStoryboardVideoReferenceUrls(row: StoryboardRow): string[] {
+  // 明确把当前分镜绑定的参考图传给后端，减少后端自动推断时“看起来有图、实际没带上”的误差。
+  const urls = [
+    ...row.roleKeys.map((key) => roleAssetByKey(key)),
+    ...row.sceneKeys.map((key) => sceneAssetByKey(key)),
+    ...row.propKeys.map((key) => propAssetByKey(key))
+  ].filter(Boolean)
+  return Array.from(new Set(urls)).slice(0, 5)
+}
+
+function extractActionErrorMessage(error: unknown): string {
+  const fetchError = error as {
+    data?: { detail?: { message?: string } | string; message?: string }
+    response?: { _data?: { detail?: { message?: string } | string; message?: string } }
+    message?: string
+  }
+  const detail = fetchError?.data?.detail ?? fetchError?.response?._data?.detail
+  if (typeof detail === 'string' && detail.trim()) return detail
+  if (detail && typeof detail === 'object' && 'message' in detail && typeof detail.message === 'string') return detail.message
+  if (typeof fetchError?.data?.message === 'string' && fetchError.data.message.trim()) return fetchError.data.message
+  return fetchError?.message || '请求失败，请稍后重试'
+}
+
+function isRowVideoSubmitting(rowId: string): boolean {
+  return submittingStoryboardVideoRowId.value === rowId
+}
+
+function resolvedStoryboardVideoAudioMode(row: StoryboardRow): 'sound' | 'silent' {
+  const activeModel = row.videoModel || selectedVideoModel.value || runtimeConfig.value?.defaults.video_model || ''
+  const currentMode = storyboardVideoAudioModeMap.value[row.id] || 'sound'
+  if (!isSilentCapableStoryboardVideoModel(activeModel)) return 'sound'
+  return currentMode
+}
+
+function updateStoryboardVideoAudioMode(rowId: string, nextMode: string): void {
+  storyboardVideoAudioModeMap.value = {
+    ...storyboardVideoAudioModeMap.value,
+    [rowId]: nextMode === 'silent' ? 'silent' : 'sound'
+  }
+}
+
+function handleStoryboardVideoModelChange(row: StoryboardRow, nextModel: string): void {
+  row.videoModel = nextModel
+  row.videoDurationSec = normalizeStoryboardVideoDuration(Number(row.videoDurationSec || row.durationSec || 10), row.videoModel)
+  selectedResolution.value = normalizeStoryboardVideoResolution(selectedResolution.value, row.videoModel)
+  if (!isSilentCapableStoryboardVideoModel(row.videoModel)) {
+    updateStoryboardVideoAudioMode(row.id, 'sound')
+  }
+  queueStoryboardAutosave(row.id, { videoModel: row.videoModel, videoDurationSec: row.videoDurationSec })
+}
+
+async function resetStoryboardVideoPrompt(row: StoryboardRow): Promise<void> {
+  if (!projectDetail.value) return
+  regeneratingStoryboardPromptRowId.value = row.id
+
+  try {
+    const activeModel = row.videoModel || selectedVideoModel.value
+    const normalizedDuration = resolvedStoryboardVideoDuration(row)
+    const normalizedResolution = normalizeStoryboardVideoResolution(selectedResolution.value, activeModel)
+    const payload: StoryboardVideoPromptGeneratePayload = {
+      model: activeModel,
+      durationSec: normalizedDuration,
+      resolution: normalizedResolution
+    }
+    const result = await runPageAction(
+      'video',
+      () => dramaService.generateStoryboardVideoPrompt(projectDetail.value!.projectId, row.id, payload),
+      `分镜 ${row.shotNo} 视频提示词已重新生成。`
+    )
+    if (!result) {
+      // 后端异常时保留一个前端兜底版本，避免用户点击后没有任何可编辑结果。
+      row.videoModel = payload.model || row.videoModel
+      row.videoDurationSec = Number(payload.durationSec || row.videoDurationSec || 10)
+      row.videoPrompt = composeStoryboardVideoPrompt(row)
+      return
+    }
+
+    row.videoPrompt = result.videoPrompt
+    row.videoModel = result.videoModel
+    row.videoDurationSec = result.videoDurationSec
+  } finally {
+    regeneratingStoryboardPromptRowId.value = ''
+  }
 }
 
 async function createStoryboardAfter(row?: StoryboardRow): Promise<void> {
@@ -1473,17 +1711,49 @@ function removeStoryboardKey(row: StoryboardRow, type: 'role' | 'scene' | 'prop'
 
 async function generateSingleStoryboardVideo(row: StoryboardRow): Promise<void> {
   if (!projectDetail.value) return
-  const payload: StoryboardVideoGeneratePayload = {
-    model: row.videoModel || selectedVideoModel.value,
-    durationSec: row.videoDurationSec || 12,
-    resolution: selectedResolution.value
+  const activeModel = row.videoModel || selectedVideoModel.value
+  const activeDuration = resolvedStoryboardVideoDuration(row)
+  const activeResolution = normalizeStoryboardVideoResolution(selectedResolution.value, activeModel)
+  const referenceUrls = buildStoryboardVideoReferenceUrls(row)
+  if (!referenceUrls.length) {
+    const message = '当前分镜没有可用参考图。请先绑定至少一张已生成的角色图、场景图或道具图，再生成视频。'
+    row.videoStatus = 'failed'
+    row.videoErrorMessage = message
+    errorMessage.value = message
+    infoMessage.value = ''
+    return
   }
-  await runPageAction(
-    'video',
-    () => dramaService.generateStoryboardVideo(projectDetail.value!.projectId, row.id, payload),
-    `分镜 ${row.shotNo} 已加入视频生成队列。`
-  )
-  await refreshProjectDetail()
+
+  submittingStoryboardVideoRowId.value = row.id
+  errorMessage.value = ''
+  infoMessage.value = ''
+  row.videoErrorMessage = ''
+  const payload: StoryboardVideoGeneratePayload = {
+    model: activeModel,
+    durationSec: activeDuration,
+    resolution: activeResolution,
+    referenceUrls,
+    audioMode: resolvedStoryboardVideoAudioMode(row)
+  }
+  row.videoStatus = 'queued'
+  row.videoProgress = 0
+
+  try {
+    await dramaService.generateStoryboardVideo(projectDetail.value.projectId, row.id, payload)
+    row.videoModel = payload.model || row.videoModel
+    row.videoDurationSec = Number(payload.durationSec || row.videoDurationSec || 10)
+    selectedResolution.value = payload.resolution || selectedResolution.value
+    infoMessage.value = `分镜 ${row.shotNo} 已加入视频生成队列。`
+    await refreshProjectDetail()
+  } catch (error) {
+    const message = extractActionErrorMessage(error)
+    row.videoStatus = 'failed'
+    row.videoProgress = 0
+    row.videoErrorMessage = message
+    errorMessage.value = message
+  } finally {
+    submittingStoryboardVideoRowId.value = ''
+  }
 }
 
 async function batchGenerateCurrentEpisodeVideos(): Promise<void> {
@@ -1528,9 +1798,9 @@ function storyboardVideoStatusLabel(row: StoryboardRow): string {
 function storyboardVideoStatusToneClass(status: string): string {
   if (status === 'success') return 'border-[#bbf7d0] bg-[#f0fdf4] text-[#15803d]'
   if (status === 'failed') return 'border-[#fecaca] bg-[#fff1f2] text-[#dc2626]'
-  if (status === 'running') return 'border-[#c7d2fe] bg-[#eef2ff] text-[#4f46e5]'
-  if (status === 'queued') return 'border-[#dbeafe] bg-[#eff6ff] text-[#2563eb]'
-  return 'border-[#e2e8f0] bg-white text-[#94a3b8]'
+  if (status === 'running') return 'border-[#c7d2fe] bg-neonSoft/20 text-neon'
+  if (status === 'queued') return 'border-borderSoft bg-[#eff6ff] text-[#2563eb]'
+  return 'border-borderSoft bg-panel text-textMuted'
 }
 
 function storyboardRowRolePreviewUrl(roleKey: string): string {
@@ -1682,8 +1952,147 @@ function handleAudioUpload(roleKey: string, event: Event): void {
   }
 }
 
+function assetPreviewMapKey(type: SettingAssetType, key: string): string {
+  return `${type}:${key}`
+}
+
+function uploadedAssetPreviewUrl(type: SettingAssetType, key: string): string {
+  return assetUploadPreviewMap.value[assetPreviewMapKey(type, key)]?.url || ''
+}
+
+function openSettingEditor(item: DramaRoleProfile | DramaSceneProfile | DramaPropProfile, type: SettingAssetType): void {
+  if (type === 'role') {
+    const role = item as DramaRoleProfile
+    settingEditorDraft.value = {
+      type,
+      key: role.key,
+      title: role.name,
+      subtitle: role.ageIdentity || '角色设定',
+      description: role.appearance || '',
+      prompt: role.prompt || ''
+    }
+    settingEditorVisible.value = true
+    return
+  }
+
+  if (type === 'scene') {
+    const scene = item as DramaSceneProfile
+    settingEditorDraft.value = {
+      type,
+      key: scene.key,
+      title: scene.name,
+      subtitle: '场景设定',
+      description: scene.description || '',
+      prompt: scene.prompt || ''
+    }
+    settingEditorVisible.value = true
+    return
+  }
+
+  const prop = item as DramaPropProfile
+  settingEditorDraft.value = {
+    type,
+    key: prop.key,
+    title: prop.name,
+    subtitle: '道具设定',
+    description: prop.description || '',
+    prompt: prop.prompt || ''
+  }
+  settingEditorVisible.value = true
+}
+
+function closeSettingEditor(): void {
+  settingEditorVisible.value = false
+  settingEditorDraft.value = null
+}
+
+function handleSettingEditorImageUpload(event: Event): void {
+  const draft = settingEditorDraft.value
+  const input = event.target as HTMLInputElement | null
+  const file = input?.files?.[0]
+  if (!draft || !file) return
+
+  const nextKey = assetPreviewMapKey(draft.type, draft.key)
+  const previous = assetUploadPreviewMap.value[nextKey]
+  if (previous?.url?.startsWith('blob:')) {
+    URL.revokeObjectURL(previous.url)
+  }
+
+  assetUploadPreviewMap.value = {
+    ...assetUploadPreviewMap.value,
+    [nextKey]: {
+      url: URL.createObjectURL(file),
+      fileName: file.name
+    }
+  }
+}
+
+async function saveSettingEditor(regenerate = false): Promise<void> {
+  const project = projectDetail.value
+  const draft = settingEditorDraft.value
+  if (!project || !draft) return
+
+  const key = draft.type === 'role' ? 'roles' : draft.type === 'scene' ? 'scenes' : 'props'
+  busyKey.value = key
+  errorMessage.value = ''
+  infoMessage.value = ''
+
+  try {
+    if (draft.type === 'role') {
+      const payload: DramaRoleUpdatePayload = {
+        // 角色卡片主文案当前主要展示外观描述，因此抽屉保存时优先更新该字段。
+        appearance: draft.description,
+        prompt: draft.prompt
+      }
+      projectDetail.value = await dramaService.updateRole(project.projectId, draft.key, payload)
+      if (regenerate) {
+        projectDetail.value = await dramaService.generateRoleAssets(project.projectId, {
+          model: selectedImageModel.value,
+          overwrite: true,
+          roleKeys: [draft.key]
+        })
+      }
+    } else if (draft.type === 'scene') {
+      const payload: DramaSceneUpdatePayload = {
+        description: draft.description,
+        prompt: draft.prompt
+      }
+      projectDetail.value = await dramaService.updateScene(project.projectId, draft.key, payload)
+      if (regenerate) {
+        projectDetail.value = await dramaService.generateSceneAssets(project.projectId, {
+          model: selectedImageModel.value,
+          overwrite: true,
+          sceneKeys: [draft.key]
+        })
+      }
+    } else {
+      const payload: DramaPropUpdatePayload = {
+        description: draft.description,
+        prompt: draft.prompt
+      }
+      projectDetail.value = await dramaService.updateProp(project.projectId, draft.key, payload)
+      if (regenerate) {
+        projectDetail.value = await dramaService.generatePropAssets(project.projectId, {
+          model: selectedImageModel.value,
+          overwrite: true,
+          propKeys: [draft.key]
+        })
+      }
+    }
+
+    infoMessage.value = regenerate ? '设定已保存，并已加入重绘队列。' : '设定已保存。'
+    closeSettingEditor()
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error('[livliv] 设定抽屉保存失败', { type: draft.type, key: draft.key, error })
+    errorMessage.value = error instanceof Error ? error.message : '保存设定失败，请稍后重试'
+  } finally {
+    busyKey.value = ''
+  }
+}
+
 function primaryRoleAssetUrl(role: DramaRoleProfile): string {
-  return role.assets[0]?.imageUrl || ''
+  return uploadedAssetPreviewUrl('role', role.key) || role.assets[0]?.imageUrl || ''
 }
 
 function isRoleGenerating(role: DramaRoleProfile): boolean {
@@ -1722,11 +2131,11 @@ function roleGenerationText(role: DramaRoleProfile): string {
 }
 
 function scenePreviewUrl(scene: DramaSceneProfile): string {
-  return scene.asset?.imageUrl || ''
+  return uploadedAssetPreviewUrl('scene', scene.key) || scene.asset?.imageUrl || ''
 }
 
 function propPreviewUrl(prop: DramaPropProfile): string {
-  return prop.asset?.imageUrl || ''
+  return uploadedAssetPreviewUrl('prop', prop.key) || prop.asset?.imageUrl || ''
 }
 
 function isSceneGenerating(scene: DramaSceneProfile): boolean {
@@ -1745,6 +2154,48 @@ function propGenerationText(prop: DramaPropProfile): string {
   return isPropGenerating(prop) ? '道具图生成中' : '待生成道具图'
 }
 
+function currentSettingRetryCount(): number {
+  if (activeSettingTab.value === 'roles') {
+    return (projectDetail.value?.analysis.roles || []).filter((role) => role.generationStatus === 'failed').length
+  }
+  if (activeSettingTab.value === 'scenes') {
+    return (projectDetail.value?.analysis.scenes || []).filter((scene) => !scene.asset && !pendingSceneKeys.value.includes(scene.key)).length
+  }
+  return (projectDetail.value?.analysis.props || []).filter((prop) => !prop.asset && !pendingPropKeys.value.includes(prop.key)).length
+}
+
+async function retryCurrentSettingFailures(): Promise<void> {
+  const project = projectDetail.value
+  if (!project) return
+
+  if (activeSettingTab.value === 'roles') {
+    const roleKeys = (project.analysis.roles || []).filter((role) => role.generationStatus === 'failed').map((role) => role.key)
+    if (!roleKeys.length) return
+    await generateRoleAssets({ overwrite: true, roleKeys, successMessage: '失败角色已重新加入重绘队列。' })
+    return
+  }
+
+  if (activeSettingTab.value === 'scenes') {
+    const sceneKeys = (project.analysis.scenes || []).filter((scene) => !scene.asset && !pendingSceneKeys.value.includes(scene.key)).map((scene) => scene.key)
+    if (!sceneKeys.length) return
+    await generateSceneAssets({ overwrite: true, sceneKeys, successMessage: '未完成场景已重新加入生成队列。' })
+    return
+  }
+
+  const propKeys = (project.analysis.props || []).filter((prop) => !prop.asset && !pendingPropKeys.value.includes(prop.key)).map((prop) => prop.key)
+  if (!propKeys.length) return
+  await generatePropAssets({ overwrite: true, propKeys, successMessage: '未完成道具已重新加入生成队列。' })
+}
+
+function storyboardKeyMenuToken(rowId: string, group: 'role' | 'scene' | 'prop', index: number): string {
+  return `${rowId}:${group}:${index}`
+}
+
+function toggleStoryboardKeyMenu(rowId: string, group: 'role' | 'scene' | 'prop', index: number): void {
+  const nextToken = storyboardKeyMenuToken(rowId, group, index)
+  storyboardKeyActionMenu.value = storyboardKeyActionMenu.value === nextToken ? '' : nextToken
+}
+
 function tagToneClass(index: number): string {
   return tagToneCatalog[index % tagToneCatalog.length]
 }
@@ -1752,6 +2203,10 @@ function tagToneClass(index: number): string {
 watch(videoModelOptions, (options) => {
   if (options.some((option) => option.value === selectedVideoModel.value)) return
   selectedVideoModel.value = options[0]?.value || ''
+}, { immediate: true })
+
+watch([() => selectedVideoModel.value, resolutionOptions], () => {
+  selectedResolution.value = normalizeStoryboardVideoResolution(selectedResolution.value, selectedVideoModel.value)
 }, { immediate: true })
 
 watch(
@@ -1866,13 +2321,13 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <main class="min-h-screen bg-[#f5f7fb] text-[#0f172a]">
-    <header class="sticky top-0 z-30 border-b border-[#e7ebf4] bg-white/92 backdrop-blur-xl">
+  <main class="min-h-screen bg-bg text-textMain">
+    <header class="sticky top-0 z-30 border-b border-borderSoft bg-panel/92 backdrop-blur-xl">
       <div class="grid grid-cols-[minmax(300px,1fr)_auto_minmax(300px,1fr)] items-center gap-4 px-6 py-3 xl:px-10">
         <div class="flex min-w-0 items-start gap-4 justify-self-start">
           <button
             type="button"
-            class="flex h-11 w-11 items-center justify-center rounded-2xl border border-[#d9e1f1] bg-white text-[#0f172a] transition hover:border-[#94a3b8]"
+            class="flex h-11 w-11 items-center justify-center rounded-2xl border border-[#d9e1f1] bg-panel text-textMain transition hover:border-[#94a3b8]"
             @click="goBack"
           >
             <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2">
@@ -1884,8 +2339,8 @@ onBeforeUnmount(() => {
             <div class="flex items-start gap-3">
               <div class="min-w-0">
                 <h1 class="truncate text-[20px] font-semibold tracking-[-0.04em] xl:text-[22px]">{{ currentTitle }}</h1>
-                <div class="mt-2 flex flex-wrap items-center gap-2 text-xs text-[#64748b]">
-                  <span v-for="item in headerInfoItems" :key="item" class="rounded-full border border-[#d7dfef] bg-[#f8fafc] px-3 py-1">
+                <div class="mt-2 flex flex-wrap items-center gap-2 text-xs text-textMuted">
+                  <span v-for="item in headerInfoItems" :key="item" class="rounded-full border border-borderSoft bg-panelSoft px-3 py-1">
                     {{ item }}
                   </span>
                 </div>
@@ -1906,15 +2361,15 @@ onBeforeUnmount(() => {
               <span
                  class="flex h-11 w-11 items-center justify-center rounded-full border text-[13px] font-semibold transition"
                 :class="stepStatus(step.key) === 'active'
-                  ? 'border-[#8b7dff] bg-[#f4f1ff] text-[#6d5df6] shadow-[0_12px_28px_rgba(109,93,246,0.12)]'
+                  ? 'border-[#8b7dff] bg-neon/10 text-[#6d5df6] shadow-[0_12px_28px_rgba(109,93,246,0.12)]'
                   : stepStatus(step.key) === 'done'
-                    ? 'border-[#c7d2fe] bg-[#eef2ff] text-[#4f46e5]'
-                    : 'border-[#e2e8f0] bg-white text-[#94a3b8]'"
+                    ? 'border-[#c7d2fe] bg-neonSoft/20 text-neon'
+                    : 'border-borderSoft bg-panel text-textMuted'"
               >
                 {{ index + 1 }}
               </span>
                <span class="text-[14px] font-semibold leading-none">{{ step.label }}</span>
-               <span class="text-[10px] text-[#94a3b8]">{{ step.hint }}</span>
+               <span class="text-[10px] text-textMuted">{{ step.hint }}</span>
              </button>
 
              <span v-if="index < workflowSteps.length - 1" class="h-px w-6 bg-[#d7dfef] xl:w-10" />
@@ -1922,10 +2377,10 @@ onBeforeUnmount(() => {
          </nav>
 
         <div class="flex min-w-0 items-center justify-end gap-3 justify-self-end">
-          <button class="rounded-full border border-[#d7dfef] bg-white px-4 py-2 text-sm font-medium text-[#475569] transition hover:border-[#94a3b8]">
+          <button class="rounded-full border border-borderSoft bg-panel px-4 py-2 text-sm font-medium text-textMuted transition hover:border-[#94a3b8]">
             优化建议
           </button>
-          <div class="rounded-full bg-[#eef2ff] px-4 py-2 text-sm font-semibold text-[#4f46e5]">
+          <div class="rounded-full bg-neonSoft/20 px-4 py-2 text-sm font-semibold text-neon">
             {{ workflowRunInfo?.status === 'success' ? '视频已生成' : '流程进行中' }}
           </div>
         </div>
@@ -1941,14 +2396,14 @@ onBeforeUnmount(() => {
         {{ infoMessage }}
       </div>
 
-      <section v-if="isBooting" class="rounded-[32px] border border-[#e8edf5] bg-white p-8 shadow-[0_18px_60px_rgba(15,23,42,0.06)]">
+      <section v-if="isBooting" class="rounded-[32px] border border-[#e8edf5] bg-panel p-8 shadow-[0_18px_60px_rgba(15,23,42,0.06)]">
         <div class="animate-pulse space-y-4">
-          <div class="h-8 w-48 rounded-full bg-[#eef2f7]" />
-          <div class="h-40 rounded-[28px] bg-[#eef2f7]" />
+          <div class="h-8 w-48 rounded-full bg-panelSoft" />
+          <div class="h-40 rounded-[28px] bg-panelSoft" />
           <div class="grid gap-4 lg:grid-cols-3">
-            <div class="h-32 rounded-[24px] bg-[#eef2f7]" />
-            <div class="h-32 rounded-[24px] bg-[#eef2f7]" />
-            <div class="h-32 rounded-[24px] bg-[#eef2f7]" />
+            <div class="h-32 rounded-[24px] bg-panelSoft" />
+            <div class="h-32 rounded-[24px] bg-panelSoft" />
+            <div class="h-32 rounded-[24px] bg-panelSoft" />
           </div>
         </div>
       </section>
@@ -1956,16 +2411,16 @@ onBeforeUnmount(() => {
       <template v-else>
         <section
           v-if="activeStep === 'script'"
-          class="rounded-[32px] border border-[#e8edf5] bg-white p-8 shadow-[0_18px_60px_rgba(15,23,42,0.06)]"
+          class="rounded-[32px] border border-[#e8edf5] bg-panel p-8 shadow-[0_18px_60px_rgba(15,23,42,0.06)]"
         >
           <div v-if="showScriptProgressPanel && !shouldPreferAnalysisResultView" class="flex min-h-[520px] flex-col items-center justify-center">
-            <div class="flex h-20 w-20 items-center justify-center rounded-full bg-[#eef2ff] text-[#4f46e5]">
+            <div class="flex h-20 w-20 items-center justify-center rounded-full bg-neonSoft/20 text-neon">
               <svg viewBox="0 0 24 24" class="h-9 w-9 animate-spin" fill="none" stroke="currentColor" stroke-width="1.8">
                 <path d="M12 3a9 9 0 1 1-9 9" stroke-linecap="round" />
               </svg>
             </div>
             <h2 class="mt-8 text-[34px] font-semibold tracking-[-0.04em]">{{ scriptProgressTitle }}</h2>
-            <p class="mt-3 text-base text-[#64748b]">
+            <p class="mt-3 text-base text-textMuted">
               {{ scriptProgressSubtitle }}
             </p>
 
@@ -1973,22 +2428,22 @@ onBeforeUnmount(() => {
               <article
                 v-for="item in scriptProgressItems"
                 :key="item.key"
-                class="rounded-[24px] border border-[#e5e7eb] bg-[#fafcff] px-4 py-5 text-center"
+                class="rounded-[24px] border border-borderSoft bg-panelSoft px-4 py-5 text-center"
               >
                 <div
                   class="mx-auto flex h-12 w-12 items-center justify-center rounded-full border text-sm font-semibold"
                   :class="item.status === 'done'
                     ? 'border-[#bbf7d0] bg-[#f0fdf4] text-[#15803d]'
                     : item.status === 'running'
-                      ? 'border-[#c7d2fe] bg-[#eef2ff] text-[#4f46e5]'
+                      ? 'border-[#c7d2fe] bg-neonSoft/20 text-neon'
                       : item.status === 'failed'
                         ? 'border-[#fecaca] bg-[#fff1f2] text-[#dc2626]'
-                        : 'border-[#e2e8f0] bg-white text-[#94a3b8]'"
+                        : 'border-borderSoft bg-panel text-textMuted'"
                 >
                   {{ item.status === 'failed' ? '失败' : `${item.progress}%` }}
                 </div>
-                <p class="mt-3 text-sm font-medium text-[#334155]">{{ item.label }}</p>
-                <p class="mt-1 text-xs text-[#94a3b8]">
+                <p class="mt-3 text-sm font-medium text-textMain">{{ item.label }}</p>
+                <p class="mt-1 text-xs text-textMuted">
                   {{ item.status === 'done' ? '已完成' : item.status === 'running' ? '解析中' : item.status === 'failed' ? '失败' : '等待中' }}
                 </p>
               </article>
@@ -2006,9 +2461,9 @@ onBeforeUnmount(() => {
           </div>
 
           <div v-else class="space-y-8">
-            <div v-if="!isScriptAnalysisReady" class="flex min-h-[420px] flex-col items-center justify-center rounded-[28px] border border-dashed border-[#d7dfef] bg-[#fafcff] px-8 py-10 text-center">
+            <div v-if="!isScriptAnalysisReady" class="flex min-h-[420px] flex-col items-center justify-center rounded-[28px] border border-dashed border-borderSoft bg-panelSoft px-8 py-10 text-center">
               <h2 class="text-[30px] font-semibold tracking-[-0.04em]">当前还没有剧本解析结果</h2>
-              <p class="mt-3 max-w-[620px] text-base leading-8 text-[#64748b]">点击下方按钮后，系统会自动完成剧情全局理解、剧集智能拆分、剧集概要提炼与角色场景识别，并生成剧本结果页。</p>
+              <p class="mt-3 max-w-[620px] text-base leading-8 text-textMuted">点击下方按钮后，系统会自动完成剧情全局理解、剧集智能拆分、剧集概要提炼与角色场景识别，并生成剧本结果页。</p>
               <button
                 type="button"
                 class="mt-8 rounded-full bg-gradient-to-r from-[#2463ff] to-[#7c3aed] px-8 py-4 text-base font-semibold text-white shadow-[0_18px_42px_rgba(79,70,229,0.2)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
@@ -2021,7 +2476,7 @@ onBeforeUnmount(() => {
 
             <template v-else>
               <div class="space-y-7">
-                <div class="rounded-[30px] border border-[#e7ebf4] bg-[#fbfcff] p-5">
+                <div class="rounded-[30px] border border-borderSoft bg-panelSoft p-5">
                   <div class="grid items-stretch gap-5 xl:grid-cols-[132px_minmax(0,1fr)]">
                     <div class="overflow-hidden rounded-[22px] bg-transparent">
                       <div class="group relative h-full min-h-[188px] overflow-hidden rounded-[22px]">
@@ -2070,28 +2525,28 @@ onBeforeUnmount(() => {
                       </div>
                     </div>
 
-                    <div class="flex h-full min-h-[188px] flex-col justify-between rounded-[24px] border border-[#e7ebf4] bg-white p-5">
+                    <div class="flex h-full min-h-[188px] flex-col justify-between rounded-[24px] border border-borderSoft bg-panel p-5">
                       <div class="flex items-start justify-between gap-5">
                         <div class="min-w-0">
                           <div class="flex flex-wrap items-center gap-3">
                             <h3 class="text-[30px] font-semibold tracking-[-0.04em] xl:text-[32px]">{{ projectDetail?.analysis.title || currentTitle }}</h3>
-                            <span class="rounded-full bg-[#eef2ff] px-3 py-1 text-sm font-medium text-[#4f46e5]">
+                            <span class="rounded-full bg-neonSoft/20 px-3 py-1 text-sm font-medium text-neon">
                               {{ projectDetail?.analysis.genre || '等待解析' }}
                             </span>
                           </div>
 
-                          <div class="mt-4 flex flex-wrap items-center gap-2 text-sm text-[#64748b]">
-                            <span class="rounded-full border border-[#d7dfef] bg-white px-3 py-1">{{ projectDetail?.analysis.totalEpisodes || 1 }}集</span>
-                            <span class="rounded-full border border-[#d7dfef] bg-white px-3 py-1">{{ projectDetail?.analysis.displayMeta.aspectRatio || selectedAspectRatio }}</span>
-                            <span class="rounded-full border border-[#d7dfef] bg-white px-3 py-1">{{ projectDetail?.analysis.displayMeta.resolution || selectedResolution }}</span>
-                            <span class="rounded-full border border-[#d7dfef] bg-white px-3 py-1">{{ projectDetail?.analysis.displayMeta.style || resolvedVisualStyle }}</span>
+                          <div class="mt-4 flex flex-wrap items-center gap-2 text-sm text-textMuted">
+                            <span class="rounded-full border border-borderSoft bg-panel px-3 py-1">{{ projectDetail?.analysis.totalEpisodes || 1 }}集</span>
+                            <span class="rounded-full border border-borderSoft bg-panel px-3 py-1">{{ projectDetail?.analysis.displayMeta.aspectRatio || selectedAspectRatio }}</span>
+                            <span class="rounded-full border border-borderSoft bg-panel px-3 py-1">{{ projectDetail?.analysis.displayMeta.resolution || selectedResolution }}</span>
+                            <span class="rounded-full border border-borderSoft bg-panel px-3 py-1">{{ projectDetail?.analysis.displayMeta.style || resolvedVisualStyle }}</span>
                           </div>
                         </div>
 
                         <div class="flex shrink-0 items-center gap-2">
                           <button
                             type="button"
-                            class="rounded-full border border-[#d7dfef] bg-white px-4 py-2 text-sm font-medium text-[#475569] transition hover:border-[#94a3b8]"
+                            class="rounded-full border border-borderSoft bg-panel px-4 py-2 text-sm font-medium text-textMuted transition hover:border-[#94a3b8]"
                             :disabled="isBusy"
                             @click="analyzeScript"
                           >
@@ -2099,7 +2554,7 @@ onBeforeUnmount(() => {
                           </button>
                           <button
                             type="button"
-                            class="rounded-full border border-[#d7dfef] bg-white px-4 py-2 text-sm font-semibold text-[#4f46e5] transition hover:border-[#a5b4fc] hover:text-[#4338ca]"
+                            class="rounded-full border border-borderSoft bg-panel px-4 py-2 text-sm font-semibold text-neon transition hover:border-neon hover:text-[#4338ca]"
                             @click="openSourceScriptPreview"
                           >
                             查看剧本
@@ -2125,12 +2580,12 @@ onBeforeUnmount(() => {
 
                 <article class="space-y-3">
                   <h4 class="text-[28px] font-semibold tracking-[-0.03em]">大纲</h4>
-                  <p class="text-base leading-8 text-[#334155]">{{ projectDetail?.analysis.outline || projectDetail?.analysis.synopsis || '当前暂无大纲。' }}</p>
+                  <p class="text-base leading-8 text-textMain">{{ projectDetail?.analysis.outline || projectDetail?.analysis.synopsis || '当前暂无大纲。' }}</p>
                 </article>
 
                 <article class="space-y-3">
                   <h4 class="text-[28px] font-semibold tracking-[-0.03em]">背景特点</h4>
-                  <p class="text-base leading-8 text-[#334155]">{{ projectDetail?.analysis.backgroundTraits || '当前暂无背景特点。' }}</p>
+                  <p class="text-base leading-8 text-textMain">{{ projectDetail?.analysis.backgroundTraits || '当前暂无背景特点。' }}</p>
                 </article>
 
                 <article class="space-y-4">
@@ -2139,22 +2594,22 @@ onBeforeUnmount(() => {
                     <div
                       v-for="item in projectDetail?.analysis.characterBios || []"
                       :key="item.key"
-                      class="rounded-[24px] border border-[#edf1f7] bg-[#fafcff] p-5"
+                      class="rounded-[24px] border border-borderSoft bg-panelSoft p-5"
                     >
                       <div class="flex items-center justify-between gap-3">
                         <h5 class="text-xl font-semibold">{{ item.name }}</h5>
-                        <span class="text-sm text-[#64748b]">{{ item.identity }}</span>
+                        <span class="text-sm text-textMuted">{{ item.identity }}</span>
                       </div>
                       <div v-if="item.traits.length > 0" class="mt-3 flex flex-wrap gap-2">
                         <span
                           v-for="(trait, traitIndex) in item.traits"
                           :key="`${item.key}-${trait}-${traitIndex}`"
-                          class="rounded-full border border-[#dbe4f2] bg-white px-3 py-1 text-xs font-medium text-[#475569]"
+                          class="rounded-full border border-[#dbe4f2] bg-panel px-3 py-1 text-xs font-medium text-textMuted"
                         >
                           {{ trait }}
                         </span>
                       </div>
-                      <p class="mt-4 text-sm leading-7 text-[#475569]">{{ item.summary }}</p>
+                      <p class="mt-4 text-sm leading-7 text-textMuted">{{ item.summary }}</p>
                     </div>
                   </div>
                 </article>
@@ -2168,7 +2623,7 @@ onBeforeUnmount(() => {
                         :key="episode.episodeNo"
                         type="button"
                         class="rounded-[14px] border px-4 py-2 text-sm font-semibold transition"
-                        :class="selectedEpisodeNo === episode.episodeNo ? 'border-[#a5b4fc] bg-[#eef2ff] text-[#4f46e5]' : 'border-[#d7dfef] bg-white text-[#475569]'"
+                        :class="selectedEpisodeNo === episode.episodeNo ? 'border-neon bg-neonSoft/20 text-neon' : 'border-borderSoft bg-panel text-textMuted'"
                         @click="selectedEpisodeNo = episode.episodeNo"
                       >
                         {{ episode.episodeNo }}
@@ -2176,12 +2631,12 @@ onBeforeUnmount(() => {
                     </div>
                   </div>
 
-                  <div class="rounded-[28px] border border-[#edf1f7] bg-[#fafcff] p-6">
+                  <div class="rounded-[28px] border border-borderSoft bg-panelSoft p-6">
                     <h5 class="text-[24px] font-semibold">{{ selectedEpisodeDetail?.title || selectedEpisodeSummary?.title || '当前暂无分集剧情' }}</h5>
-                    <p v-if="selectedEpisodeSummary?.summary" class="mt-4 text-sm leading-7 text-[#64748b]">
+                    <p v-if="selectedEpisodeSummary?.summary" class="mt-4 text-sm leading-7 text-textMuted">
                       {{ selectedEpisodeSummary?.summary }}
                     </p>
-                    <div class="mt-5 whitespace-pre-line text-base leading-8 text-[#334155]">
+                    <div class="mt-5 whitespace-pre-line text-base leading-8 text-textMain">
                       {{ selectedEpisodeDetail?.content || '当前暂无该集详细剧情内容。' }}
                     </div>
                   </div>
@@ -2194,30 +2649,50 @@ onBeforeUnmount(() => {
 
         <section
           v-else-if="activeStep === 'setting'"
-          class="rounded-[32px] border border-[#e8edf5] bg-white p-8 shadow-[0_18px_60px_rgba(15,23,42,0.06)]"
+          class="rounded-[32px] border border-[#e8edf5] bg-panel p-6 shadow-[0_18px_60px_rgba(15,23,42,0.06)] xl:p-7"
         >
-          <div class="rounded-[24px] border border-[#e6ebff] bg-[#f8f9ff] px-5 py-4 text-sm leading-7 text-[#6366f1]">
-            请确保角色、场景及道具已经全部生成。角色支持配置音色或上传音频，点击卡片后续可继续扩展重绘与替换。
+          <div class="rounded-[24px] border border-borderSoft bg-panelSoft px-5 py-4 text-sm leading-7 text-neon">
+            生成完成后不再强制切换视图，角色、场景、道具页签会直接显示完成角标。点击卡片可在右侧抽屉修改文案、上传本地图片预览，并保存后重绘。
           </div>
 
-          <div class="mt-6 flex flex-col gap-5 xl:flex-row xl:items-center xl:justify-between">
+          <div class="mt-5 flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
             <div class="flex flex-wrap items-center gap-3">
               <button
                 v-for="tab in [{ key: 'roles', label: '角色' }, { key: 'scenes', label: '场景' }, { key: 'props', label: '道具' }]"
                 :key="tab.key"
                 type="button"
-                class="rounded-full px-5 py-2.5 text-lg font-semibold transition"
-                :class="activeSettingTab === tab.key ? 'bg-[#111827] text-white' : 'bg-[#f8fafc] text-[#0f172a]'"
+                class="flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-semibold transition"
+                :class="activeSettingTab === tab.key
+                  ? 'border-[#111827] bg-[#111827] text-white'
+                  : 'border-borderSoft bg-panelSoft text-textMain'"
                 @click="switchSettingTab(tab.key)"
               >
-                {{ tab.label }}
+                <span>{{ tab.label }}</span>
+                <span class="rounded-full px-2 py-0.5 text-[11px]" :class="activeSettingTab === tab.key ? 'bg-panel/14 text-white' : 'bg-panel text-textMuted'">
+                  已完成 {{ settingTabStats[tab.key].completed }}
+                </span>
+                <span
+                  v-if="settingTabStats[tab.key].failed > 0"
+                  class="rounded-full bg-[#fff1f2] px-2 py-0.5 text-[11px] text-[#dc2626]"
+                >
+                  {{ settingTabStats[tab.key].failed }}
+                </span>
               </button>
             </div>
 
-            <div class="grid gap-3 md:grid-cols-2">
+            <div class="flex flex-wrap items-center gap-3">
+              <button
+                v-if="currentSettingRetryCount() > 0"
+                type="button"
+                class="rounded-[14px] border border-[#fecaca] bg-[#fff1f2] px-4 py-2 text-sm font-semibold text-[#dc2626] transition hover:bg-[#ffe4e6]"
+                :disabled="isBusy"
+                @click="retryCurrentSettingFailures"
+              >
+                刷新失败项（{{ currentSettingRetryCount() }}）
+              </button>
               <button
                 type="button"
-                class="rounded-[16px] border border-[#d7dfef] bg-white px-5 py-2.5 text-sm font-semibold text-[#0f172a] transition hover:border-[#94a3b8]"
+                class="rounded-[14px] border border-borderSoft bg-panel px-4 py-2 text-sm font-semibold text-textMain transition hover:border-[#94a3b8]"
                 :disabled="isBusy"
                 @click="refreshCurrentSettingTab"
               >
@@ -2225,7 +2700,7 @@ onBeforeUnmount(() => {
               </button>
               <button
                 type="button"
-                class="rounded-[16px] bg-gradient-to-r from-[#2463ff] to-[#7c3aed] px-5 py-2.5 text-sm font-semibold text-white transition hover:brightness-110"
+                class="rounded-[14px] bg-gradient-to-r from-[#2463ff] to-[#7c3aed] px-4 py-2 text-sm font-semibold text-white transition hover:brightness-110"
                 :disabled="isBusy"
                 @click="activeSettingTab === 'roles' ? openRoleDialog() : activeSettingTab === 'scenes' ? generateSceneAssets() : generatePropAssets()"
               >
@@ -2234,95 +2709,92 @@ onBeforeUnmount(() => {
             </div>
           </div>
 
-          <template v-if="activeSettingTab === 'roles'">
-            <div class="mt-8 flex flex-wrap items-center gap-6 text-sm text-[#475569]">
-              <span>角色</span>
-              <span>总计 {{ roleCountSummary.total }}</span>
-              <span>已完成 {{ roleCountSummary.completed }}</span>
-              <span>生成中 {{ roleCountSummary.generating }}</span>
-              <span v-if="roleCountSummary.failed > 0">失败 {{ roleCountSummary.failed }}</span>
-            </div>
+          <div class="mt-5 flex flex-wrap items-center gap-4 rounded-[22px] border border-borderSoft bg-panelSoft px-4 py-3 text-sm text-textMuted">
+            <span>总计 {{ settingTabStats[activeSettingTab].total }}</span>
+            <span>已完成 {{ settingTabStats[activeSettingTab].completed }}</span>
+            <span>生成中 {{ settingTabStats[activeSettingTab].generating }}</span>
+            <span>失败/未完成 {{ settingTabStats[activeSettingTab].failed }}</span>
+          </div>
 
-            <div class="mt-6 grid gap-5 xl:grid-cols-3">
+          <template v-if="activeSettingTab === 'roles'">
+            <div class="mt-5 grid gap-4 xl:grid-cols-3 2xl:grid-cols-4">
               <article
                 v-for="role in projectDetail?.analysis.roles || []"
                 :key="role.key"
-                class="relative z-[1] overflow-visible rounded-[28px] border border-[#e7ebf4] bg-[#fbfdff] shadow-[0_10px_28px_rgba(15,23,42,0.04)] transition hover:z-[6]"
+                class="rounded-[24px] border border-borderSoft bg-panelSoft p-4 shadow-[0_10px_28px_rgba(15,23,42,0.04)]"
               >
-                <div class="border-b border-[#edf1f7] p-4">
-                  <template v-if="role.assets.length > 0">
-                    <button
-                      type="button"
-                      class="group relative block w-full overflow-hidden rounded-[20px] bg-[#eef2f7] text-left"
-                      @click="openRolePreview(role)"
-                    >
-                      <UiFluidImage
-                        :src="primaryRoleAssetUrl(role)"
-                        :alt="role.name"
-                        img-class="h-[220px] object-cover"
-                        wrapper-class="h-[220px] w-full"
-                        loading-label="生成中"
-                      />
-                      <span
-                        v-if="isRoleGenerating(role)"
-                        class="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-2 bg-[rgba(15,23,42,0.36)] px-4 text-center"
+                <button
+                  type="button"
+                  class="group block w-full overflow-hidden rounded-[18px] bg-panelSoft text-left"
+                  @click="openSettingEditor(role, 'role')"
+                >
+                  <div v-if="primaryRoleAssetUrl(role)" class="relative">
+                    <UiFluidImage
+                      :src="primaryRoleAssetUrl(role)"
+                      :alt="role.name"
+                      img-class="h-[204px] object-cover"
+                      wrapper-class="h-[204px] w-full"
+                      loading-label="生成中"
+                    />
+                    <span class="pointer-events-none absolute right-3 top-3 rounded-full border border-white/20 bg-[rgba(15,23,42,0.5)] px-2.5 py-1 text-[11px] font-semibold text-white backdrop-blur">
+                      编辑
+                    </span>
+                  </div>
+                  <div
+                    v-else
+                    class="relative flex h-[204px] items-center justify-center overflow-hidden rounded-[18px] bg-[linear-gradient(135deg,#eef6ff_0%,#d8e9ff_44%,#c6dcff_100%)] px-6 text-center"
+                  >
+                    <div class="absolute inset-0 bg-[radial-gradient(circle_at_28%_24%,rgba(255,255,255,0.72),transparent_42%),radial-gradient(circle_at_72%_68%,rgba(191,219,254,0.55),transparent_38%)]" />
+                    <div class="relative z-[1]">
+                      <div
+                        class="mx-auto flex h-14 w-14 items-center justify-center rounded-full border text-sm font-semibold"
+                        :class="isRoleGenerationFailed(role)
+                          ? 'border-[#fecaca] bg-[#fff1f2] text-[#dc2626]'
+                          : isRoleGenerating(role)
+                            ? 'border-[#c7d2fe] bg-neonSoft/20 text-neon'
+                            : 'border-borderSoft bg-panel/70 text-textMuted'"
                       >
-                        <span class="rounded-full bg-white/18 px-4 py-1.5 text-base font-semibold text-white backdrop-blur-sm">
-                          {{ roleGenerationText(role) }}
-                        </span>
-                        <span class="text-sm font-medium text-white/90">{{ role.generationProgress || 0 }}%</span>
-                      </span>
-                      <span class="pointer-events-none absolute inset-0 flex items-end justify-end bg-[linear-gradient(180deg,rgba(15,23,42,0)_0%,rgba(15,23,42,0.20)_100%)] p-3 opacity-0 transition duration-200 group-hover:opacity-100">
-                        <span class="rounded-full border border-white/20 bg-[rgba(15,23,42,0.46)] px-3 py-1 text-xs font-semibold text-white backdrop-blur">
-                          预览大图
-                        </span>
-                      </span>
-                    </button>
-                  </template>
-                  <template v-else>
-                    <div class="relative flex min-h-[220px] items-center justify-center overflow-hidden rounded-[24px] bg-[linear-gradient(135deg,#eef6ff_0%,#d8e9ff_44%,#c6dcff_100%)] px-6 text-center text-sm text-[#5b6b85]">
-                      <div class="absolute inset-0 bg-[radial-gradient(circle_at_28%_24%,rgba(255,255,255,0.72),transparent_42%),radial-gradient(circle_at_72%_68%,rgba(191,219,254,0.55),transparent_38%)]" />
-                      <div class="relative z-[1]">
-                        <div
-                          class="mx-auto flex h-16 w-16 items-center justify-center rounded-full border text-base font-semibold"
-                          :class="isRoleGenerationFailed(role)
-                            ? 'border-[#fecaca] bg-[#fff1f2] text-[#dc2626]'
-                            : isRoleGenerating(role)
-                              ? 'border-[#c7d2fe] bg-[#eef2ff] text-[#4f46e5]'
-                              : 'border-[#dbeafe] bg-white/70 text-[#64748b]'"
-                        >
-                          {{ isRoleGenerationFailed(role) ? '!' : `${role.generationProgress || 0}%` }}
-                        </div>
-                        <p class="mt-4 text-lg font-semibold text-[#334155]">{{ roleGenerationText(role) }}</p>
+                        {{ isRoleGenerationFailed(role) ? '!' : `${role.generationProgress || 0}%` }}
                       </div>
+                      <p class="mt-3 text-base font-semibold text-textMain">{{ roleGenerationText(role) }}</p>
                     </div>
-                  </template>
-                </div>
+                  </div>
+                </button>
 
-                <div class="p-5">
+                <div class="mt-4">
                   <div class="flex items-start justify-between gap-3">
-                    <div>
-                      <h3 class="text-xl font-semibold">{{ role.name }}</h3>
-                      <p class="mt-1 text-sm text-[#64748b]">{{ role.ageIdentity }}</p>
+                    <div class="min-w-0">
+                      <h3 class="truncate text-lg font-semibold">{{ role.name }}</h3>
+                      <p class="mt-1 text-sm text-textMuted">{{ role.ageIdentity }}</p>
                     </div>
-                    <button
-                      type="button"
-                      class="whitespace-nowrap rounded-full border border-[#d7dfef] bg-white px-3 py-1.5 text-xs font-semibold text-[#475569] transition hover:border-[#94a3b8]"
-                      :disabled="isBusy"
-                      @click="generateRoleAssets({ overwrite: true, roleKeys: [role.key], successMessage: `${role.name} 四视图已刷新。` })"
-                    >
-                      重绘
-                    </button>
+                    <div class="flex items-center gap-2">
+                      <button
+                        type="button"
+                        class="rounded-full border border-borderSoft bg-panel px-3 py-1.5 text-xs font-semibold text-textMuted transition hover:border-[#94a3b8]"
+                        :disabled="isBusy"
+                        @click="openSettingEditor(role, 'role')"
+                      >
+                        编辑
+                      </button>
+                      <button
+                        type="button"
+                        class="rounded-full border border-borderSoft bg-panel px-3 py-1.5 text-xs font-semibold text-textMuted transition hover:border-[#94a3b8]"
+                        :disabled="isBusy"
+                        @click="generateRoleAssets({ overwrite: true, roleKeys: [role.key], successMessage: `${role.name} 四视图已刷新。` })"
+                      >
+                        重绘
+                      </button>
+                    </div>
                   </div>
 
-                  <p class="mt-4 text-sm leading-7 text-[#475569]">{{ role.personality }}，{{ role.appearance }}</p>
+                  <p class="mt-3 line-clamp-3 text-sm leading-7 text-textMuted">{{ role.personality }}，{{ role.appearance }}</p>
 
-                  <div class="mt-3 flex items-center justify-between text-xs text-[#64748b]">
+                  <div class="mt-3 flex items-center justify-between text-xs text-textMuted">
                     <span>状态：{{ roleGenerationStatusLabel(role) }}</span>
                     <span>{{ role.generationProgress || 0 }}%</span>
                   </div>
 
-                  <div class="relative z-[60] mt-5 grid gap-3 md:grid-cols-2">
+                  <div class="relative z-[60] mt-4 grid gap-3 md:grid-cols-2">
                     <UiBaseSelect
                       v-model="roleVoiceSelections[role.key]"
                       :options="voiceToneCatalog"
@@ -2330,15 +2802,10 @@ onBeforeUnmount(() => {
                       size="sm"
                       class="relative z-[80] min-w-[140px]"
                     />
-                    <label class="flex cursor-pointer items-center justify-center rounded-[16px] border border-[#d7dfef] bg-white px-4 py-2.5 text-sm font-semibold text-[#0f172a] transition hover:border-[#94a3b8]">
+                    <label class="flex cursor-pointer items-center justify-center rounded-[14px] border border-borderSoft bg-panel px-4 py-2 text-sm font-semibold text-textMain transition hover:border-[#94a3b8]">
                       上传音频
                       <input type="file" accept="audio/*" class="hidden" @change="handleAudioUpload(role.key, $event)" />
                     </label>
-                  </div>
-
-                  <div class="mt-3 flex items-center justify-between text-sm text-[#64748b]">
-                    <span>音色：{{ roleVoiceSelections[role.key] || '未配置音色' }}</span>
-                    <span>{{ roleAudioFileNames[role.key] || '未上传音频' }}</span>
                   </div>
                 </div>
               </article>
@@ -2346,50 +2813,56 @@ onBeforeUnmount(() => {
           </template>
 
           <template v-else-if="activeSettingTab === 'scenes'">
-            <div class="mt-8 flex flex-wrap items-center gap-6 text-sm text-[#475569]">
-              <span>场景</span>
-              <span>总计 {{ sceneCountSummary.total }}</span>
-              <span>已完成 {{ sceneCountSummary.completed }}</span>
-              <span>生成中 {{ sceneCountSummary.generating }}</span>
-            </div>
-
-            <div class="mt-6 grid gap-5 xl:grid-cols-3">
+            <div class="mt-5 grid gap-4 xl:grid-cols-3 2xl:grid-cols-4">
               <article
                 v-for="scene in projectDetail?.analysis.scenes || []"
                 :key="scene.key"
-                class="overflow-hidden rounded-[28px] border border-[#e7ebf4] bg-[#fbfdff] shadow-[0_10px_28px_rgba(15,23,42,0.04)]"
+                class="rounded-[24px] border border-borderSoft bg-panelSoft p-4 shadow-[0_10px_28px_rgba(15,23,42,0.04)]"
               >
-                <div class="relative h-[220px] bg-[#eef2f7]">
-                  <UiFluidImage
-                    v-if="scenePreviewUrl(scene) && !isSceneGenerating(scene)"
-                    :src="scenePreviewUrl(scene)"
-                    :alt="scene.name"
-                    img-class="object-cover"
-                    wrapper-class="h-full w-full"
-                    loading-label="生成中"
-                  />
-                  <div
-                    v-else
-                    class="relative flex h-full items-center justify-center overflow-hidden rounded-[24px] bg-[linear-gradient(135deg,#eef6ff_0%,#d8e9ff_44%,#c6dcff_100%)] px-6 text-center"
-                  >
-                    <div class="absolute inset-0 bg-[radial-gradient(circle_at_28%_24%,rgba(255,255,255,0.72),transparent_42%),radial-gradient(circle_at_72%_68%,rgba(191,219,254,0.55),transparent_38%)]" />
-                    <div class="relative z-[1]">
-                      <p class="text-[24px] font-semibold text-white drop-shadow-[0_8px_18px_rgba(15,23,42,0.18)]">
-                        {{ isSceneGenerating(scene) ? '生成中' : '待生成' }}
-                      </p>
-                      <p class="mt-2 text-sm font-medium text-white/90">{{ sceneGenerationText(scene) }}</p>
+                <button type="button" class="block w-full text-left" @click="openSettingEditor(scene, 'scene')">
+                  <div class="relative h-[204px] overflow-hidden rounded-[18px] bg-panelSoft">
+                    <UiFluidImage
+                      v-if="scenePreviewUrl(scene) && !isSceneGenerating(scene)"
+                      :src="scenePreviewUrl(scene)"
+                      :alt="scene.name"
+                      img-class="h-full object-cover"
+                      wrapper-class="h-full w-full"
+                      loading-label="生成中"
+                    />
+                    <div
+                      v-else
+                      class="relative flex h-full items-center justify-center overflow-hidden rounded-[18px] bg-[linear-gradient(135deg,#eef6ff_0%,#d8e9ff_44%,#c6dcff_100%)] px-6 text-center"
+                    >
+                      <div class="absolute inset-0 bg-[radial-gradient(circle_at_28%_24%,rgba(255,255,255,0.72),transparent_42%),radial-gradient(circle_at_72%_68%,rgba(191,219,254,0.55),transparent_38%)]" />
+                      <div class="relative z-[1]">
+                        <p class="text-[22px] font-semibold text-white drop-shadow-[0_8px_18px_rgba(15,23,42,0.18)]">
+                          {{ isSceneGenerating(scene) ? '生成中' : '待生成' }}
+                        </p>
+                        <p class="mt-2 text-sm font-medium text-white/90">{{ sceneGenerationText(scene) }}</p>
+                      </div>
                     </div>
+                    <span class="pointer-events-none absolute right-3 top-3 rounded-full border border-white/20 bg-[rgba(15,23,42,0.5)] px-2.5 py-1 text-[11px] font-semibold text-white backdrop-blur">
+                      编辑
+                    </span>
                   </div>
-                </div>
-                <div class="p-5">
-                  <div class="flex items-start justify-between gap-3">
-                    <div>
-                      <h3 class="text-xl font-semibold">{{ scene.name }}</h3>
-                      <p class="mt-2 text-sm leading-7 text-[#64748b]">{{ scene.description }}</p>
-                    </div>
+                </button>
+                <div class="mt-4 flex items-start justify-between gap-3">
+                  <div class="min-w-0">
+                    <h3 class="truncate text-lg font-semibold">{{ scene.name }}</h3>
+                    <p class="mt-2 line-clamp-3 text-sm leading-7 text-textMuted">{{ scene.description }}</p>
+                  </div>
+                  <div class="flex items-center gap-2">
                     <button
                       type="button"
-                      class="whitespace-nowrap rounded-full border border-[#d7dfef] bg-white px-3 py-1.5 text-xs font-semibold text-[#475569] transition hover:border-[#94a3b8]"
+                      class="rounded-full border border-borderSoft bg-panel px-3 py-1.5 text-xs font-semibold text-textMuted transition hover:border-[#94a3b8]"
+                      :disabled="isBusy"
+                      @click="openSettingEditor(scene, 'scene')"
+                    >
+                      编辑
+                    </button>
+                    <button
+                      type="button"
+                      class="rounded-full border border-borderSoft bg-panel px-3 py-1.5 text-xs font-semibold text-textMuted transition hover:border-[#94a3b8]"
                       :disabled="isBusy"
                       @click="generateSceneAssets({ overwrite: true, sceneKeys: [scene.key], successMessage: `${scene.name} 场景图已刷新。` })"
                     >
@@ -2402,50 +2875,56 @@ onBeforeUnmount(() => {
           </template>
 
           <template v-else>
-            <div class="mt-8 flex flex-wrap items-center gap-6 text-sm text-[#475569]">
-              <span>道具</span>
-              <span>总计 {{ propCountSummary.total }}</span>
-              <span>已完成 {{ propCountSummary.completed }}</span>
-              <span>生成中 {{ propCountSummary.generating }}</span>
-            </div>
-
-            <div class="mt-6 grid gap-5 xl:grid-cols-3">
+            <div class="mt-5 grid gap-4 xl:grid-cols-3 2xl:grid-cols-4">
               <article
                 v-for="prop in projectDetail?.analysis.props || []"
                 :key="prop.key"
-                class="overflow-hidden rounded-[28px] border border-[#e7ebf4] bg-[#fbfdff] shadow-[0_10px_28px_rgba(15,23,42,0.04)]"
+                class="rounded-[24px] border border-borderSoft bg-panelSoft p-4 shadow-[0_10px_28px_rgba(15,23,42,0.04)]"
               >
-                <div class="relative h-[220px] bg-[#eef2f7]">
-                  <UiFluidImage
-                    v-if="propPreviewUrl(prop) && !isPropGenerating(prop)"
-                    :src="propPreviewUrl(prop)"
-                    :alt="prop.name"
-                    img-class="object-cover"
-                    wrapper-class="h-full w-full"
-                    loading-label="生成中"
-                  />
-                  <div
-                    v-else
-                    class="relative flex h-full items-center justify-center overflow-hidden rounded-[24px] bg-[linear-gradient(135deg,#eef6ff_0%,#d8e9ff_44%,#c6dcff_100%)] px-6 text-center"
-                  >
-                    <div class="absolute inset-0 bg-[radial-gradient(circle_at_28%_24%,rgba(255,255,255,0.72),transparent_42%),radial-gradient(circle_at_72%_68%,rgba(191,219,254,0.55),transparent_38%)]" />
-                    <div class="relative z-[1]">
-                      <p class="text-[24px] font-semibold text-white drop-shadow-[0_8px_18px_rgba(15,23,42,0.18)]">
-                        {{ isPropGenerating(prop) ? '生成中' : '待生成' }}
-                      </p>
-                      <p class="mt-2 text-sm font-medium text-white/90">{{ propGenerationText(prop) }}</p>
+                <button type="button" class="block w-full text-left" @click="openSettingEditor(prop, 'prop')">
+                  <div class="relative h-[204px] overflow-hidden rounded-[18px] bg-panelSoft">
+                    <UiFluidImage
+                      v-if="propPreviewUrl(prop) && !isPropGenerating(prop)"
+                      :src="propPreviewUrl(prop)"
+                      :alt="prop.name"
+                      img-class="h-full object-cover"
+                      wrapper-class="h-full w-full"
+                      loading-label="生成中"
+                    />
+                    <div
+                      v-else
+                      class="relative flex h-full items-center justify-center overflow-hidden rounded-[18px] bg-[linear-gradient(135deg,#eef6ff_0%,#d8e9ff_44%,#c6dcff_100%)] px-6 text-center"
+                    >
+                      <div class="absolute inset-0 bg-[radial-gradient(circle_at_28%_24%,rgba(255,255,255,0.72),transparent_42%),radial-gradient(circle_at_72%_68%,rgba(191,219,254,0.55),transparent_38%)]" />
+                      <div class="relative z-[1]">
+                        <p class="text-[22px] font-semibold text-white drop-shadow-[0_8px_18px_rgba(15,23,42,0.18)]">
+                          {{ isPropGenerating(prop) ? '生成中' : '待生成' }}
+                        </p>
+                        <p class="mt-2 text-sm font-medium text-white/90">{{ propGenerationText(prop) }}</p>
+                      </div>
                     </div>
+                    <span class="pointer-events-none absolute right-3 top-3 rounded-full border border-white/20 bg-[rgba(15,23,42,0.5)] px-2.5 py-1 text-[11px] font-semibold text-white backdrop-blur">
+                      编辑
+                    </span>
                   </div>
-                </div>
-                <div class="p-5">
-                  <div class="flex items-start justify-between gap-3">
-                    <div>
-                      <h3 class="text-xl font-semibold">{{ prop.name }}</h3>
-                      <p class="mt-2 text-sm leading-7 text-[#64748b]">{{ prop.description }}</p>
-                    </div>
+                </button>
+                <div class="mt-4 flex items-start justify-between gap-3">
+                  <div class="min-w-0">
+                    <h3 class="truncate text-lg font-semibold">{{ prop.name }}</h3>
+                    <p class="mt-2 line-clamp-3 text-sm leading-7 text-textMuted">{{ prop.description }}</p>
+                  </div>
+                  <div class="flex items-center gap-2">
                     <button
                       type="button"
-                      class="whitespace-nowrap rounded-full border border-[#d7dfef] bg-white px-3 py-1.5 text-xs font-semibold text-[#475569] transition hover:border-[#94a3b8]"
+                      class="rounded-full border border-borderSoft bg-panel px-3 py-1.5 text-xs font-semibold text-textMuted transition hover:border-[#94a3b8]"
+                      :disabled="isBusy"
+                      @click="openSettingEditor(prop, 'prop')"
+                    >
+                      编辑
+                    </button>
+                    <button
+                      type="button"
+                      class="rounded-full border border-borderSoft bg-panel px-3 py-1.5 text-xs font-semibold text-textMuted transition hover:border-[#94a3b8]"
                       :disabled="isBusy"
                       @click="generatePropAssets({ overwrite: true, propKeys: [prop.key], successMessage: `${prop.name} 道具图已刷新。` })"
                     >
@@ -2460,23 +2939,23 @@ onBeforeUnmount(() => {
 
         <section
           v-else-if="activeStep === 'storyboard'"
-          class="rounded-[32px] border border-[#e8edf5] bg-white p-8 shadow-[0_18px_60px_rgba(15,23,42,0.06)]"
+          class="rounded-[32px] border border-[#e8edf5] bg-panel p-8 shadow-[0_18px_60px_rgba(15,23,42,0.06)]"
         >
           <div v-if="showStoryboardProgressPanel" class="flex min-h-[560px] flex-col items-center justify-center">
-            <div class="flex h-20 w-20 items-center justify-center rounded-full bg-[#eef2ff] text-[#4f46e5]">
+            <div class="flex h-20 w-20 items-center justify-center rounded-full bg-neonSoft/20 text-neon">
               <svg viewBox="0 0 24 24" class="h-9 w-9 animate-spin" fill="none" stroke="currentColor" stroke-width="1.8">
                 <path d="M12 3a9 9 0 1 1-9 9" stroke-linecap="round" />
               </svg>
             </div>
             <h2 class="mt-8 text-[34px] font-semibold tracking-[-0.04em]">{{ storyboardProgressTitle }}</h2>
-            <p class="mt-3 max-w-[760px] text-center text-base text-[#64748b]">{{ storyboardProgressSubtitle }}</p>
+            <p class="mt-3 max-w-[760px] text-center text-base text-textMuted">{{ storyboardProgressSubtitle }}</p>
 
-            <div class="mt-8 flex w-full max-w-[820px] items-center justify-between text-sm text-[#64748b]">
+            <div class="mt-8 flex w-full max-w-[820px] items-center justify-between text-sm text-textMuted">
               <span>当前剧集进度：</span>
               <span>第 {{ selectedStoryboardEpisode?.episodeNo || 1 }} 集 / 共 {{ currentStoryboardRun.totalEpisodes || 1 }} 集</span>
             </div>
 
-            <div class="mt-4 w-full max-w-[820px] overflow-hidden rounded-full bg-[#eef2f7]">
+            <div class="mt-4 w-full max-w-[820px] overflow-hidden rounded-full bg-panelSoft">
               <div
                 class="h-3 rounded-full bg-gradient-to-r from-[#2463ff] to-[#7c3aed] transition-all duration-500"
                 :style="{ width: `${selectedStoryboardEpisode?.progress || 0}%` }"
@@ -2487,22 +2966,22 @@ onBeforeUnmount(() => {
               <article
                 v-for="episode in storyboardEpisodeItems"
                 :key="episode.episodeNo"
-                class="rounded-[22px] border border-[#e5e7eb] bg-[#fafcff] px-5 py-5"
+                class="rounded-[22px] border border-borderSoft bg-panelSoft px-5 py-5"
               >
                 <div class="flex items-start justify-between gap-3">
                   <div>
-                    <p class="text-base font-semibold text-[#0f172a]">第 {{ episode.episodeNo }} 集</p>
-                    <p class="mt-1 text-xs text-[#64748b]">{{ storyboardEpisodeStatusLabel(episode.status) }}</p>
+                    <p class="text-base font-semibold text-textMain">第 {{ episode.episodeNo }} 集</p>
+                    <p class="mt-1 text-xs text-textMuted">{{ storyboardEpisodeStatusLabel(episode.status) }}</p>
                   </div>
-                  <span class="text-lg font-semibold text-[#4f46e5]">{{ episode.progress }}%</span>
+                  <span class="text-lg font-semibold text-neon">{{ episode.progress }}%</span>
                 </div>
-                <div class="mt-4 h-2 overflow-hidden rounded-full bg-[#eef2f7]">
+                <div class="mt-4 h-2 overflow-hidden rounded-full bg-panelSoft">
                   <div
                     class="h-full rounded-full bg-gradient-to-r from-[#2463ff] to-[#7c3aed] transition-all duration-500"
                     :style="{ width: `${episode.progress}%` }"
                   />
                 </div>
-                <p class="mt-3 text-sm text-[#64748b]">
+                <p class="mt-3 text-sm text-textMuted">
                   已生成 {{ episode.generatedCount }} / {{ episode.expectedCount || '待估算' }} 条分镜
                 </p>
               </article>
@@ -2510,40 +2989,40 @@ onBeforeUnmount(() => {
           </div>
 
           <template v-else>
-            <div class="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
+            <div class="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
               <div class="min-w-0">
                 <div class="flex flex-wrap items-center gap-3">
                   <h2 class="text-[30px] font-semibold tracking-[-0.04em]">分镜表</h2>
-                  <span class="rounded-full border border-[#d7dfef] bg-[#f8fafc] px-3 py-1 text-sm text-[#64748b]">
+                  <span class="rounded-full border border-borderSoft bg-panelSoft px-3 py-1 text-sm text-textMuted">
                     第 {{ selectedEpisodeNo }} 集
                   </span>
                 </div>
-                <p class="mt-3 line-clamp-1 text-sm leading-7 text-[#64748b]">
+                <p class="mt-3 line-clamp-1 text-sm leading-7 text-textMuted">
                   {{ storyboardEpisodeSummaryText(selectedEpisodeNo) }}
                 </p>
                 <button
                   type="button"
-                  class="mt-2 text-sm font-semibold text-[#4f46e5] transition hover:text-[#4338ca]"
+                  class="mt-2 text-sm font-semibold text-neon transition hover:text-[#4338ca]"
                   @click="openStoryboardEpisodePreview"
                 >
                   详情
                 </button>
               </div>
 
-              <div class="flex flex-wrap items-center gap-3">
+              <div class="flex w-full flex-col items-start gap-3 xl:w-auto xl:items-end">
                 <UiBaseSelect
                   v-if="hasStoryboards"
                   v-model="selectedVideoModel"
                   :options="videoModelOptions"
                   placeholder="视频模型"
                   size="sm"
-                  class="min-w-[240px]"
+                  class="w-full min-w-0 xl:w-[260px]"
                 />
                 <button
                   type="button"
                   class="rounded-[16px] px-5 py-2.5 text-sm font-semibold transition"
                   :class="hasStoryboards
-                    ? 'border border-[#d7dfef] bg-white text-[#0f172a] hover:border-[#94a3b8]'
+                    ? 'border border-borderSoft bg-panel text-textMain hover:border-[#94a3b8]'
                     : 'bg-gradient-to-r from-[#2463ff] to-[#7c3aed] text-white hover:brightness-110'"
                   :disabled="isBusy"
                   @click="hasStoryboards ? batchGenerateCurrentEpisodeVideos() : generateStoryboards()"
@@ -2553,15 +3032,15 @@ onBeforeUnmount(() => {
               </div>
             </div>
 
-            <div class="mt-8 grid gap-5 xl:grid-cols-[84px_minmax(0,1fr)]">
-              <aside class="rounded-[28px] border border-[#e7ebf4] bg-[#fbfdff] p-4">
+            <div class="mt-6 grid gap-4 xl:grid-cols-[78px_minmax(0,1fr)]">
+              <aside class="rounded-[28px] border border-borderSoft bg-panelSoft p-4">
                 <div class="space-y-3">
                   <button
                     v-for="episode in storyboardEpisodeItems"
                     :key="episode.episodeNo"
                     type="button"
                     class="flex w-full flex-col items-center rounded-[18px] border px-3 py-3 text-center transition"
-                    :class="selectedEpisodeNo === episode.episodeNo ? 'border-[#8b7dff] bg-[#eef2ff] text-[#4f46e5]' : 'border-[#edf1f7] bg-white text-[#475569] hover:border-[#cbd5e1]'"
+                    :class="selectedEpisodeNo === episode.episodeNo ? 'border-[#8b7dff] bg-neonSoft/20 text-neon' : 'border-borderSoft bg-panel text-textMuted hover:border-borderSoft'"
                     @click="selectedEpisodeNo = episode.episodeNo"
                   >
                     <span class="text-lg font-semibold">{{ episode.episodeNo }}</span>
@@ -2571,10 +3050,10 @@ onBeforeUnmount(() => {
               </aside>
 
               <section class="space-y-5">
-                <div v-if="!storyboardRowsForCurrentEpisode.length" class="flex min-h-[360px] items-center justify-center rounded-[28px] border border-dashed border-[#d7dfef] bg-[#fafcff]">
+                <div v-if="!storyboardRowsForCurrentEpisode.length" class="flex min-h-[360px] items-center justify-center rounded-[28px] border border-dashed border-borderSoft bg-panelSoft">
                   <div class="text-center">
                     <p class="text-xl font-semibold">当前集还没有分镜</p>
-                    <p class="mt-3 text-sm text-[#64748b]">
+                    <p class="mt-3 text-sm text-textMuted">
                       {{ currentStoryboardRun.status === 'completed' ? '可点击下方按钮新增首条分镜。' : '后台正在继续生成当前剧集的结构化分镜。' }}
                     </p>
                     <button
@@ -2591,23 +3070,23 @@ onBeforeUnmount(() => {
                 <article
                   v-for="row in storyboardRowsForCurrentEpisode"
                   :key="row.id"
-                  class="rounded-[30px] border border-[#e7ebf4] bg-[#fbfdff] p-5 shadow-[0_10px_28px_rgba(15,23,42,0.04)]"
+                  class="rounded-[28px] border border-borderSoft bg-panelSoft p-4 shadow-[0_10px_28px_rgba(15,23,42,0.04)]"
                 >
                   <div class="flex flex-wrap items-start justify-between gap-4">
                     <div class="flex flex-wrap items-center gap-3">
-                      <span class="text-xl font-semibold text-[#0f172a]">分镜 {{ row.shotNo }}</span>
-                      <span class="rounded-full bg-[#eef2ff] px-3 py-1 text-sm font-semibold text-[#4f46e5]">
-                        {{ row.shotType || '镜头待定' }}
+                      <span class="text-xl font-semibold text-textMain">分镜 {{ row.shotNo }}</span>
+                      <span class="rounded-full border border-borderSoft bg-panel px-3 py-1 text-sm text-textMuted">
+                        {{ resolvedStoryboardVideoDuration(row) }}s
                       </span>
-                      <span class="rounded-full border border-[#d7dfef] bg-white px-3 py-1 text-sm text-[#64748b]">
-                        {{ row.durationSec || row.videoDurationSec || 5 }}s
+                      <span class="rounded-full border border-borderSoft bg-panel px-3 py-1 text-sm text-textMuted">
+                        {{ selectedResolution }}
                       </span>
                     </div>
 
                     <div class="flex items-center gap-2">
                       <button
                         type="button"
-                        class="flex h-10 w-10 items-center justify-center rounded-full border border-[#d7dfef] bg-white text-[#475569] transition hover:border-[#94a3b8]"
+                        class="flex h-10 w-10 items-center justify-center rounded-full border border-borderSoft bg-panel text-textMuted transition hover:border-[#94a3b8]"
                         title="新增分镜"
                         @click="createStoryboardAfter(row)"
                       >
@@ -2615,7 +3094,7 @@ onBeforeUnmount(() => {
                       </button>
                       <button
                         type="button"
-                        class="flex h-10 w-10 items-center justify-center rounded-full border border-[#d7dfef] bg-white text-[#475569] transition hover:border-[#94a3b8]"
+                        class="flex h-10 w-10 items-center justify-center rounded-full border border-borderSoft bg-panel text-textMuted transition hover:border-[#94a3b8]"
                         title="复制分镜"
                         @click="copyStoryboardRow(row)"
                       >
@@ -2623,7 +3102,7 @@ onBeforeUnmount(() => {
                       </button>
                       <button
                         type="button"
-                        class="flex h-10 w-10 items-center justify-center rounded-full border border-[#fecaca] bg-white text-[#dc2626] transition hover:bg-[#fff1f2]"
+                        class="flex h-10 w-10 items-center justify-center rounded-full border border-[#fecaca] bg-panel text-[#dc2626] transition hover:bg-[#fff1f2]"
                         title="删除分镜"
                         @click="deleteStoryboardRow(row)"
                       >
@@ -2632,12 +3111,12 @@ onBeforeUnmount(() => {
                     </div>
                   </div>
 
-                  <div class="mt-5 grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_360px]">
-                    <section class="rounded-[24px] border border-[#edf1f7] bg-white p-5">
+                  <div class="mt-4 grid gap-4 xl:grid-cols-[minmax(0,0.76fr)_minmax(0,1.12fr)_420px]">
+                    <section class="rounded-[22px] border border-borderSoft bg-panel p-4">
                       <h3 class="text-[22px] font-semibold">分镜信息</h3>
 
                       <div class="mt-5">
-                        <p class="mb-2 text-sm font-semibold text-[#64748b]">分镜描述</p>
+                        <p class="mb-2 text-sm font-semibold text-textMuted">分镜描述</p>
                         <UiBaseTextarea
                           v-model="row.sceneDescription"
                           placeholder="请输入当前分镜的画面描述"
@@ -2649,10 +3128,10 @@ onBeforeUnmount(() => {
 
                       <div class="mt-5">
                         <div class="mb-2 flex items-center justify-between gap-3">
-                          <p class="text-sm font-semibold text-[#64748b]">出场角色</p>
+                          <p class="text-sm font-semibold text-textMuted">出场角色</p>
                           <button
                             type="button"
-                            class="text-sm font-semibold text-[#4f46e5] transition hover:text-[#4338ca]"
+                            class="text-sm font-semibold text-neon transition hover:text-[#4338ca]"
                             @click="appendStoryboardKey(row, 'role')"
                           >
                             ＋ 添加
@@ -2664,14 +3143,14 @@ onBeforeUnmount(() => {
                             :key="`${row.id}-role-${roleIndex}`"
                             class="grid gap-3 md:grid-cols-[52px_minmax(0,1fr)_44px]"
                           >
-                            <div class="overflow-hidden rounded-2xl border border-[#e7ebf4] bg-[#f8fafc]">
+                            <div class="overflow-hidden rounded-2xl border border-borderSoft bg-panelSoft">
                               <img
                                 v-if="storyboardRowRolePreviewUrl(roleKey)"
                                 :src="storyboardRowRolePreviewUrl(roleKey)"
                                 :alt="roleNameByKey(roleKey)"
                                 class="h-[52px] w-[52px] object-cover object-left"
                               />
-                              <div v-else class="flex h-[52px] w-[52px] items-center justify-center text-xs text-[#94a3b8]">
+                              <div v-else class="flex h-[52px] w-[52px] items-center justify-center text-xs text-textMuted">
                                 角色
                               </div>
                             </div>
@@ -2682,23 +3161,37 @@ onBeforeUnmount(() => {
                               full
                               @update:model-value="(value) => updateStoryboardKey(row, 'role', roleIndex, String(value))"
                             />
-                            <button
-                              type="button"
-                              class="rounded-2xl border border-[#d7dfef] bg-white text-[#64748b] transition hover:border-[#94a3b8]"
-                              @click="removeStoryboardKey(row, 'role', roleIndex)"
-                            >
-                              删除
-                            </button>
+                            <div class="relative">
+                              <button
+                                type="button"
+                                class="flex h-full w-full items-center justify-center text-textMuted transition hover:text-textMain"
+                                @click="toggleStoryboardKeyMenu(row.id, 'role', roleIndex)"
+                              >
+                                ⋯
+                              </button>
+                              <div
+                                v-if="storyboardKeyActionMenu === storyboardKeyMenuToken(row.id, 'role', roleIndex)"
+                                class="absolute right-0 top-[calc(100%+8px)] z-20 min-w-[88px] rounded-2xl border border-borderSoft bg-panel p-1 shadow-[0_18px_40px_rgba(15,23,42,0.12)]"
+                              >
+                                <button
+                                  type="button"
+                                  class="w-full rounded-xl px-3 py-2 text-sm font-semibold text-[#dc2626] transition hover:bg-[#fff1f2]"
+                                  @click="removeStoryboardKey(row, 'role', roleIndex); storyboardKeyActionMenu = ''"
+                                >
+                                  删除
+                                </button>
+                              </div>
+                            </div>
                           </div>
                         </div>
                       </div>
 
                       <div class="mt-5">
                         <div class="mb-2 flex items-center justify-between gap-3">
-                          <p class="text-sm font-semibold text-[#64748b]">分镜场景</p>
+                          <p class="text-sm font-semibold text-textMuted">分镜场景</p>
                           <button
                             type="button"
-                            class="text-sm font-semibold text-[#4f46e5] transition hover:text-[#4338ca]"
+                            class="text-sm font-semibold text-neon transition hover:text-[#4338ca]"
                             @click="appendStoryboardKey(row, 'scene')"
                           >
                             ＋ 添加
@@ -2710,14 +3203,14 @@ onBeforeUnmount(() => {
                             :key="`${row.id}-scene-${sceneIndex}`"
                             class="grid gap-3 md:grid-cols-[88px_minmax(0,1fr)_44px]"
                           >
-                            <div class="overflow-hidden rounded-2xl border border-[#e7ebf4] bg-[#f8fafc]">
+                            <div class="overflow-hidden rounded-2xl border border-borderSoft bg-panelSoft">
                               <img
                                 v-if="sceneAssetByKey(sceneKey)"
                                 :src="sceneAssetByKey(sceneKey)"
                                 :alt="sceneNameByKey(sceneKey)"
                                 class="h-[64px] w-[88px] object-cover"
                               />
-                              <div v-else class="flex h-[64px] w-[88px] items-center justify-center text-xs text-[#94a3b8]">
+                              <div v-else class="flex h-[64px] w-[88px] items-center justify-center text-xs text-textMuted">
                                 场景
                               </div>
                             </div>
@@ -2728,23 +3221,37 @@ onBeforeUnmount(() => {
                               full
                               @update:model-value="(value) => updateStoryboardKey(row, 'scene', sceneIndex, String(value))"
                             />
-                            <button
-                              type="button"
-                              class="rounded-2xl border border-[#d7dfef] bg-white text-[#64748b] transition hover:border-[#94a3b8]"
-                              @click="removeStoryboardKey(row, 'scene', sceneIndex)"
-                            >
-                              删除
-                            </button>
+                            <div class="relative">
+                              <button
+                                type="button"
+                                class="flex h-full w-full items-center justify-center text-textMuted transition hover:text-textMain"
+                                @click="toggleStoryboardKeyMenu(row.id, 'scene', sceneIndex)"
+                              >
+                                ⋯
+                              </button>
+                              <div
+                                v-if="storyboardKeyActionMenu === storyboardKeyMenuToken(row.id, 'scene', sceneIndex)"
+                                class="absolute right-0 top-[calc(100%+8px)] z-20 min-w-[88px] rounded-2xl border border-borderSoft bg-panel p-1 shadow-[0_18px_40px_rgba(15,23,42,0.12)]"
+                              >
+                                <button
+                                  type="button"
+                                  class="w-full rounded-xl px-3 py-2 text-sm font-semibold text-[#dc2626] transition hover:bg-[#fff1f2]"
+                                  @click="removeStoryboardKey(row, 'scene', sceneIndex); storyboardKeyActionMenu = ''"
+                                >
+                                  删除
+                                </button>
+                              </div>
+                            </div>
                           </div>
                         </div>
                       </div>
 
                       <div class="mt-5">
                         <div class="mb-2 flex items-center justify-between gap-3">
-                          <p class="text-sm font-semibold text-[#64748b]">分镜道具</p>
+                          <p class="text-sm font-semibold text-textMuted">分镜道具</p>
                           <button
                             type="button"
-                            class="text-sm font-semibold text-[#4f46e5] transition hover:text-[#4338ca]"
+                            class="text-sm font-semibold text-neon transition hover:text-[#4338ca]"
                             @click="appendStoryboardKey(row, 'prop')"
                           >
                             ＋ 添加
@@ -2756,14 +3263,14 @@ onBeforeUnmount(() => {
                             :key="`${row.id}-prop-${propIndex}`"
                             class="grid gap-3 md:grid-cols-[88px_minmax(0,1fr)_44px]"
                           >
-                            <div class="overflow-hidden rounded-2xl border border-[#e7ebf4] bg-[#f8fafc]">
+                            <div class="overflow-hidden rounded-2xl border border-borderSoft bg-panelSoft">
                               <img
                                 v-if="propAssetByKey(propKey)"
                                 :src="propAssetByKey(propKey)"
                                 :alt="propNameByKey(propKey)"
                                 class="h-[64px] w-[88px] object-cover"
                               />
-                              <div v-else class="flex h-[64px] w-[88px] items-center justify-center text-xs text-[#94a3b8]">
+                              <div v-else class="flex h-[64px] w-[88px] items-center justify-center text-xs text-textMuted">
                                 道具
                               </div>
                             </div>
@@ -2774,76 +3281,118 @@ onBeforeUnmount(() => {
                               full
                               @update:model-value="(value) => updateStoryboardKey(row, 'prop', propIndex, String(value))"
                             />
-                            <button
-                              type="button"
-                              class="rounded-2xl border border-[#d7dfef] bg-white text-[#64748b] transition hover:border-[#94a3b8]"
-                              @click="removeStoryboardKey(row, 'prop', propIndex)"
-                            >
-                              删除
-                            </button>
+                            <div class="relative">
+                              <button
+                                type="button"
+                                class="flex h-full w-full items-center justify-center text-textMuted transition hover:text-textMain"
+                                @click="toggleStoryboardKeyMenu(row.id, 'prop', propIndex)"
+                              >
+                                ⋯
+                              </button>
+                              <div
+                                v-if="storyboardKeyActionMenu === storyboardKeyMenuToken(row.id, 'prop', propIndex)"
+                                class="absolute right-0 top-[calc(100%+8px)] z-20 min-w-[88px] rounded-2xl border border-borderSoft bg-panel p-1 shadow-[0_18px_40px_rgba(15,23,42,0.12)]"
+                              >
+                                <button
+                                  type="button"
+                                  class="w-full rounded-xl px-3 py-2 text-sm font-semibold text-[#dc2626] transition hover:bg-[#fff1f2]"
+                                  @click="removeStoryboardKey(row, 'prop', propIndex); storyboardKeyActionMenu = ''"
+                                >
+                                  删除
+                                </button>
+                              </div>
+                            </div>
                           </div>
                         </div>
                       </div>
                     </section>
 
-                    <section class="rounded-[24px] border border-[#edf1f7] bg-white p-5">
-                      <h3 class="text-[22px] font-semibold">分镜视频生成</h3>
-
-                      <div class="mt-5">
-                        <p class="mb-2 text-sm font-semibold text-[#64748b]">视频提示词</p>
-                        <UiBaseTextarea
-                          v-model="row.videoPrompt"
-                          placeholder="镜头1 [0-3秒] 全景：请描述镜头调度、角色动作、场景氛围与运镜节奏。"
-                          full
-                          size="md"
-                          @blur="queueStoryboardAutosave(row.id, { videoPrompt: row.videoPrompt })"
-                        />
+                    <section class="relative flex flex-col rounded-[22px] border border-borderSoft bg-panel p-4">
+                      <div
+                        v-if="isRowVideoPromptGenerating(row.id)"
+                        class="absolute inset-0 z-10 flex flex-col items-center justify-center rounded-[22px] bg-[#0f172a]/16 backdrop-blur-[1px]"
+                      >
+                        <div class="rounded-full border border-neon/30 bg-panel px-4 py-2 text-sm font-semibold text-neon">
+                          正在重新生成当前分镜的视频提示词...
+                        </div>
+                      </div>
+                      <h3 class="text-[22px] font-semibold shrink-0">分镜视频生成</h3>
+                      <div class="mt-3 flex flex-wrap items-center gap-2 text-xs font-semibold text-textMuted">
+                        <span class="rounded-full border border-borderSoft bg-panelSoft px-3 py-1">当前分辨率 {{ selectedResolution }}</span>
+                        <span class="rounded-full border border-borderSoft bg-panelSoft px-3 py-1">
+                          {{ isSilentCapableStoryboardVideoModel(row.videoModel || selectedVideoModel) ? `输出模式 ${resolvedStoryboardVideoAudioMode(row) === 'silent' ? '无声' : '有声'}` : '输出模式 有声' }}
+                        </span>
+                      </div>
+                      <div class="mt-5 flex-1 flex flex-col min-h-0">
+                        <p class="mb-2 text-sm font-semibold text-textMuted shrink-0">视频提示词</p>
+                        <div class="flex-1 min-h-0">
+                          <UiBaseTextarea
+                            v-model="row.videoPrompt"
+                            placeholder="镜头1 [0-3秒] 全景：请描述镜头调度、角色动作、场景氛围与运镜节奏。"
+                            full
+                            size="md"
+                            class="h-full min-h-[200px] leading-loose"
+                            :disabled="isRowVideoPromptGenerating(row.id) || isRowVideoSubmitting(row.id)"
+                            @blur="queueStoryboardAutosave(row.id, { videoPrompt: row.videoPrompt })"
+                          />
+                        </div>
                       </div>
 
-                      <div class="mt-5 rounded-[20px] border border-[#edf1f7] bg-[#fafcff] p-4 text-sm leading-7 text-[#475569]">
-                        <p><span class="font-semibold text-[#334155]">画风：</span>{{ resolvedVisualStyle }}</p>
-                        <p class="mt-2"><span class="font-semibold text-[#334155]">场景：</span>{{ row.sceneKeys.map((item) => sceneNameByKey(item)).join('、') || '未关联' }}</p>
-                        <p class="mt-2"><span class="font-semibold text-[#334155]">角色：</span>{{ row.roleKeys.map((item) => roleNameByKey(item)).join('、') || '未关联' }}</p>
-                        <p class="mt-2"><span class="font-semibold text-[#334155]">道具：</span>{{ row.propKeys.map((item) => propNameByKey(item)).join('、') || '未关联' }}</p>
-                      </div>
-
-                      <div class="mt-5 grid gap-3 md:grid-cols-[minmax(0,1fr)_132px]">
-                        <UiBaseSelect
-                          :model-value="row.videoModel || selectedVideoModel"
-                          :options="videoModelOptions"
-                          placeholder="视频模型"
-                          full
-                          @update:model-value="(value) => { row.videoModel = String(value); queueStoryboardAutosave(row.id, { videoModel: row.videoModel }) }"
-                        />
-                        <UiBaseSelect
-                          :model-value="String(row.videoDurationSec || row.durationSec || 5)"
-                          :options="selectedStoryboardVideoDurationOptions"
-                          placeholder="时长"
-                          full
-                          @update:model-value="(value) => { row.videoDurationSec = Number(value); queueStoryboardAutosave(row.id, { videoDurationSec: row.videoDurationSec }) }"
-                        />
-                      </div>
-
-                      <div class="mt-4 flex flex-wrap items-center gap-3">
+                      <div class="mt-5 flex items-center gap-2 shrink-0">
+                        <div class="w-[140px] shrink-0">
+                          <UiBaseSelect
+                            :model-value="row.videoModel || selectedVideoModel"
+                            :options="videoModelOptions"
+                            placeholder="视频模型"
+                            full
+                            size="sm"
+                            class="min-w-0"
+                            :disabled="isRowVideoPromptGenerating(row.id) || isRowVideoSubmitting(row.id)"
+                            @update:model-value="(value) => handleStoryboardVideoModelChange(row, String(value))"
+                          />
+                        </div>
+                        <div class="w-[80px] shrink-0">
+                          <UiBaseSelect
+                            :model-value="String(resolvedStoryboardVideoDuration(row))"
+                            :options="storyboardVideoDurationOptions(row)"
+                            placeholder="时长"
+                            full
+                            size="sm"
+                            :disabled="isRowVideoPromptGenerating(row.id) || isRowVideoSubmitting(row.id)"
+                            @update:model-value="(value) => { row.videoDurationSec = Number(value); queueStoryboardAutosave(row.id, { videoDurationSec: row.videoDurationSec }) }"
+                          />
+                        </div>
+                        <div class="w-[92px] shrink-0">
+                          <UiBaseSelect
+                            :model-value="resolvedStoryboardVideoAudioMode(row)"
+                            :options="storyboardVideoAudioModeOptions"
+                            placeholder="声音"
+                            full
+                            size="sm"
+                            :disabled="!isSilentCapableStoryboardVideoModel(row.videoModel || selectedVideoModel) || isRowVideoPromptGenerating(row.id) || isRowVideoSubmitting(row.id)"
+                            @update:model-value="(value) => updateStoryboardVideoAudioMode(row.id, String(value))"
+                          />
+                        </div>
                         <button
                           type="button"
-                          class="rounded-full border border-[#d7dfef] bg-white px-4 py-2 text-sm font-semibold text-[#475569] transition hover:border-[#94a3b8]"
+                          class="shrink-0 whitespace-nowrap rounded-full border border-borderSoft bg-panel px-4 py-2 text-sm font-semibold text-textMain transition hover:border-neon/45 hover:text-neon"
+                          :disabled="isBusy || isRowVideoPromptGenerating(row.id) || isRowVideoSubmitting(row.id)"
                           @click="resetStoryboardVideoPrompt(row)"
                         >
-                          重新设置
+                          {{ isRowVideoPromptGenerating(row.id) ? '提示词生成中...' : '重新生成提示词' }}
                         </button>
                         <button
                           type="button"
-                          class="rounded-full bg-gradient-to-r from-[#2463ff] to-[#7c3aed] px-5 py-2 text-sm font-semibold text-white transition hover:brightness-110"
-                          :disabled="isBusy"
+                          class="ml-auto shrink-0 whitespace-nowrap rounded-full bg-gradient-to-r from-[#2463ff] to-[#7c3aed] px-5 py-2 text-sm font-semibold text-white transition hover:brightness-110"
+                          :disabled="isBusy || isRowVideoPromptGenerating(row.id) || isRowVideoSubmitting(row.id)"
                           @click="generateSingleStoryboardVideo(row)"
                         >
-                          生成视频
+                          {{ isRowVideoSubmitting(row.id) ? '提交中...' : '生成视频' }}
                         </button>
                       </div>
                     </section>
 
-                    <section class="rounded-[24px] border border-[#edf1f7] bg-white p-5">
+                    <section class="rounded-[22px] border border-borderSoft bg-panel p-4">
                       <div class="flex items-center justify-between gap-3">
                         <h3 class="text-[22px] font-semibold">当前分镜视频</h3>
                         <span
@@ -2859,37 +3408,34 @@ onBeforeUnmount(() => {
                           v-if="row.videoUrl"
                           :src="row.videoUrl"
                           controls
-                          class="h-[260px] w-full rounded-[22px] bg-[#0f172a] object-cover"
+                          class="h-[320px] w-full rounded-[22px] bg-[#0f172a] object-cover"
                         />
                         <div
                           v-else
-                          class="flex h-[260px] flex-col items-center justify-center rounded-[22px] bg-[#111827] px-6 text-center text-white/72"
+                          class="flex h-[320px] flex-col items-center justify-center rounded-[22px] bg-[#111827] px-6 text-center text-white/72"
                         >
                           <div
-                            v-if="row.videoStatus !== 'idle'"
+                            v-if="isRowVideoSubmitting(row.id) || row.videoStatus !== 'idle'"
                             class="flex h-14 w-14 items-center justify-center rounded-full border text-base font-semibold"
-                            :class="row.videoStatus === 'failed'
+                            :class="isRowVideoSubmitting(row.id)
+                              ? 'border-[#c7d2fe] bg-[#1d4ed8]/20 text-[#c7d2fe]'
+                              : row.videoStatus === 'failed'
                               ? 'border-[#fecaca] bg-[#7f1d1d]/35 text-[#fecaca]'
                               : row.videoStatus === 'running'
                                 ? 'border-[#c7d2fe] bg-[#1d4ed8]/20 text-[#c7d2fe]'
                                 : row.videoStatus === 'queued'
                                   ? 'border-[#93c5fd] bg-[#1d4ed8]/16 text-[#bfdbfe]'
-                                  : 'border-white/15 bg-white/5 text-white/70'"
+                                  : 'border-white/15 bg-panel/5 text-white/70'"
                           >
-                            {{ row.videoStatus === 'failed' ? '!' : `${row.videoProgress || 0}%` }}
+                            {{ isRowVideoSubmitting(row.id) ? '...' : row.videoStatus === 'failed' ? '!' : `${row.videoProgress || 0}%` }}
                           </div>
-                          <p class="text-lg font-semibold text-white" :class="row.videoStatus !== 'idle' ? 'mt-4' : ''">{{ storyboardVideoStatusLabel(row) }}</p>
+                          <p class="text-lg font-semibold text-white" :class="(isRowVideoSubmitting(row.id) || row.videoStatus !== 'idle') ? 'mt-4' : ''">
+                            {{ isRowVideoSubmitting(row.id) ? '视频任务提交中...' : storyboardVideoStatusLabel(row) }}
+                          </p>
                           <p v-if="row.videoErrorMessage" class="mt-3 text-sm leading-7 text-[#fecaca]">
                             {{ row.videoErrorMessage }}
                           </p>
                         </div>
-                      </div>
-
-                      <div class="mt-5 rounded-[20px] border border-[#edf1f7] bg-[#fafcff] p-4 text-sm text-[#475569]">
-                        <p>分镜策划状态：{{ storyboardGenerationStatusLabel(row) }}</p>
-                        <p class="mt-2" v-if="row.videoStatus !== 'idle'">视频进度：{{ row.videoProgress || 0 }}%</p>
-                        <p class="mt-2" v-else>视频进度：未生成</p>
-                        <p class="mt-2">使用模型：{{ row.videoModel || selectedVideoModel || '未设置' }}</p>
                       </div>
                     </section>
                   </div>
@@ -2901,12 +3447,12 @@ onBeforeUnmount(() => {
 
         <section
           v-else
-          class="rounded-[32px] border border-[#e8edf5] bg-white p-8 shadow-[0_18px_60px_rgba(15,23,42,0.06)]"
+          class="rounded-[32px] border border-[#e8edf5] bg-panel p-8 shadow-[0_18px_60px_rgba(15,23,42,0.06)]"
         >
           <div class="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
             <div>
               <h2 class="text-[32px] font-semibold tracking-[-0.04em]">视频</h2>
-              <p class="mt-2 text-sm leading-7 text-[#64748b]">基于当前分镜、角色、场景与道具信息发起视频工作流。后端完成真实视频接口接入后，这里会展示正式成片。</p>
+              <p class="mt-2 text-sm leading-7 text-textMuted">基于当前分镜、角色、场景与道具信息发起视频工作流。后端完成真实视频接口接入后，这里会展示正式成片。</p>
             </div>
 
             <div class="grid gap-3 md:grid-cols-3">
@@ -2925,15 +3471,15 @@ onBeforeUnmount(() => {
 
           <div class="mt-8 grid gap-5 xl:grid-cols-[340px_minmax(0,1fr)]">
             <aside class="space-y-4">
-              <article class="rounded-[24px] border border-[#e7ebf4] bg-[#fbfdff] p-5">
-                <p class="text-sm font-semibold text-[#64748b]">工作流状态</p>
+              <article class="rounded-[24px] border border-borderSoft bg-panelSoft p-5">
+                <p class="text-sm font-semibold text-textMuted">工作流状态</p>
                 <p class="mt-3 text-[28px] font-semibold">{{ workflowRunInfo?.status || '尚未开始' }}</p>
-                <p class="mt-4 break-all text-sm text-[#64748b]">Run ID：{{ workflowRunInfo?.runId || '等待创建' }}</p>
+                <p class="mt-4 break-all text-sm text-textMuted">Run ID：{{ workflowRunInfo?.runId || '等待创建' }}</p>
               </article>
 
-              <article class="rounded-[24px] border border-[#e7ebf4] bg-[#fbfdff] p-5">
-                <p class="text-sm font-semibold text-[#64748b]">当前参数</p>
-                <div class="mt-4 space-y-2 text-sm text-[#334155]">
+              <article class="rounded-[24px] border border-borderSoft bg-panelSoft p-5">
+                <p class="text-sm font-semibold text-textMuted">当前参数</p>
+                <div class="mt-4 space-y-2 text-sm text-textMain">
                   <p>模型：{{ selectedVideoModel || '待选择' }}</p>
                   <p>分辨率：{{ selectedResolution }}</p>
                   <p>比例：{{ selectedAspectRatio }}</p>
@@ -2942,7 +3488,7 @@ onBeforeUnmount(() => {
               </article>
             </aside>
 
-            <section class="rounded-[28px] border border-[#e7ebf4] bg-[#0f172a] p-5 text-white">
+            <section class="rounded-[28px] border border-borderSoft bg-[#0f172a] p-5 text-white">
               <div class="flex items-center justify-between gap-3">
                 <h3 class="text-2xl font-semibold">视频预览区</h3>
                 <span class="rounded-full border border-white/15 px-3 py-1 text-sm text-white/70">当前分镜 {{ selectedStoryboard?.shotNo || '-' }}</span>
@@ -2959,7 +3505,7 @@ onBeforeUnmount(() => {
                 <article
                   v-for="row in projectDetail?.storyboards || []"
                   :key="row.id"
-                  class="rounded-[20px] border border-white/10 bg-white/5 px-4 py-3"
+                  class="rounded-[20px] border border-white/10 bg-panel/5 px-4 py-3"
                 >
                   <p class="text-sm font-semibold text-white">分镜 {{ row.shotNo }}</p>
                   <p class="mt-2 line-clamp-2 text-sm text-white/70">{{ row.sceneDescription }}</p>
@@ -2973,7 +3519,7 @@ onBeforeUnmount(() => {
 
     <div
       v-if="showFloatingConfirmButton"
-      class="pointer-events-none fixed inset-x-0 bottom-0 z-40 flex justify-center px-4 pb-6"
+      class="pointer-events-none fixed inset-x-0 bottom-0 z-[100] flex justify-center px-4 pb-6"
     >
       <div class="pointer-events-auto rounded-full bg-[#0f172a] p-1.5 shadow-[0_24px_50px_rgba(15,23,42,0.28)]">
         <button
@@ -2988,19 +3534,101 @@ onBeforeUnmount(() => {
     </div>
 
     <div
+      v-if="settingEditorVisible && settingEditorDraft"
+      class="fixed inset-0 z-[68] flex justify-end bg-[#0f172a]/60 backdrop-blur-[2px]"
+      @click.self="closeSettingEditor"
+    >
+      <aside class="flex h-full w-full max-w-[520px] flex-col border-l border-borderSoft bg-panel shadow-[-24px_0_64px_rgba(15,23,42,0.16)]">
+        <div class="flex items-start justify-between gap-4 border-b border-[#eef2f7] px-6 py-5">
+          <div class="min-w-0">
+            <p class="text-xs font-semibold uppercase tracking-[0.18em] text-textMuted">{{ settingEditorDraft.subtitle }}</p>
+            <h3 class="mt-2 truncate text-[26px] font-semibold tracking-[-0.03em]">{{ settingEditorDraft.title }}</h3>
+          </div>
+          <button
+            type="button"
+            class="rounded-full border border-borderSoft bg-panel px-3 py-1.5 text-sm text-textMuted transition hover:text-textMain"
+            @click="closeSettingEditor"
+          >
+            关闭
+          </button>
+        </div>
+
+        <div class="flex-1 space-y-5 overflow-y-auto px-6 py-5">
+          <div class="overflow-hidden rounded-[22px] border border-borderSoft bg-panelSoft">
+            <div class="flex h-[220px] items-center justify-center bg-panelSoft">
+              <img
+                v-if="uploadedAssetPreviewUrl(settingEditorDraft.type, settingEditorDraft.key)
+                  || (settingEditorDraft.type === 'role'
+                    ? projectDetail?.analysis.roles.find((item) => item.key === settingEditorDraft.key)?.assets[0]?.imageUrl
+                    : settingEditorDraft.type === 'scene'
+                      ? projectDetail?.analysis.scenes.find((item) => item.key === settingEditorDraft.key)?.asset?.imageUrl
+                      : projectDetail?.analysis.props.find((item) => item.key === settingEditorDraft.key)?.asset?.imageUrl)"
+                :src="uploadedAssetPreviewUrl(settingEditorDraft.type, settingEditorDraft.key)
+                  || (settingEditorDraft.type === 'role'
+                    ? projectDetail?.analysis.roles.find((item) => item.key === settingEditorDraft.key)?.assets[0]?.imageUrl
+                    : settingEditorDraft.type === 'scene'
+                      ? projectDetail?.analysis.scenes.find((item) => item.key === settingEditorDraft.key)?.asset?.imageUrl
+                      : projectDetail?.analysis.props.find((item) => item.key === settingEditorDraft.key)?.asset?.imageUrl)"
+                :alt="settingEditorDraft.title"
+                class="h-full w-full object-cover"
+              >
+              <div v-else class="px-6 text-center text-sm text-textMuted">当前还没有图片，可先保存后重绘，或上传本地图片做预览替换。</div>
+            </div>
+            <div class="flex items-center justify-between gap-3 border-t border-borderSoft px-4 py-3 text-xs text-textMuted">
+              <span class="truncate">{{ assetUploadPreviewMap[`${settingEditorDraft.type}:${settingEditorDraft.key}`]?.fileName || '未上传本地图片' }}</span>
+              <label class="cursor-pointer rounded-full border border-borderSoft bg-panel px-3 py-1.5 font-semibold text-textMain transition hover:border-[#94a3b8]">
+                本地上传
+                <input type="file" accept="image/*" class="hidden" @change="handleSettingEditorImageUpload" />
+              </label>
+            </div>
+          </div>
+
+          <div>
+            <p class="mb-2 text-sm font-semibold text-textMain">重绘提示词</p>
+            <UiBaseTextarea
+              v-model="settingEditorDraft.prompt"
+              placeholder="请输入补充提示词，用于后续重新生成图片。"
+              full
+              size="md"
+            />
+          </div>
+        </div>
+
+        <div class="flex flex-wrap items-center justify-end gap-3 border-t border-borderSoft px-6 py-5">
+          <button
+            type="button"
+            class="rounded-full border border-borderSoft bg-panel px-5 py-2.5 text-sm font-semibold text-textMuted transition hover:border-[#94a3b8]"
+            :disabled="isBusy"
+            @click="saveSettingEditor(false)"
+          >
+            保存
+          </button>
+          <button
+            type="button"
+            class="rounded-full bg-gradient-to-r from-[#2463ff] to-[#7c3aed] px-6 py-2.5 text-sm font-semibold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+            :disabled="isBusy"
+            @click="saveSettingEditor(true)"
+          >
+            保存并重绘
+          </button>
+        </div>
+      </aside>
+    </div>
+
+    <div
       v-if="roleDialogVisible"
       class="fixed inset-0 z-[70] flex items-center justify-center bg-[rgba(15,23,42,0.46)] px-4 py-8 backdrop-blur-sm"
       @click.self="closeRoleDialog"
     >
-      <div class="w-full max-w-[820px] rounded-[32px] border border-[#e7ebf4] bg-white p-7 shadow-[0_30px_90px_rgba(15,23,42,0.16)]">
+      <div class="w-full max-w-[820px] rounded-[32px] border border-borderSoft bg-panel p-7 shadow-[0_30px_90px_rgba(15,23,42,0.16)]">
         <div class="flex items-start justify-between gap-4">
           <div>
             <h3 class="text-[28px] font-semibold tracking-[-0.03em]">新增角色</h3>
-            <p class="mt-2 text-sm leading-7 text-[#64748b]">填写基础人物信息后，系统会直接生成一张包含四视图的角色设定参考图。</p>
+            <p class="mt-2 text-sm leading-7 text-textMuted">填写基础人物信息后，系统会直接生成一张包含四视图的角色设定参考图。</p>
           </div>
           <button
             type="button"
-            class="rounded-full border border-[#d7dfef] bg-white px-3 py-1.5 text-sm text-[#64748b] transition hover:text-[#0f172a]"
+            class="rounded-full border border-borderSoft bg-panel px-3 py-1.5 text-sm text-textMuted transition hover:text-textMain"
             @click="closeRoleDialog"
           >
             关闭
@@ -3009,25 +3637,25 @@ onBeforeUnmount(() => {
 
         <div class="mt-6 grid gap-4 md:grid-cols-2">
           <div>
-            <p class="mb-2 text-sm font-semibold text-[#0f172a]"><span class="mr-1 text-[#f43f5e]">*</span>名称</p>
+            <p class="mb-2 text-sm font-semibold text-textMain"><span class="mr-1 text-[#f43f5e]">*</span>名称</p>
             <UiBaseInput v-model="roleForm.name" placeholder="请输入" full />
           </div>
           <div>
-            <p class="mb-2 text-sm font-semibold text-[#0f172a]"><span class="mr-1 text-[#f43f5e]">*</span>性别</p>
+            <p class="mb-2 text-sm font-semibold text-textMain"><span class="mr-1 text-[#f43f5e]">*</span>性别</p>
             <UiBaseSelect v-model="roleForm.gender" :options="roleGenderCatalog" placeholder="请选择" full />
           </div>
           <div>
-            <p class="mb-2 text-sm font-semibold text-[#0f172a]"><span class="mr-1 text-[#f43f5e]">*</span>年龄</p>
+            <p class="mb-2 text-sm font-semibold text-textMain"><span class="mr-1 text-[#f43f5e]">*</span>年龄</p>
             <UiBaseSelect v-model="roleForm.ageIdentity" :options="roleAgeCatalog" placeholder="请选择" full />
           </div>
           <div>
-            <p class="mb-2 text-sm font-semibold text-[#0f172a]">音色选择</p>
+            <p class="mb-2 text-sm font-semibold text-textMain">音色选择</p>
             <UiBaseSelect v-model="roleForm.voiceRef" :options="voiceToneCatalog" placeholder="请选择音色" full />
           </div>
         </div>
 
         <div class="mt-5">
-          <p class="mb-2 text-sm font-semibold text-[#0f172a]">提示词</p>
+          <p class="mb-2 text-sm font-semibold text-textMain">提示词</p>
           <UiBaseTextarea
             v-model="roleForm.prompt"
             placeholder="请输入人物发型、脸型、神态、服装、配饰、气质等关键信息。"
@@ -3037,7 +3665,7 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="mt-5">
-          <p class="mb-2 text-sm font-semibold text-[#0f172a]">角色描述</p>
+          <p class="mb-2 text-sm font-semibold text-textMain">角色描述</p>
           <UiBaseTextarea
             v-model="roleForm.description"
             placeholder="补充人物背景、身份、行为气质、服装特色等，系统会一并写入四视图生成提示词。"
@@ -3049,7 +3677,7 @@ onBeforeUnmount(() => {
         <div class="mt-6 flex justify-end gap-3">
           <button
             type="button"
-            class="rounded-full border border-[#d7dfef] bg-white px-5 py-2.5 text-sm font-semibold text-[#475569] transition hover:border-[#94a3b8]"
+            class="rounded-full border border-borderSoft bg-panel px-5 py-2.5 text-sm font-semibold text-textMuted transition hover:border-[#94a3b8]"
             @click="closeRoleDialog"
           >
             取消
@@ -3071,22 +3699,22 @@ onBeforeUnmount(() => {
       class="fixed inset-0 z-[75] flex items-center justify-center bg-[rgba(15,23,42,0.56)] px-4 py-8 backdrop-blur-sm"
       @click.self="closeSourceScriptPreview"
     >
-      <div class="w-full max-w-[980px] rounded-[32px] border border-[#e7ebf4] bg-white p-6 shadow-[0_30px_90px_rgba(15,23,42,0.16)]">
+      <div class="w-full max-w-[980px] rounded-[32px] border border-borderSoft bg-panel p-6 shadow-[0_30px_90px_rgba(15,23,42,0.16)]">
         <div class="flex items-center justify-between gap-4">
           <div>
             <h3 class="text-[26px] font-semibold tracking-[-0.03em]">原始剧本</h3>
-            <p class="mt-2 text-sm text-[#64748b]">{{ projectDetail?.sourceFileName || '当前为手动输入剧本' }}</p>
+            <p class="mt-2 text-sm text-textMuted">{{ projectDetail?.sourceFileName || '当前为手动输入剧本' }}</p>
           </div>
           <button
             type="button"
-            class="rounded-full border border-[#d7dfef] bg-white px-3 py-1.5 text-sm text-[#64748b] transition hover:text-[#0f172a]"
+            class="rounded-full border border-borderSoft bg-panel px-3 py-1.5 text-sm text-textMuted transition hover:text-textMain"
             @click="closeSourceScriptPreview"
           >
             关闭
           </button>
         </div>
-        <div class="mt-5 rounded-[24px] border border-[#e7ebf4] bg-[#fbfdff] p-5">
-          <div class="max-h-[68vh] overflow-y-auto whitespace-pre-line text-[15px] leading-8 text-[#334155]">
+        <div class="mt-5 rounded-[24px] border border-borderSoft bg-panelSoft p-5">
+          <div class="max-h-[68vh] overflow-y-auto whitespace-pre-line text-[15px] leading-8 text-textMain">
             {{ projectDetail?.sourceScriptText || '当前暂无原始剧本内容。' }}
           </div>
         </div>
@@ -3098,24 +3726,24 @@ onBeforeUnmount(() => {
       class="fixed inset-0 z-[76] flex items-center justify-center bg-[rgba(15,23,42,0.56)] px-4 py-8 backdrop-blur-sm"
       @click.self="closeStoryboardEpisodePreview"
     >
-      <div class="w-full max-w-[980px] rounded-[32px] border border-[#e7ebf4] bg-white p-6 shadow-[0_30px_90px_rgba(15,23,42,0.16)]">
+      <div class="w-full max-w-[980px] rounded-[32px] border border-borderSoft bg-panel p-6 shadow-[0_30px_90px_rgba(15,23,42,0.16)]">
         <div class="flex items-center justify-between gap-4">
           <div>
             <h3 class="text-[26px] font-semibold tracking-[-0.03em]">第 {{ selectedEpisodeNo }} 集剧本详情</h3>
-            <p class="mt-2 text-sm text-[#64748b]">
+            <p class="mt-2 text-sm text-textMuted">
               {{ selectedEpisodeDetail?.title || selectedEpisodeSummary?.title || `第${selectedEpisodeNo}集` }}
             </p>
           </div>
           <button
             type="button"
-            class="rounded-full border border-[#d7dfef] bg-white px-3 py-1.5 text-sm text-[#64748b] transition hover:text-[#0f172a]"
+            class="rounded-full border border-borderSoft bg-panel px-3 py-1.5 text-sm text-textMuted transition hover:text-textMain"
             @click="closeStoryboardEpisodePreview"
           >
             关闭
           </button>
         </div>
-        <div class="mt-5 rounded-[24px] border border-[#e7ebf4] bg-[#fbfdff] p-5">
-          <div class="max-h-[68vh] overflow-y-auto whitespace-pre-line text-[15px] leading-8 text-[#334155]">
+        <div class="mt-5 rounded-[24px] border border-borderSoft bg-panelSoft p-5">
+          <div class="max-h-[68vh] overflow-y-auto whitespace-pre-line text-[15px] leading-8 text-textMain">
             {{ selectedEpisodeDetail?.content || selectedEpisodeSummary?.summary || '当前暂无该集完整剧本内容。' }}
           </div>
         </div>
@@ -3135,7 +3763,7 @@ onBeforeUnmount(() => {
         >
           关闭
         </button>
-        <div class="overflow-hidden rounded-[28px] bg-white/6 p-3 shadow-[0_30px_120px_rgba(15,23,42,0.35)]">
+        <div class="overflow-hidden rounded-[28px] bg-panel/6 p-3 shadow-[0_30px_120px_rgba(15,23,42,0.35)]">
           <UiFluidImage
             :src="rolePreviewTarget.imageUrl"
             :alt="rolePreviewTarget.name"
@@ -3164,7 +3792,7 @@ onBeforeUnmount(() => {
         >
           关闭
         </button>
-        <div class="overflow-hidden rounded-[28px] bg-white/6 p-3 shadow-[0_30px_120px_rgba(15,23,42,0.35)]">
+        <div class="overflow-hidden rounded-[28px] bg-panel/6 p-3 shadow-[0_30px_120px_rgba(15,23,42,0.35)]">
           <UiFluidImage
             :src="scriptCoverUrl"
             :alt="projectDetail?.analysis.title || currentTitle"

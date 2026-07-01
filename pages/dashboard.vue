@@ -835,7 +835,9 @@ onMounted(async () => {
                   <button
                     v-if="isBatchSelectingProjects"
                     class="absolute left-4 top-4 z-20 flex h-7 w-7 items-center justify-center rounded-full border border-borderSoft bg-panel shadow-sm transition"
-                    :class="isProjectSelected(project.id) ? 'border-neon bg-neon text-bg' : 'text-transparent hover:border-neon'"
+                    :class="isProjectSelected(project.id)
+                      ? 'border-neon bg-neon text-slate-900 shadow-[0_10px_24px_rgba(69,215,255,0.28)]'
+                      : 'text-transparent hover:border-neon'"
                     type="button"
                     @click.stop="toggleProjectSelection(project.id)"
                   >

@@ -8,7 +8,10 @@ import type {
   ApiAdapter,
   ApiResponse,
   DramaAssetGeneratePayload,
+  DramaPropUpdatePayload,
   DramaProjectCreatePayload,
+  DramaRoleUpdatePayload,
+  DramaSceneUpdatePayload,
   DramaScriptIngestPayload,
   DramaStoryboardGeneratePayload,
   StoryboardGeneratePayload,
@@ -453,6 +456,33 @@ export const mockAdapter: ApiAdapter = {
     return ok(next)
   },
 
+  async updateDramaRole(projectId: string, roleKey: string, payload: DramaRoleUpdatePayload) {
+    await sleep(80)
+    const current = mockDramaProjectMap.get(projectId)!
+    const next: DramaProjectDetail = {
+      ...current,
+      analysis: {
+        ...current.analysis,
+        roles: current.analysis.roles.map((role) => role.key === roleKey
+          ? {
+              ...role,
+              personality: payload.personality || '',
+              appearance: payload.appearance || '',
+              prompt: payload.prompt || ''
+            }
+          : role),
+        characterBios: current.analysis.characterBios.map((bio) => bio.key === roleKey
+          ? {
+              ...bio,
+              summary: payload.appearance || payload.personality || payload.prompt || bio.summary
+            }
+          : bio)
+      }
+    }
+    mockDramaProjectMap.set(projectId, next)
+    return ok(next)
+  },
+
   async generateDramaRoleAssets(projectId: string, payload?: DramaAssetGeneratePayload) {
     await sleep(280)
     const current = mockDramaProjectMap.get(projectId)!
@@ -486,6 +516,26 @@ export const mockAdapter: ApiAdapter = {
     return ok(next)
   },
 
+  async updateDramaScene(projectId: string, sceneKey: string, payload: DramaSceneUpdatePayload) {
+    await sleep(80)
+    const current = mockDramaProjectMap.get(projectId)!
+    const next: DramaProjectDetail = {
+      ...current,
+      analysis: {
+        ...current.analysis,
+        scenes: current.analysis.scenes.map((scene) => scene.key === sceneKey
+          ? {
+              ...scene,
+              description: payload.description || '',
+              prompt: payload.prompt || ''
+            }
+          : scene)
+      }
+    }
+    mockDramaProjectMap.set(projectId, next)
+    return ok(next)
+  },
+
   async generateDramaSceneAssets(projectId: string, payload?: DramaAssetGeneratePayload) {
     await sleep(260)
     const current = mockDramaProjectMap.get(projectId)!
@@ -508,6 +558,26 @@ export const mockAdapter: ApiAdapter = {
                 meta: { drama_group: 'scene' }
               }
         }))
+      }
+    }
+    mockDramaProjectMap.set(projectId, next)
+    return ok(next)
+  },
+
+  async updateDramaProp(projectId: string, propKey: string, payload: DramaPropUpdatePayload) {
+    await sleep(80)
+    const current = mockDramaProjectMap.get(projectId)!
+    const next: DramaProjectDetail = {
+      ...current,
+      analysis: {
+        ...current.analysis,
+        props: current.analysis.props.map((prop) => prop.key === propKey
+          ? {
+              ...prop,
+              description: payload.description || '',
+              prompt: payload.prompt || ''
+            }
+          : prop)
       }
     }
     mockDramaProjectMap.set(projectId, next)
@@ -700,6 +770,49 @@ export const mockAdapter: ApiAdapter = {
     }
     mockDramaProjectMap.set(projectId, next)
     return ok(next)
+  },
+
+  async generateStoryboardVideoPrompt(projectId: string, rowId: string, payload) {
+    await sleep(120)
+    const current = mockDramaProjectMap.get(projectId)!
+    const target = (current.storyboards || []).find((row) => row.id === rowId)
+    if (!target) {
+      return ok({
+        storyboardRowId: rowId,
+        videoPrompt: '',
+        videoModel: payload?.model || '',
+        videoDurationSec: payload?.durationSec || 5
+      })
+    }
+
+    const activeModel = payload?.model || target.videoModel || 'wan2.7-r2v'
+    const activeDuration = payload?.durationSec || target.videoDurationSec || 5
+    const nextPrompt = [
+      `目标视频模型：${activeModel}`,
+      `目标成片时长：${activeDuration}秒`,
+      `分镜场景设定在：${target.sceneDescription || '当前分镜场景'}`,
+      `分镜动作描述：${target.actionDesc || target.sceneDescription || '按当前分镜动作执行'}`,
+      target.dialogue ? `对白情绪：${target.dialogue}` : ''
+    ].filter(Boolean).join('\n')
+
+    const next = {
+      ...current,
+      storyboards: (current.storyboards || []).map((row) => row.id !== rowId
+        ? row
+        : {
+            ...row,
+            videoPrompt: nextPrompt,
+            videoModel: activeModel,
+            videoDurationSec: activeDuration
+          })
+    }
+    mockDramaProjectMap.set(projectId, next)
+    return ok({
+      storyboardRowId: rowId,
+      videoPrompt: nextPrompt,
+      videoModel: activeModel,
+      videoDurationSec: activeDuration
+    })
   },
 
   async generateStoryboardVideo(projectId: string, rowId: string) {

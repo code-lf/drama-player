@@ -87,6 +87,22 @@ export interface DramaRoleCreatePayload {
   description?: string
 }
 
+export interface DramaRoleUpdatePayload {
+  personality?: string
+  appearance?: string
+  prompt?: string
+}
+
+export interface DramaSceneUpdatePayload {
+  description?: string
+  prompt?: string
+}
+
+export interface DramaPropUpdatePayload {
+  description?: string
+  prompt?: string
+}
+
 export interface DramaStoryboardGeneratePayload {
   model?: string
   shotCount?: number
@@ -123,6 +139,20 @@ export interface StoryboardVideoGeneratePayload {
   durationSec?: number
   resolution?: string
   referenceUrls?: string[]
+  audioMode?: 'sound' | 'silent'
+}
+
+export interface StoryboardVideoPromptGeneratePayload {
+  model?: string
+  durationSec?: number
+  resolution?: string
+}
+
+export interface StoryboardVideoPromptInfo {
+  storyboardRowId: string
+  videoPrompt: string
+  videoModel: string
+  videoDurationSec: number
 }
 
 export interface StoryboardVideoRunInfo {
@@ -136,6 +166,7 @@ export interface StoryboardVideoBatchPayload {
   model?: string
   durationSec?: number
   resolution?: string
+  audioMode?: 'sound' | 'silent'
 }
 
 export interface DramaDeleteResult {
@@ -163,8 +194,11 @@ export interface ApiAdapter {
   analyzeDrama(projectId: string, payload?: DramaAnalyzePayload): Promise<ApiResponse<DramaProjectDetail>>
   regenerateDramaCover(projectId: string, payload?: DramaCoverRegeneratePayload): Promise<ApiResponse<DramaProjectDetail>>
   createDramaRole(projectId: string, payload: DramaRoleCreatePayload): Promise<ApiResponse<DramaProjectDetail>>
+  updateDramaRole(projectId: string, roleKey: string, payload: DramaRoleUpdatePayload): Promise<ApiResponse<DramaProjectDetail>>
   generateDramaRoleAssets(projectId: string, payload?: DramaAssetGeneratePayload): Promise<ApiResponse<DramaProjectDetail>>
+  updateDramaScene(projectId: string, sceneKey: string, payload: DramaSceneUpdatePayload): Promise<ApiResponse<DramaProjectDetail>>
   generateDramaSceneAssets(projectId: string, payload?: DramaAssetGeneratePayload): Promise<ApiResponse<DramaProjectDetail>>
+  updateDramaProp(projectId: string, propKey: string, payload: DramaPropUpdatePayload): Promise<ApiResponse<DramaProjectDetail>>
   generateDramaPropAssets(projectId: string, payload?: DramaAssetGeneratePayload): Promise<ApiResponse<DramaProjectDetail>>
   generateDramaStoryboards(projectId: string, payload?: DramaStoryboardGeneratePayload): Promise<ApiResponse<DramaProjectDetail>>
   listDramaStoryboards(projectId: string, episodeNo?: number): Promise<ApiResponse<{ rows: StoryboardRow[]; run: DramaProjectDetail['storyboardRun'] }>>
@@ -172,6 +206,7 @@ export interface ApiAdapter {
   updateDramaStoryboard(projectId: string, rowId: string, payload: StoryboardUpdatePayload): Promise<ApiResponse<DramaProjectDetail>>
   copyDramaStoryboard(projectId: string, rowId: string): Promise<ApiResponse<DramaProjectDetail>>
   deleteDramaStoryboard(projectId: string, rowId: string): Promise<ApiResponse<DramaProjectDetail>>
+  generateStoryboardVideoPrompt(projectId: string, rowId: string, payload?: StoryboardVideoPromptGeneratePayload): Promise<ApiResponse<StoryboardVideoPromptInfo>>
   generateStoryboardVideo(projectId: string, rowId: string, payload?: StoryboardVideoGeneratePayload): Promise<ApiResponse<StoryboardVideoRunInfo>>
   batchGenerateStoryboardVideos(projectId: string, payload: StoryboardVideoBatchPayload): Promise<ApiResponse<StoryboardVideoRunInfo[]>>
 }

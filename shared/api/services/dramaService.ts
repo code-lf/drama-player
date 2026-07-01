@@ -5,13 +5,17 @@ import type {
   DramaCoverRegeneratePayload,
   DramaDeleteResult,
   DramaProjectCreatePayload,
+  DramaPropUpdatePayload,
   DramaRoleCreatePayload,
+  DramaRoleUpdatePayload,
+  DramaSceneUpdatePayload,
   DramaScriptIngestPayload,
   DramaStoryboardGeneratePayload,
   StoryboardCreatePayload,
   StoryboardUpdatePayload,
   StoryboardVideoBatchPayload,
   StoryboardVideoGeneratePayload,
+  StoryboardVideoPromptGeneratePayload,
 } from '~/shared/api/types'
 
 export const dramaService = {
@@ -55,12 +59,24 @@ export const dramaService = {
     return callApi('drama/createRole', (adapter) => adapter.createDramaRole(projectId, payload))
   },
 
+  async updateRole(projectId: string, roleKey: string, payload: DramaRoleUpdatePayload) {
+    return callApi('drama/updateRole', (adapter) => adapter.updateDramaRole(projectId, roleKey, payload))
+  },
+
   async generateRoleAssets(projectId: string, payload?: DramaAssetGeneratePayload) {
     return callApi('drama/generateRoles', (adapter) => adapter.generateDramaRoleAssets(projectId, payload))
   },
 
+  async updateScene(projectId: string, sceneKey: string, payload: DramaSceneUpdatePayload) {
+    return callApi('drama/updateScene', (adapter) => adapter.updateDramaScene(projectId, sceneKey, payload))
+  },
+
   async generateSceneAssets(projectId: string, payload?: DramaAssetGeneratePayload) {
     return callApi('drama/generateScenes', (adapter) => adapter.generateDramaSceneAssets(projectId, payload))
+  },
+
+  async updateProp(projectId: string, propKey: string, payload: DramaPropUpdatePayload) {
+    return callApi('drama/updateProp', (adapter) => adapter.updateDramaProp(projectId, propKey, payload))
   },
 
   async generatePropAssets(projectId: string, payload?: DramaAssetGeneratePayload) {
@@ -89,6 +105,10 @@ export const dramaService = {
 
   async deleteStoryboard(projectId: string, rowId: string) {
     return callApi('drama/deleteStoryboard', (adapter) => adapter.deleteDramaStoryboard(projectId, rowId))
+  },
+
+  async generateStoryboardVideoPrompt(projectId: string, rowId: string, payload?: StoryboardVideoPromptGeneratePayload) {
+    return callApi('drama/generateStoryboardVideoPrompt', (adapter) => adapter.generateStoryboardVideoPrompt(projectId, rowId, payload))
   },
 
   async generateStoryboardVideo(projectId: string, rowId: string, payload?: StoryboardVideoGeneratePayload) {

@@ -15,6 +15,9 @@ import type {
   DramaAssetGeneratePayload,
   DramaDeleteResult,
   DramaProjectCreatePayload,
+  DramaPropUpdatePayload,
+  DramaRoleUpdatePayload,
+  DramaSceneUpdatePayload,
   DramaScriptIngestPayload,
   DramaStoryboardGeneratePayload,
   StoryboardCreatePayload,
@@ -221,6 +224,13 @@ interface BackendStoryboardVideoRunResponse {
   storyboard_row_id: string
   run_id: string
   status: string
+}
+
+interface BackendStoryboardVideoPromptResponse {
+  storyboard_row_id: string
+  video_prompt: string
+  video_model: string
+  video_duration_sec: number
 }
 
 interface BackendStoryboardVideoBatchResponse {
@@ -714,6 +724,18 @@ export const httpAdapter: ApiAdapter = {
     return ok(mapDramaDetail(response))
   },
 
+  async updateDramaRole(projectId: string, roleKey: string, payload: DramaRoleUpdatePayload) {
+    const response = await request<BackendDramaDetailResponse>(`/drama/projects/${projectId}/roles/${encodeURIComponent(roleKey)}`, {
+      method: 'PATCH',
+      body: {
+        personality: payload.personality || '',
+        appearance: payload.appearance || '',
+        prompt: payload.prompt || ''
+      }
+    })
+    return ok(mapDramaDetail(response))
+  },
+
   async generateDramaRoleAssets(projectId: string, payload?: DramaAssetGeneratePayload) {
     const response = await request<BackendDramaDetailResponse>(`/drama/projects/${projectId}/assets/roles/generate`, {
       method: 'POST',
@@ -727,6 +749,17 @@ export const httpAdapter: ApiAdapter = {
     return ok(mapDramaDetail(response))
   },
 
+  async updateDramaScene(projectId: string, sceneKey: string, payload: DramaSceneUpdatePayload) {
+    const response = await request<BackendDramaDetailResponse>(`/drama/projects/${projectId}/scenes/${encodeURIComponent(sceneKey)}`, {
+      method: 'PATCH',
+      body: {
+        description: payload.description || '',
+        prompt: payload.prompt || ''
+      }
+    })
+    return ok(mapDramaDetail(response))
+  },
+
   async generateDramaSceneAssets(projectId: string, payload?: DramaAssetGeneratePayload) {
     const response = await request<BackendDramaDetailResponse>(`/drama/projects/${projectId}/assets/scenes/generate`, {
       method: 'POST',
@@ -735,6 +768,17 @@ export const httpAdapter: ApiAdapter = {
         style: payload?.style || '',
         overwrite: payload?.overwrite ?? true,
         scene_keys: payload?.sceneKeys || []
+      }
+    })
+    return ok(mapDramaDetail(response))
+  },
+
+  async updateDramaProp(projectId: string, propKey: string, payload: DramaPropUpdatePayload) {
+    const response = await request<BackendDramaDetailResponse>(`/drama/projects/${projectId}/props/${encodeURIComponent(propKey)}`, {
+      method: 'PATCH',
+      body: {
+        description: payload.description || '',
+        prompt: payload.prompt || ''
       }
     })
     return ok(mapDramaDetail(response))
@@ -837,6 +881,23 @@ export const httpAdapter: ApiAdapter = {
     return ok(mapDramaDetail(response))
   },
 
+  async generateStoryboardVideoPrompt(projectId: string, rowId: string, payload) {
+    const response = await request<BackendStoryboardVideoPromptResponse>(`/drama/projects/${projectId}/storyboards/${rowId}/video-prompt`, {
+      method: 'POST',
+      body: {
+        model: payload?.model || '',
+        duration_sec: payload?.durationSec || 5,
+        resolution: payload?.resolution || '720p'
+      }
+    })
+    return ok({
+      storyboardRowId: response.storyboard_row_id,
+      videoPrompt: response.video_prompt,
+      videoModel: response.video_model,
+      videoDurationSec: response.video_duration_sec
+    })
+  },
+
   async generateStoryboardVideo(projectId: string, rowId: string, payload?: StoryboardVideoGeneratePayload) {
     const response = await request<BackendStoryboardVideoRunResponse>(`/drama/projects/${projectId}/storyboards/${rowId}/videos`, {
       method: 'POST',
@@ -844,7 +905,8 @@ export const httpAdapter: ApiAdapter = {
         model: payload?.model || '',
         duration_sec: payload?.durationSec || 5,
         resolution: payload?.resolution || '720p',
-        reference_urls: payload?.referenceUrls || []
+        reference_urls: payload?.referenceUrls || [],
+        audio: payload?.audioMode !== 'silent'
       }
     })
     return ok({
@@ -861,7 +923,8 @@ export const httpAdapter: ApiAdapter = {
         episode_no: payload.episodeNo,
         model: payload.model || '',
         duration_sec: payload.durationSec || 5,
-        resolution: payload.resolution || '720p'
+        resolution: payload.resolution || '720p',
+        audio: payload.audioMode !== 'silent'
       }
     })
     return ok(
