@@ -158,9 +158,14 @@ const visualStyleCatalog = ['写实通用', '写实都市', '写实电影感', '
 const voiceToneCatalog: PageOption[] = [
   { label: '温柔女声', value: '温柔女声' },
   { label: '清冷女声', value: '清冷女声' },
+  { label: '活泼少女 (呆萌)', value: '活泼少女' },
   { label: '青年男声', value: '青年男声' },
   { label: '成熟男声', value: '成熟男声' },
-  { label: '沧桑长者', value: '沧桑长者' }
+  { label: '搞怪男声', value: '搞怪男声' },
+  { label: '沧桑长者', value: '沧桑长者' },
+  { label: '正太音', value: '正太音' },
+  { label: '御姐音', value: '御姐音' },
+  { label: '旁白解说', value: '旁白解说' }
 ]
 const roleAgeCatalog: PageOption[] = [
   { label: '儿童', value: '儿童' },
@@ -206,13 +211,27 @@ const projectDetail = ref<DramaProjectDetail | null>(null)
 const workflowRunInfo = ref<WorkflowRunInfo | null>(null)
 const activeStep = ref<WorkflowStepKey>('script')
 const activeSettingTab = ref<SettingTabKey>('roles')
+const settingTabBadges = ref<Record<SettingTabKey, boolean>>({ roles: false, scenes: false, props: false })
 const selectedStoryboardId = ref('')
+const reviewPlayerRef = ref<HTMLVideoElement | null>(null)
+const reviewPlaybackSeconds = ref(0)
+const isSequentialReviewMode = ref(false)
 const selectedEpisodeNo = ref(1)
 const busyKey = ref<'boot' | 'analyze' | 'roles' | 'scenes' | 'props' | 'storyboards' | 'video' | ''>('boot')
 const errorMessage = ref('')
 const infoMessage = ref('')
 const analysisStatusMessage = ref('准备开始解析剧本…')
-const coverPreviewVisible = ref(false)
+const previewImageUrl = ref('')
+const previewImageVisible = ref(false)
+function openImagePreview(url: string) {
+  if (!url) return
+  previewImageUrl.value = url
+  previewImageVisible.value = true
+}
+function closeImagePreview() {
+  previewImageVisible.value = false
+  previewImageUrl.value = ''
+}
 const sourceScriptPreviewVisible = ref(false)
 // 分镜步骤需要单独查看“当前集完整剧本”，这里用独立弹框避免和原始剧本预览混用。
 const storyboardEpisodePreviewVisible = ref(false)
@@ -350,6 +369,20 @@ const selectedStoryboard = computed<StoryboardRow | null>(() => {
   const rows = storyboardRowsForCurrentEpisode.value
   return rows.find((row) => row.id === selectedStoryboardId.value) || rows[0] || null
 })
+const generatedStoryboardVideos = computed(() => {
+  return storyboardRowsForCurrentEpisode.value.filter((row) => Boolean(row.videoUrl))
+})
+const storyboardTimelineTotalDuration = computed(() => {
+  return storyboardRowsForCurrentEpisode.value.reduce((sum, row) => sum + Number(row.videoDurationSec || row.durationSec || 0), 0)
+})
+const selectedStoryboardTimelineOffset = computed(() => {
+  const rows = storyboardRowsForCurrentEpisode.value
+  const currentIndex = rows.findIndex((row) => row.id === selectedStoryboard.value?.id)
+  if (currentIndex <= 0) return 0
+  return rows
+    .slice(0, currentIndex)
+    .reduce((sum, row) => sum + Number(row.videoDurationSec || row.durationSec || 0), 0)
+})
 const firstScenePreviewUrl = computed(() => {
   return projectDetail.value?.analysis.scenes.find((scene) => Boolean(scene.asset?.imageUrl))?.asset?.imageUrl || ''
 })
@@ -411,6 +444,20 @@ const settingTabStats = computed(() => ({
   scenes: sceneCountSummary.value,
   props: propCountSummary.value
 }))
+
+watch(
+  settingTabStats,
+  (newStats, oldStats) => {
+    if (!oldStats) return
+    const tabs: SettingTabKey[] = ['roles', 'scenes', 'props']
+    for (const tab of tabs) {
+      if (newStats[tab].completed > oldStats[tab].completed && activeSettingTab.value !== tab) {
+        settingTabBadges.value[tab] = true
+      }
+    }
+  },
+  { deep: true }
+)
 const areSettingsReady = computed(() => hasRoleAssets.value && hasSceneAssets.value && hasPropAssets.value)
 const scriptProgressItems = computed(() => {
   return scriptProgressStages.map((stage) => {
@@ -838,11 +885,12 @@ function closeRolePreview(): void {
 }
 
 function openRoleDialog(): void {
+  const randomVoice = voiceToneCatalog[Math.floor(Math.random() * voiceToneCatalog.length)]
   roleForm.value = {
     name: '',
     ageIdentity: '',
     gender: '',
-    voiceRef: '',
+    voiceRef: randomVoice?.value || '',
     prompt: '',
     description: ''
   }
@@ -857,13 +905,20 @@ function mapAnalysisFromEvent(raw: NonNullable<DramaAnalysisEventPayload['analys
   // SSE 事件直接携带后端 snake_case 结构，这里只做字段名转换，不改业务内容。
   const roles = (raw.roles || []).map((item) => {
     const role = item as Record<string, unknown>
+    const roleKey = String(role.key || '')
+    let voice = String(role.voice_ref || '')
+    if (!voice) {
+      // Deterministic pseudo-random voice based on key length/chars
+      const hash = roleKey.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0)
+      voice = voiceToneCatalog[hash % voiceToneCatalog.length]?.value || ''
+    }
     return {
-      key: String(role.key || ''),
+      key: roleKey,
       name: String(role.name || ''),
       ageIdentity: String(role.age_identity || ''),
       personality: String(role.personality || ''),
       appearance: String(role.appearance || ''),
-      voiceRef: String(role.voice_ref || ''),
+      voiceRef: voice,
       prompt: String(role.prompt || ''),
       generationStatus: String(role.generation_status || 'idle'),
       generationProgress: Number(role.generation_progress || 0),
@@ -1765,6 +1820,7 @@ function updateStoryboardVideoAudioMode(rowId: string, nextMode: string): void {
 function handleStoryboardVideoModelChange(row: StoryboardRow, nextModel: string): void {
   row.videoModel = nextModel
   row.videoDurationSec = normalizeStoryboardVideoDuration(Number(row.videoDurationSec || row.durationSec || 10), row.videoModel)
+  row.videoPrompt = normalizeStoryboardPromptToRanges(row.videoPrompt, row.videoDurationSec)
   selectedResolution.value = normalizeStoryboardVideoResolution(selectedResolution.value, row.videoModel)
   if (!isSilentCapableStoryboardVideoModel(row.videoModel)) {
     updateStoryboardVideoAudioMode(row.id, 'sound')
@@ -2045,6 +2101,98 @@ function storyboardRowRolePreviewUrl(roleKey: string): string {
   return roleAssetByKey(roleKey)
 }
 
+function formatReviewTimelineTime(seconds: number): string {
+  const safeSeconds = Math.max(0, Math.floor(seconds))
+  const minutes = Math.floor(safeSeconds / 60)
+  const remainSeconds = safeSeconds % 60
+  return `${String(minutes).padStart(2, '0')}:${String(remainSeconds).padStart(2, '0')}`
+}
+
+function selectReviewStoryboard(rowId: string): void {
+  selectedStoryboardId.value = rowId
+  reviewPlaybackSeconds.value = 0
+  isSequentialReviewMode.value = false
+}
+
+function jumpToStoryboardEditor(): void {
+  if (!selectedStoryboard.value) return
+  selectedEpisodeNo.value = Number(selectedStoryboard.value.episodeNo || selectedEpisodeNo.value || 1)
+  selectedStoryboardId.value = selectedStoryboard.value.id
+  activeStep.value = 'storyboard'
+  persistActiveStep()
+}
+
+function handleReviewTimeUpdate(): void {
+  const player = reviewPlayerRef.value
+  if (!player || !selectedStoryboard.value) return
+  reviewPlaybackSeconds.value = selectedStoryboardTimelineOffset.value + player.currentTime
+}
+
+async function startSequentialReview(): Promise<void> {
+  const rows = generatedStoryboardVideos.value
+  if (rows.length === 0) return
+  isSequentialReviewMode.value = true
+  if (!rows.some((row) => row.id === selectedStoryboardId.value)) {
+    selectedStoryboardId.value = rows[0].id
+  }
+  await nextTick()
+  void reviewPlayerRef.value?.play().catch(() => {})
+}
+
+function stopSequentialReview(): void {
+  isSequentialReviewMode.value = false
+}
+
+async function handleReviewVideoEnded(): Promise<void> {
+  if (!isSequentialReviewMode.value) return
+  const rows = generatedStoryboardVideos.value
+  if (rows.length === 0 || !selectedStoryboard.value) {
+    isSequentialReviewMode.value = false
+    return
+  }
+  const currentIndex = rows.findIndex((row) => row.id === selectedStoryboard.value?.id)
+  const nextRow = rows[currentIndex + 1]
+  if (!nextRow) {
+    isSequentialReviewMode.value = false
+    return
+  }
+  selectedStoryboardId.value = nextRow.id
+  await nextTick()
+  void reviewPlayerRef.value?.play().catch(() => {})
+}
+
+function exportEpisodeReviewManifest(): void {
+  if (!import.meta.client || !projectDetail.value) return
+  const payload = {
+    projectId: projectDetail.value.projectId,
+    title: projectDetail.value.title,
+    episodeNo: selectedEpisodeNo.value,
+    exportedAt: new Date().toISOString(),
+    clips: generatedStoryboardVideos.value.map((row) => ({
+      storyboardId: row.id,
+      shotNo: row.shotNo,
+      durationSec: Number(row.videoDurationSec || row.durationSec || 0),
+      sceneDescription: row.sceneDescription,
+      videoUrl: row.videoUrl
+    }))
+  }
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' })
+  const objectUrl = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = objectUrl
+  link.download = `episode-${selectedEpisodeNo.value}-review-manifest.json`
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  URL.revokeObjectURL(objectUrl)
+}
+
+watch([() => selectedStoryboardId.value, () => isSequentialReviewMode.value], async ([storyboardId, sequentialMode]) => {
+  if (!sequentialMode || !storyboardId) return
+  await nextTick()
+  void reviewPlayerRef.value?.play().catch(() => {})
+})
+
 function clearWorkflowPoll(): void {
   if (!workflowPollTimer) return
   clearTimeout(workflowPollTimer)
@@ -2169,6 +2317,7 @@ async function goNextStep(): Promise<void> {
 
 function switchSettingTab(tab: SettingTabKey): void {
   activeSettingTab.value = tab
+  settingTabBadges.value[tab] = false
 }
 
 function stepStatus(step: WorkflowStepKey): 'done' | 'active' | 'locked' {
@@ -2907,15 +3056,16 @@ onBeforeUnmount(() => {
           <div class="mt-5 flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
             <div class="flex flex-wrap items-center gap-3">
               <button
-                v-for="tab in [{ key: 'roles', label: '角色' }, { key: 'scenes', label: '场景' }, { key: 'props', label: '道具' }]"
+                v-for="tab in [{ key: 'roles', label: '角色' }, { key: 'scenes', label: '场景' }, { key: 'props', label: '道具' }] as { key: SettingTabKey; label: string }[]"
                 :key="tab.key"
                 type="button"
-                class="flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-semibold transition"
+                class="relative flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-semibold transition"
                 :class="activeSettingTab === tab.key
                   ? 'border-[#111827] bg-[#111827] text-white'
                   : 'border-borderSoft bg-panelSoft text-textMain'"
                 @click="switchSettingTab(tab.key)"
               >
+                <div v-if="settingTabBadges[tab.key]" class="absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full bg-red-500 ring-2 ring-panel"></div>
                 <span>{{ tab.label }}</span>
                 <span class="rounded-full px-2 py-0.5 text-[11px]" :class="activeSettingTab === tab.key ? 'bg-panel/14 text-white' : 'bg-panel text-textMuted'">
                   已完成 {{ settingTabStats[tab.key].completed }}
@@ -3004,7 +3154,7 @@ onBeforeUnmount(() => {
                     <UiFluidImage
                       :src="primaryRoleAssetUrl(role)"
                       :alt="role.name"
-                      img-class="h-[204px] object-cover"
+                      img-class="h-[204px] object-contain"
                       wrapper-class="h-[204px] w-full"
                       loading-label="生成中"
                     />
@@ -3104,7 +3254,7 @@ onBeforeUnmount(() => {
                       v-if="scenePreviewUrl(scene) && !isSceneGenerating(scene)"
                       :src="scenePreviewUrl(scene)"
                       :alt="scene.name"
-                      img-class="h-full object-cover"
+                      img-class="h-full object-contain"
                       wrapper-class="h-full w-full"
                       loading-label="生成中"
                     />
@@ -3176,7 +3326,7 @@ onBeforeUnmount(() => {
                       v-if="propPreviewUrl(prop) && !isPropGenerating(prop)"
                       :src="propPreviewUrl(prop)"
                       :alt="prop.name"
-                      img-class="h-full object-cover"
+                      img-class="h-full object-contain"
                       wrapper-class="h-full w-full"
                       loading-label="生成中"
                     />
@@ -3475,12 +3625,13 @@ onBeforeUnmount(() => {
                             :key="`${row.id}-role-${roleIndex}`"
                             class="grid gap-3 md:grid-cols-[52px_minmax(0,1fr)_44px]"
                           >
-                            <div class="overflow-hidden rounded-2xl border border-borderSoft bg-panelSoft">
+                            <div class="overflow-hidden rounded-2xl border border-borderSoft bg-panelSoft cursor-pointer" @click="openImagePreview(storyboardRowRolePreviewUrl(roleKey))">
                               <img
                                 v-if="storyboardRowRolePreviewUrl(roleKey)"
                                 :src="storyboardRowRolePreviewUrl(roleKey)"
                                 :alt="roleNameByKey(roleKey)"
-                                class="h-[52px] w-[52px] object-cover object-left"
+                                class="h-[52px] w-[52px] object-cover object-left-top"
+                                style="width: 200%; max-width: none; height: 100%;"
                               />
                               <div v-else class="flex h-[52px] w-[52px] items-center justify-center text-xs text-textMuted">
                                 角色
@@ -3535,12 +3686,12 @@ onBeforeUnmount(() => {
                             :key="`${row.id}-scene-${sceneIndex}`"
                             class="grid gap-3 md:grid-cols-[88px_minmax(0,1fr)_44px]"
                           >
-                            <div class="overflow-hidden rounded-2xl border border-borderSoft bg-panelSoft">
+                            <div class="overflow-hidden rounded-2xl border border-borderSoft bg-panelSoft cursor-pointer" @click="openImagePreview(sceneAssetByKey(sceneKey))">
                               <img
                                 v-if="sceneAssetByKey(sceneKey)"
                                 :src="sceneAssetByKey(sceneKey)"
                                 :alt="sceneNameByKey(sceneKey)"
-                                class="h-[64px] w-[88px] object-cover"
+                                class="h-[64px] w-[88px] object-contain"
                               />
                               <div v-else class="flex h-[64px] w-[88px] items-center justify-center text-xs text-textMuted">
                                 场景
@@ -3595,12 +3746,12 @@ onBeforeUnmount(() => {
                             :key="`${row.id}-prop-${propIndex}`"
                             class="grid gap-3 md:grid-cols-[88px_minmax(0,1fr)_44px]"
                           >
-                            <div class="overflow-hidden rounded-2xl border border-borderSoft bg-panelSoft">
+                            <div class="overflow-hidden rounded-2xl border border-borderSoft bg-panelSoft cursor-pointer" @click="openImagePreview(propAssetByKey(propKey))">
                               <img
                                 v-if="propAssetByKey(propKey)"
                                 :src="propAssetByKey(propKey)"
                                 :alt="propNameByKey(propKey)"
-                                class="h-[64px] w-[88px] object-cover"
+                                class="h-[64px] w-[88px] object-contain"
                               />
                               <div v-else class="flex h-[64px] w-[88px] items-center justify-center text-xs text-textMuted">
                                 道具
@@ -3691,7 +3842,7 @@ onBeforeUnmount(() => {
                             full
                             size="sm"
                             :disabled="isRowVideoPromptGenerating(row.id) || isRowVideoSubmitting(row.id)"
-                            @update:model-value="(value) => { row.videoDurationSec = Number(value); queueStoryboardAutosave(row.id, { videoDurationSec: row.videoDurationSec }) }"
+                            @update:model-value="(value) => { row.videoDurationSec = Number(value); row.videoPrompt = normalizeStoryboardPromptToRanges(row.videoPrompt, row.videoDurationSec); queueStoryboardAutosave(row.id, { videoDurationSec: row.videoDurationSec, videoPrompt: row.videoPrompt }) }"
                           />
                         </div>
                         <div class="w-[92px] shrink-0">
@@ -3844,64 +3995,133 @@ onBeforeUnmount(() => {
           <div class="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
             <div>
               <h2 class="text-[32px] font-semibold tracking-[-0.04em]">视频</h2>
-              <p class="mt-2 text-sm leading-7 text-textMuted">基于当前分镜、角色、场景与道具信息发起视频工作流。后端完成真实视频接口接入后，这里会展示正式成片。</p>
-            </div>
-
-            <div class="grid gap-3 md:grid-cols-3">
-              <UiBaseSelect v-model="selectedVideoModel" :options="videoModelOptions" placeholder="视频模型" size="sm" class="min-w-[220px]" />
-              <UiBaseSelect v-model="selectedResolution" :options="resolutionOptions" placeholder="分辨率" size="sm" class="min-w-[120px]" />
-              <button
-                type="button"
-                class="rounded-[16px] bg-gradient-to-r from-[#2463ff] to-[#7c3aed] px-5 py-2.5 text-sm font-semibold text-white transition hover:brightness-110"
-                :disabled="isBusy || !selectedStoryboard"
-                @click="startVideoWorkflow"
-              >
-                {{ busyKey === 'video' ? '提交中...' : '创建视频工作流' }}
-              </button>
+              <p class="mt-2 text-sm leading-7 text-textMuted">这里改成看片验收区，只负责连续查看本集已生成分镜视频，并导出素材清单给剪映或其他剪辑工具继续处理。</p>
             </div>
           </div>
 
-          <div class="mt-8 grid gap-5 xl:grid-cols-[340px_minmax(0,1fr)]">
-            <aside class="space-y-4">
-              <article class="rounded-[24px] border border-borderSoft bg-panelSoft p-5">
-                <p class="text-sm font-semibold text-textMuted">工作流状态</p>
-                <p class="mt-3 text-[28px] font-semibold">{{ workflowRunInfo?.status || '尚未开始' }}</p>
-                <p class="mt-4 break-all text-sm text-textMuted">Run ID：{{ workflowRunInfo?.runId || '等待创建' }}</p>
-              </article>
-
-              <article class="rounded-[24px] border border-borderSoft bg-panelSoft p-5">
-                <p class="text-sm font-semibold text-textMuted">当前参数</p>
-                <div class="mt-4 space-y-2 text-sm text-textMain">
-                  <p>模型：{{ selectedVideoModel || '待选择' }}</p>
-                  <p>分辨率：{{ selectedResolution }}</p>
-                  <p>比例：{{ selectedAspectRatio }}</p>
-                  <p>风格：{{ resolvedVisualStyle }}</p>
+          <div class="mt-8 space-y-5">
+            <section class="rounded-[28px] border border-borderSoft bg-panel p-5 text-textMain shadow-sm">
+              <div class="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h3 class="text-2xl font-semibold">视频验收台</h3>
+                  <p class="mt-2 text-sm text-textMuted">把本集所有已生成分镜按顺序串起来看片，右上角“编辑”可直接回到对应分镜继续调整。</p>
                 </div>
-              </article>
-            </aside>
-
-            <section class="rounded-[28px] border border-borderSoft bg-[#0f172a] p-5 text-white">
-              <div class="flex items-center justify-between gap-3">
-                <h3 class="text-2xl font-semibold">视频预览区</h3>
-                <span class="rounded-full border border-white/15 px-3 py-1 text-sm text-white/70">当前分镜 {{ selectedStoryboard?.shotNo || '-' }}</span>
+                <div class="flex flex-wrap items-center gap-3">
+                  <span class="rounded-full border border-borderSoft bg-panelSoft px-3 py-1 text-sm text-textMuted">
+                    总时长 {{ formatReviewTimelineTime(storyboardTimelineTotalDuration) }}
+                  </span>
+                  <span class="rounded-full border border-borderSoft bg-panelSoft px-3 py-1 text-sm text-textMuted">
+                    已生成 {{ generatedStoryboardVideos.length }} / {{ storyboardRowsForCurrentEpisode.length }}
+                  </span>
+                  <button
+                    type="button"
+                    class="rounded-[16px] bg-gradient-to-r from-[#2463ff] to-[#7c3aed] px-5 py-2.5 text-sm font-semibold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                    :disabled="generatedStoryboardVideos.length === 0"
+                    @click="isSequentialReviewMode ? stopSequentialReview() : startSequentialReview()"
+                  >
+                    {{ isSequentialReviewMode ? '停止连续播放' : '连续预览本集' }}
+                  </button>
+                  <button
+                    type="button"
+                    class="rounded-[16px] border border-borderSoft bg-panel px-5 py-2.5 text-sm font-semibold text-textMain transition hover:border-[#94a3b8] disabled:cursor-not-allowed disabled:opacity-60"
+                    :disabled="generatedStoryboardVideos.length === 0"
+                    @click="exportEpisodeReviewManifest"
+                  >
+                    导出验收清单
+                  </button>
+                </div>
               </div>
 
-              <div class="mt-5 flex min-h-[360px] items-center justify-center rounded-[24px] border border-white/10 bg-[#111827]">
-                <div class="text-center text-white/70">
-                  <p class="text-3xl font-semibold">{{ workflowRunInfo?.status === 'success' ? '视频工作流完成' : '视频尚未生成' }}</p>
-                  <p class="mt-3 text-sm">当前后端返回的是任务状态与占位结果，真实视频地址接通后会直接在这里预览。</p>
+              <div class="mt-5 overflow-hidden rounded-[24px] border border-borderSoft bg-panelSoft">
+                <div class="flex items-center justify-between border-b border-borderSoft px-4 py-3">
+                  <div class="flex items-center gap-3">
+                    <span class="rounded-full bg-[#eef2ff] px-3 py-1 text-sm font-semibold text-[#4338ca]">第 {{ selectedEpisodeNo }} 集</span>
+                    <span class="text-sm text-textMuted">
+                      {{ isSequentialReviewMode ? '连续播放中' : `当前分镜 ${selectedStoryboard?.shotNo || '-'}` }}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    class="rounded-[12px] bg-gradient-to-r from-[#2463ff] to-[#7c3aed] px-4 py-2 text-sm font-semibold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                    :disabled="!selectedStoryboard"
+                    @click="jumpToStoryboardEditor"
+                  >
+                    编辑
+                  </button>
                 </div>
-              </div>
 
-              <div class="mt-5 grid gap-3 md:grid-cols-3">
-                <article
-                  v-for="row in projectDetail?.storyboards || []"
-                  :key="row.id"
-                  class="rounded-[20px] border border-white/10 bg-panel/5 px-4 py-3"
-                >
-                  <p class="text-sm font-semibold text-white">分镜 {{ row.shotNo }}</p>
-                  <p class="mt-2 line-clamp-2 text-sm text-white/70">{{ row.sceneDescription }}</p>
-                </article>
+                <div class="px-5 pb-5 pt-4">
+                  <div class="flex min-h-[380px] items-center justify-center rounded-[20px] bg-black">
+                    <video
+                      v-if="selectedStoryboard?.videoUrl"
+                      ref="reviewPlayerRef"
+                      :key="selectedStoryboard.id"
+                      :src="selectedStoryboard.videoUrl"
+                      controls
+                      class="h-full max-h-[520px] w-full object-contain"
+                      @ended="handleReviewVideoEnded"
+                      @timeupdate="handleReviewTimeUpdate"
+                    />
+                    <div v-else class="px-6 text-center text-white/70">
+                      <p class="text-3xl font-semibold">{{ generatedStoryboardVideos.length > 0 ? '请选择一个已生成分镜' : '本集还没有可验收的视频' }}</p>
+                      <p class="mt-3 text-sm">{{ generatedStoryboardVideos.length > 0 ? '点击下方时间轴或分镜卡片切换，右上角“编辑”会回到对应分镜。' : '先在分镜阶段把视频生成出来，这里就会自动串成验收台。' }}</p>
+                    </div>
+                  </div>
+
+                  <div class="mt-4 flex items-center justify-center gap-4 text-sm text-textMuted">
+                    <span>{{ formatReviewTimelineTime(reviewPlaybackSeconds) }}</span>
+                    <span>/</span>
+                    <span>{{ formatReviewTimelineTime(storyboardTimelineTotalDuration) }}</span>
+                  </div>
+
+                  <div class="mt-5 rounded-[20px] border border-borderSoft bg-panel px-4 py-4">
+                    <div class="flex items-center justify-between text-xs text-textMuted">
+                      <span>00:00</span>
+                      <span>{{ formatReviewTimelineTime(storyboardTimelineTotalDuration / 2) }}</span>
+                      <span>{{ formatReviewTimelineTime(storyboardTimelineTotalDuration) }}</span>
+                    </div>
+
+                    <div class="mt-3 overflow-x-auto pb-2">
+                      <div class="min-w-[900px]">
+                        <div class="relative h-2 rounded-full bg-[#e5e7eb]">
+                          <div
+                            class="absolute left-0 top-0 h-2 rounded-full bg-gradient-to-r from-[#2463ff] to-[#7c3aed]"
+                            :style="{ width: `${storyboardTimelineTotalDuration > 0 ? Math.min(100, (reviewPlaybackSeconds / storyboardTimelineTotalDuration) * 100) : 0}%` }"
+                          ></div>
+                        </div>
+
+                        <div class="mt-4 flex gap-2">
+                          <button
+                            v-for="row in storyboardRowsForCurrentEpisode"
+                            :key="row.id"
+                            type="button"
+                            class="rounded-[16px] border text-left transition"
+                            :style="{ flex: String(Math.max(row.videoUrl ? 1 : 0.45, Number(row.videoDurationSec || row.durationSec || 1))), minWidth: row.videoUrl ? '132px' : '52px' }"
+                            :class="[
+                              selectedStoryboard?.id === row.id ? 'border-[#2463ff] bg-[#eff6ff]' : 'border-borderSoft bg-panelSoft hover:border-[#94a3b8]',
+                              row.videoUrl ? 'px-3 py-3' : 'px-2 py-2'
+                            ]"
+                            @click="selectReviewStoryboard(row.id)"
+                          >
+                            <div class="flex items-center justify-between gap-2">
+                              <span :class="row.videoUrl ? 'text-sm font-semibold text-textMain' : 'text-xs font-semibold text-textMain'">分镜 {{ row.shotNo }}</span>
+                              <span
+                                class="rounded-full border px-2 py-0.5 font-semibold"
+                                :class="[row.videoUrl ? 'text-[11px]' : 'text-[10px]', storyboardVideoStatusToneClass(row.videoStatus)]"
+                              >
+                                {{ storyboardVideoIndicatorLabel(row) }}
+                              </span>
+                            </div>
+                            <p v-if="row.videoUrl" class="mt-2 line-clamp-2 text-xs text-textMuted">{{ row.sceneDescription }}</p>
+                            <p class="mt-2 text-[11px] text-textMuted">
+                              {{ row.videoUrl ? formatReviewTimelineTime(Number(row.videoDurationSec || row.durationSec || 0)) : storyboardVideoStatusLabel(row) }}
+                            </p>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
               </div>
             </section>
           </div>
@@ -3927,10 +4147,10 @@ onBeforeUnmount(() => {
 
     <div
       v-if="settingEditorVisible && settingEditorDraft"
-      class="fixed inset-0 z-[68] flex justify-end bg-[#0f172a]/60 backdrop-blur-[2px]"
+      class="fixed inset-0 z-[68] flex items-center justify-center bg-[#0f172a]/60 backdrop-blur-[2px]"
       @click.self="closeSettingEditor"
     >
-      <aside class="flex h-full w-full max-w-[520px] flex-col border-l border-borderSoft bg-panel shadow-[-24px_0_64px_rgba(15,23,42,0.16)]">
+      <aside class="flex w-full max-w-[520px] flex-col rounded-[24px] border border-borderSoft bg-panel shadow-[0_24px_64px_rgba(15,23,42,0.16)] overflow-hidden">
         <div class="flex items-start justify-between gap-4 border-b border-[#eef2f7] px-6 py-5">
           <div class="min-w-0">
             <p class="text-xs font-semibold uppercase tracking-[0.18em] text-textMuted">{{ settingEditorDraft.subtitle }}</p>
@@ -3962,7 +4182,7 @@ onBeforeUnmount(() => {
                       ? projectDetail?.analysis.scenes.find((item) => item.key === settingEditorDraft.key)?.asset?.imageUrl
                       : projectDetail?.analysis.props.find((item) => item.key === settingEditorDraft.key)?.asset?.imageUrl)"
                 :alt="settingEditorDraft.title"
-                class="h-full w-full object-cover"
+                class="h-full w-full object-contain"
               >
               <div v-else class="px-6 text-center text-sm text-textMuted">当前还没有图片，可先保存后重绘，或上传本地图片做预览替换。</div>
             </div>
@@ -4036,13 +4256,9 @@ onBeforeUnmount(() => {
             <p class="mb-2 text-sm font-semibold text-textMain"><span class="mr-1 text-[#f43f5e]">*</span>性别</p>
             <UiBaseSelect v-model="roleForm.gender" :options="roleGenderCatalog" placeholder="请选择" full />
           </div>
-          <div>
+          <div class="md:col-span-2">
             <p class="mb-2 text-sm font-semibold text-textMain"><span class="mr-1 text-[#f43f5e]">*</span>年龄</p>
             <UiBaseSelect v-model="roleForm.ageIdentity" :options="roleAgeCatalog" placeholder="请选择" full />
-          </div>
-          <div>
-            <p class="mb-2 text-sm font-semibold text-textMain">音色选择</p>
-            <UiBaseSelect v-model="roleForm.voiceRef" :options="voiceToneCatalog" placeholder="请选择音色" full />
           </div>
         </div>
 
@@ -4192,6 +4408,29 @@ onBeforeUnmount(() => {
             wrapper-class="w-full overflow-hidden rounded-[22px] bg-[rgba(255,255,255,0.04)]"
             fallback-text="封面预览加载失败。"
             loading-label="封面预览加载中"
+          />
+        </div>
+      </div>
+    </div>
+
+    <div
+      v-if="previewImageVisible && previewImageUrl"
+      class="fixed inset-0 z-[80] flex items-center justify-center bg-[rgba(15,23,42,0.72)] px-6 py-10 backdrop-blur-sm"
+      @click.self="closeImagePreview"
+    >
+      <div class="relative w-full max-w-[960px]">
+        <button
+          type="button"
+          class="absolute right-3 top-3 z-10 rounded-full border border-white/20 bg-[rgba(15,23,42,0.5)] px-3 py-1.5 text-sm font-semibold text-white backdrop-blur transition hover:bg-[rgba(15,23,42,0.68)]"
+          @click="closeImagePreview"
+        >
+          关闭
+        </button>
+        <div class="overflow-hidden rounded-[28px] bg-panel/6 p-3 shadow-[0_30px_120px_rgba(15,23,42,0.35)]">
+          <img
+            :src="previewImageUrl"
+            alt="预览"
+            class="max-h-[82vh] w-full object-contain rounded-[22px] bg-[#0f172a]"
           />
         </div>
       </div>
