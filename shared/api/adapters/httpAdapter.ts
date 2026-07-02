@@ -237,6 +237,60 @@ interface BackendStoryboardVideoBatchResponse {
   runs: BackendStoryboardVideoRunResponse[]
 }
 
+function formatStoryboardVideoErrorMessage(message: string): string {
+  const cleaned = message.replace(/\s+/g, ' ').trim()
+  if (!cleaned) return ''
+  if (cleaned.includes('InvalidParameter') && cleaned.includes('Failed to download')) {
+    return '参考图链接已失效，阿里视频服务无法下载当前分镜绑定的素材。请重新生成或重新上传角色图、场景图或道具图后，再次提交视频生成。'
+  }
+  if (cleaned.includes('当前分镜没有可用参考图')) {
+    return '当前分镜缺少可用参考图。请先绑定至少一张已生成的角色图、场景图或道具图，再生成视频。'
+  }
+  if (cleaned.includes('InvalidParameter')) {
+    return '视频生成参数不符合当前模型要求，请检查参考图、时长、分辨率和音频模式后重试。'
+  }
+  return cleaned.length > 120 ? `${cleaned.slice(0, 120)}...` : cleaned
+}
+
+function normalizeStoryboardVideoPrompt(prompt: string, targetDuration: number): string {
+  const lines = (prompt || '')
+    .split(/\n+/)
+    .map(line => line.trim())
+    .filter(Boolean)
+  if (!lines.length || !lines.every(line => /^镜头\d+/.test(line))) return prompt || ''
+
+  const pattern = /^镜头(?<index>\d+)\s+(?:(?<start>\d+(?:\.\d+)?)s-(?<end>\d+(?:\.\d+)?)s|(?<duration>\d+(?:\.\d+)?)s)时间[:：]?(?<timeLabel>[^\[,，]+)(?<suffix>.*)$/
+  const parsed = lines.map((line) => {
+    const matched = line.match(pattern)
+    if (!matched?.groups) return null
+    const currentDuration = matched.groups.start && matched.groups.end
+      ? Math.max(0, Number(matched.groups.end) - Number(matched.groups.start))
+      : Number(matched.groups.duration || 0)
+    return {
+      index: matched.groups.index,
+      duration: currentDuration,
+      timeLabel: (matched.groups.timeLabel || '日').trim(),
+      suffix: (matched.groups.suffix || '').trim(),
+      raw: line
+    }
+  })
+  if (parsed.some(item => !item) || !parsed.length) return prompt || ''
+
+  const totalDuration = parsed.reduce((sum, item) => sum + Number(item?.duration || 0), 0)
+  if (totalDuration <= 0) return prompt || ''
+
+  let cursor = 0
+  const safeDuration = Math.max(0.1, Number(targetDuration || totalDuration))
+  return parsed.map((item, index) => {
+    const duration = Number(item?.duration || 0)
+    const scaledDuration = duration * (safeDuration / totalDuration)
+    const endTime = index === parsed.length - 1 ? safeDuration : cursor + scaledDuration
+    const line = `镜头${item?.index} ${Number(cursor.toFixed(1)).toString().replace(/\.0$/, '')}-${Number(endTime.toFixed(1)).toString().replace(/\.0$/, '')}s时间:${item?.timeLabel}${item?.suffix}`
+    cursor = endTime
+    return line
+  }).join('\n')
+}
+
 interface BackendWorkflowRunCreateResponse {
   run_id: string
   status: string
@@ -338,14 +392,17 @@ function mapStoryboardRows(projectId: string, nodeId: string, rows: BackendStory
     roleKeys: row.role_keys || [],
     sceneKeys: row.scene_keys || [],
     propKeys: row.prop_keys || [],
-    videoPrompt: row.video_prompt || '',
+    videoPrompt: normalizeStoryboardVideoPrompt(
+      row.video_prompt || row.camera_motion_prompt || row.action_desc || '',
+      row.video_duration_sec || row.duration_sec || 5
+    ),
     videoModel: row.video_model || '',
     videoDurationSec: row.video_duration_sec || 5,
     videoStatus: row.video_status || 'idle',
     videoProgress: row.video_progress || 0,
     videoTaskId: row.video_task_id || '',
     videoUrl: row.video_url || '',
-    videoErrorMessage: row.video_error_message || '',
+    videoErrorMessage: formatStoryboardVideoErrorMessage(row.video_error_message || ''),
     generationStatus: row.generation_status || 'idle',
     generationProgress: row.generation_progress || 0,
     generationErrorMessage: row.generation_error_message || '',
