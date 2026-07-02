@@ -549,6 +549,23 @@ const storyboardOverallSummary = computed(() => {
   }
   return `当前已生成 ${totalGenerated} 条分镜，第 ${runningEpisode?.episodeNo || 1} 集仍在继续补全。`
 })
+const storyboardPendingSkeletonCount = computed(() => {
+  const episode = selectedStoryboardEpisode.value
+  const generatedCount = storyboardRowsForCurrentEpisode.value.length
+  const expectedCount = Number(episode?.expectedCount || 0)
+  const isGenerating = ['queued', 'running'].includes(currentStoryboardRun.value.status)
+  if (!isGenerating) return 0
+  if (expectedCount > generatedCount) {
+    return Math.max(expectedCount - generatedCount, 0)
+  }
+  if (generatedCount > 0) return 1
+  return 3
+})
+const showRegenerateAllStoryboardsButton = computed(() => {
+  // 只要用户已经进入过分镜流程，就提前展示“重新生成所有分镜”入口，
+  // 避免首条分镜尚未落库时按钮因为 hasStoryboards=false 被整块隐藏。
+  return hasStoryboards.value || currentStoryboardRun.value.status !== 'idle'
+})
 const showFloatingConfirmButton = computed(() => {
   if (activeStep.value === 'script') return isScriptAnalysisReady.value
   if (activeStep.value === 'setting') return true
@@ -1058,10 +1075,14 @@ function patchStoryboardRunFromEvent(payload: any): void {
     return
   }
 
-  replaceEpisodeStoryboards(
-    Number(payload.episode_no || selectedEpisodeNo.value || 1),
-    (payload.storyboards || []).map(mapStoryboardRowFromEvent)
+  const targetEpisodeNo = Number(payload.episode_no || selectedEpisodeNo.value || 1)
+  const incomingRows = (payload.storyboards || []).map(mapStoryboardRowFromEvent)
+  const existingRows = (projectDetail.value.storyboards || []).filter(
+    row => Number(row.episodeNo || 1) === targetEpisodeNo
   )
+  if (incomingRows.length > 0 || existingRows.length === 0) {
+    replaceEpisodeStoryboards(targetEpisodeNo, incomingRows)
+  }
 
   projectDetail.value = {
     ...projectDetail.value,
@@ -1435,6 +1456,25 @@ async function generateStoryboards(): Promise<void> {
     persistActiveStep()
     await connectStoryboardEventStream()
   }
+}
+
+async function regenerateAllStoryboards(): Promise<void> {
+  if (!projectDetail.value || isBusy.value) return
+  // 当前还没有任何分镜落库时，直接按首次生成处理，避免用户看得到按钮却无法操作。
+  if (!hasStoryboards.value) {
+    await generateStoryboards()
+    return
+  }
+  if (!import.meta.client) {
+    await generateStoryboards()
+    return
+  }
+
+  // 重新生成会覆盖当前项目下已存在的分镜表，因此这里加一层显式确认，避免误触。
+  const shouldRegenerate = window.confirm('重新生成会覆盖当前项目的全部分镜内容，是否继续？')
+  if (!shouldRegenerate) return
+  selectedStoryboardId.value = ''
+  await generateStoryboards()
 }
 
 function roleSelectOptions() {
@@ -2918,11 +2958,34 @@ onBeforeUnmount(() => {
             </div>
           </div>
 
-          <div class="mt-5 flex flex-wrap items-center gap-4 rounded-[22px] border border-borderSoft bg-panelSoft px-4 py-3 text-sm text-textMuted">
-            <span>总计 {{ settingTabStats[activeSettingTab].total }}</span>
-            <span>已完成 {{ settingTabStats[activeSettingTab].completed }}</span>
-            <span>生成中 {{ settingTabStats[activeSettingTab].generating }}</span>
-            <span>失败/未完成 {{ settingTabStats[activeSettingTab].failed }}</span>
+          <div class="mt-5 flex flex-wrap items-center gap-3 rounded-[22px] border border-borderSoft bg-panelSoft px-4 py-3 text-sm text-textMuted">
+            <span class="inline-flex items-center rounded-full border border-borderSoft bg-panel px-3 py-1.5 text-sm font-medium text-textMain">
+              总计 {{ settingTabStats[activeSettingTab].total }}
+            </span>
+            <span class="inline-flex items-center rounded-full border border-[#c7d2fe] bg-[#eef2ff] px-3 py-1.5 text-sm font-medium text-[#4338ca]">
+              已完成 {{ settingTabStats[activeSettingTab].completed }}
+            </span>
+            <span class="inline-flex items-center rounded-full border border-[#bfdbfe] bg-[#eff6ff] px-3 py-1.5 text-sm font-medium text-[#2563eb]">
+              生成中 {{ settingTabStats[activeSettingTab].generating }}
+            </span>
+            <span class="inline-flex items-center rounded-full border border-borderSoft bg-panel px-3 py-1.5 text-sm font-medium text-textMuted">
+              失败/未完成 {{ settingTabStats[activeSettingTab].failed }}
+            </span>
+            <button
+              type="button"
+              class="inline-flex h-9 w-9 items-center justify-center rounded-full border transition"
+              :class="currentSettingRetryCount() > 0
+                ? 'border-[#fecaca] bg-[#fff1f2] text-[#dc2626] hover:bg-[#ffe4e6]'
+                : 'border-borderSoft bg-panel text-textMuted opacity-70'"
+              :disabled="isBusy || currentSettingRetryCount() <= 0"
+              title="重试当前页签失败项"
+              @click="retryCurrentSettingFailures"
+            >
+              <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8">
+                <path d="M21 12a9 9 0 1 1-2.64-6.36" stroke-linecap="round" stroke-linejoin="round" />
+                <path d="M21 3v6h-6" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+            </button>
           </div>
 
           <template v-if="activeSettingTab === 'roles'">
@@ -2930,7 +2993,7 @@ onBeforeUnmount(() => {
               <article
                 v-for="role in projectDetail?.analysis.roles || []"
                 :key="role.key"
-                class="rounded-[24px] border border-borderSoft bg-panelSoft p-4 shadow-[0_10px_28px_rgba(15,23,42,0.04)]"
+                class="flex h-full flex-col rounded-[24px] border border-borderSoft bg-panelSoft p-4 shadow-[0_10px_28px_rgba(15,23,42,0.04)]"
               >
                 <button
                   type="button"
@@ -2956,7 +3019,7 @@ onBeforeUnmount(() => {
                     <div class="absolute inset-0 bg-[radial-gradient(circle_at_28%_24%,rgba(255,255,255,0.72),transparent_42%),radial-gradient(circle_at_72%_68%,rgba(191,219,254,0.55),transparent_38%)]" />
                     <div class="relative z-[1]">
                       <div
-                        class="mx-auto flex h-14 w-14 items-center justify-center rounded-full border text-sm font-semibold"
+                        class="mx-auto flex h-20 w-20 items-center justify-center rounded-full border text-lg font-semibold"
                         :class="isRoleGenerationFailed(role)
                           ? 'border-[#fecaca] bg-[#fff1f2] text-[#dc2626]'
                           : isRoleGenerating(role)
@@ -2965,12 +3028,12 @@ onBeforeUnmount(() => {
                       >
                         {{ isRoleGenerationFailed(role) ? '!' : `${role.generationProgress || 0}%` }}
                       </div>
-                      <p class="mt-3 text-base font-semibold text-textMain">{{ roleGenerationText(role) }}</p>
+                      <p class="mt-4 text-xl font-semibold text-textMain">{{ roleGenerationText(role) }}</p>
                     </div>
                   </div>
                 </button>
 
-                <div class="mt-4">
+                <div class="mt-4 flex flex-1 flex-col">
                   <div class="flex items-start justify-between gap-3">
                     <div class="min-w-0">
                       <h3 class="truncate text-lg font-semibold">{{ role.name }}</h3>
@@ -2996,14 +3059,21 @@ onBeforeUnmount(() => {
                     </div>
                   </div>
 
-                  <p class="mt-3 line-clamp-3 text-sm leading-7 text-textMuted">{{ role.personality }}，{{ role.appearance }}</p>
+                  <div class="group relative mt-3">
+                    <p class="line-clamp-3 text-sm leading-7 text-textMuted">{{ role.personality }}，{{ role.appearance }}</p>
+                    <div class="absolute left-0 top-full z-[70] mt-2 hidden w-full rounded-[16px] border border-borderSoft bg-panel p-3 text-left shadow-[0_14px_30px_rgba(15,23,42,0.10)] group-hover:block">
+                      <div class="max-h-36 overflow-y-auto pr-1 text-sm leading-7 text-textMain">
+                        {{ role.personality }}，{{ role.appearance }}
+                      </div>
+                    </div>
+                  </div>
 
                   <div class="mt-3 flex items-center justify-between text-xs text-textMuted">
                     <span>状态：{{ roleGenerationStatusLabel(role) }}</span>
                     <span>{{ role.generationProgress || 0 }}%</span>
                   </div>
 
-                  <div class="relative z-[60] mt-4 grid gap-3 md:grid-cols-2">
+                  <div class="relative z-[60] mt-auto grid gap-3 pt-4 md:grid-cols-2">
                     <UiBaseSelect
                       v-model="roleVoiceSelections[role.key]"
                       :options="voiceToneCatalog"
@@ -3026,7 +3096,7 @@ onBeforeUnmount(() => {
               <article
                 v-for="scene in projectDetail?.analysis.scenes || []"
                 :key="scene.key"
-                class="rounded-[24px] border border-borderSoft bg-panelSoft p-4 shadow-[0_10px_28px_rgba(15,23,42,0.04)]"
+                class="flex h-full flex-col rounded-[24px] border border-borderSoft bg-panelSoft p-4 shadow-[0_10px_28px_rgba(15,23,42,0.04)]"
               >
                 <button type="button" class="block w-full text-left" @click="openSettingEditor(scene, 'scene')">
                   <div class="relative h-[204px] overflow-hidden rounded-[18px] bg-panelSoft">
@@ -3044,10 +3114,10 @@ onBeforeUnmount(() => {
                     >
                       <div class="absolute inset-0 bg-[radial-gradient(circle_at_28%_24%,rgba(255,255,255,0.72),transparent_42%),radial-gradient(circle_at_72%_68%,rgba(191,219,254,0.55),transparent_38%)]" />
                       <div class="relative z-[1]">
-                        <p class="text-[22px] font-semibold text-white drop-shadow-[0_8px_18px_rgba(15,23,42,0.18)]">
+                        <p class="text-[30px] font-semibold text-white drop-shadow-[0_8px_18px_rgba(15,23,42,0.18)]">
                           {{ isSceneGenerating(scene) ? '生成中' : '待生成' }}
                         </p>
-                        <p class="mt-2 text-sm font-medium text-white/90">{{ sceneGenerationText(scene) }}</p>
+                        <p class="mt-3 text-base font-medium text-white/90">{{ sceneGenerationText(scene) }}</p>
                       </div>
                     </div>
                     <span class="pointer-events-none absolute right-3 top-3 rounded-full border border-white/20 bg-[rgba(15,23,42,0.5)] px-2.5 py-1 text-[11px] font-semibold text-white backdrop-blur">
@@ -3055,29 +3125,39 @@ onBeforeUnmount(() => {
                     </span>
                   </div>
                 </button>
-                <div class="mt-4 flex items-start justify-between gap-3">
-                  <div class="min-w-0">
-                    <h3 class="truncate text-lg font-semibold">{{ scene.name }}</h3>
-                    <p class="mt-2 line-clamp-3 text-sm leading-7 text-textMuted">{{ scene.description }}</p>
+                <div class="mt-4 flex flex-1 flex-col">
+                  <div class="flex items-start justify-between gap-3">
+                    <div class="min-w-0">
+                      <h3 class="truncate text-lg font-semibold">{{ scene.name }}</h3>
+                      <div class="group relative mt-2">
+                        <p class="line-clamp-3 text-sm leading-7 text-textMuted">{{ scene.description }}</p>
+                        <div class="absolute left-0 top-full z-[70] mt-2 hidden w-full rounded-[16px] border border-borderSoft bg-panel p-3 text-left shadow-[0_14px_30px_rgba(15,23,42,0.10)] group-hover:block">
+                          <div class="max-h-36 overflow-y-auto pr-1 text-sm leading-7 text-textMain">
+                            {{ scene.description }}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <button
+                        type="button"
+                        class="rounded-full border border-borderSoft bg-panel px-3 py-1.5 text-xs font-semibold text-textMuted transition hover:border-[#94a3b8]"
+                        :disabled="isBusy"
+                        @click="openSettingEditor(scene, 'scene')"
+                      >
+                        编辑
+                      </button>
+                      <button
+                        type="button"
+                        class="rounded-full border border-borderSoft bg-panel px-3 py-1.5 text-xs font-semibold text-textMuted transition hover:border-[#94a3b8]"
+                        :disabled="isBusy"
+                        @click="generateSceneAssets({ overwrite: true, sceneKeys: [scene.key], successMessage: `${scene.name} 场景图已刷新。` })"
+                      >
+                        重绘
+                      </button>
+                    </div>
                   </div>
-                  <div class="flex items-center gap-2">
-                    <button
-                      type="button"
-                      class="rounded-full border border-borderSoft bg-panel px-3 py-1.5 text-xs font-semibold text-textMuted transition hover:border-[#94a3b8]"
-                      :disabled="isBusy"
-                      @click="openSettingEditor(scene, 'scene')"
-                    >
-                      编辑
-                    </button>
-                    <button
-                      type="button"
-                      class="rounded-full border border-borderSoft bg-panel px-3 py-1.5 text-xs font-semibold text-textMuted transition hover:border-[#94a3b8]"
-                      :disabled="isBusy"
-                      @click="generateSceneAssets({ overwrite: true, sceneKeys: [scene.key], successMessage: `${scene.name} 场景图已刷新。` })"
-                    >
-                      重绘
-                    </button>
-                  </div>
+                  <div class="mt-auto pt-4" />
                 </div>
               </article>
             </div>
@@ -3088,7 +3168,7 @@ onBeforeUnmount(() => {
               <article
                 v-for="prop in projectDetail?.analysis.props || []"
                 :key="prop.key"
-                class="rounded-[24px] border border-borderSoft bg-panelSoft p-4 shadow-[0_10px_28px_rgba(15,23,42,0.04)]"
+                class="flex h-full flex-col rounded-[24px] border border-borderSoft bg-panelSoft p-4 shadow-[0_10px_28px_rgba(15,23,42,0.04)]"
               >
                 <button type="button" class="block w-full text-left" @click="openSettingEditor(prop, 'prop')">
                   <div class="relative h-[204px] overflow-hidden rounded-[18px] bg-panelSoft">
@@ -3106,10 +3186,10 @@ onBeforeUnmount(() => {
                     >
                       <div class="absolute inset-0 bg-[radial-gradient(circle_at_28%_24%,rgba(255,255,255,0.72),transparent_42%),radial-gradient(circle_at_72%_68%,rgba(191,219,254,0.55),transparent_38%)]" />
                       <div class="relative z-[1]">
-                        <p class="text-[22px] font-semibold text-white drop-shadow-[0_8px_18px_rgba(15,23,42,0.18)]">
+                        <p class="text-[30px] font-semibold text-white drop-shadow-[0_8px_18px_rgba(15,23,42,0.18)]">
                           {{ isPropGenerating(prop) ? '生成中' : '待生成' }}
                         </p>
-                        <p class="mt-2 text-sm font-medium text-white/90">{{ propGenerationText(prop) }}</p>
+                        <p class="mt-3 text-base font-medium text-white/90">{{ propGenerationText(prop) }}</p>
                       </div>
                     </div>
                     <span class="pointer-events-none absolute right-3 top-3 rounded-full border border-white/20 bg-[rgba(15,23,42,0.5)] px-2.5 py-1 text-[11px] font-semibold text-white backdrop-blur">
@@ -3117,29 +3197,39 @@ onBeforeUnmount(() => {
                     </span>
                   </div>
                 </button>
-                <div class="mt-4 flex items-start justify-between gap-3">
-                  <div class="min-w-0">
-                    <h3 class="truncate text-lg font-semibold">{{ prop.name }}</h3>
-                    <p class="mt-2 line-clamp-3 text-sm leading-7 text-textMuted">{{ prop.description }}</p>
+                <div class="mt-4 flex flex-1 flex-col">
+                  <div class="flex items-start justify-between gap-3">
+                    <div class="min-w-0">
+                      <h3 class="truncate text-lg font-semibold">{{ prop.name }}</h3>
+                      <div class="group relative mt-2">
+                        <p class="line-clamp-3 text-sm leading-7 text-textMuted">{{ prop.description }}</p>
+                        <div class="absolute left-0 top-full z-[70] mt-2 hidden w-full rounded-[16px] border border-borderSoft bg-panel p-3 text-left shadow-[0_14px_30px_rgba(15,23,42,0.10)] group-hover:block">
+                          <div class="max-h-36 overflow-y-auto pr-1 text-sm leading-7 text-textMain">
+                            {{ prop.description }}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <button
+                        type="button"
+                        class="rounded-full border border-borderSoft bg-panel px-3 py-1.5 text-xs font-semibold text-textMuted transition hover:border-[#94a3b8]"
+                        :disabled="isBusy"
+                        @click="openSettingEditor(prop, 'prop')"
+                      >
+                        编辑
+                      </button>
+                      <button
+                        type="button"
+                        class="rounded-full border border-borderSoft bg-panel px-3 py-1.5 text-xs font-semibold text-textMuted transition hover:border-[#94a3b8]"
+                        :disabled="isBusy"
+                        @click="generatePropAssets({ overwrite: true, propKeys: [prop.key], successMessage: `${prop.name} 道具图已刷新。` })"
+                      >
+                        重绘
+                      </button>
+                    </div>
                   </div>
-                  <div class="flex items-center gap-2">
-                    <button
-                      type="button"
-                      class="rounded-full border border-borderSoft bg-panel px-3 py-1.5 text-xs font-semibold text-textMuted transition hover:border-[#94a3b8]"
-                      :disabled="isBusy"
-                      @click="openSettingEditor(prop, 'prop')"
-                    >
-                      编辑
-                    </button>
-                    <button
-                      type="button"
-                      class="rounded-full border border-borderSoft bg-panel px-3 py-1.5 text-xs font-semibold text-textMuted transition hover:border-[#94a3b8]"
-                      :disabled="isBusy"
-                      @click="generatePropAssets({ overwrite: true, propKeys: [prop.key], successMessage: `${prop.name} 道具图已刷新。` })"
-                    >
-                      重绘
-                    </button>
-                  </div>
+                  <div class="mt-auto pt-4" />
                 </div>
               </article>
             </div>
@@ -3152,37 +3242,33 @@ onBeforeUnmount(() => {
         >
           <div
             v-if="showStoryboardFloatingProgress"
-            class="sticky top-[82px] z-20 mb-5 rounded-[24px] border border-[#c7d2fe] bg-[#eef2ff]/96 px-5 py-4 shadow-[0_12px_30px_rgba(99,102,241,0.10)] backdrop-blur-xl"
+            class="sticky top-[82px] z-20 mb-4 flex justify-end"
           >
-            <div class="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-              <div class="min-w-0">
-                <div class="flex items-center gap-3">
-                  <div class="flex h-9 w-9 items-center justify-center rounded-full bg-white text-neon shadow-[0_6px_20px_rgba(99,102,241,0.16)]">
-                    <svg viewBox="0 0 24 24" class="h-4 w-4 animate-spin" fill="none" stroke="currentColor" stroke-width="2">
-                      <path d="M12 3a9 9 0 1 1-9 9" stroke-linecap="round" />
-                    </svg>
+            <div class="min-w-[280px] max-w-[420px] rounded-full border border-[#c7d2fe] bg-[#eef2ff]/96 px-3 py-2 shadow-[0_10px_24px_rgba(99,102,241,0.10)] backdrop-blur-xl">
+              <div class="flex items-center gap-2">
+                <div class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white text-neon shadow-[0_4px_14px_rgba(99,102,241,0.16)]">
+                  <svg viewBox="0 0 24 24" class="h-3.5 w-3.5 animate-spin" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M12 3a9 9 0 1 1-9 9" stroke-linecap="round" />
+                  </svg>
+                </div>
+                <div class="min-w-0 flex-1">
+                  <div class="flex items-center justify-between gap-3">
+                    <p class="truncate text-xs font-semibold text-textMain">{{ storyboardProgressTitle }}</p>
+                    <span class="shrink-0 text-xs font-medium text-textMuted">{{ storyboardOverallProgress }}%</span>
                   </div>
-                  <div class="min-w-0">
-                    <p class="text-sm font-semibold text-textMain">{{ storyboardProgressTitle }}</p>
-                    <p class="mt-1 truncate text-sm text-textMuted">{{ storyboardOverallSummary }}</p>
-                  </div>
+                  <p class="mt-0.5 truncate text-[11px] text-textMuted">{{ storyboardOverallSummary }}</p>
                 </div>
               </div>
-              <div class="flex items-center gap-3 text-sm text-textMuted">
-                <span>总体进度 {{ storyboardOverallProgress }}%</span>
-                <span>当前第 {{ selectedStoryboardEpisode?.episodeNo || 1 }} 集 / 共 {{ currentStoryboardRun.totalEpisodes || 1 }} 集</span>
+              <div class="mt-2 h-1.5 overflow-hidden rounded-full bg-white/70">
+                <div
+                  class="h-full rounded-full bg-gradient-to-r from-[#2463ff] to-[#7c3aed] transition-all duration-500"
+                  :style="{ width: `${storyboardOverallProgress}%` }"
+                />
               </div>
-            </div>
-            <div class="mt-3 h-2 overflow-hidden rounded-full bg-white/70">
-              <div
-                class="h-full rounded-full bg-gradient-to-r from-[#2463ff] to-[#7c3aed] transition-all duration-500"
-                :style="{ width: `${storyboardOverallProgress}%` }"
-              />
             </div>
           </div>
 
-          <template>
-            <div class="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+          <div class="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
               <div class="min-w-0">
                 <div class="flex flex-wrap items-center gap-3">
                   <h2 class="text-[30px] font-semibold tracking-[-0.04em]">分镜表</h2>
@@ -3190,19 +3276,19 @@ onBeforeUnmount(() => {
                     第 {{ selectedEpisodeNo }} 集
                   </span>
                 </div>
-                <p class="mt-3 line-clamp-1 text-sm leading-7 text-textMuted">
-                  {{ storyboardEpisodeSummaryText(selectedEpisodeNo) }}
-                </p>
-                <button
-                  type="button"
-                  class="mt-2 text-sm font-semibold text-neon transition hover:text-[#4338ca]"
-                  @click="openStoryboardEpisodePreview"
-                >
-                  详情
-                </button>
+                <div class="mt-3 text-sm leading-7 text-textMuted">
+                  <span class="line-clamp-2 inline">{{ storyboardEpisodeSummaryText(selectedEpisodeNo) }}</span>
+                  <button
+                    type="button"
+                    class="ml-2 inline-block font-semibold text-neon transition hover:text-[#4338ca]"
+                    @click="openStoryboardEpisodePreview"
+                  >
+                    详情
+                  </button>
+                </div>
               </div>
 
-              <div class="flex w-full flex-col items-start gap-3 xl:w-auto xl:items-end">
+              <div class="flex w-full flex-wrap items-center gap-2 xl:w-auto">
                 <UiBaseSelect
                   v-if="hasStoryboards"
                   v-model="selectedVideoModel"
@@ -3211,6 +3297,15 @@ onBeforeUnmount(() => {
                   size="sm"
                   class="w-full min-w-0 xl:w-[260px]"
                 />
+                <button
+                  v-if="showRegenerateAllStoryboardsButton"
+                  type="button"
+                  class="rounded-[16px] border border-borderSoft bg-panel px-5 py-2.5 text-sm font-semibold text-textMain transition hover:border-[#94a3b8]"
+                  :disabled="isBusy"
+                  @click="regenerateAllStoryboards"
+                >
+                  {{ busyKey === 'storyboards' ? '重新生成中...' : '重新生成所有分镜' }}
+                </button>
                 <button
                   type="button"
                   class="rounded-[16px] px-5 py-2.5 text-sm font-semibold transition"
@@ -3243,21 +3338,16 @@ onBeforeUnmount(() => {
               </aside>
 
               <section class="space-y-5">
-                <div v-if="!storyboardRowsForCurrentEpisode.length" class="flex min-h-[360px] items-center justify-center rounded-[28px] border border-dashed border-borderSoft bg-panelSoft">
+                <div
+                  v-if="!storyboardRowsForCurrentEpisode.length && !['queued', 'running'].includes(currentStoryboardRun.status)"
+                  class="flex min-h-[360px] items-center justify-center rounded-[28px] border border-dashed border-borderSoft bg-panelSoft"
+                >
                   <div class="text-center">
-                    <div
-                      v-if="['queued', 'running'].includes(currentStoryboardRun.status)"
-                      class="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-neonSoft/20 text-neon"
-                    >
-                      <svg viewBox="0 0 24 24" class="h-7 w-7 animate-spin" fill="none" stroke="currentColor" stroke-width="1.8">
-                        <path d="M12 3a9 9 0 1 1-9 9" stroke-linecap="round" />
-                      </svg>
-                    </div>
                     <p class="mt-4 text-xl font-semibold">
-                      {{ ['queued', 'running'].includes(currentStoryboardRun.status) ? '当前集分镜生成中' : '当前集还没有分镜' }}
+                      当前集还没有分镜
                     </p>
                     <p class="mt-3 text-sm text-textMuted">
-                      {{ currentStoryboardRun.status === 'completed' ? '可点击下方按钮新增首条分镜。' : '后台正在持续生成结构化分镜，首条完成后会直接出现在这里。' }}
+                      {{ currentStoryboardRun.status === 'completed' ? '可点击下方按钮新增首条分镜。' : '后台正在持续生成结构化分镜。' }}
                     </p>
                     <button
                       v-if="currentStoryboardRun.status === 'completed' || currentStoryboardRun.status === 'idle'"
@@ -3269,6 +3359,45 @@ onBeforeUnmount(() => {
                     </button>
                   </div>
                 </div>
+
+                <article
+                  v-for="placeholder in storyboardPendingSkeletonCount"
+                  v-if="['queued', 'running'].includes(currentStoryboardRun.status) && storyboardRowsForCurrentEpisode.length === 0"
+                  :key="`storyboard-skeleton-empty-${placeholder}`"
+                  class="overflow-hidden rounded-[28px] border border-borderSoft bg-panelSoft p-4 shadow-[0_10px_28px_rgba(15,23,42,0.04)]"
+                >
+                  <div class="animate-pulse">
+                    <div class="flex items-center gap-3">
+                      <div class="h-7 w-20 rounded-full bg-[#e9eef7]" />
+                      <div class="h-7 w-14 rounded-full bg-[#eef2ff]" />
+                      <div class="h-7 w-14 rounded-full bg-[#eef2ff]" />
+                    </div>
+                    <div class="mt-4 grid gap-4 xl:grid-cols-[minmax(0,0.76fr)_minmax(0,1.12fr)_420px]">
+                      <div class="rounded-[22px] border border-borderSoft bg-panel p-4">
+                        <div class="h-6 w-28 rounded-full bg-[#e9eef7]" />
+                        <div class="mt-5 h-24 rounded-2xl bg-[#f3f6fb]" />
+                        <div class="mt-5 space-y-3">
+                          <div class="h-14 rounded-2xl bg-[#f3f6fb]" />
+                          <div class="h-14 rounded-2xl bg-[#f3f6fb]" />
+                          <div class="h-14 rounded-2xl bg-[#f3f6fb]" />
+                        </div>
+                      </div>
+                      <div class="rounded-[22px] border border-borderSoft bg-panel p-4">
+                        <div class="h-6 w-32 rounded-full bg-[#e9eef7]" />
+                        <div class="mt-5 h-[220px] rounded-2xl bg-[#f3f6fb]" />
+                        <div class="mt-4 flex gap-3">
+                          <div class="h-10 flex-1 rounded-full bg-[#eef2ff]" />
+                          <div class="h-10 w-20 rounded-full bg-[#eef2ff]" />
+                          <div class="h-10 w-24 rounded-full bg-[#eef2ff]" />
+                        </div>
+                      </div>
+                      <div class="rounded-[22px] border border-borderSoft bg-panel p-4">
+                        <div class="h-6 w-36 rounded-full bg-[#e9eef7]" />
+                        <div class="mt-5 h-[320px] rounded-[22px] bg-[#0f172a]/90" />
+                      </div>
+                    </div>
+                  </div>
+                </article>
 
                 <article
                   v-for="row in storyboardRowsForCurrentEpisode"
@@ -3658,16 +3787,54 @@ onBeforeUnmount(() => {
 
                 <div
                   v-if="['queued', 'running'].includes(currentStoryboardRun.status) && storyboardRowsForCurrentEpisode.length > 0"
-                  class="flex items-center justify-center rounded-[28px] border border-dashed border-borderSoft bg-panelSoft py-10"
+                  class="space-y-5"
                 >
-                  <div class="flex flex-col items-center justify-center gap-3">
-                    <div class="h-6 w-6 animate-spin rounded-full border-2 border-[#8b7dff] border-t-transparent"></div>
-                    <p class="text-sm font-medium text-textMuted">正在继续生成分镜，请稍候...</p>
+                  <article
+                    v-for="placeholder in storyboardPendingSkeletonCount"
+                    :key="`storyboard-skeleton-tail-${placeholder}`"
+                    class="overflow-hidden rounded-[28px] border border-dashed border-borderSoft bg-panelSoft p-4"
+                  >
+                    <div class="animate-pulse">
+                      <div class="flex items-center gap-3">
+                        <div class="h-7 w-20 rounded-full bg-[#e9eef7]" />
+                        <div class="h-7 w-14 rounded-full bg-[#eef2ff]" />
+                        <div class="h-7 w-14 rounded-full bg-[#eef2ff]" />
+                      </div>
+                      <div class="mt-4 grid gap-4 xl:grid-cols-[minmax(0,0.76fr)_minmax(0,1.12fr)_420px]">
+                        <div class="rounded-[22px] border border-borderSoft bg-panel p-4">
+                          <div class="h-6 w-28 rounded-full bg-[#e9eef7]" />
+                          <div class="mt-5 h-24 rounded-2xl bg-[#f3f6fb]" />
+                          <div class="mt-5 space-y-3">
+                            <div class="h-14 rounded-2xl bg-[#f3f6fb]" />
+                            <div class="h-14 rounded-2xl bg-[#f3f6fb]" />
+                            <div class="h-14 rounded-2xl bg-[#f3f6fb]" />
+                          </div>
+                        </div>
+                        <div class="rounded-[22px] border border-borderSoft bg-panel p-4">
+                          <div class="h-6 w-32 rounded-full bg-[#e9eef7]" />
+                          <div class="mt-5 h-[220px] rounded-2xl bg-[#f3f6fb]" />
+                          <div class="mt-4 flex gap-3">
+                            <div class="h-10 flex-1 rounded-full bg-[#eef2ff]" />
+                            <div class="h-10 w-20 rounded-full bg-[#eef2ff]" />
+                            <div class="h-10 w-24 rounded-full bg-[#eef2ff]" />
+                          </div>
+                        </div>
+                        <div class="rounded-[22px] border border-borderSoft bg-panel p-4">
+                          <div class="h-6 w-36 rounded-full bg-[#e9eef7]" />
+                          <div class="mt-5 h-[320px] rounded-[22px] bg-[#0f172a]/90" />
+                        </div>
+                      </div>
+                    </div>
+                  </article>
+                  <div class="flex items-center justify-center rounded-[28px] border border-dashed border-borderSoft bg-panelSoft py-8">
+                    <div class="flex flex-col items-center justify-center gap-3">
+                      <div class="h-6 w-6 animate-spin rounded-full border-2 border-[#8b7dff] border-t-transparent"></div>
+                      <p class="text-sm font-medium text-textMuted">正在继续生成剩余分镜，请稍候...</p>
+                    </div>
                   </div>
                 </div>
               </section>
             </div>
-          </template>
         </section>
 
         <section
