@@ -486,10 +486,9 @@ const storyboardEpisodeItems = computed(() => {
 const selectedStoryboardEpisode = computed(() => {
   return storyboardEpisodeItems.value.find((item) => item.episodeNo === selectedEpisodeNo.value) || storyboardEpisodeItems.value[0] || null
 })
-const showStoryboardProgressPanel = computed(() => {
+const showStoryboardFloatingProgress = computed(() => {
   return activeStep.value === 'storyboard'
     && ['queued', 'running'].includes(currentStoryboardRun.value.status)
-    && storyboardRowsForCurrentEpisode.value.length === 0
 })
 const shouldPreferAnalysisResultView = computed(() => {
   // 只要事件流已经把完整 analysis 带回来，就直接进结果页，不再额外卡“整理中”。
@@ -516,7 +515,56 @@ const storyboardProgressSubtitle = computed(() => {
   }
   const currentEpisode = selectedStoryboardEpisode.value
   if (!currentEpisode) return 'Agent 正在进行分镜策划，请耐心等待…'
-  return `第${currentEpisode.episodeNo}集已完成 ${currentEpisode.generatedCount}/${currentEpisode.expectedCount || '待估算'} 个分镜，Agent 正在持续生成结构化镜头。`
+  if ((currentEpisode.generatedCount || 0) <= 0) {
+    return `第${currentEpisode.episodeNo}集正在生成首条分镜，生成后会持续追加到当前页面。`
+  }
+  return `第${currentEpisode.episodeNo}集已生成 ${currentEpisode.generatedCount} 条分镜，Agent 正在持续补全后续镜头。`
+})
+const storyboardOverallProgress = computed(() => {
+  const items = storyboardEpisodeItems.value
+  if (!items.length) return 0
+
+  const totalExpected = items.reduce((sum, episode) => sum + Number(episode.expectedCount || 0), 0)
+  const totalGenerated = items.reduce((sum, episode) => sum + Number(episode.generatedCount || 0), 0)
+  if (totalExpected > 0) {
+    return Math.max(0, Math.min(100, Math.round(totalGenerated / totalExpected * 100)))
+  }
+
+  const progressSum = items.reduce((sum, episode) => sum + Number(episode.progress || 0), 0)
+  return Math.max(0, Math.min(100, Math.round(progressSum / items.length)))
+})
+const storyboardOverallSummary = computed(() => {
+  const items = storyboardEpisodeItems.value
+  if (!items.length) return '正在准备分镜任务…'
+
+  const totalGenerated = items.reduce((sum, episode) => sum + Number(episode.generatedCount || 0), 0)
+  const totalExpected = items.reduce((sum, episode) => sum + Number(episode.expectedCount || 0), 0)
+  const runningEpisode = items.find((episode) => ['generating', 'queued', 'running'].includes(episode.status)) || selectedStoryboardEpisode.value
+
+  if (totalGenerated <= 0) {
+    return `第 ${runningEpisode?.episodeNo || 1} 集正在生成首条分镜，请稍候...`
+  }
+  if (totalExpected > 0) {
+    return `当前已生成 ${totalGenerated} / ${totalExpected} 条分镜，第 ${runningEpisode?.episodeNo || 1} 集仍在继续补全。`
+  }
+  return `当前已生成 ${totalGenerated} 条分镜，第 ${runningEpisode?.episodeNo || 1} 集仍在继续补全。`
+})
+const storyboardPendingSkeletonCount = computed(() => {
+  const episode = selectedStoryboardEpisode.value
+  const generatedCount = storyboardRowsForCurrentEpisode.value.length
+  const expectedCount = Number(episode?.expectedCount || 0)
+  const isGenerating = ['queued', 'running'].includes(currentStoryboardRun.value.status)
+  if (!isGenerating) return 0
+  if (expectedCount > generatedCount) {
+    return Math.max(expectedCount - generatedCount, 0)
+  }
+  if (generatedCount > 0) return 1
+  return 3
+})
+const showRegenerateAllStoryboardsButton = computed(() => {
+  // 只要用户已经进入过分镜流程，就提前展示“重新生成所有分镜”入口，
+  // 避免首条分镜尚未落库时按钮因为 hasStoryboards=false 被整块隐藏。
+  return hasStoryboards.value || currentStoryboardRun.value.status !== 'idle'
 })
 const showFloatingConfirmButton = computed(() => {
   if (activeStep.value === 'script') return isScriptAnalysisReady.value
@@ -559,7 +607,29 @@ const selectedStoryboardVideoDurationOptions = computed(() => {
 
 function getWorkflowProgressStorageKey(): string {
   // 使用项目 id 作为隔离维度，保证不同短剧项目的步骤确认状态互不影响。
+  // 这里改用 localStorage，保证用户关闭页面后再次进入仍能恢复到上次流程位置。
   return `livliv:drama-workflow:${currentProjectId.value}:confirmed-step`
+}
+
+function getWorkflowActiveStepStorageKey(): string {
+  // 当前停留步骤也按项目维度单独持久化，避免退出后总是回到初始步骤。
+  return `livliv:drama-workflow:${currentProjectId.value}:active-step`
+}
+
+function workflowStepIndex(step: WorkflowStepKey): number {
+  return workflowSteps.findIndex((item) => item.key === step)
+}
+
+function dataDrivenStepByIndex(index: number): WorkflowStepKey {
+  return workflowSteps[Math.max(0, Math.min(index, workflowSteps.length - 1))]?.key || 'script'
+}
+
+function mapProjectStageToWorkflowStep(stage: string): WorkflowStepKey {
+  // 后端 currentStage 是业务阶段名，这里统一折叠成页面四步流程。
+  if (['roles', 'scenes', 'props'].includes(stage)) return 'setting'
+  if (['storyboards'].includes(stage)) return 'storyboard'
+  if (['video', 'videos'].includes(stage)) return 'video'
+  return 'script'
 }
 
 function getDataDrivenConfirmedStepIndex(): number {
@@ -577,26 +647,64 @@ function getDataDrivenConfirmedStepIndex(): number {
 }
 
 function syncConfirmedStepIndex(): void {
-  if (!import.meta.client) return
+  const dataDrivenIndex = getDataDrivenConfirmedStepIndex()
+  if (!import.meta.client) {
+    confirmedStepIndex.value = dataDrivenIndex
+    return
+  }
 
   const storageKey = getWorkflowProgressStorageKey()
-  const rawIndex = window.sessionStorage.getItem(storageKey)
+  const rawIndex = window.localStorage.getItem(storageKey)
   const parsedIndex = Number.parseInt(rawIndex || '', 10)
   const persistedIndex = Number.isFinite(parsedIndex) ? parsedIndex : 0
-  const dataDrivenIndex = getDataDrivenConfirmedStepIndex()
 
-  // 步骤确认既不能超过当前数据状态，也不能倒退到 0 以下。
-  confirmedStepIndex.value = Math.max(0, Math.min(persistedIndex, dataDrivenIndex))
+  // 已完成步骤始终可回看，因此这里不能取更小值，否则重新进入项目会把已完成步骤重新锁死。
+  confirmedStepIndex.value = Math.max(0, Math.min(Math.max(persistedIndex, dataDrivenIndex), workflowSteps.length - 1))
 }
 
 function persistConfirmedStepIndex(): void {
   if (!import.meta.client) return
-  window.sessionStorage.setItem(getWorkflowProgressStorageKey(), String(confirmedStepIndex.value))
+  window.localStorage.setItem(getWorkflowProgressStorageKey(), String(confirmedStepIndex.value))
+}
+
+function readPersistedActiveStep(): WorkflowStepKey | null {
+  if (!import.meta.client) return null
+  const rawStep = window.localStorage.getItem(getWorkflowActiveStepStorageKey())
+  if (!rawStep) return null
+  return workflowSteps.some((item) => item.key === rawStep) ? rawStep as WorkflowStepKey : null
+}
+
+function persistActiveStep(): void {
+  if (!import.meta.client) return
+  window.localStorage.setItem(getWorkflowActiveStepStorageKey(), activeStep.value)
+}
+
+function restoreActiveStep(project: DramaProjectDetail): void {
+  const persistedStep = readPersistedActiveStep()
+  const inferredStep = project.storyboards.some((row) => row.videoStatus !== 'idle')
+    ? 'video'
+    : hasStoryboards.value
+      ? 'storyboard'
+      : areSettingsReady.value
+        ? 'setting'
+        : mapProjectStageToWorkflowStep(project.currentStage || '')
+  const preferredStep = persistedStep || inferredStep
+  const maxReachableIndex = Math.max(confirmedStepIndex.value, getDataDrivenConfirmedStepIndex())
+  activeStep.value = dataDrivenStepByIndex(Math.min(workflowStepIndex(preferredStep), maxReachableIndex))
+  persistActiveStep()
+}
+
+function ensureActiveStepAccessible(): void {
+  const maxReachableIndex = Math.max(confirmedStepIndex.value, getDataDrivenConfirmedStepIndex())
+  if (workflowStepIndex(activeStep.value) > maxReachableIndex) {
+    activeStep.value = dataDrivenStepByIndex(maxReachableIndex)
+  }
+  persistActiveStep()
 }
 
 function canVisitStep(step: WorkflowStepKey): boolean {
-  const targetIndex = workflowSteps.findIndex((item) => item.key === step)
-  return targetIndex <= confirmedStepIndex.value
+  const targetIndex = workflowStepIndex(step)
+  return targetIndex <= Math.max(confirmedStepIndex.value, getDataDrivenConfirmedStepIndex())
 }
 
 function getQueryValue(key: string): string {
@@ -682,7 +790,11 @@ function closeAnalysisEventStream(): void {
 
 function shouldTrackStoryboardStream(project: DramaProjectDetail | null): boolean {
   if (!project) return false
-  return ['queued', 'running'].includes(project.storyboardRun?.status || 'idle')
+  const storyboardRunStatus = project.storyboardRun?.status || 'idle'
+  const hasRunningStoryboardRows = (project.storyboards || []).some((row) => {
+    return ['queued', 'running'].includes(row.generationStatus) || ['queued', 'running'].includes(row.videoStatus)
+  })
+  return ['queued', 'running'].includes(storyboardRunStatus) || hasRunningStoryboardRows
 }
 
 function closeStoryboardEventStream(): void {
@@ -886,6 +998,7 @@ function patchAnalysisRunFromEvent(payload: DramaAnalysisEventPayload): void {
 }
 
 function mapStoryboardRowFromEvent(row: DramaStoryboardEventPayload['storyboards'][number]): StoryboardRow {
+  const resolvedVideoPromptSource = row.video_prompt || row.camera_motion_prompt || row.action_desc || ''
   return {
     id: row.id,
     sourceNodeId: row.source_node_id,
@@ -905,14 +1018,16 @@ function mapStoryboardRowFromEvent(row: DramaStoryboardEventPayload['storyboards
     roleKeys: row.role_keys || [],
     sceneKeys: row.scene_keys || [],
     propKeys: row.prop_keys || [],
-    videoPrompt: row.video_prompt || '',
+    videoPrompt: resolvedVideoPromptSource
+      ? normalizeStoryboardPromptToRanges(resolvedVideoPromptSource, Number(row.video_duration_sec || row.duration_sec || 12))
+      : '',
     videoModel: row.video_model || '',
     videoDurationSec: Number(row.video_duration_sec || row.duration_sec || 12),
     videoStatus: row.video_status || 'idle',
     videoProgress: Number(row.video_progress || 0),
     videoTaskId: row.video_task_id || '',
     videoUrl: row.video_url || '',
-    videoErrorMessage: row.video_error_message || '',
+    videoErrorMessage: formatDisplayErrorMessage(row.video_error_message || ''),
     generationStatus: row.generation_status || 'idle',
     generationProgress: Number(row.generation_progress || 0),
     generationErrorMessage: row.generation_error_message || '',
@@ -935,13 +1050,39 @@ function replaceEpisodeStoryboards(episodeNo: number, rows: StoryboardRow[]): vo
   }
 }
 
-function patchStoryboardRunFromEvent(payload: DramaStoryboardEventPayload): void {
+function patchStoryboardRunFromEvent(payload: any): void {
   if (!projectDetail.value) return
 
-  replaceEpisodeStoryboards(
-    Number(payload.episode_no || selectedEpisodeNo.value || 1),
-    (payload.storyboards || []).map(mapStoryboardRowFromEvent)
+  // 拦截视频生成相关的事件，避免将分镜列表覆盖为空
+  if ('run_id' in payload || payload.step?.startsWith('video_')) {
+    const rowId = payload.storyboard_row_id
+    if (rowId) {
+      const row = projectDetail.value.storyboards.find((r) => r.id === rowId)
+      if (row) {
+        if (payload.status === 'running') {
+          row.videoStatus = 'running'
+          row.videoProgress = payload.progress || row.videoProgress
+        } else if (payload.status === 'success') {
+          row.videoStatus = 'success'
+          row.videoProgress = 100
+          row.videoUrl = payload.output?.video_task?.video_url || row.videoUrl
+        } else if (payload.status === 'failed') {
+          row.videoStatus = 'failed'
+          row.videoErrorMessage = payload.error || ''
+        }
+      }
+    }
+    return
+  }
+
+  const targetEpisodeNo = Number(payload.episode_no || selectedEpisodeNo.value || 1)
+  const incomingRows = (payload.storyboards || []).map(mapStoryboardRowFromEvent)
+  const existingRows = (projectDetail.value.storyboards || []).filter(
+    row => Number(row.episodeNo || 1) === targetEpisodeNo
   )
+  if (incomingRows.length > 0 || existingRows.length === 0) {
+    replaceEpisodeStoryboards(targetEpisodeNo, incomingRows)
+  }
 
   projectDetail.value = {
     ...projectDetail.value,
@@ -1070,6 +1211,7 @@ async function loadWorkflowPage(): Promise<void> {
     applyRuntimeDefaults(config)
     syncSelectionsFromAnalysis(project)
     syncConfirmedStepIndex()
+    restoreActiveStep(project)
 
     if (project.storyboards.length > 0) {
       selectedStoryboardId.value = project.storyboards[0].id
@@ -1102,8 +1244,11 @@ async function refreshProjectDetail(): Promise<void> {
   projectDetail.value = latestProject
   syncSelectionsFromAnalysis(latestProject)
   syncConfirmedStepIndex()
+  ensureActiveStepAccessible()
   if (shouldTrackStoryboardStream(latestProject)) {
     await connectStoryboardEventStream()
+  } else {
+    closeStoryboardEventStream()
   }
   if (!selectedStoryboardId.value && latestProject.storyboards[0]) {
     selectedStoryboardId.value = latestProject.storyboards[0].id
@@ -1122,7 +1267,7 @@ async function runPageAction<T>(key: typeof busyKey.value, action: () => Promise
   } catch (error) {
     // eslint-disable-next-line no-console
     console.error('[livliv] 短剧流程操作失败', { key, error })
-    errorMessage.value = error instanceof Error ? error.message : '请求失败，请稍后重试'
+    errorMessage.value = formatDisplayErrorMessage(extractActionErrorMessage(error))
     return undefined
   } finally {
     busyKey.value = ''
@@ -1148,6 +1293,7 @@ async function analyzeScript(): Promise<void> {
     const queuedProject = await dramaService.analyze(project.projectId, payload)
     projectDetail.value = queuedProject
     activeStep.value = 'script'
+    persistActiveStep()
     analysisStatusMessage.value = '剧本解析任务已启动，正在依次完成四个节点。'
     infoMessage.value = '剧本解析任务已启动。'
     syncSelectionsFromAnalysis(queuedProject)
@@ -1155,7 +1301,7 @@ async function analyzeScript(): Promise<void> {
     await connectAnalysisEventStream()
   } catch (error) {
     console.error('[livliv] 剧本解析启动失败', error)
-    errorMessage.value = error instanceof Error ? error.message : '剧本解析启动失败'
+    errorMessage.value = formatDisplayErrorMessage(extractActionErrorMessage(error))
   } finally {
     busyKey.value = ''
   }
@@ -1177,7 +1323,6 @@ async function generateRoleAssets(options?: { overwrite?: boolean; successMessag
   if (result) {
     projectDetail.value = result
     syncConfirmedStepIndex()
-    activeSettingTab.value = 'roles'
     await connectAnalysisEventStream()
   }
 }
@@ -1216,7 +1361,6 @@ async function submitNewRole(): Promise<void> {
   projectDetail.value = created
   const latestRole = [...(created.analysis.roles || [])].reverse().find((role) => role.name === payload.name.trim())
   roleDialogVisible.value = false
-  activeSettingTab.value = 'roles'
   await generateRoleAssets({
     overwrite: false,
     roleKeys: latestRole?.key ? [latestRole.key] : [],
@@ -1246,7 +1390,6 @@ async function generateSceneAssets(options?: { overwrite?: boolean; successMessa
   if (result) {
     projectDetail.value = result
     syncConfirmedStepIndex()
-    activeSettingTab.value = 'scenes'
   }
 }
 
@@ -1272,7 +1415,6 @@ async function generatePropAssets(options?: { overwrite?: boolean; successMessag
   if (result) {
     projectDetail.value = result
     syncConfirmedStepIndex()
-    activeSettingTab.value = 'props'
   }
 }
 
@@ -1311,8 +1453,28 @@ async function generateStoryboards(): Promise<void> {
     syncConfirmedStepIndex()
     selectedStoryboardId.value = result.storyboards[0]?.id || ''
     activeStep.value = 'storyboard'
+    persistActiveStep()
     await connectStoryboardEventStream()
   }
+}
+
+async function regenerateAllStoryboards(): Promise<void> {
+  if (!projectDetail.value || isBusy.value) return
+  // 当前还没有任何分镜落库时，直接按首次生成处理，避免用户看得到按钮却无法操作。
+  if (!hasStoryboards.value) {
+    await generateStoryboards()
+    return
+  }
+  if (!import.meta.client) {
+    await generateStoryboards()
+    return
+  }
+
+  // 重新生成会覆盖当前项目下已存在的分镜表，因此这里加一层显式确认，避免误触。
+  const shouldRegenerate = window.confirm('重新生成会覆盖当前项目的全部分镜内容，是否继续？')
+  if (!shouldRegenerate) return
+  selectedStoryboardId.value = ''
+  await generateStoryboards()
 }
 
 function roleSelectOptions() {
@@ -1535,6 +1697,53 @@ function extractActionErrorMessage(error: unknown): string {
   return fetchError?.message || '请求失败，请稍后重试'
 }
 
+function dedupeRepeatedErrorMessage(message: string): string {
+  const normalized = message.replace(/\s+/g, ' ').trim()
+  if (!normalized) return ''
+
+  // 有些后端或轮询错误会把同一段 provider 错误拼接两次，这里优先做去重，避免前端展示成长串重复文案。
+  const duplicateIndex = normalized.indexOf(normalized.slice(0, Math.floor(normalized.length / 2)))
+  if (duplicateIndex === 0) {
+    const half = Math.floor(normalized.length / 2)
+    const firstHalf = normalized.slice(0, half).trim()
+    const secondHalf = normalized.slice(half).trim()
+    if (firstHalf && secondHalf && (firstHalf === secondHalf || normalized === `${firstHalf} ${firstHalf}`)) {
+      return firstHalf
+    }
+  }
+
+  const segments = normalized.split(/(?=阿里视频任务失败：)|(?=task_status=FAILED)/).map(item => item.trim()).filter(Boolean)
+  return Array.from(new Set(segments)).join('；')
+}
+
+function formatDisplayErrorMessage(message: string): string {
+  if (!message) return ''
+  const cleaned = dedupeRepeatedErrorMessage(message)
+  if (!cleaned) return '请求失败，请稍后重试。'
+
+  // 阿里参考图下载失败是目前最常见的一类错误，前端统一翻译成用户能直接处理的原因与建议。
+  if (cleaned.includes('InvalidParameter') && cleaned.includes('Failed to download')) {
+    return '参考图链接已失效，阿里视频服务无法下载当前分镜绑定的素材。请重新生成或重新上传角色图、场景图或道具图后，再次提交视频生成。'
+  }
+  if (cleaned.includes('当前分镜没有可用参考图')) {
+    return '当前分镜缺少可用参考图。请先绑定至少一张已生成的角色图、场景图或道具图，再生成视频。'
+  }
+  if (cleaned.includes('InvalidParameter')) {
+    return '视频生成参数不符合当前模型要求，请检查参考图、时长、分辨率和音频模式后重试。'
+  }
+  if (cleaned.includes('Timeout') || cleaned.includes('超时')) {
+    return '视频生成等待超时，请稍后重试；若连续多次超时，再检查后端日志。'
+  }
+
+  return cleaned.length > 120 ? `${cleaned.slice(0, 120)}...` : cleaned
+}
+
+function buildErrorCardTitle(message: string): string {
+  if (message.includes('视频')) return '视频任务处理失败'
+  if (message.includes('剧本')) return '剧本处理失败'
+  return '操作失败'
+}
+
 function isRowVideoSubmitting(rowId: string): boolean {
   return submittingStoryboardVideoRowId.value === rowId
 }
@@ -1737,6 +1946,9 @@ async function generateSingleStoryboardVideo(row: StoryboardRow): Promise<void> 
   }
   row.videoStatus = 'queued'
   row.videoProgress = 0
+  if ((activeStep.value === 'storyboard' || activeStep.value === 'video') && shouldTrackStoryboardStream(projectDetail.value)) {
+    await connectStoryboardEventStream()
+  }
 
   try {
     await dramaService.generateStoryboardVideo(projectDetail.value.projectId, row.id, payload)
@@ -1746,11 +1958,14 @@ async function generateSingleStoryboardVideo(row: StoryboardRow): Promise<void> 
     infoMessage.value = `分镜 ${row.shotNo} 已加入视频生成队列。`
     await refreshProjectDetail()
   } catch (error) {
-    const message = extractActionErrorMessage(error)
+    const message = formatDisplayErrorMessage(extractActionErrorMessage(error))
     row.videoStatus = 'failed'
     row.videoProgress = 0
     row.videoErrorMessage = message
     errorMessage.value = message
+    if (!shouldTrackStoryboardStream(projectDetail.value)) {
+      closeStoryboardEventStream()
+    }
   } finally {
     submittingStoryboardVideoRowId.value = ''
   }
@@ -1789,10 +2004,33 @@ function storyboardGenerationStatusLabel(row: StoryboardRow): string {
 
 function storyboardVideoStatusLabel(row: StoryboardRow): string {
   if (row.videoStatus === 'success') return '视频已生成'
-  if (row.videoStatus === 'failed') return row.videoErrorMessage || '视频生成失败'
-  if (row.videoStatus === 'running') return `视频生成中 ${row.videoProgress || 0}%`
+  if (row.videoStatus === 'failed') return '视频生成失败，请处理后重试'
+  if (row.videoStatus === 'running') return `视频生成中，${storyboardVideoEtaLabel(row)}`
+  if (row.videoStatus === 'queued') return `视频排队中，${storyboardVideoEtaLabel(row)}`
+  return '未生成'
+}
+
+function storyboardVideoBadgeLabel(row: StoryboardRow): string {
+  if (row.videoStatus === 'success') return '视频已生成'
+  if (row.videoStatus === 'failed') return '视频生成失败'
+  if (row.videoStatus === 'running') return '视频生成中'
   if (row.videoStatus === 'queued') return '视频排队中'
   return '未生成'
+}
+
+function storyboardVideoEtaLabel(row: StoryboardRow): string {
+  const activeModel = row.videoModel || selectedVideoModel.value
+  // 阿里官方视频文档写明异步任务通常需要 1-5 分钟，接口只返回 task_status，不提供真实连续百分比。
+  if (isAlibabaReferenceVideoModel(activeModel)) return '预计 1-5 分钟完成'
+  return '预计数分钟完成'
+}
+
+function storyboardVideoIndicatorLabel(row: StoryboardRow): string {
+  if (row.videoStatus === 'success') return '完成'
+  if (row.videoStatus === 'failed') return '失败'
+  if (row.videoStatus === 'running') return '生成中'
+  if (row.videoStatus === 'queued') return '排队中'
+  return '等待'
 }
 
 function storyboardVideoStatusToneClass(status: string): string {
@@ -1850,6 +2088,7 @@ async function startVideoWorkflow(): Promise<void> {
   if (!result) return
   workflowRunInfo.value = result
   activeStep.value = 'video'
+  persistActiveStep()
   clearWorkflowPoll()
   await pollWorkflowStatus(result.runId)
 }
@@ -1864,6 +2103,7 @@ function selectStep(step: WorkflowStepKey): void {
   // 流程页按步骤推进：只能回看已确认步骤，未来步骤必须通过底部确认按钮逐步进入。
   if (!canVisitStep(step)) return
   activeStep.value = step
+  persistActiveStep()
 }
 
 async function goNextStep(): Promise<void> {
@@ -2261,6 +2501,14 @@ watch(
 )
 
 watch(
+  () => activeStep.value,
+  () => {
+    // 当前步骤变化后立即持久化，保证关闭页面再回来仍停留在刚才的位置。
+    persistActiveStep()
+  }
+)
+
+watch(
   [() => activeStep.value, hasAnalysis, hasRoleAssets, roleCountSummary, () => busyKey.value],
   async ([step, ready, roleReady, summary, busy]) => {
     // 回访或刷新后如果已经停在“设定”步骤，但角色四视图还没进入生成队列，就自动补一次排队。
@@ -2388,8 +2636,9 @@ onBeforeUnmount(() => {
     </header>
 
     <section class="mx-auto w-full px-4 py-6 pb-28">
-      <div v-if="errorMessage" class="mb-4 rounded-2xl border border-[#fecaca] bg-[#fff1f2] px-4 py-3 text-sm text-[#b91c1c]">
-        {{ errorMessage }}
+      <div v-if="errorMessage" class="mb-4 rounded-[24px] border border-[#fecaca] bg-[#fff1f2] px-5 py-4 text-[#991b1b] shadow-[0_10px_30px_rgba(239,68,68,0.08)]">
+        <p class="text-sm font-semibold">{{ buildErrorCardTitle(errorMessage) }}</p>
+        <p class="mt-1 text-sm leading-7 text-[#b91c1c]">{{ errorMessage }}</p>
       </div>
 
       <div v-if="infoMessage" class="mb-4 rounded-2xl border border-[#bbf7d0] bg-[#f0fdf4] px-4 py-3 text-sm text-[#166534]">
@@ -2709,11 +2958,34 @@ onBeforeUnmount(() => {
             </div>
           </div>
 
-          <div class="mt-5 flex flex-wrap items-center gap-4 rounded-[22px] border border-borderSoft bg-panelSoft px-4 py-3 text-sm text-textMuted">
-            <span>总计 {{ settingTabStats[activeSettingTab].total }}</span>
-            <span>已完成 {{ settingTabStats[activeSettingTab].completed }}</span>
-            <span>生成中 {{ settingTabStats[activeSettingTab].generating }}</span>
-            <span>失败/未完成 {{ settingTabStats[activeSettingTab].failed }}</span>
+          <div class="mt-5 flex flex-wrap items-center gap-3 rounded-[22px] border border-borderSoft bg-panelSoft px-4 py-3 text-sm text-textMuted">
+            <span class="inline-flex items-center rounded-full border border-borderSoft bg-panel px-3 py-1.5 text-sm font-medium text-textMain">
+              总计 {{ settingTabStats[activeSettingTab].total }}
+            </span>
+            <span class="inline-flex items-center rounded-full border border-[#c7d2fe] bg-[#eef2ff] px-3 py-1.5 text-sm font-medium text-[#4338ca]">
+              已完成 {{ settingTabStats[activeSettingTab].completed }}
+            </span>
+            <span class="inline-flex items-center rounded-full border border-[#bfdbfe] bg-[#eff6ff] px-3 py-1.5 text-sm font-medium text-[#2563eb]">
+              生成中 {{ settingTabStats[activeSettingTab].generating }}
+            </span>
+            <span class="inline-flex items-center rounded-full border border-borderSoft bg-panel px-3 py-1.5 text-sm font-medium text-textMuted">
+              失败/未完成 {{ settingTabStats[activeSettingTab].failed }}
+            </span>
+            <button
+              type="button"
+              class="inline-flex h-9 w-9 items-center justify-center rounded-full border transition"
+              :class="currentSettingRetryCount() > 0
+                ? 'border-[#fecaca] bg-[#fff1f2] text-[#dc2626] hover:bg-[#ffe4e6]'
+                : 'border-borderSoft bg-panel text-textMuted opacity-70'"
+              :disabled="isBusy || currentSettingRetryCount() <= 0"
+              title="重试当前页签失败项"
+              @click="retryCurrentSettingFailures"
+            >
+              <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8">
+                <path d="M21 12a9 9 0 1 1-2.64-6.36" stroke-linecap="round" stroke-linejoin="round" />
+                <path d="M21 3v6h-6" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+            </button>
           </div>
 
           <template v-if="activeSettingTab === 'roles'">
@@ -2721,7 +2993,7 @@ onBeforeUnmount(() => {
               <article
                 v-for="role in projectDetail?.analysis.roles || []"
                 :key="role.key"
-                class="rounded-[24px] border border-borderSoft bg-panelSoft p-4 shadow-[0_10px_28px_rgba(15,23,42,0.04)]"
+                class="flex h-full flex-col rounded-[24px] border border-borderSoft bg-panelSoft p-4 shadow-[0_10px_28px_rgba(15,23,42,0.04)]"
               >
                 <button
                   type="button"
@@ -2747,7 +3019,7 @@ onBeforeUnmount(() => {
                     <div class="absolute inset-0 bg-[radial-gradient(circle_at_28%_24%,rgba(255,255,255,0.72),transparent_42%),radial-gradient(circle_at_72%_68%,rgba(191,219,254,0.55),transparent_38%)]" />
                     <div class="relative z-[1]">
                       <div
-                        class="mx-auto flex h-14 w-14 items-center justify-center rounded-full border text-sm font-semibold"
+                        class="mx-auto flex h-20 w-20 items-center justify-center rounded-full border text-lg font-semibold"
                         :class="isRoleGenerationFailed(role)
                           ? 'border-[#fecaca] bg-[#fff1f2] text-[#dc2626]'
                           : isRoleGenerating(role)
@@ -2756,12 +3028,12 @@ onBeforeUnmount(() => {
                       >
                         {{ isRoleGenerationFailed(role) ? '!' : `${role.generationProgress || 0}%` }}
                       </div>
-                      <p class="mt-3 text-base font-semibold text-textMain">{{ roleGenerationText(role) }}</p>
+                      <p class="mt-4 text-xl font-semibold text-textMain">{{ roleGenerationText(role) }}</p>
                     </div>
                   </div>
                 </button>
 
-                <div class="mt-4">
+                <div class="mt-4 flex flex-1 flex-col">
                   <div class="flex items-start justify-between gap-3">
                     <div class="min-w-0">
                       <h3 class="truncate text-lg font-semibold">{{ role.name }}</h3>
@@ -2787,14 +3059,21 @@ onBeforeUnmount(() => {
                     </div>
                   </div>
 
-                  <p class="mt-3 line-clamp-3 text-sm leading-7 text-textMuted">{{ role.personality }}，{{ role.appearance }}</p>
+                  <div class="group relative mt-3">
+                    <p class="line-clamp-3 text-sm leading-7 text-textMuted">{{ role.personality }}，{{ role.appearance }}</p>
+                    <div class="absolute left-0 top-full z-[70] mt-2 hidden w-full rounded-[16px] border border-borderSoft bg-panel p-3 text-left shadow-[0_14px_30px_rgba(15,23,42,0.10)] group-hover:block">
+                      <div class="max-h-36 overflow-y-auto pr-1 text-sm leading-7 text-textMain">
+                        {{ role.personality }}，{{ role.appearance }}
+                      </div>
+                    </div>
+                  </div>
 
                   <div class="mt-3 flex items-center justify-between text-xs text-textMuted">
                     <span>状态：{{ roleGenerationStatusLabel(role) }}</span>
                     <span>{{ role.generationProgress || 0 }}%</span>
                   </div>
 
-                  <div class="relative z-[60] mt-4 grid gap-3 md:grid-cols-2">
+                  <div class="relative z-[60] mt-auto grid gap-3 pt-4 md:grid-cols-2">
                     <UiBaseSelect
                       v-model="roleVoiceSelections[role.key]"
                       :options="voiceToneCatalog"
@@ -2817,7 +3096,7 @@ onBeforeUnmount(() => {
               <article
                 v-for="scene in projectDetail?.analysis.scenes || []"
                 :key="scene.key"
-                class="rounded-[24px] border border-borderSoft bg-panelSoft p-4 shadow-[0_10px_28px_rgba(15,23,42,0.04)]"
+                class="flex h-full flex-col rounded-[24px] border border-borderSoft bg-panelSoft p-4 shadow-[0_10px_28px_rgba(15,23,42,0.04)]"
               >
                 <button type="button" class="block w-full text-left" @click="openSettingEditor(scene, 'scene')">
                   <div class="relative h-[204px] overflow-hidden rounded-[18px] bg-panelSoft">
@@ -2835,10 +3114,10 @@ onBeforeUnmount(() => {
                     >
                       <div class="absolute inset-0 bg-[radial-gradient(circle_at_28%_24%,rgba(255,255,255,0.72),transparent_42%),radial-gradient(circle_at_72%_68%,rgba(191,219,254,0.55),transparent_38%)]" />
                       <div class="relative z-[1]">
-                        <p class="text-[22px] font-semibold text-white drop-shadow-[0_8px_18px_rgba(15,23,42,0.18)]">
+                        <p class="text-[30px] font-semibold text-white drop-shadow-[0_8px_18px_rgba(15,23,42,0.18)]">
                           {{ isSceneGenerating(scene) ? '生成中' : '待生成' }}
                         </p>
-                        <p class="mt-2 text-sm font-medium text-white/90">{{ sceneGenerationText(scene) }}</p>
+                        <p class="mt-3 text-base font-medium text-white/90">{{ sceneGenerationText(scene) }}</p>
                       </div>
                     </div>
                     <span class="pointer-events-none absolute right-3 top-3 rounded-full border border-white/20 bg-[rgba(15,23,42,0.5)] px-2.5 py-1 text-[11px] font-semibold text-white backdrop-blur">
@@ -2846,29 +3125,39 @@ onBeforeUnmount(() => {
                     </span>
                   </div>
                 </button>
-                <div class="mt-4 flex items-start justify-between gap-3">
-                  <div class="min-w-0">
-                    <h3 class="truncate text-lg font-semibold">{{ scene.name }}</h3>
-                    <p class="mt-2 line-clamp-3 text-sm leading-7 text-textMuted">{{ scene.description }}</p>
+                <div class="mt-4 flex flex-1 flex-col">
+                  <div class="flex items-start justify-between gap-3">
+                    <div class="min-w-0">
+                      <h3 class="truncate text-lg font-semibold">{{ scene.name }}</h3>
+                      <div class="group relative mt-2">
+                        <p class="line-clamp-3 text-sm leading-7 text-textMuted">{{ scene.description }}</p>
+                        <div class="absolute left-0 top-full z-[70] mt-2 hidden w-full rounded-[16px] border border-borderSoft bg-panel p-3 text-left shadow-[0_14px_30px_rgba(15,23,42,0.10)] group-hover:block">
+                          <div class="max-h-36 overflow-y-auto pr-1 text-sm leading-7 text-textMain">
+                            {{ scene.description }}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <button
+                        type="button"
+                        class="rounded-full border border-borderSoft bg-panel px-3 py-1.5 text-xs font-semibold text-textMuted transition hover:border-[#94a3b8]"
+                        :disabled="isBusy"
+                        @click="openSettingEditor(scene, 'scene')"
+                      >
+                        编辑
+                      </button>
+                      <button
+                        type="button"
+                        class="rounded-full border border-borderSoft bg-panel px-3 py-1.5 text-xs font-semibold text-textMuted transition hover:border-[#94a3b8]"
+                        :disabled="isBusy"
+                        @click="generateSceneAssets({ overwrite: true, sceneKeys: [scene.key], successMessage: `${scene.name} 场景图已刷新。` })"
+                      >
+                        重绘
+                      </button>
+                    </div>
                   </div>
-                  <div class="flex items-center gap-2">
-                    <button
-                      type="button"
-                      class="rounded-full border border-borderSoft bg-panel px-3 py-1.5 text-xs font-semibold text-textMuted transition hover:border-[#94a3b8]"
-                      :disabled="isBusy"
-                      @click="openSettingEditor(scene, 'scene')"
-                    >
-                      编辑
-                    </button>
-                    <button
-                      type="button"
-                      class="rounded-full border border-borderSoft bg-panel px-3 py-1.5 text-xs font-semibold text-textMuted transition hover:border-[#94a3b8]"
-                      :disabled="isBusy"
-                      @click="generateSceneAssets({ overwrite: true, sceneKeys: [scene.key], successMessage: `${scene.name} 场景图已刷新。` })"
-                    >
-                      重绘
-                    </button>
-                  </div>
+                  <div class="mt-auto pt-4" />
                 </div>
               </article>
             </div>
@@ -2879,7 +3168,7 @@ onBeforeUnmount(() => {
               <article
                 v-for="prop in projectDetail?.analysis.props || []"
                 :key="prop.key"
-                class="rounded-[24px] border border-borderSoft bg-panelSoft p-4 shadow-[0_10px_28px_rgba(15,23,42,0.04)]"
+                class="flex h-full flex-col rounded-[24px] border border-borderSoft bg-panelSoft p-4 shadow-[0_10px_28px_rgba(15,23,42,0.04)]"
               >
                 <button type="button" class="block w-full text-left" @click="openSettingEditor(prop, 'prop')">
                   <div class="relative h-[204px] overflow-hidden rounded-[18px] bg-panelSoft">
@@ -2897,10 +3186,10 @@ onBeforeUnmount(() => {
                     >
                       <div class="absolute inset-0 bg-[radial-gradient(circle_at_28%_24%,rgba(255,255,255,0.72),transparent_42%),radial-gradient(circle_at_72%_68%,rgba(191,219,254,0.55),transparent_38%)]" />
                       <div class="relative z-[1]">
-                        <p class="text-[22px] font-semibold text-white drop-shadow-[0_8px_18px_rgba(15,23,42,0.18)]">
+                        <p class="text-[30px] font-semibold text-white drop-shadow-[0_8px_18px_rgba(15,23,42,0.18)]">
                           {{ isPropGenerating(prop) ? '生成中' : '待生成' }}
                         </p>
-                        <p class="mt-2 text-sm font-medium text-white/90">{{ propGenerationText(prop) }}</p>
+                        <p class="mt-3 text-base font-medium text-white/90">{{ propGenerationText(prop) }}</p>
                       </div>
                     </div>
                     <span class="pointer-events-none absolute right-3 top-3 rounded-full border border-white/20 bg-[rgba(15,23,42,0.5)] px-2.5 py-1 text-[11px] font-semibold text-white backdrop-blur">
@@ -2908,29 +3197,39 @@ onBeforeUnmount(() => {
                     </span>
                   </div>
                 </button>
-                <div class="mt-4 flex items-start justify-between gap-3">
-                  <div class="min-w-0">
-                    <h3 class="truncate text-lg font-semibold">{{ prop.name }}</h3>
-                    <p class="mt-2 line-clamp-3 text-sm leading-7 text-textMuted">{{ prop.description }}</p>
+                <div class="mt-4 flex flex-1 flex-col">
+                  <div class="flex items-start justify-between gap-3">
+                    <div class="min-w-0">
+                      <h3 class="truncate text-lg font-semibold">{{ prop.name }}</h3>
+                      <div class="group relative mt-2">
+                        <p class="line-clamp-3 text-sm leading-7 text-textMuted">{{ prop.description }}</p>
+                        <div class="absolute left-0 top-full z-[70] mt-2 hidden w-full rounded-[16px] border border-borderSoft bg-panel p-3 text-left shadow-[0_14px_30px_rgba(15,23,42,0.10)] group-hover:block">
+                          <div class="max-h-36 overflow-y-auto pr-1 text-sm leading-7 text-textMain">
+                            {{ prop.description }}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <button
+                        type="button"
+                        class="rounded-full border border-borderSoft bg-panel px-3 py-1.5 text-xs font-semibold text-textMuted transition hover:border-[#94a3b8]"
+                        :disabled="isBusy"
+                        @click="openSettingEditor(prop, 'prop')"
+                      >
+                        编辑
+                      </button>
+                      <button
+                        type="button"
+                        class="rounded-full border border-borderSoft bg-panel px-3 py-1.5 text-xs font-semibold text-textMuted transition hover:border-[#94a3b8]"
+                        :disabled="isBusy"
+                        @click="generatePropAssets({ overwrite: true, propKeys: [prop.key], successMessage: `${prop.name} 道具图已刷新。` })"
+                      >
+                        重绘
+                      </button>
+                    </div>
                   </div>
-                  <div class="flex items-center gap-2">
-                    <button
-                      type="button"
-                      class="rounded-full border border-borderSoft bg-panel px-3 py-1.5 text-xs font-semibold text-textMuted transition hover:border-[#94a3b8]"
-                      :disabled="isBusy"
-                      @click="openSettingEditor(prop, 'prop')"
-                    >
-                      编辑
-                    </button>
-                    <button
-                      type="button"
-                      class="rounded-full border border-borderSoft bg-panel px-3 py-1.5 text-xs font-semibold text-textMuted transition hover:border-[#94a3b8]"
-                      :disabled="isBusy"
-                      @click="generatePropAssets({ overwrite: true, propKeys: [prop.key], successMessage: `${prop.name} 道具图已刷新。` })"
-                    >
-                      重绘
-                    </button>
-                  </div>
+                  <div class="mt-auto pt-4" />
                 </div>
               </article>
             </div>
@@ -2941,55 +3240,35 @@ onBeforeUnmount(() => {
           v-else-if="activeStep === 'storyboard'"
           class="rounded-[32px] border border-[#e8edf5] bg-panel p-8 shadow-[0_18px_60px_rgba(15,23,42,0.06)]"
         >
-          <div v-if="showStoryboardProgressPanel" class="flex min-h-[560px] flex-col items-center justify-center">
-            <div class="flex h-20 w-20 items-center justify-center rounded-full bg-neonSoft/20 text-neon">
-              <svg viewBox="0 0 24 24" class="h-9 w-9 animate-spin" fill="none" stroke="currentColor" stroke-width="1.8">
-                <path d="M12 3a9 9 0 1 1-9 9" stroke-linecap="round" />
-              </svg>
-            </div>
-            <h2 class="mt-8 text-[34px] font-semibold tracking-[-0.04em]">{{ storyboardProgressTitle }}</h2>
-            <p class="mt-3 max-w-[760px] text-center text-base text-textMuted">{{ storyboardProgressSubtitle }}</p>
-
-            <div class="mt-8 flex w-full max-w-[820px] items-center justify-between text-sm text-textMuted">
-              <span>当前剧集进度：</span>
-              <span>第 {{ selectedStoryboardEpisode?.episodeNo || 1 }} 集 / 共 {{ currentStoryboardRun.totalEpisodes || 1 }} 集</span>
-            </div>
-
-            <div class="mt-4 w-full max-w-[820px] overflow-hidden rounded-full bg-panelSoft">
-              <div
-                class="h-3 rounded-full bg-gradient-to-r from-[#2463ff] to-[#7c3aed] transition-all duration-500"
-                :style="{ width: `${selectedStoryboardEpisode?.progress || 0}%` }"
-              />
-            </div>
-
-            <div class="mt-8 grid w-full max-w-[820px] gap-4 md:grid-cols-3">
-              <article
-                v-for="episode in storyboardEpisodeItems"
-                :key="episode.episodeNo"
-                class="rounded-[22px] border border-borderSoft bg-panelSoft px-5 py-5"
-              >
-                <div class="flex items-start justify-between gap-3">
-                  <div>
-                    <p class="text-base font-semibold text-textMain">第 {{ episode.episodeNo }} 集</p>
-                    <p class="mt-1 text-xs text-textMuted">{{ storyboardEpisodeStatusLabel(episode.status) }}</p>
+          <div
+            v-if="showStoryboardFloatingProgress"
+            class="sticky top-[82px] z-20 mb-4 flex justify-end"
+          >
+            <div class="min-w-[280px] max-w-[420px] rounded-full border border-[#c7d2fe] bg-[#eef2ff]/96 px-3 py-2 shadow-[0_10px_24px_rgba(99,102,241,0.10)] backdrop-blur-xl">
+              <div class="flex items-center gap-2">
+                <div class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white text-neon shadow-[0_4px_14px_rgba(99,102,241,0.16)]">
+                  <svg viewBox="0 0 24 24" class="h-3.5 w-3.5 animate-spin" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M12 3a9 9 0 1 1-9 9" stroke-linecap="round" />
+                  </svg>
+                </div>
+                <div class="min-w-0 flex-1">
+                  <div class="flex items-center justify-between gap-3">
+                    <p class="truncate text-xs font-semibold text-textMain">{{ storyboardProgressTitle }}</p>
+                    <span class="shrink-0 text-xs font-medium text-textMuted">{{ storyboardOverallProgress }}%</span>
                   </div>
-                  <span class="text-lg font-semibold text-neon">{{ episode.progress }}%</span>
+                  <p class="mt-0.5 truncate text-[11px] text-textMuted">{{ storyboardOverallSummary }}</p>
                 </div>
-                <div class="mt-4 h-2 overflow-hidden rounded-full bg-panelSoft">
-                  <div
-                    class="h-full rounded-full bg-gradient-to-r from-[#2463ff] to-[#7c3aed] transition-all duration-500"
-                    :style="{ width: `${episode.progress}%` }"
-                  />
-                </div>
-                <p class="mt-3 text-sm text-textMuted">
-                  已生成 {{ episode.generatedCount }} / {{ episode.expectedCount || '待估算' }} 条分镜
-                </p>
-              </article>
+              </div>
+              <div class="mt-2 h-1.5 overflow-hidden rounded-full bg-white/70">
+                <div
+                  class="h-full rounded-full bg-gradient-to-r from-[#2463ff] to-[#7c3aed] transition-all duration-500"
+                  :style="{ width: `${storyboardOverallProgress}%` }"
+                />
+              </div>
             </div>
           </div>
 
-          <template v-else>
-            <div class="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+          <div class="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
               <div class="min-w-0">
                 <div class="flex flex-wrap items-center gap-3">
                   <h2 class="text-[30px] font-semibold tracking-[-0.04em]">分镜表</h2>
@@ -2997,19 +3276,19 @@ onBeforeUnmount(() => {
                     第 {{ selectedEpisodeNo }} 集
                   </span>
                 </div>
-                <p class="mt-3 line-clamp-1 text-sm leading-7 text-textMuted">
-                  {{ storyboardEpisodeSummaryText(selectedEpisodeNo) }}
-                </p>
-                <button
-                  type="button"
-                  class="mt-2 text-sm font-semibold text-neon transition hover:text-[#4338ca]"
-                  @click="openStoryboardEpisodePreview"
-                >
-                  详情
-                </button>
+                <div class="mt-3 text-sm leading-7 text-textMuted">
+                  <span class="line-clamp-2 inline">{{ storyboardEpisodeSummaryText(selectedEpisodeNo) }}</span>
+                  <button
+                    type="button"
+                    class="ml-2 inline-block font-semibold text-neon transition hover:text-[#4338ca]"
+                    @click="openStoryboardEpisodePreview"
+                  >
+                    详情
+                  </button>
+                </div>
               </div>
 
-              <div class="flex w-full flex-col items-start gap-3 xl:w-auto xl:items-end">
+              <div class="flex w-full flex-wrap items-center gap-2 xl:w-auto">
                 <UiBaseSelect
                   v-if="hasStoryboards"
                   v-model="selectedVideoModel"
@@ -3018,6 +3297,15 @@ onBeforeUnmount(() => {
                   size="sm"
                   class="w-full min-w-0 xl:w-[260px]"
                 />
+                <button
+                  v-if="showRegenerateAllStoryboardsButton"
+                  type="button"
+                  class="rounded-[16px] border border-borderSoft bg-panel px-5 py-2.5 text-sm font-semibold text-textMain transition hover:border-[#94a3b8]"
+                  :disabled="isBusy"
+                  @click="regenerateAllStoryboards"
+                >
+                  {{ busyKey === 'storyboards' ? '重新生成中...' : '重新生成所有分镜' }}
+                </button>
                 <button
                   type="button"
                   class="rounded-[16px] px-5 py-2.5 text-sm font-semibold transition"
@@ -3050,11 +3338,16 @@ onBeforeUnmount(() => {
               </aside>
 
               <section class="space-y-5">
-                <div v-if="!storyboardRowsForCurrentEpisode.length" class="flex min-h-[360px] items-center justify-center rounded-[28px] border border-dashed border-borderSoft bg-panelSoft">
+                <div
+                  v-if="!storyboardRowsForCurrentEpisode.length && !['queued', 'running'].includes(currentStoryboardRun.status)"
+                  class="flex min-h-[360px] items-center justify-center rounded-[28px] border border-dashed border-borderSoft bg-panelSoft"
+                >
                   <div class="text-center">
-                    <p class="text-xl font-semibold">当前集还没有分镜</p>
+                    <p class="mt-4 text-xl font-semibold">
+                      当前集还没有分镜
+                    </p>
                     <p class="mt-3 text-sm text-textMuted">
-                      {{ currentStoryboardRun.status === 'completed' ? '可点击下方按钮新增首条分镜。' : '后台正在继续生成当前剧集的结构化分镜。' }}
+                      {{ currentStoryboardRun.status === 'completed' ? '可点击下方按钮新增首条分镜。' : '后台正在持续生成结构化分镜。' }}
                     </p>
                     <button
                       v-if="currentStoryboardRun.status === 'completed' || currentStoryboardRun.status === 'idle'"
@@ -3066,6 +3359,45 @@ onBeforeUnmount(() => {
                     </button>
                   </div>
                 </div>
+
+                <article
+                  v-for="placeholder in storyboardPendingSkeletonCount"
+                  v-if="['queued', 'running'].includes(currentStoryboardRun.status) && storyboardRowsForCurrentEpisode.length === 0"
+                  :key="`storyboard-skeleton-empty-${placeholder}`"
+                  class="overflow-hidden rounded-[28px] border border-borderSoft bg-panelSoft p-4 shadow-[0_10px_28px_rgba(15,23,42,0.04)]"
+                >
+                  <div class="animate-pulse">
+                    <div class="flex items-center gap-3">
+                      <div class="h-7 w-20 rounded-full bg-[#e9eef7]" />
+                      <div class="h-7 w-14 rounded-full bg-[#eef2ff]" />
+                      <div class="h-7 w-14 rounded-full bg-[#eef2ff]" />
+                    </div>
+                    <div class="mt-4 grid gap-4 xl:grid-cols-[minmax(0,0.76fr)_minmax(0,1.12fr)_420px]">
+                      <div class="rounded-[22px] border border-borderSoft bg-panel p-4">
+                        <div class="h-6 w-28 rounded-full bg-[#e9eef7]" />
+                        <div class="mt-5 h-24 rounded-2xl bg-[#f3f6fb]" />
+                        <div class="mt-5 space-y-3">
+                          <div class="h-14 rounded-2xl bg-[#f3f6fb]" />
+                          <div class="h-14 rounded-2xl bg-[#f3f6fb]" />
+                          <div class="h-14 rounded-2xl bg-[#f3f6fb]" />
+                        </div>
+                      </div>
+                      <div class="rounded-[22px] border border-borderSoft bg-panel p-4">
+                        <div class="h-6 w-32 rounded-full bg-[#e9eef7]" />
+                        <div class="mt-5 h-[220px] rounded-2xl bg-[#f3f6fb]" />
+                        <div class="mt-4 flex gap-3">
+                          <div class="h-10 flex-1 rounded-full bg-[#eef2ff]" />
+                          <div class="h-10 w-20 rounded-full bg-[#eef2ff]" />
+                          <div class="h-10 w-24 rounded-full bg-[#eef2ff]" />
+                        </div>
+                      </div>
+                      <div class="rounded-[22px] border border-borderSoft bg-panel p-4">
+                        <div class="h-6 w-36 rounded-full bg-[#e9eef7]" />
+                        <div class="mt-5 h-[320px] rounded-[22px] bg-[#0f172a]/90" />
+                      </div>
+                    </div>
+                  </div>
+                </article>
 
                 <article
                   v-for="row in storyboardRowsForCurrentEpisode"
@@ -3399,7 +3731,7 @@ onBeforeUnmount(() => {
                           class="rounded-full border px-3 py-1 text-xs font-semibold"
                           :class="storyboardVideoStatusToneClass(row.videoStatus)"
                         >
-                          {{ storyboardVideoStatusLabel(row) }}
+                          {{ storyboardVideoBadgeLabel(row) }}
                         </span>
                       </div>
 
@@ -3427,22 +3759,82 @@ onBeforeUnmount(() => {
                                   ? 'border-[#93c5fd] bg-[#1d4ed8]/16 text-[#bfdbfe]'
                                   : 'border-white/15 bg-panel/5 text-white/70'"
                           >
-                            {{ isRowVideoSubmitting(row.id) ? '...' : row.videoStatus === 'failed' ? '!' : `${row.videoProgress || 0}%` }}
+                            {{ isRowVideoSubmitting(row.id) ? '...' : storyboardVideoIndicatorLabel(row) }}
                           </div>
                           <p class="text-lg font-semibold text-white" :class="(isRowVideoSubmitting(row.id) || row.videoStatus !== 'idle') ? 'mt-4' : ''">
                             {{ isRowVideoSubmitting(row.id) ? '视频任务提交中...' : storyboardVideoStatusLabel(row) }}
                           </p>
-                          <p v-if="row.videoErrorMessage" class="mt-3 text-sm leading-7 text-[#fecaca]">
-                            {{ row.videoErrorMessage }}
+                          <p
+                            v-if="!isRowVideoSubmitting(row.id) && ['queued', 'running'].includes(row.videoStatus)"
+                            class="mt-2 text-sm text-white/60"
+                          >
+                            {{ storyboardVideoEtaLabel(row) }}
                           </p>
+                          <div
+                            v-if="row.videoErrorMessage"
+                            class="mt-4 w-full rounded-2xl border border-[#7f1d1d]/60 bg-[#7f1d1d]/20 px-4 py-3 text-left"
+                          >
+                            <p class="text-sm font-semibold text-[#fecaca]">失败原因</p>
+                            <p class="mt-1 text-sm leading-7 text-[#fee2e2]">
+                              {{ row.videoErrorMessage }}
+                            </p>
+                          </div>
                         </div>
                       </div>
                     </section>
                   </div>
                 </article>
+
+                <div
+                  v-if="['queued', 'running'].includes(currentStoryboardRun.status) && storyboardRowsForCurrentEpisode.length > 0"
+                  class="space-y-5"
+                >
+                  <article
+                    v-for="placeholder in storyboardPendingSkeletonCount"
+                    :key="`storyboard-skeleton-tail-${placeholder}`"
+                    class="overflow-hidden rounded-[28px] border border-dashed border-borderSoft bg-panelSoft p-4"
+                  >
+                    <div class="animate-pulse">
+                      <div class="flex items-center gap-3">
+                        <div class="h-7 w-20 rounded-full bg-[#e9eef7]" />
+                        <div class="h-7 w-14 rounded-full bg-[#eef2ff]" />
+                        <div class="h-7 w-14 rounded-full bg-[#eef2ff]" />
+                      </div>
+                      <div class="mt-4 grid gap-4 xl:grid-cols-[minmax(0,0.76fr)_minmax(0,1.12fr)_420px]">
+                        <div class="rounded-[22px] border border-borderSoft bg-panel p-4">
+                          <div class="h-6 w-28 rounded-full bg-[#e9eef7]" />
+                          <div class="mt-5 h-24 rounded-2xl bg-[#f3f6fb]" />
+                          <div class="mt-5 space-y-3">
+                            <div class="h-14 rounded-2xl bg-[#f3f6fb]" />
+                            <div class="h-14 rounded-2xl bg-[#f3f6fb]" />
+                            <div class="h-14 rounded-2xl bg-[#f3f6fb]" />
+                          </div>
+                        </div>
+                        <div class="rounded-[22px] border border-borderSoft bg-panel p-4">
+                          <div class="h-6 w-32 rounded-full bg-[#e9eef7]" />
+                          <div class="mt-5 h-[220px] rounded-2xl bg-[#f3f6fb]" />
+                          <div class="mt-4 flex gap-3">
+                            <div class="h-10 flex-1 rounded-full bg-[#eef2ff]" />
+                            <div class="h-10 w-20 rounded-full bg-[#eef2ff]" />
+                            <div class="h-10 w-24 rounded-full bg-[#eef2ff]" />
+                          </div>
+                        </div>
+                        <div class="rounded-[22px] border border-borderSoft bg-panel p-4">
+                          <div class="h-6 w-36 rounded-full bg-[#e9eef7]" />
+                          <div class="mt-5 h-[320px] rounded-[22px] bg-[#0f172a]/90" />
+                        </div>
+                      </div>
+                    </div>
+                  </article>
+                  <div class="flex items-center justify-center rounded-[28px] border border-dashed border-borderSoft bg-panelSoft py-8">
+                    <div class="flex flex-col items-center justify-center gap-3">
+                      <div class="h-6 w-6 animate-spin rounded-full border-2 border-[#8b7dff] border-t-transparent"></div>
+                      <p class="text-sm font-medium text-textMuted">正在继续生成剩余分镜，请稍候...</p>
+                    </div>
+                  </div>
+                </div>
               </section>
             </div>
-          </template>
         </section>
 
         <section

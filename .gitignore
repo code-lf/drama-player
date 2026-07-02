@@ -12,7 +12,7 @@ node_modules
 .env
 .env.*
 !.env.example
-
+.nuxt-app
 # 日志
 logs
 *.log
