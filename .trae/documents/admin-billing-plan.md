@@ -16,6 +16,10 @@
 
   * 首期后台聚焦：用户、模型、点数；订单/支付作为第二阶段补齐。
 
+  * 模型体系需要统一成“一套规则 + 多 provider 适配器”，支持可灵、阿里、火山由后台任意启停与切换。
+
+  * 现有后端中的 provider / model 硬编码，需要迁移到数据库配置与后台管理，不再由 `Settings / ConfigService / Service / Task` 写死。
+
 * 推荐落地路线：
 
   * 阶段 1：先补后端基础能力与数据模型。
@@ -25,6 +29,8 @@
   * 阶段 3：接入支付与点数结算。
 
   * 阶段 4：上线运营报表、人工调账、模型成本配置。
+
+  * 阶段 5：完成多 provider 动态路由与模型治理平台。
 
 ## Current State Analysis
 
@@ -86,6 +92,78 @@
 
   * 统一的用量结算事件流
 
+  * 统一模型目录、统一输出协议、统一 provider 工厂
+
+  * 可灵 / 阿里 / 火山三套供应商的后台可配接入
+
+  * 把默认 provider / model / 候选模型 / 兼容别名从代码迁出到后台配置
+
+### 当前模型硬编码现状
+
+* 运行时配置里的模型候选目前写死在：
+
+  * `e:\workspace\ai-create-video-api\app\services\config_service.py`
+
+  * 例如 `ALIBABA_VIDEO_CANDIDATE_MODELS`、`BYTEDANCE_VIDEO_CANDIDATE_MODEL`
+
+* 默认 provider 和默认 model 目前写死在：
+
+  * `e:\workspace\ai-create-video-api\app\core\config.py`
+
+  * 例如 `drama_text_provider='alibaba'`、`drama_video_model='wan2.6-r2v-flash'`
+
+* 兼容别名和 provider fallback 也写死在：
+
+  * `e:\workspace\ai-create-video-api\app\core\config.py`
+
+  * 例如：
+
+    * `ali_video_model`
+
+    * `bytedance_video_model`
+
+* provider client 选择目前直接写死在服务/任务中：
+
+  * `e:\workspace\ai-create-video-api\app\tasks\workflow_tasks.py`
+
+    * 直接实例化 `AlibabaVideoClient()`
+
+  * `e:\workspace\ai-create-video-api\app\services\drama_service.py`
+
+    * 直接依赖 `AlibabaTextClient()`、`AlibabaImageClient()`
+
+  * `e:\workspace\ai-create-video-api\app\api\routes\drama.py`
+
+    * 路由层直接注入 `AlibabaTextClient()`、`AlibabaImageClient()`
+
+* 部分模型名和回退规则也写死在业务逻辑中：
+
+  * `e:\workspace\ai-create-video-api\app\services\drama_service.py`
+
+  * `e:\workspace\ai-create-video-api\app\integrations\alibaba\text_client.py`
+
+  * 例如：
+
+    * `qwen-plus`
+
+    * `wanx2.1-t2i-turbo`
+
+    * `wan2.7-r2v`
+
+    * `wan2.6-r2v-flash`
+
+    * `doubao-seedance-1.0-pro-fast`
+
+* 这意味着当前虽然看上去“可切换 provider”，但本质仍然是：
+
+  * 默认值靠 `.env`
+
+  * 候选列表靠代码常量
+
+  * 真实 client 依赖阿里实现
+
+  * 多供应商尚未形成统一治理层
+
 ### 当前还缺哪些功能
 
 * 用户侧仍缺：
@@ -134,7 +212,7 @@
 
 ### 已确定决策
 
-* 管理后台采用独立项目，不与当前用户端 Nuxt 仓库混写。
+* 管理后台采用独立VUE3项目+饿了么UI，不与当前用户端 Nuxt 仓库混写。
 
 * 支付优先面向国内支付场景。
 
@@ -153,6 +231,14 @@
   * 模型管理
 
   * 点数管理
+
+* 模型治理要求：
+
+  * 前台只读取后台下发的模型配置
+
+  * 后台控制哪些模型可见、默认哪个、哪个需要会员或更高点数门槛
+
+  * provider 密钥与 endpoint 允许在后台配置，而不是只放 `.env`
 
 ### 推荐技术决策
 
@@ -179,6 +265,22 @@
   * 价格由后台配置中心维护
 
   * 计费规则按“模型 + 能力 + 参数区间”配置
+
+* 模型接入策略：
+
+  * 前后端统一只认“标准模型协议”，不直接感知阿里 / 可灵 / 火山的原生差异
+
+  * 每个 provider 由适配器负责把标准输入转换成各自 API 协议
+
+  * 前台只拿统一输出结构，不感知 provider 差异
+
+* 后台配置策略：
+
+  * 密钥可后台录入，但必须加密存储
+
+  * 所有敏感配置修改都写审计日志
+
+  * 支持启停、权重、默认、可见范围、会员门槛、价格规则、参数限制统一管理
 
 ## Proposed Changes
 
@@ -254,6 +356,164 @@
 
   * `/system-config`
 
+  * `/providers`
+
+  * `/provider-credentials`
+
+  * `/model-catalog`
+
+  * `/model-routing`
+
+### 一点五、统一模型治理架构
+
+#### 1. 目标形态
+
+* 后台不再按“阿里模型 / 火山模型 / 可灵模型”零散管理，而是统一成：
+
+  * provider 配置层
+
+  * 模型目录层
+
+  * 路由与默认策略层
+
+  * 价格规则层
+
+  * 前台可见性层
+
+* 前台拿到的始终是一套统一结构：
+
+  * `provider`
+
+  * `model_code`
+
+  * `display_name`
+
+  * `task_type`
+
+  * `capabilities`
+
+  * `limits`
+
+  * `pricing_preview`
+
+  * `visibility`
+
+* 后台改配置后，前端无须改代码即可切换：
+
+  * 默认 provider
+
+  * 默认模型
+
+  * 可见模型列表
+
+  * 会员可用范围
+
+  * 参数上限
+
+  * 对应的真实 provider 接入通道
+
+#### 2. 统一标准输入输出
+
+* 针对三类任务统一标准输入：
+
+  * 文本任务
+
+  * 图片任务
+
+  * 视频任务
+
+* 标准视频任务输入建议统一为：
+
+  * `task_type`
+
+  * `provider`
+
+  * `model_code`
+
+  * `prompt`
+
+  * `negative_prompt`
+
+  * `duration_sec`
+
+  * `resolution`
+
+  * `ratio`
+
+  * `audio_enabled`
+
+  * `reference_assets`
+
+  * `callback_context`
+
+* 标准视频任务输出统一为：
+
+  * `provider`
+
+  * `model_code`
+
+  * `provider_task_id`
+
+  * `request_id`
+
+  * `status`
+
+  * `progress`
+
+  * `video_url`
+
+  * `cover_url`
+
+  * `error_code`
+
+  * `error_message`
+
+  * `raw_meta`
+
+* 文本、图片也采用同样模式，形成统一 provider 适配协议。
+
+#### 3. provider 适配器工厂
+
+* 建议新增统一 provider 工厂，而不是在业务代码里直接 `new AlibabaVideoClient()`：
+
+  * `e:\workspace\ai-create-video-api\app\integrations\factories\provider_factory.py`
+
+* 建议新增标准接口定义：
+
+  * `e:\workspace\ai-create-video-api\app\integrations\contracts\text_provider.py`
+
+  * `e:\workspace\ai-create-video-api\app\integrations\contracts\image_provider.py`
+
+  * `e:\workspace\ai-create-video-api\app\integrations\contracts\video_provider.py`
+
+* provider 实现建议拆分为：
+
+  * `e:\workspace\ai-create-video-api\app\integrations\alibaba\*`
+
+  * `e:\workspace\ai-create-video-api\app\integrations\huoshan\*`
+
+  * `e:\workspace\ai-create-video-api\app\integrations\kling\*`
+
+* 工厂行为：
+
+  * 根据后台启用的 provider 凭据和模型目录，返回可用 provider client
+
+  * 如果 provider 被停用或密钥失效，直接在服务层拒绝调用
+
+#### 4. 前台只读运行时配置
+
+* `e:\workspace\ai-create-video-api\app\services\config_service.py` 不再维护代码常量候选模型。
+
+* 改造成：
+
+  * 从数据库读取后台启用且允许前台可见的模型
+
+  * 生成统一的 `RuntimeConfigResponse`
+
+  * 根据用户会员等级 / 点数 / 业务场景过滤可见模型
+
+* 前端仍只调原有运行时配置接口，但内容不再来自硬编码常量。
+
 ### 二、后端数据模型补齐
 
 #### 1. 保留并扩展 `UsageLedger`
@@ -316,6 +576,10 @@
 
   * `RefundRecord`
 
+  * `ProviderCatalog`
+
+  * `ProviderCredential`
+
   * `ModelCatalog`
 
   * `ModelPricingRule`
@@ -328,41 +592,99 @@
 
 #### 3. 计费规则模型设计
 
+* `ProviderCatalog`
+
+  * `provider_code`
+
+  * `provider_name`
+
+  * `task_types`
+
+  * `is_enabled`
+
+  * `priority`
+
+  * `health_status`
+
+* `ProviderCredential`
+
+  * `provider_id`
+
+  * `credential_name`
+
+  * `base_url`
+
+  * `encrypted_secret_json`
+
+  * `is_default`
+
+  * `is_enabled`
+
+  * `environment`
+
+  * `last_check_status`
+
+  * `last_check_at`
+
 * `ModelCatalog`
 
-  * provider
+  * `provider_id`
 
-  * model\_code
+  * `provider`
 
-  * model\_name
+  * `model_code`
 
-  * model\_type
+  * `model_name`
 
-  * is\_enabled
+  * `display_name`
 
-  * supports\_audio
+  * `model_type`
 
-  * supports\_multi\_image
+  * `is_enabled`
+
+  * `supports_audio`
+
+  * `supports_multi_image`
+
+  * `visible_in_frontend`
+
+  * `default_for_scene`
+
+  * `member_only`
+
+  * `sort_order`
+
+  * `capability_json`
+
+  * `limits_json`
+
+  * `input_schema_json`
+
+  * `output_schema_json`
 
 * `ModelPricingRule`
 
-  * model\_id
+  * `model_id`
 
-  * billing\_unit
+  * `billing_unit`
 
-  * base\_cost
+  * `base_cost`
 
-  * step\_cost
+  * `step_cost`
 
-  * step\_size
+  * `step_size`
 
-  * currency\_cost
+  * `currency_cost`
 
-  * credits\_cost
+  * `credits_cost`
 
-  * effective\_from
+  * `effective_from`
 
-  * effective\_to
+  * `effective_to`
+
+  * `member_discount_json`
+
+  * `fallback_rule_json`
 
 * 计费维度支持：
 
@@ -388,13 +710,23 @@
 
   * `e:\workspace\ai-create-video-api\app\api\routes\admin_reports.py`
 
+  * `e:\workspace\ai-create-video-api\app\api\routes\admin_providers.py`
+
+  * `e:\workspace\ai-create-video-api\app\api\routes\admin_runtime_config.py`
+
 * 首期接口范围：
 
   * 用户列表、详情、封禁、补点
 
+  * provider 凭据增删改查、健康检查、启停、默认切换
+
   * 模型启停、排序、标签、能力配置
 
   * 模型价格规则 CRUD
+
+  * 模型前台可见范围配置
+
+  * 默认模型与路由策略配置
 
   * 点数余额查询、手工加减点
 
@@ -416,6 +748,12 @@
 
   * `e:\workspace\ai-create-video-api\app\services\admin_service.py`
 
+  * `e:\workspace\ai-create-video-api\app\services\provider_service.py`
+
+  * `e:\workspace\ai-create-video-api\app\services\model_registry_service.py`
+
+  * `e:\workspace\ai-create-video-api\app\services\runtime_model_service.py`
+
 * 各服务职责：
 
   * `pricing_service`：按模型和参数输出“应扣点数”
@@ -427,6 +765,12 @@
   * `payment_service`：创建支付单、校验回调、对账
 
   * `admin_service`：后台通用管理逻辑
+
+  * `provider_service`：provider 凭据、健康检查、加密存储、默认通道切换
+
+  * `model_registry_service`：统一管理模型目录、能力、限制、可见性
+
+  * `runtime_model_service`：面向前台生成“当前用户当前场景可见的模型配置”
 
 #### 3. 鉴权体系
 
@@ -452,11 +796,55 @@
 
   * 按接口与菜单双层校验
 
+  * provider 密钥查看 / 修改仅限超管角色
+
+#### 4. 必须去掉的后端硬编码点
+
+* `e:\workspace\ai-create-video-api\app\services\config_service.py`
+
+  * 删除代码常量候选列表
+
+  * 改为数据库读取模型目录和前台可见配置
+
+* `e:\workspace\ai-create-video-api\app\core\config.py`
+
+  * 环境变量只保留底层应用配置与兼容兜底
+
+  * 不再作为业务默认模型的长期真相源
+
+  * `drama_*_provider`、`drama_*_model` 后续降级为初始化默认值
+
+* `e:\workspace\ai-create-video-api\app\tasks\workflow_tasks.py`
+
+  * 替换 `AlibabaVideoClient()` 为 provider factory
+
+  * 不再默认“视频只能走阿里”
+
+* `e:\workspace\ai-create-video-api\app\services\drama_service.py`
+
+  * 替换 `AlibabaTextClient()`、`AlibabaImageClient()`
+
+  * 删除 `qwen-plus / wanx / wan2.*` 的业务硬编码回退
+
+  * 所有模型回退改为后台配置的 fallback 策略
+
+* `e:\workspace\ai-create-video-api\app\api\routes\drama.py`
+
+  * 依赖注入改为 provider-neutral service，不在路由层绑定阿里实现
+
+* `e:\workspace\ai-create-video-api\app\integrations\alibaba\video_client.py`
+
+  * 阿里专属约束继续保留在 provider adapter 内部
+
+  * 但这些限制只在适配器里生效，不再污染通用业务层
+
 ### 四、盈利体系设计
 
-#### 1. 商业模式
+#### 1. 商业模式基础版套餐 99.9 元 / 年，赠送 10,000 积分，支持 30 个子账号；
 
-* 会员套餐：
+* 可叠加购买积分资源包，10 万积分 / 1,000 元，有效期 1 年；
+
+- 会员套餐：
 
   * 月会员
 
@@ -464,7 +852,7 @@
 
   * 年会员
 
-* 会员权益建议：
+- 会员权益建议：
 
   * 每月赠送点数
 
@@ -476,7 +864,7 @@
 
   * 视频优先队列
 
-* 充值点数：
+- 充值点数：
 
   * 小额试用包
 
@@ -620,6 +1008,36 @@
 
   * 能力标签
 
+  * 前台是否可见
+
+  * 会员门槛
+
+  * 参数上限
+
+* Provider 管理
+
+  * Provider 列表
+
+  * 通道启停
+
+  * 默认通道
+
+  * 健康检查
+
+  * 错误日志
+
+* Provider 密钥管理
+
+  * `base_url`
+
+  * `api_key / secret`
+
+  * 加密存储
+
+  * 环境标记
+
+  * 可用性校验
+
 * 定价规则管理
 
   * 文本计费规则
@@ -663,6 +1081,10 @@
 * Webhook 日志
 
 * 审计日志
+
+* 模型路由策略
+
+* provider 健康大盘
 
 ### 七、开源方案推荐与使用方式
 
@@ -714,6 +1136,8 @@
 
 * 确认盈利模式为“会员 + 点数充值 + 动态扣点”。
 
+* 确认模型治理模式为“后台统一模型目录 + provider 适配器 + 前台只读可见模型”。
+
 * 确认首期后台范围只做：
 
   * 用户
@@ -721,6 +1145,8 @@
   * 模型
 
   * 点数
+
+  * provider
 
 * 确认支付优先顺序为：
 
@@ -736,9 +1162,17 @@
 
 * 检查用户侧前端哪些页面需要补余额、订单、充值入口。
 
+* 检查当前所有直接依赖阿里 provider 的服务、任务、路由是否已全部替换为 provider factory。
+
+* 检查当前所有候选模型与默认模型是否都改成数据库读取，而不是代码常量。
+
 ### 首期验收标准
 
 * 后端可配置模型及其点数规则。
+
+* 后端可通过后台任意启停 / 切换可灵、阿里、火山 provider 与模型。
+
+* 后端不存在业务层 provider / model 硬编码。
 
 * 后台可查看用户余额、流水、进行人工调账。
 
