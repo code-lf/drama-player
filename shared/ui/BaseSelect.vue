@@ -108,7 +108,7 @@ onBeforeUnmount(() => {
         <p v-if="label" class="text-[11px] uppercase tracking-[0.2em] text-textMuted">
           {{ label }}
         </p>
-        <div class="mt-1 flex items-center gap-2">
+        <div class="mt-1 flex items-center gap-2 overflow-hidden">
           <span class="truncate text-sm font-semibold text-textMain">
             {{ selectedOption?.label || placeholder }}
           </span>

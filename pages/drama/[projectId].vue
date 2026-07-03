@@ -20,6 +20,7 @@ import type {
   StoryboardVideoPromptGeneratePayload,
   WorkflowRunInfo
 } from '~/shared/api/types'
+import { Copy, Ellipsis, Plus, Trash2 } from '@lucide/vue'
 import { dramaService } from '~/shared/api/services/dramaService'
 import { workflowService } from '~/shared/api/services/workflowService'
 
@@ -2090,11 +2091,11 @@ function storyboardVideoIndicatorLabel(row: StoryboardRow): string {
 }
 
 function storyboardVideoStatusToneClass(status: string): string {
-  if (status === 'success') return 'border-[#bbf7d0] bg-[#f0fdf4] text-[#15803d]'
-  if (status === 'failed') return 'border-[#fecaca] bg-[#fff1f2] text-[#dc2626]'
-  if (status === 'running') return 'border-[#c7d2fe] bg-neonSoft/20 text-neon'
-  if (status === 'queued') return 'border-borderSoft bg-[#eff6ff] text-[#2563eb]'
-  return 'border-borderSoft bg-panel text-textMuted'
+  if (status === 'success') return 'border-white/45 bg-[rgba(187,247,208,0.18)] text-[#166534] backdrop-blur-xl'
+  if (status === 'failed') return 'border-white/35 bg-[rgba(239,68,68,0.16)] text-[#b91c1c] backdrop-blur-xl'
+  if (status === 'running') return 'border-white/45 bg-[rgba(59,130,246,0.16)] text-[#1d4ed8] backdrop-blur-xl'
+  if (status === 'queued') return 'border-white/45 bg-[rgba(96,165,250,0.14)] text-[#2563eb] backdrop-blur-xl'
+  return 'border-borderSoft bg-panelSoft text-textMain backdrop-blur-xl'
 }
 
 function storyboardRowRolePreviewUrl(roleKey: string): string {
@@ -2244,6 +2245,10 @@ async function startVideoWorkflow(): Promise<void> {
 function goBack(): void {
   closeAnalysisEventStream()
   closeStoryboardEventStream()
+  if (route.query.from === 'dashboard-projects') {
+    router.push('/dashboard-projects')
+    return
+  }
   router.push('/dashboard')
 }
 
@@ -2480,8 +2485,16 @@ async function saveSettingEditor(regenerate = false): Promise<void> {
   }
 }
 
+function sanitizeSettingPreviewUrl(url: string): string {
+  // 设定阶段有一类“生成中”占位图会直接返回 data:image/svg+xml，
+  // 文案已经被画死在 SVG 里。这里统一拦截掉，避免页面上看到“图片自带字”
+  // 和我们额外渲染的 DOM 文字叠在一起。
+  if ((url || '').startsWith('data:image/svg+xml')) return ''
+  return url || ''
+}
+
 function primaryRoleAssetUrl(role: DramaRoleProfile): string {
-  return uploadedAssetPreviewUrl('role', role.key) || role.assets[0]?.imageUrl || ''
+  return sanitizeSettingPreviewUrl(uploadedAssetPreviewUrl('role', role.key) || role.assets[0]?.imageUrl || '')
 }
 
 function isRoleGenerating(role: DramaRoleProfile): boolean {
@@ -2520,11 +2533,11 @@ function roleGenerationText(role: DramaRoleProfile): string {
 }
 
 function scenePreviewUrl(scene: DramaSceneProfile): string {
-  return uploadedAssetPreviewUrl('scene', scene.key) || scene.asset?.imageUrl || ''
+  return sanitizeSettingPreviewUrl(uploadedAssetPreviewUrl('scene', scene.key) || scene.asset?.imageUrl || '')
 }
 
 function propPreviewUrl(prop: DramaPropProfile): string {
-  return uploadedAssetPreviewUrl('prop', prop.key) || prop.asset?.imageUrl || ''
+  return sanitizeSettingPreviewUrl(uploadedAssetPreviewUrl('prop', prop.key) || prop.asset?.imageUrl || '')
 }
 
 function isSceneGenerating(scene: DramaSceneProfile): boolean {
@@ -3156,31 +3169,30 @@ onBeforeUnmount(() => {
                       :alt="role.name"
                       img-class="h-[204px] object-contain"
                       wrapper-class="h-[204px] w-full"
-                      loading-label="生成中"
                     />
+                    <div
+                      v-if="isRoleGenerating(role)"
+                      class="absolute left-3 top-3 z-[2] inline-flex rounded-[12px] border border-white/20 bg-[rgba(148,163,184,0.34)] px-3 py-2 text-left backdrop-blur-md"
+                    >
+                      <p class="text-sm font-semibold leading-none text-white">
+                        生成中
+                      </p>
+                    </div>
                     <span class="pointer-events-none absolute right-3 top-3 rounded-full border border-white/20 bg-[rgba(15,23,42,0.5)] px-2.5 py-1 text-[11px] font-semibold text-white backdrop-blur">
                       编辑
                     </span>
                   </div>
-                  <div
-                    v-else
-                    class="relative flex h-[204px] items-center justify-center overflow-hidden rounded-[18px] bg-[linear-gradient(135deg,#eef6ff_0%,#d8e9ff_44%,#c6dcff_100%)] px-6 text-center"
-                  >
-                    <div class="absolute inset-0 bg-[radial-gradient(circle_at_28%_24%,rgba(255,255,255,0.72),transparent_42%),radial-gradient(circle_at_72%_68%,rgba(191,219,254,0.55),transparent_38%)]" />
-                    <div class="relative z-[1]">
-                      <div
-                        class="mx-auto flex h-20 w-20 items-center justify-center rounded-full border text-lg font-semibold"
-                        :class="isRoleGenerationFailed(role)
-                          ? 'border-[#fecaca] bg-[#fff1f2] text-[#dc2626]'
-                          : isRoleGenerating(role)
-                            ? 'border-[#c7d2fe] bg-neonSoft/20 text-neon'
-                            : 'border-borderSoft bg-panel/70 text-textMuted'"
-                      >
-                        {{ isRoleGenerationFailed(role) ? '!' : `${role.generationProgress || 0}%` }}
+                    <div
+                      v-else
+                    class="relative h-[204px] overflow-hidden rounded-[18px]"
+                    >
+                    <UiAnimatedPlaceholder class="h-full w-full rounded-[18px]" />
+                      <div class="absolute left-3 top-3 z-[2] inline-flex rounded-[12px] border border-white/20 bg-[rgba(148,163,184,0.34)] px-3 py-2 text-left backdrop-blur-md">
+                        <p class="text-xs font-semibold leading-none text-white">
+                          已完成
+                        </p>
                       </div>
-                      <p class="mt-4 text-xl font-semibold text-textMain">{{ roleGenerationText(role) }}</p>
                     </div>
-                  </div>
                 </button>
 
                 <div class="mt-4 flex flex-1 flex-col">
@@ -3250,24 +3262,29 @@ onBeforeUnmount(() => {
               >
                 <button type="button" class="block w-full text-left" @click="openSettingEditor(scene, 'scene')">
                   <div class="relative h-[204px] overflow-hidden rounded-[18px] bg-panelSoft">
-                    <UiFluidImage
-                      v-if="scenePreviewUrl(scene) && !isSceneGenerating(scene)"
+                    <img
+                      v-if="scenePreviewUrl(scene)"
                       :src="scenePreviewUrl(scene)"
                       :alt="scene.name"
-                      img-class="h-full object-contain"
-                      wrapper-class="h-full w-full"
-                      loading-label="生成中"
+                      class="h-full w-full object-contain"
                     />
                     <div
-                      v-else
-                      class="relative flex h-full items-center justify-center overflow-hidden rounded-[18px] bg-[linear-gradient(135deg,#eef6ff_0%,#d8e9ff_44%,#c6dcff_100%)] px-6 text-center"
+                      v-if="isSceneGenerating(scene)"
+                      class="absolute left-3 top-3 z-[2] inline-flex rounded-[12px] border border-white/20 bg-[rgba(148,163,184,0.34)] px-3 py-2 text-left backdrop-blur-md"
                     >
-                      <div class="absolute inset-0 bg-[radial-gradient(circle_at_28%_24%,rgba(255,255,255,0.72),transparent_42%),radial-gradient(circle_at_72%_68%,rgba(191,219,254,0.55),transparent_38%)]" />
-                      <div class="relative z-[1]">
-                        <p class="text-[30px] font-semibold text-white drop-shadow-[0_8px_18px_rgba(15,23,42,0.18)]">
-                          {{ isSceneGenerating(scene) ? '生成中' : '待生成' }}
+                      <p class="text-sm font-semibold leading-none text-white">
+                        生成中
+                      </p>
+                    </div>
+                    <div
+                      v-else-if="!scenePreviewUrl(scene)"
+                      class="relative h-full overflow-hidden rounded-[18px]"
+                    >
+                      <UiAnimatedPlaceholder class="h-full w-full rounded-[18px]" />
+                      <div class="absolute left-3 top-3 z-[2] inline-flex rounded-[12px] border border-white/20 bg-[rgba(148,163,184,0.34)] px-3 py-2 text-left backdrop-blur-md">
+                        <p class="text-xs font-semibold leading-none text-white">
+                          已完成
                         </p>
-                        <p class="mt-3 text-base font-medium text-white/90">{{ sceneGenerationText(scene) }}</p>
                       </div>
                     </div>
                     <span class="pointer-events-none absolute right-3 top-3 rounded-full border border-white/20 bg-[rgba(15,23,42,0.5)] px-2.5 py-1 text-[11px] font-semibold text-white backdrop-blur">
@@ -3322,24 +3339,29 @@ onBeforeUnmount(() => {
               >
                 <button type="button" class="block w-full text-left" @click="openSettingEditor(prop, 'prop')">
                   <div class="relative h-[204px] overflow-hidden rounded-[18px] bg-panelSoft">
-                    <UiFluidImage
-                      v-if="propPreviewUrl(prop) && !isPropGenerating(prop)"
+                    <img
+                      v-if="propPreviewUrl(prop)"
                       :src="propPreviewUrl(prop)"
                       :alt="prop.name"
-                      img-class="h-full object-contain"
-                      wrapper-class="h-full w-full"
-                      loading-label="生成中"
+                      class="h-full w-full object-contain"
                     />
                     <div
-                      v-else
-                      class="relative flex h-full items-center justify-center overflow-hidden rounded-[18px] bg-[linear-gradient(135deg,#eef6ff_0%,#d8e9ff_44%,#c6dcff_100%)] px-6 text-center"
+                      v-if="isPropGenerating(prop)"
+                      class="absolute left-3 top-3 z-[2] inline-flex rounded-[12px] border border-white/20 bg-[rgba(148,163,184,0.34)] px-3 py-2 text-left backdrop-blur-md"
                     >
-                      <div class="absolute inset-0 bg-[radial-gradient(circle_at_28%_24%,rgba(255,255,255,0.72),transparent_42%),radial-gradient(circle_at_72%_68%,rgba(191,219,254,0.55),transparent_38%)]" />
-                      <div class="relative z-[1]">
-                        <p class="text-[30px] font-semibold text-white drop-shadow-[0_8px_18px_rgba(15,23,42,0.18)]">
-                          {{ isPropGenerating(prop) ? '生成中' : '待生成' }}
+                      <p class="text-sm font-semibold leading-none text-white">
+                        生成中
+                      </p>
+                    </div>
+                    <div
+                      v-else-if="!propPreviewUrl(prop)"
+                      class="relative h-full overflow-hidden rounded-[18px]"
+                    >
+                      <UiAnimatedPlaceholder class="h-full w-full rounded-[18px]" />
+                      <div class="absolute left-3 top-3 z-[2] inline-flex rounded-[12px] border border-white/20 bg-[rgba(148,163,184,0.34)] px-3 py-2 text-left backdrop-blur-md">
+                        <p class="text-xs font-semibold leading-none text-white">
+                          已完成
                         </p>
-                        <p class="mt-3 text-base font-medium text-white/90">{{ propGenerationText(prop) }}</p>
                       </div>
                     </div>
                     <span class="pointer-events-none absolute right-3 top-3 rounded-full border border-white/20 bg-[rgba(15,23,42,0.5)] px-2.5 py-1 text-[11px] font-semibold text-white backdrop-blur">
@@ -3419,23 +3441,21 @@ onBeforeUnmount(() => {
           </div>
 
           <div class="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-              <div class="min-w-0">
-                <div class="flex flex-wrap items-center gap-3">
-                  <h2 class="text-[30px] font-semibold tracking-[-0.04em]">分镜表</h2>
-                  <span class="rounded-full border border-borderSoft bg-panelSoft px-3 py-1 text-sm text-textMuted">
-                    第 {{ selectedEpisodeNo }} 集
-                  </span>
-                </div>
-                <div class="mt-3 text-sm leading-7 text-textMuted">
-                  <span class="line-clamp-2 inline">{{ storyboardEpisodeSummaryText(selectedEpisodeNo) }}</span>
-                  <button
-                    type="button"
-                    class="ml-2 inline-block font-semibold text-neon transition hover:text-[#4338ca]"
-                    @click="openStoryboardEpisodePreview"
-                  >
-                    详情
-                  </button>
-                </div>
+              <div class="flex min-w-0 flex-1 items-center gap-3">
+                <h2 class="shrink-0 text-[30px] font-semibold tracking-[-0.04em]">分镜表</h2>
+                <span class="shrink-0 rounded-full border border-borderSoft bg-panelSoft px-3 py-1 text-sm text-textMuted">
+                  第 {{ selectedEpisodeNo }} 集
+                </span>
+                <p class="ml-2 truncate text-sm text-textMuted xl:max-w-[500px]">
+                  {{ storyboardEpisodeSummaryText(selectedEpisodeNo) }}
+                </p>
+                <button
+                  type="button"
+                  class="shrink-0 font-semibold text-neon transition hover:text-[#4338ca]"
+                  @click="openStoryboardEpisodePreview"
+                >
+                  详情
+                </button>
               </div>
 
               <div class="flex w-full flex-wrap items-center gap-2 xl:w-auto">
@@ -3445,7 +3465,7 @@ onBeforeUnmount(() => {
                   :options="videoModelOptions"
                   placeholder="视频模型"
                   size="sm"
-                  class="w-full min-w-0 xl:w-[260px]"
+                  class="w-full min-w-0 xl:w-[200px]"
                 />
                 <button
                   v-if="showRegenerateAllStoryboardsButton"
@@ -3568,27 +3588,27 @@ onBeforeUnmount(() => {
                     <div class="flex items-center gap-2">
                       <button
                         type="button"
-                        class="flex h-10 w-10 items-center justify-center rounded-full border border-borderSoft bg-panel text-textMuted transition hover:border-[#94a3b8]"
+                        class="flex h-10 w-10 items-center justify-center rounded-full border border-borderSoft bg-panelSoft text-textMuted transition hover:border-neon/35 hover:text-textMain"
                         title="新增分镜"
                         @click="createStoryboardAfter(row)"
                       >
-                        ＋
+                        <Plus class="h-4 w-4" />
                       </button>
                       <button
                         type="button"
-                        class="flex h-10 w-10 items-center justify-center rounded-full border border-borderSoft bg-panel text-textMuted transition hover:border-[#94a3b8]"
+                        class="flex h-10 w-10 items-center justify-center rounded-full border border-borderSoft bg-panelSoft text-textMuted transition hover:border-neon/35 hover:text-textMain"
                         title="复制分镜"
                         @click="copyStoryboardRow(row)"
                       >
-                        ⧉
+                        <Copy class="h-4 w-4" />
                       </button>
                       <button
                         type="button"
-                        class="flex h-10 w-10 items-center justify-center rounded-full border border-[#fecaca] bg-panel text-[#dc2626] transition hover:bg-[#fff1f2]"
+                        class="flex h-10 w-10 items-center justify-center rounded-full border border-[#fca5a5]/55 bg-panelSoft text-[#ef4444] transition hover:bg-[rgba(239,68,68,0.10)]"
                         title="删除分镜"
                         @click="deleteStoryboardRow(row)"
                       >
-                        －
+                        <Trash2 class="h-4 w-4" />
                       </button>
                     </div>
                   </div>
@@ -3613,27 +3633,28 @@ onBeforeUnmount(() => {
                           <p class="text-sm font-semibold text-textMuted">出场角色</p>
                           <button
                             type="button"
-                            class="text-sm font-semibold text-neon transition hover:text-[#4338ca]"
+                            class="inline-flex items-center gap-1.5 text-sm font-semibold text-neon transition hover:text-[#4338ca]"
                             @click="appendStoryboardKey(row, 'role')"
                           >
-                            ＋ 添加
+                            <Plus class="h-3.5 w-3.5" />
+                            <span>添加</span>
                           </button>
                         </div>
                         <div class="space-y-3">
                           <div
                             v-for="(roleKey, roleIndex) in row.roleKeys"
                             :key="`${row.id}-role-${roleIndex}`"
-                            class="grid gap-3 md:grid-cols-[52px_minmax(0,1fr)_44px]"
+                            class="grid items-center gap-3 md:grid-cols-[34px_minmax(0,1fr)_36px]"
                           >
-                            <div class="overflow-hidden rounded-2xl border border-borderSoft bg-panelSoft cursor-pointer" @click="openImagePreview(storyboardRowRolePreviewUrl(roleKey))">
+                            <div class="h-[38px] w-[38px] overflow-hidden rounded-full border border-borderSoft bg-panelSoft cursor-pointer" @click="openImagePreview(storyboardRowRolePreviewUrl(roleKey))">
                               <img
                                 v-if="storyboardRowRolePreviewUrl(roleKey)"
                                 :src="storyboardRowRolePreviewUrl(roleKey)"
                                 :alt="roleNameByKey(roleKey)"
-                                class="h-[52px] w-[52px] object-cover object-left-top"
-                                style="width: 200%; max-width: none; height: 100%;"
+                                class="max-w-none object-cover object-left-top"
+                                style="width: 159%; height: 154%; transform: translate(11%, -4%);"
                               />
-                              <div v-else class="flex h-[52px] w-[52px] items-center justify-center text-xs text-textMuted">
+                              <div class="flex h-[38px] w-[38px] items-center justify-center text-[10px] text-textMuted">
                                 角色
                               </div>
                             </div>
@@ -3642,15 +3663,16 @@ onBeforeUnmount(() => {
                               :options="roleSelectOptions()"
                               placeholder="选择角色"
                               full
+                              class="w-full min-w-0"
                               @update:model-value="(value) => updateStoryboardKey(row, 'role', roleIndex, String(value))"
                             />
                             <div class="relative">
                               <button
                                 type="button"
-                                class="flex h-full w-full items-center justify-center text-textMuted transition hover:text-textMain"
+                                class="flex h-9 w-9 items-center justify-center rounded-full text-textMuted transition hover:bg-panelSoft hover:text-textMain"
                                 @click="toggleStoryboardKeyMenu(row.id, 'role', roleIndex)"
                               >
-                                ⋯
+                                <Ellipsis class="h-4 w-4" />
                               </button>
                               <div
                                 v-if="storyboardKeyActionMenu === storyboardKeyMenuToken(row.id, 'role', roleIndex)"
@@ -3674,26 +3696,27 @@ onBeforeUnmount(() => {
                           <p class="text-sm font-semibold text-textMuted">分镜场景</p>
                           <button
                             type="button"
-                            class="text-sm font-semibold text-neon transition hover:text-[#4338ca]"
+                            class="inline-flex items-center gap-1.5 text-sm font-semibold text-neon transition hover:text-[#4338ca]"
                             @click="appendStoryboardKey(row, 'scene')"
                           >
-                            ＋ 添加
+                            <Plus class="h-3.5 w-3.5" />
+                            <span>添加</span>
                           </button>
                         </div>
                         <div class="space-y-3">
                           <div
                             v-for="(sceneKey, sceneIndex) in row.sceneKeys"
                             :key="`${row.id}-scene-${sceneIndex}`"
-                            class="grid gap-3 md:grid-cols-[88px_minmax(0,1fr)_44px]"
+                            class="grid items-center gap-3 md:grid-cols-[48px_minmax(0,1fr)_36px]"
                           >
-                            <div class="overflow-hidden rounded-2xl border border-borderSoft bg-panelSoft cursor-pointer" @click="openImagePreview(sceneAssetByKey(sceneKey))">
+                            <div class="overflow-hidden rounded-[10px] border border-borderSoft bg-panelSoft cursor-pointer" @click="openImagePreview(sceneAssetByKey(sceneKey))">
                               <img
                                 v-if="sceneAssetByKey(sceneKey)"
                                 :src="sceneAssetByKey(sceneKey)"
                                 :alt="sceneNameByKey(sceneKey)"
-                                class="h-[64px] w-[88px] object-contain"
+                                class="h-[36px] w-[48px] object-cover object-center"
                               />
-                              <div v-else class="flex h-[64px] w-[88px] items-center justify-center text-xs text-textMuted">
+                              <div v-else class="flex h-[36px] w-[48px] items-center justify-center text-[10px] text-textMuted">
                                 场景
                               </div>
                             </div>
@@ -3702,15 +3725,16 @@ onBeforeUnmount(() => {
                               :options="sceneSelectOptions()"
                               placeholder="选择场景"
                               full
+                              class="w-full min-w-0"
                               @update:model-value="(value) => updateStoryboardKey(row, 'scene', sceneIndex, String(value))"
                             />
                             <div class="relative">
                               <button
                                 type="button"
-                                class="flex h-full w-full items-center justify-center text-textMuted transition hover:text-textMain"
+                                class="flex h-9 w-9 items-center justify-center rounded-full text-textMuted transition hover:bg-panelSoft hover:text-textMain"
                                 @click="toggleStoryboardKeyMenu(row.id, 'scene', sceneIndex)"
                               >
-                                ⋯
+                                <Ellipsis class="h-4 w-4" />
                               </button>
                               <div
                                 v-if="storyboardKeyActionMenu === storyboardKeyMenuToken(row.id, 'scene', sceneIndex)"
@@ -3734,26 +3758,27 @@ onBeforeUnmount(() => {
                           <p class="text-sm font-semibold text-textMuted">分镜道具</p>
                           <button
                             type="button"
-                            class="text-sm font-semibold text-neon transition hover:text-[#4338ca]"
+                            class="inline-flex items-center gap-1.5 text-sm font-semibold text-neon transition hover:text-[#4338ca]"
                             @click="appendStoryboardKey(row, 'prop')"
                           >
-                            ＋ 添加
+                            <Plus class="h-3.5 w-3.5" />
+                            <span>添加</span>
                           </button>
                         </div>
                         <div class="space-y-3">
                           <div
                             v-for="(propKey, propIndex) in row.propKeys"
                             :key="`${row.id}-prop-${propIndex}`"
-                            class="grid gap-3 md:grid-cols-[88px_minmax(0,1fr)_44px]"
+                            class="grid items-center gap-3 md:grid-cols-[48px_minmax(0,1fr)_36px]"
                           >
-                            <div class="overflow-hidden rounded-2xl border border-borderSoft bg-panelSoft cursor-pointer" @click="openImagePreview(propAssetByKey(propKey))">
+                            <div class="overflow-hidden rounded-[10px] border border-borderSoft bg-panelSoft cursor-pointer" @click="openImagePreview(propAssetByKey(propKey))">
                               <img
                                 v-if="propAssetByKey(propKey)"
                                 :src="propAssetByKey(propKey)"
                                 :alt="propNameByKey(propKey)"
-                                class="h-[64px] w-[88px] object-contain"
+                                class="h-[36px] w-[48px] object-cover object-center"
                               />
-                              <div v-else class="flex h-[64px] w-[88px] items-center justify-center text-xs text-textMuted">
+                              <div v-else class="flex h-[36px] w-[48px] items-center justify-center text-[10px] text-textMuted">
                                 道具
                               </div>
                             </div>
@@ -3762,15 +3787,16 @@ onBeforeUnmount(() => {
                               :options="propSelectOptions()"
                               placeholder="选择道具"
                               full
+                              class="w-full min-w-0"
                               @update:model-value="(value) => updateStoryboardKey(row, 'prop', propIndex, String(value))"
                             />
                             <div class="relative">
                               <button
                                 type="button"
-                                class="flex h-full w-full items-center justify-center text-textMuted transition hover:text-textMain"
+                                class="flex h-9 w-9 items-center justify-center rounded-full text-textMuted transition hover:bg-panelSoft hover:text-textMain"
                                 @click="toggleStoryboardKeyMenu(row.id, 'prop', propIndex)"
                               >
-                                ⋯
+                                <Ellipsis class="h-4 w-4" />
                               </button>
                               <div
                                 v-if="storyboardKeyActionMenu === storyboardKeyMenuToken(row.id, 'prop', propIndex)"
@@ -3895,40 +3921,49 @@ onBeforeUnmount(() => {
                         />
                         <div
                           v-else
-                          class="flex h-[320px] flex-col items-center justify-center rounded-[22px] bg-[#111827] px-6 text-center text-white/72"
+                          class="relative h-[320px] overflow-hidden rounded-[22px] text-white"
                         >
-                          <div
-                            v-if="isRowVideoSubmitting(row.id) || row.videoStatus !== 'idle'"
-                            class="flex h-14 w-14 items-center justify-center rounded-full border text-base font-semibold"
-                            :class="isRowVideoSubmitting(row.id)
-                              ? 'border-[#c7d2fe] bg-[#1d4ed8]/20 text-[#c7d2fe]'
-                              : row.videoStatus === 'failed'
-                              ? 'border-[#fecaca] bg-[#7f1d1d]/35 text-[#fecaca]'
-                              : row.videoStatus === 'running'
-                                ? 'border-[#c7d2fe] bg-[#1d4ed8]/20 text-[#c7d2fe]'
-                                : row.videoStatus === 'queued'
-                                  ? 'border-[#93c5fd] bg-[#1d4ed8]/16 text-[#bfdbfe]'
-                                  : 'border-white/15 bg-panel/5 text-white/70'"
-                          >
-                            {{ isRowVideoSubmitting(row.id) ? '...' : storyboardVideoIndicatorLabel(row) }}
-                          </div>
-                          <p class="text-lg font-semibold text-white" :class="(isRowVideoSubmitting(row.id) || row.videoStatus !== 'idle') ? 'mt-4' : ''">
-                            {{ isRowVideoSubmitting(row.id) ? '视频任务提交中...' : storyboardVideoStatusLabel(row) }}
-                          </p>
-                          <p
-                            v-if="!isRowVideoSubmitting(row.id) && ['queued', 'running'].includes(row.videoStatus)"
-                            class="mt-2 text-sm text-white/60"
-                          >
-                            {{ storyboardVideoEtaLabel(row) }}
-                          </p>
-                          <div
-                            v-if="row.videoErrorMessage"
-                            class="mt-4 w-full rounded-2xl border border-[#7f1d1d]/60 bg-[#7f1d1d]/20 px-4 py-3 text-left"
-                          >
-                            <p class="text-sm font-semibold text-[#fecaca]">失败原因</p>
-                            <p class="mt-1 text-sm leading-7 text-[#fee2e2]">
-                              {{ row.videoErrorMessage }}
+                          <UiAnimatedPlaceholder class="h-full w-full rounded-[22px]" />
+                          <div class="absolute left-4 top-4 z-[2] inline-flex max-w-[160px] flex-col rounded-[12px] border border-white/15 bg-[rgba(15,23,42,0.42)] px-3 py-2 text-left backdrop-blur-md">
+                            <div
+                              v-if="isRowVideoSubmitting(row.id) || row.videoStatus !== 'idle'"
+                              class="inline-flex min-w-[56px] items-center justify-center rounded-full border px-2.5 py-1 text-[11px] font-semibold"
+                              :class="isRowVideoSubmitting(row.id)
+                                ? 'border-white/45 bg-[rgba(59,130,246,0.18)] text-[#dbeafe] backdrop-blur-xl'
+                                : row.videoStatus === 'failed'
+                                ? 'border-white/35 bg-[rgba(239,68,68,0.18)] text-[#fecaca] backdrop-blur-xl'
+                                : row.videoStatus === 'running'
+                                  ? 'border-white/45 bg-[rgba(59,130,246,0.18)] text-[#dbeafe] backdrop-blur-xl'
+                                  : row.videoStatus === 'queued'
+                                    ? 'border-white/45 bg-[rgba(96,165,250,0.16)] text-[#dbeafe] backdrop-blur-xl'
+                                    : 'border-white/25 bg-white/10 text-white/78 backdrop-blur-xl'"
+                            >
+                              {{ isRowVideoSubmitting(row.id) ? '提交中' : storyboardVideoIndicatorLabel(row) }}
+                            </div>
+                            <p
+                              class="text-white"
+                              :class="(isRowVideoSubmitting(row.id) || row.videoStatus !== 'idle') ? 'mt-2 text-sm font-semibold leading-none' : 'text-xs font-semibold leading-none'"
+                            >
+                              {{ isRowVideoSubmitting(row.id) ? '提交中' : storyboardVideoIndicatorLabel(row) }}
                             </p>
+                            <p class="mt-1 text-[11px] leading-4 text-white/78">
+                              {{ isRowVideoSubmitting(row.id) ? '视频任务提交中...' : storyboardVideoStatusLabel(row) }}
+                            </p>
+                            <p
+                              v-if="!isRowVideoSubmitting(row.id) && ['queued', 'running'].includes(row.videoStatus)"
+                              class="mt-1 text-[11px] leading-4 text-white/70"
+                            >
+                              {{ storyboardVideoEtaLabel(row) }}
+                            </p>
+                            <div
+                              v-if="row.videoErrorMessage"
+                              class="mt-3 w-full rounded-2xl border border-white/20 bg-black/18 px-3 py-2.5 text-left backdrop-blur-sm"
+                            >
+                              <p class="text-[11px] font-semibold text-white">失败原因</p>
+                              <p class="mt-1 text-[11px] leading-5 text-white/88">
+                                {{ row.videoErrorMessage }}
+                              </p>
+                            </div>
                           </div>
                         </div>
                       </div>
@@ -3992,46 +4027,36 @@ onBeforeUnmount(() => {
           v-else
           class="rounded-[32px] border border-[#e8edf5] bg-panel p-8 shadow-[0_18px_60px_rgba(15,23,42,0.06)]"
         >
-          <div class="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
-            <div>
-              <h2 class="text-[32px] font-semibold tracking-[-0.04em]">视频</h2>
-              <p class="mt-2 text-sm leading-7 text-textMuted">这里改成看片验收区，只负责连续查看本集已生成分镜视频，并导出素材清单给剪映或其他剪辑工具继续处理。</p>
+          <div class="flex flex-wrap items-center justify-between gap-4">
+            <h2 class="text-2xl font-semibold tracking-tight">视频验收台</h2>
+            <div class="flex flex-wrap items-center gap-3">
+              <span class="rounded-full border border-borderSoft bg-panelSoft px-3 py-1.5 text-sm text-textMuted">
+                总时长 {{ formatReviewTimelineTime(storyboardTimelineTotalDuration) }}
+              </span>
+              <span class="rounded-full border border-borderSoft bg-panelSoft px-3 py-1.5 text-sm text-textMuted">
+                已生成 {{ generatedStoryboardVideos.length }} / {{ storyboardRowsForCurrentEpisode.length }}
+              </span>
+              <button
+                type="button"
+                class="rounded-full bg-gradient-to-r from-[#2463ff] to-[#7c3aed] px-5 py-2 text-sm font-semibold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                :disabled="generatedStoryboardVideos.length === 0"
+                @click="isSequentialReviewMode ? stopSequentialReview() : startSequentialReview()"
+              >
+                {{ isSequentialReviewMode ? '停止连续播放' : '连续预览本集' }}
+              </button>
+              <button
+                type="button"
+                class="rounded-full border border-borderSoft bg-panel px-5 py-2 text-sm font-semibold text-textMain transition hover:border-[#94a3b8] disabled:cursor-not-allowed disabled:opacity-60"
+                :disabled="generatedStoryboardVideos.length === 0"
+                @click="exportEpisodeReviewManifest"
+              >
+                导出验收清单
+              </button>
             </div>
           </div>
 
-          <div class="mt-8 space-y-5">
+          <div class="mt-6 space-y-5">
             <section class="rounded-[28px] border border-borderSoft bg-panel p-5 text-textMain shadow-sm">
-              <div class="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <h3 class="text-2xl font-semibold">视频验收台</h3>
-                  <p class="mt-2 text-sm text-textMuted">把本集所有已生成分镜按顺序串起来看片，右上角“编辑”可直接回到对应分镜继续调整。</p>
-                </div>
-                <div class="flex flex-wrap items-center gap-3">
-                  <span class="rounded-full border border-borderSoft bg-panelSoft px-3 py-1 text-sm text-textMuted">
-                    总时长 {{ formatReviewTimelineTime(storyboardTimelineTotalDuration) }}
-                  </span>
-                  <span class="rounded-full border border-borderSoft bg-panelSoft px-3 py-1 text-sm text-textMuted">
-                    已生成 {{ generatedStoryboardVideos.length }} / {{ storyboardRowsForCurrentEpisode.length }}
-                  </span>
-                  <button
-                    type="button"
-                    class="rounded-[16px] bg-gradient-to-r from-[#2463ff] to-[#7c3aed] px-5 py-2.5 text-sm font-semibold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
-                    :disabled="generatedStoryboardVideos.length === 0"
-                    @click="isSequentialReviewMode ? stopSequentialReview() : startSequentialReview()"
-                  >
-                    {{ isSequentialReviewMode ? '停止连续播放' : '连续预览本集' }}
-                  </button>
-                  <button
-                    type="button"
-                    class="rounded-[16px] border border-borderSoft bg-panel px-5 py-2.5 text-sm font-semibold text-textMain transition hover:border-[#94a3b8] disabled:cursor-not-allowed disabled:opacity-60"
-                    :disabled="generatedStoryboardVideos.length === 0"
-                    @click="exportEpisodeReviewManifest"
-                  >
-                    导出验收清单
-                  </button>
-                </div>
-              </div>
-
               <div class="mt-5 overflow-hidden rounded-[24px] border border-borderSoft bg-panelSoft">
                 <div class="flex items-center justify-between border-b border-borderSoft px-4 py-3">
                   <div class="flex items-center gap-3">
@@ -4069,9 +4094,19 @@ onBeforeUnmount(() => {
                   </div>
 
                   <div class="mt-4 flex items-center justify-center gap-4 text-sm text-textMuted">
-                    <span>{{ formatReviewTimelineTime(reviewPlaybackSeconds) }}</span>
-                    <span>/</span>
-                    <span>{{ formatReviewTimelineTime(storyboardTimelineTotalDuration) }}</span>
+                    <button
+                      type="button"
+                      class="flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-r from-[#2463ff] to-[#7c3aed] text-white shadow-md transition hover:brightness-110"
+                      @click="isSequentialReviewMode ? stopSequentialReview() : startSequentialReview()"
+                    >
+                      <svg v-if="isSequentialReviewMode" viewBox="0 0 24 24" class="h-5 w-5" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
+                      <svg v-else viewBox="0 0 24 24" class="h-5 w-5" fill="currentColor"><path d="M8 5.14v13.72a1 1 0 0 0 1.5.86l11-6.86a1 1 0 0 0 0-1.72l-11-6.86A1 1 0 0 0 8 5.14z"/></svg>
+                    </button>
+                    <div class="flex items-center gap-2 font-medium">
+                      <span>{{ formatReviewTimelineTime(reviewPlaybackSeconds) }}</span>
+                      <span>/</span>
+                      <span>{{ formatReviewTimelineTime(storyboardTimelineTotalDuration) }}</span>
+                    </div>
                   </div>
 
                   <div class="mt-5 rounded-[20px] border border-borderSoft bg-panel px-4 py-4">

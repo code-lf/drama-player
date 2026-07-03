@@ -582,7 +582,7 @@ function openDramaProject(projectId: string): void {
     toggleProjectSelection(projectId)
     return
   }
-  router.push(`/drama/${encodeURIComponent(projectId)}`)
+  router.push(`/drama/${encodeURIComponent(projectId)}?from=dashboard-projects`)
 }
 
 function syncWorkspaceRouteState(path: string): void {
