@@ -58,6 +58,14 @@ export async function callApi<T>(endpoint: string, task: (adapter: ApiAdapter) =
       throw error
     }
 
+    // 尝试提取后端的 AppException 错误信息
+    if (error && typeof error === 'object' && 'response' in error) {
+      const response = (error as any).response
+      if (response && response._data && response._data.detail) {
+        throw new ApiClientError(response._data.detail, 'BIZ_ERROR')
+      }
+    }
+
     throw new ApiClientError('网络异常，请稍后重试', 'NETWORK_ERROR')
   }
 }

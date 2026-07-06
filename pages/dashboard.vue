@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import type { DramaProjectCard, DramaProjectDetail, DramaRuntimeConfig } from '~/entities/drama/types'
 import { useThemeStore } from '~/features/ui/store/useThemeStore'
+import { useAuthStore } from '~/features/auth/store/useAuthStore'
 import { dramaService } from '~/shared/api/services/dramaService'
 
-type DashboardMenuKey = 'drama' | 'product' | 'canvas'
-type DashboardWorkspaceView = 'console' | 'projects'
+type DashboardMenuKey = 'drama' | 'product' | 'canvas' | 'billing' | 'none'
+type DashboardWorkspaceView = 'console' | 'projects' | 'billing'
 type DashboardOption = {
   label: string
   value: string
@@ -38,6 +39,7 @@ const fallbackAspectRatioCatalog: DashboardOption[] = [
 const router = useRouter()
 const route = useRoute()
 const themeStore = useThemeStore()
+const authStore = useAuthStore()
 
 const activeMenu = ref<DashboardMenuKey>('drama')
 const activeWorkspaceView = ref<DashboardWorkspaceView>('console')
@@ -97,6 +99,7 @@ const stageLabel = computed(() => {
   if (stage === 'scenes') return '场景设定已生成'
   if (stage === 'props') return '道具设定已生成'
   if (stage === 'storyboards') return '分镜已生成'
+  if (scriptDraft.value.trim()) return '剧本已就绪，可开始创建'
   return '等待输入剧本'
 })
 const effectiveVisualStyle = computed(() => (selectedVisualStyle.value === '自定义风格' ? customVisualStyle.value.trim() || '电影感写实短剧' : selectedVisualStyle.value))
@@ -588,7 +591,7 @@ function openDramaProject(projectId: string): void {
 function syncWorkspaceRouteState(path: string): void {
   // 根据当前路由恢复左侧菜单高亮与主内容区，保证浏览器刷新后仍停在原页面。
   if (path === '/dashboard-projects') {
-    activeMenu.value = 'drama'
+    activeMenu.value = 'none'
     activeWorkspaceView.value = 'projects'
     return
   }
@@ -602,6 +605,12 @@ function syncWorkspaceRouteState(path: string): void {
   if (path === '/dashboard-canvas') {
     activeMenu.value = 'canvas'
     activeWorkspaceView.value = 'console'
+    return
+  }
+
+  if (path === '/dashboard-billing') {
+    activeMenu.value = 'none'
+    activeWorkspaceView.value = 'billing'
     return
   }
 
@@ -637,6 +646,11 @@ watch(
     scriptFileName.value = project.sourceFileName
   }
 )
+
+function handleLogout() {
+  authStore.logout()
+  router.push('/')
+}
 
 onMounted(async () => {
   await bootstrapDashboard()
@@ -730,7 +744,15 @@ onMounted(async () => {
         </nav>
 
         <div class="mt-auto space-y-2 pt-8">
-          <button class="flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left text-textMuted transition hover:bg-panelSoft/80 hover:text-textMain" @click="themeStore.toggleMode()">
+          <div class="mb-4 rounded-2xl bg-gradient-to-br from-neon/10 to-transparent p-4 border border-neon/20 backdrop-blur-md">
+            <p class="text-xs font-semibold text-neon">点数余额</p>
+            <p class="mt-1 text-2xl font-bold text-slate-900 dark:text-white tracking-tight">12,500 <span class="text-sm text-textMuted font-normal">点</span></p>
+            <NuxtLink to="/dashboard-billing" class="mt-3 flex w-full justify-center items-center rounded-xl bg-neon py-2 text-xs font-bold text-white dark:text-slate-900 transition hover:bg-neon/90 hover:shadow-[0_0_15px_rgba(72,214,255,0.4)]">
+              充值 / 升级
+            </NuxtLink>
+          </div>
+          
+          <button class="flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left text-textMuted transition hover:bg-slate-100 dark:hover:bg-white/5 hover:text-slate-900 dark:hover:text-white" @click="themeStore.toggleMode()">
             <svg v-if="themeStore.mode === 'dark'" viewBox="0 0 24 24" class="h-5 w-5 text-textMuted" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M12 3v2.5M12 18.5V21M4.93 4.93l1.77 1.77M17.3 17.3l1.77 1.77M3 12h2.5M18.5 12H21M4.93 19.07l1.77-1.77M17.3 6.7l1.77-1.77M12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z" stroke-linecap="round" />
             </svg>
@@ -739,12 +761,18 @@ onMounted(async () => {
             </svg>
             <p class="text-[14px] font-semibold">{{ themeStore.mode === 'dark' ? '浅色模式' : '深色模式' }}</p>
           </button>
-          <NuxtLink to="/" class="flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left text-textMuted transition hover:bg-panelSoft/80 hover:text-textMain">
+          <NuxtLink to="/" class="flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left text-textMuted transition hover:bg-slate-100 dark:hover:bg-white/5 hover:text-slate-900 dark:hover:text-white">
             <svg viewBox="0 0 24 24" class="h-5 w-5 text-textMuted" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M10 19l-7-7m0 0l7-7m-7 7h18" stroke-linecap="round" stroke-linejoin="round" />
             </svg>
             <p class="text-[14px] font-semibold">返回首页</p>
           </NuxtLink>
+          <button class="flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left text-red-500/80 transition hover:bg-red-500/10 hover:text-red-500" @click="handleLogout">
+            <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+            <p class="text-[14px] font-semibold">退出登录</p>
+          </button>
         </div>
       </aside>
 
@@ -798,7 +826,7 @@ onMounted(async () => {
                     批量删除<span v-if="hasSelectedProjects">（{{ selectedProjectCount }}）</span>
                   </button>
                   <button
-                    class="flex items-center gap-2 rounded-full bg-neon px-5 py-2.5 text-[14px] font-semibold text-bg shadow-sm transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                    class="flex items-center gap-2 rounded-full bg-neon px-5 py-2.5 text-[14px] font-semibold text-white dark:text-slate-900 shadow-sm transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
                     :disabled="isCreatingWorkspaceProject"
                     @click="createWorkspaceProject"
                   >
@@ -965,6 +993,78 @@ onMounted(async () => {
             </section>
           </div>
 
+          <div v-else-if="activeWorkspaceView === 'billing'" class="space-y-8">
+            <div class="mb-8">
+              <h1 class="text-[40px] font-semibold leading-none">充值中心</h1>
+              <p class="mt-3 text-[15px] text-textMuted">购买点数或开通高级会员，解锁更多 AI 创作特权</p>
+            </div>
+
+            <div class="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+              <!-- 套餐 1 -->
+              <div class="relative flex flex-col overflow-hidden rounded-[24px] bg-panel p-8 shadow-panel ring-1 ring-borderSoft transition-all hover:-translate-y-1 hover:shadow-neon hover:ring-neon/50">
+                <div class="mb-4 flex items-center justify-between">
+                  <h3 class="text-xl font-bold text-textMain">基础包</h3>
+                  <span class="rounded-full bg-slate-100 dark:bg-white/10 px-3 py-1 text-xs font-semibold text-slate-600 dark:text-textMuted">适合体验体验</span>
+                </div>
+                <div class="mb-6 flex items-baseline gap-1">
+                  <span class="text-3xl font-extrabold text-neon">¥ 9.9</span>
+                  <span class="text-sm text-textMuted line-through ml-2">¥ 15.0</span>
+                  <span class="text-sm text-textMuted ml-1">/ 1,000 点</span>
+                </div>
+                <ul class="mb-8 flex-1 space-y-3 text-sm text-textMuted">
+                  <li class="flex items-center gap-2"><svg class="h-4 w-4 text-neon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.704 5.29a1 1 0 01.006 1.414l-7.2 7.26a1 1 0 01-1.42 0l-3.8-3.83a1 1 0 111.42-1.408l3.09 3.116 6.49-6.544a1 1 0 011.414-.008z" clip-rule="evenodd"/></svg> 约可生成 5 个短剧项目</li>
+                  <li class="flex items-center gap-2"><svg class="h-4 w-4 text-neon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.704 5.29a1 1 0 01.006 1.414l-7.2 7.26a1 1 0 01-1.42 0l-3.8-3.83a1 1 0 111.42-1.408l3.09 3.116 6.49-6.544a1 1 0 011.414-.008z" clip-rule="evenodd"/></svg> 支持基础文本模型</li>
+                </ul>
+                <button class="w-full rounded-xl bg-panelSoft py-3 text-sm font-semibold text-textMain transition-colors hover:bg-neon hover:text-black">
+                  立即购买
+                </button>
+              </div>
+
+              <!-- 套餐 2 (推荐) -->
+              <div class="relative flex flex-col overflow-hidden rounded-[24px] bg-panel p-8 shadow-neon ring-2 ring-neon transition-all hover:-translate-y-1">
+                <div class="absolute right-0 top-0 rounded-bl-[24px] bg-neon px-4 py-1.5 text-xs font-bold text-black">
+                  最受欢迎
+                </div>
+                <div class="mb-4 flex items-center justify-between">
+                  <h3 class="text-xl font-bold text-textMain">创作包</h3>
+                </div>
+                <div class="mb-6 flex items-baseline gap-1">
+                  <span class="text-3xl font-extrabold text-neon">¥ 49.9</span>
+                  <span class="text-sm text-textMuted line-through ml-2">¥ 60.0</span>
+                  <span class="text-sm text-textMuted ml-1">/ 6,000 点</span>
+                </div>
+                <ul class="mb-8 flex-1 space-y-3 text-sm text-textMuted">
+                  <li class="flex items-center gap-2"><svg class="h-4 w-4 text-neon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.704 5.29a1 1 0 01.006 1.414l-7.2 7.26a1 1 0 01-1.42 0l-3.8-3.83a1 1 0 111.42-1.408l3.09 3.116 6.49-6.544a1 1 0 011.414-.008z" clip-rule="evenodd"/></svg> 约可生成 35 个短剧项目</li>
+                  <li class="flex items-center gap-2"><svg class="h-4 w-4 text-neon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.704 5.29a1 1 0 01.006 1.414l-7.2 7.26a1 1 0 01-1.42 0l-3.8-3.83a1 1 0 111.42-1.408l3.09 3.116 6.49-6.544a1 1 0 011.414-.008z" clip-rule="evenodd"/></svg> 支持所有文本模型与图像模型</li>
+                  <li class="flex items-center gap-2"><svg class="h-4 w-4 text-neon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.704 5.29a1 1 0 01.006 1.414l-7.2 7.26a1 1 0 01-1.42 0l-3.8-3.83a1 1 0 111.42-1.408l3.09 3.116 6.49-6.544a1 1 0 011.414-.008z" clip-rule="evenodd"/></svg> 优先排队特权</li>
+                </ul>
+                <button class="w-full rounded-xl bg-neon py-3 text-sm font-bold text-white dark:text-slate-900 transition-all hover:bg-neon/90 hover:shadow-[0_0_15px_rgba(72,214,255,0.4)]">
+                  立即购买
+                </button>
+              </div>
+
+              <!-- 套餐 3 -->
+              <div class="relative flex flex-col overflow-hidden rounded-[24px] bg-panel p-8 shadow-panel ring-1 ring-borderSoft transition-all hover:-translate-y-1 hover:shadow-neon hover:ring-neon/50">
+                <div class="mb-4 flex items-center justify-between">
+                  <h3 class="text-xl font-bold text-textMain">工作室包</h3>
+                </div>
+                <div class="mb-6 flex items-baseline gap-1">
+                  <span class="text-3xl font-extrabold text-neon">¥ 199.0</span>
+                  <span class="text-sm text-textMuted line-through ml-2">¥ 300.0</span>
+                  <span class="text-sm text-textMuted ml-1">/ 30,000 点</span>
+                </div>
+                <ul class="mb-8 flex-1 space-y-3 text-sm text-textMuted">
+                  <li class="flex items-center gap-2"><svg class="h-4 w-4 text-neon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.704 5.29a1 1 0 01.006 1.414l-7.2 7.26a1 1 0 01-1.42 0l-3.8-3.83a1 1 0 111.42-1.408l3.09 3.116 6.49-6.544a1 1 0 011.414-.008z" clip-rule="evenodd"/></svg> 约可生成 200 个短剧项目</li>
+                  <li class="flex items-center gap-2"><svg class="h-4 w-4 text-neon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.704 5.29a1 1 0 01.006 1.414l-7.2 7.26a1 1 0 01-1.42 0l-3.8-3.83a1 1 0 111.42-1.408l3.09 3.116 6.49-6.544a1 1 0 011.414-.008z" clip-rule="evenodd"/></svg> 尊享极速通道</li>
+                  <li class="flex items-center gap-2"><svg class="h-4 w-4 text-neon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.704 5.29a1 1 0 01.006 1.414l-7.2 7.26a1 1 0 01-1.42 0l-3.8-3.83a1 1 0 111.42-1.408l3.09 3.116 6.49-6.544a1 1 0 011.414-.008z" clip-rule="evenodd"/></svg> 1v1专属客服支持</li>
+                </ul>
+                <button class="w-full rounded-xl bg-panelSoft py-3 text-sm font-semibold text-textMain transition-colors hover:bg-neon hover:text-black">
+                  立即购买
+                </button>
+              </div>
+            </div>
+          </div>
+
           <div v-else class="space-y-8">
             <section class="mx-auto max-w-[1080px]">
               <div class="relative overflow-hidden rounded-[32px] bg-panel px-8 py-12 shadow-panel ring-1 ring-borderSoft transition-all">
@@ -982,71 +1082,75 @@ onMounted(async () => {
                   </div>
 
                   <div
-                    class="group relative mt-10 overflow-hidden rounded-[24px] bg-panelSoft p-1.5 ring-1 ring-borderSoft transition-all duration-300"
-                    :class="isDraggingFile ? 'bg-neonSoft/20 ring-neon/40' : 'hover:bg-panelSoft/80 hover:ring-borderSoft/80'"
+                    class="group relative mt-10 flex flex-col rounded-[24px] bg-white/60 dark:bg-[#0c0f16]/60 shadow-[0_8px_32px_rgba(0,0,0,0.04)] dark:shadow-[0_16px_48px_rgba(0,0,0,0.4)] ring-1 ring-slate-200/80 dark:ring-white/5 backdrop-blur-2xl transition-all duration-300 focus-within:ring-neon/50 focus-within:shadow-[0_0_20px_rgba(69,215,255,0.15)]"
+                    :class="isDraggingFile ? 'bg-neon/5 ring-neon/50 scale-[1.01]' : 'hover:ring-slate-300 dark:hover:ring-white/10'"
                     @dragenter.prevent="isDraggingFile = true"
                     @dragover.prevent="isDraggingFile = true"
                     @dragleave.prevent="isDraggingFile = false"
                     @drop="handleDroppedFile"
                   >
-                    <div class="rounded-[20px] bg-panel px-6 py-5 shadow-sm ring-1 ring-borderSoft">
+                    <!-- 输入区 -->
+                    <div class="p-6 pb-2">
                       <UiBaseTextarea
                         v-model="scriptDraft"
                         :placeholder="isDraggingFile ? '松开鼠标即可导入 TXT 剧本' : '写下你想讲的故事、场景或角色设定...'"
                         frame="plain"
                         full
                         size="lg"
-                        class="min-h-[160px] resize-none text-[15px] leading-relaxed text-textMain placeholder:text-textMuted/60 bg-transparent focus:ring-0 focus:outline-none"
+                        class="min-h-[160px] resize-none text-[16px] leading-relaxed text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-textMuted/50 bg-transparent focus:ring-0 focus:outline-none"
                       />
+                    </div>
+                    
+                    <!-- 底部控制栏 -->
+                    <div class="relative z-50 flex flex-col gap-4 border-t border-slate-200/60 dark:border-white/5 bg-slate-50/50 dark:bg-black/40 px-6 py-4 lg:flex-row lg:items-center lg:justify-between rounded-b-[24px]">
+                      <div class="flex items-center gap-1.5 rounded-xl bg-slate-200/50 dark:bg-white/5 p-1 backdrop-blur-md">
+                        <button class="rounded-lg bg-white dark:bg-[#1a1f2e] px-4 py-1.5 text-sm font-semibold text-slate-900 dark:text-white shadow-sm ring-1 ring-slate-200/80 dark:ring-white/10 transition-all">Agent模式</button>
+                        <button class="rounded-lg px-4 py-1.5 text-sm font-medium text-slate-500 dark:text-textMuted hover:text-slate-900 dark:hover:text-white transition-colors">人工模式</button>
+                      </div>
+
+                      <div class="flex flex-wrap items-center gap-3 lg:justify-end">
+                        <UiBaseSelect
+                          v-model="selectedTextModel"
+                          :options="textModelOptions"
+                          placeholder="文本模型"
+                          size="sm"
+                          class="min-w-[140px]"
+                        />
+                        <div class="h-4 w-px bg-slate-300 dark:bg-borderSoft"></div>
+                        <UiBaseSelect
+                          v-model="selectedAspectRatio"
+                          :options="aspectRatioOptions"
+                          placeholder="比例"
+                          size="sm"
+                          class="min-w-[90px]"
+                        />
+                        <UiBaseSelect
+                          v-model="selectedResolution"
+                          :options="resolutionOptions"
+                          placeholder="分辨率"
+                          size="sm"
+                          class="min-w-[100px]"
+                        />
+                        <UiBaseSelect
+                          v-model="selectedVisualStyle"
+                          :options="visualStyleSelectOptions"
+                          placeholder="风格"
+                          size="sm"
+                          align="right"
+                          class="min-w-[120px]"
+                        />
+                      </div>
                     </div>
                   </div>
 
-                  <div class="mt-6 flex flex-col gap-4 rounded-[20px] bg-panel p-4 shadow-sm ring-1 ring-borderSoft lg:flex-row lg:items-center lg:justify-between">
-                    <div class="flex items-center gap-2 rounded-xl bg-panelSoft p-1">
-                      <button class="rounded-lg bg-panel px-4 py-1.5 text-sm font-semibold text-textMain shadow-sm ring-1 ring-borderSoft">Agent模式</button>
-                      <button class="rounded-lg px-4 py-1.5 text-sm font-medium text-textMuted transition-colors hover:text-textMain">人工模式</button>
-                    </div>
 
-                    <div class="flex flex-wrap items-center gap-3 lg:justify-end">
-                      <UiBaseSelect
-                        v-model="selectedTextModel"
-                        :options="textModelOptions"
-                        placeholder="文本模型"
-                        size="sm"
-                        class="min-w-[140px]"
-                      />
-                      <div class="h-4 w-px bg-borderSoft"></div>
-                      <UiBaseSelect
-                        v-model="selectedAspectRatio"
-                        :options="aspectRatioOptions"
-                        placeholder="比例"
-                        size="sm"
-                        class="min-w-[90px]"
-                      />
-                      <UiBaseSelect
-                        v-model="selectedResolution"
-                        :options="resolutionOptions"
-                        placeholder="分辨率"
-                        size="sm"
-                        class="min-w-[100px]"
-                      />
-                      <UiBaseSelect
-                        v-model="selectedVisualStyle"
-                        :options="visualStyleSelectOptions"
-                        placeholder="风格"
-                        size="sm"
-                        align="right"
-                        class="min-w-[120px]"
-                      />
-                    </div>
-                  </div>
 
                   <div v-if="selectedVisualStyle === '自定义风格'" class="mt-4">
                     <UiBaseInput
                       v-model="customVisualStyle"
                       placeholder="输入自定义风格，例如：电影感写实、霓虹都市、古风水墨"
                       full
-                      class="rounded-xl"
+                      class="rounded-[16px] bg-white/60 dark:bg-panelSoft/40 ring-1 ring-slate-200/80 dark:ring-borderSoft shadow-sm"
                     />
                   </div>
 
@@ -1096,7 +1200,7 @@ onMounted(async () => {
                     <h3 class="text-2xl font-bold">{{ currentDramaProject?.analysis.title }}</h3>
                     <span class="rounded-full border border-neon/35 px-3 py-1 text-xs text-neon">{{ currentDramaProject?.analysis.genre }}</span>
                   </div>
-                  <p class="mt-4 text-lg text-white/90">{{ currentDramaProject?.analysis.logline }}</p>
+                  <p class="mt-4 text-lg text-slate-900/90 dark:text-white/90">{{ currentDramaProject?.analysis.logline }}</p>
                   <p class="mt-4 text-sm leading-7 text-textMuted">{{ currentDramaProject?.analysis.synopsis }}</p>
                 </article>
 
@@ -1165,7 +1269,7 @@ onMounted(async () => {
                       <h3 class="text-xl font-semibold">角色四视图</h3>
                       <p class="mt-1 text-sm text-textMuted">根据主角与核心配角自动生成人设四视图，可后续选择音频占位。</p>
                     </div>
-                    <button class="rounded-full bg-neon px-4 py-2 text-sm font-semibold text-slate-950 disabled:opacity-60" :disabled="isBusy" @click="generateRoleAssets">
+                    <button class="rounded-full bg-neon px-4 py-2 text-sm font-semibold text-white dark:text-slate-900 disabled:opacity-60" :disabled="isBusy" @click="generateRoleAssets">
                       {{ busyKey === 'roles' ? '生成中...' : hasRoleAssets ? '重绘角色' : '生成角色' }}
                     </button>
                   </div>
@@ -1205,7 +1309,7 @@ onMounted(async () => {
                       <h3 class="text-xl font-semibold">场景设定</h3>
                       <p class="mt-1 text-sm text-textMuted">关键场景按一场一图输出，便于后续镜头首帧参考。</p>
                     </div>
-                    <button class="rounded-full bg-neon px-4 py-2 text-sm font-semibold text-slate-950 disabled:opacity-60" :disabled="isBusy" @click="generateSceneAssets">
+                    <button class="rounded-full bg-neon px-4 py-2 text-sm font-semibold text-white dark:text-slate-900 disabled:opacity-60" :disabled="isBusy" @click="generateSceneAssets">
                       {{ busyKey === 'scenes' ? '生成中...' : hasSceneAssets ? '重绘场景' : '生成场景' }}
                     </button>
                   </div>
@@ -1234,7 +1338,7 @@ onMounted(async () => {
                       <h3 class="text-xl font-semibold">道具设定</h3>
                       <p class="mt-1 text-sm text-textMuted">关键道具一物一图，优先服务后续角色与镜头一致性。</p>
                     </div>
-                    <button class="rounded-full bg-neon px-4 py-2 text-sm font-semibold text-slate-950 disabled:opacity-60" :disabled="isBusy" @click="generatePropAssets">
+                    <button class="rounded-full bg-neon px-4 py-2 text-sm font-semibold text-white dark:text-slate-900 disabled:opacity-60" :disabled="isBusy" @click="generatePropAssets">
                       {{ busyKey === 'props' ? '生成中...' : hasPropAssets ? '重绘道具' : '生成道具' }}
                     </button>
                   </div>
@@ -1291,7 +1395,7 @@ onMounted(async () => {
                     tone="panel"
                     full
                   />
-                  <button class="rounded-2xl bg-neon px-4 py-3 text-sm font-semibold text-slate-950 disabled:opacity-60" :disabled="isBusy" @click="generateStoryboards">
+                  <button class="rounded-2xl bg-neon px-4 py-3 text-sm font-semibold text-white dark:text-slate-900 disabled:opacity-60" :disabled="isBusy" @click="generateStoryboards">
                     {{ busyKey === 'storyboards' ? '生成中...' : hasStoryboards ? '重新生成分镜' : '生成分镜' }}
                   </button>
                 </div>

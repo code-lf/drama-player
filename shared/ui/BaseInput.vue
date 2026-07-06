@@ -34,7 +34,7 @@ const containerClassName = computed(() => {
     return 'rounded-2xl border border-borderSoft bg-panelSoft px-4 py-3 transition focus-within:border-neon/55 focus-within:shadow-[0_0_0_1px_rgba(69,215,255,0.18)]'
   }
 
-  return 'rounded-full border border-borderSoft bg-white/40 px-4 py-2.5 backdrop-blur-sm transition focus-within:border-neon/55 focus-within:shadow-[0_0_0_1px_rgba(69,215,255,0.18)]'
+  return 'rounded-full border border-borderSoft bg-white/60 dark:bg-white/5 px-4 py-2.5 backdrop-blur-sm transition focus-within:border-neon/55 focus-within:shadow-[0_0_0_1px_rgba(69,215,255,0.18)]'
 })
 </script>
 

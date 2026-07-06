@@ -612,21 +612,55 @@ export const httpAdapter: ApiAdapter = {
             nickname: '创作导演',
             avatar: 'https://placehold.co/120x120/png'
           }
-        : null
+        : undefined
     }
-
     return ok(session)
+  },
+
+  async phoneLogin(phone: string, code: string) {
+    const res = await request<any>('/auth/phone/login', {
+      method: 'POST',
+      body: { phone, code }
+    })
+    return ok({
+      loggedIn: true,
+      token: res.token,
+      expiresAt: '',
+      user: {
+        id: res.user_id,
+        nickname: `用户_${phone.slice(-4)}`,
+        avatar: 'https://placehold.co/120x120/png'
+      }
+    } as AuthSession)
+  },
+
+  async sendSmsCode(phone: string) {
+    const res = await request<any>('/auth/sms/send', {
+      method: 'POST',
+      body: { phone }
+    })
+    return ok(res)
   },
 
   async getRuntimeConfig() {
     const response = await request<BackendRuntimeConfigResponse>('/config/runtime')
+    
+    const mapRuntimeModelOption = (raw: any) => ({
+      provider: raw.provider as 'alibaba' | 'bytedance',
+      model: raw.model,
+      label: raw.label,
+      description: raw.description,
+      baseCredits: raw.base_credits ?? 1,
+      billingMode: raw.billing_mode ?? 'per_call'
+    })
+
     const data: DramaRuntimeConfig = {
       themeModes: response.theme_modes,
       videoResolutions: response.video_resolutions,
       defaults: response.defaults,
-      textModels: response.text_models,
-      imageModels: response.image_models,
-      videoModels: response.video_models
+      textModels: response.text_models.map(mapRuntimeModelOption) as any,
+      imageModels: response.image_models.map(mapRuntimeModelOption) as any,
+      videoModels: response.video_models.map(mapRuntimeModelOption) as any
     }
     return ok(data)
   },

@@ -155,6 +155,23 @@ export const mockAdapter: ApiAdapter = {
     return ok(createMockSession(false), 'waiting')
   },
 
+  async phoneLogin(phone: string, _code: string) {
+    return ok({
+      loggedIn: true,
+      token: 'mock-token-123',
+      expiresAt: '',
+      user: {
+        id: 'user-1',
+        nickname: `Mock 用户 ${phone.slice(-4)}`,
+        avatar: 'https://placehold.co/120x120/png'
+      }
+    } as AuthSession)
+  },
+
+  async sendSmsCode(_phone: string) {
+    return ok({ status: 'ok', message: 'Mock 验证码已发送' })
+  },
+
   async getRuntimeConfig() {
     await sleep(120)
     const data: DramaRuntimeConfig = {

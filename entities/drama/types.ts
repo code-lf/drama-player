@@ -152,6 +152,8 @@ export interface RuntimeModelOption {
   model: string
   label: string
   description: string
+  baseCredits: number
+  billingMode: string
 }
 
 export interface DramaRuntimeConfig {

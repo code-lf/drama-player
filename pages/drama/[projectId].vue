@@ -279,6 +279,24 @@ const assetUploadPreviewMap = ref<Record<string, { url: string; fileName: string
 const storyboardKeyActionMenu = ref('')
 // 记录当前哪一条分镜正在调用后端重生成视频提示词，给用户明确的局部 loading 反馈。
 const regeneratingStoryboardPromptRowId = ref('')
+
+function calculateModelCost(modelCode: string, taskType: 'text' | 'image' | 'video', unitCount: number = 1): number {
+  if (!runtimeConfig.value) return 1
+  let options = []
+  if (taskType === 'text') options = runtimeConfig.value.textModels
+  else if (taskType === 'image') options = runtimeConfig.value.imageModels
+  else if (taskType === 'video') options = runtimeConfig.value.videoModels
+  
+  const modelOption = options.find(m => m.model === modelCode)
+  if (!modelOption) return 1
+
+  const baseCredits = modelOption.baseCredits || 1
+  const mode = modelOption.billingMode || 'per_call'
+  
+  if (mode === 'per_second') return baseCredits * unitCount
+  if (mode === 'per_token') return Math.max(1, Math.floor(baseCredits * (unitCount / 1000)))
+  return baseCredits * unitCount
+}
 // 记录当前哪一条分镜正在提交视频任务，避免“点了没反应”的错觉。
 const submittingStoryboardVideoRowId = ref('')
 // 按分镜记录“有声/无声”选择，仅 flash 模型允许切成无声。
@@ -632,10 +650,42 @@ const floatingConfirmButtonLabel = computed(() => {
   if (activeStep.value === 'storyboard') return '已确认，进入视频'
   return '继续'
 })
+const generateStoryboardButtonLabel = computed(() => {
+  if (hasStoryboards.value) {
+    const ungeneratedVideos = storyboardRowsForCurrentEpisode.value.filter(row => !row.videoUrl && row.status !== 'success').length
+    if (ungeneratedVideos === 0) return '批量生成视频'
+    
+    // Fallback to 5 seconds if selectedStoryboardVideoDuration is not available
+    const duration = 5
+    const cost = calculateModelCost(selectedVideoModel.value, 'video', ungeneratedVideos * duration)
+    return `批量生成本集视频 (✨ ${cost})`
+  }
+  
+  if (busyKey.value === 'storyboards') return '生成中...'
+  const scriptLen = projectDetail.value?.sourceScriptText?.length || 0
+  const cost = calculateModelCost(selectedTextModel.value, 'text', scriptLen)
+  return `生成分镜 (✨ ${cost})`
+})
+
 const activeSettingPrimaryButtonLabel = computed(() => {
   if (activeSettingTab.value === 'roles') return busyKey.value === 'roles' ? '生成中...' : '新增角色'
-  if (activeSettingTab.value === 'scenes') return busyKey.value === 'scenes' ? '生成中...' : '生成场景'
-  return busyKey.value === 'props' ? '生成中...' : '生成道具'
+  
+  if (activeSettingTab.value === 'scenes') {
+    if (busyKey.value === 'scenes') return '生成中...'
+    const ungeneratedScenes = (projectDetail.value?.analysis.scenes || []).filter(s => !s.asset).length
+    if (ungeneratedScenes === 0) return '重新生成所有场景'
+    const cost = calculateModelCost(selectedImageModel.value, 'image', ungeneratedScenes)
+    return `生成剩余场景 (✨ ${cost})`
+  }
+  
+  if (activeSettingTab.value === 'props') {
+    if (busyKey.value === 'props') return '生成中...'
+    const ungeneratedProps = (projectDetail.value?.analysis.props || []).filter(s => !s.asset).length
+    if (ungeneratedProps === 0) return '重新生成所有道具'
+    const cost = calculateModelCost(selectedImageModel.value, 'image', ungeneratedProps)
+    return `生成剩余道具 (✨ ${cost})`
+  }
+  return '生成'
 })
 const refreshCurrentSettingButtonLabel = computed(() => {
   if (activeSettingTab.value === 'roles') return busyKey.value === 'roles' ? '刷新中...' : '刷新角色'
@@ -652,6 +702,13 @@ const selectedStoryboardVideoDurationOptions = computed(() => {
     }
   })
 })
+
+function generateSingleVideoLabel(row: any): string {
+  // Fallback to 5 seconds if selectedStoryboardVideoDuration is not available
+  const duration = row.videoDurationSec || 5
+  const cost = calculateModelCost(row.videoModel || selectedVideoModel.value, 'video', duration)
+  return `生成视频 (✨ ${cost})`
+}
 
 function getWorkflowProgressStorageKey(): string {
   // 使用项目 id 作为隔离维度，保证不同短剧项目的步骤确认状态互不影响。
@@ -3216,7 +3273,7 @@ onBeforeUnmount(() => {
                         :disabled="isBusy"
                         @click="generateRoleAssets({ overwrite: true, roleKeys: [role.key], successMessage: `${role.name} 四视图已刷新。` })"
                       >
-                        重绘
+                        重绘 (✨ {{ calculateModelCost(selectedImageModel, 'image', 1) }})
                       </button>
                     </div>
                   </div>
@@ -3320,7 +3377,7 @@ onBeforeUnmount(() => {
                         :disabled="isBusy"
                         @click="generateSceneAssets({ overwrite: true, sceneKeys: [scene.key], successMessage: `${scene.name} 场景图已刷新。` })"
                       >
-                        重绘
+                        重绘 (✨ {{ calculateModelCost(selectedImageModel, 'image', 1) }})
                       </button>
                     </div>
                   </div>
@@ -3397,7 +3454,7 @@ onBeforeUnmount(() => {
                         :disabled="isBusy"
                         @click="generatePropAssets({ overwrite: true, propKeys: [prop.key], successMessage: `${prop.name} 道具图已刷新。` })"
                       >
-                        重绘
+                        重绘 (✨ {{ calculateModelCost(selectedImageModel, 'image', 1) }})
                       </button>
                     </div>
                   </div>
@@ -3485,7 +3542,7 @@ onBeforeUnmount(() => {
                   :disabled="isBusy"
                   @click="hasStoryboards ? batchGenerateCurrentEpisodeVideos() : generateStoryboards()"
                 >
-                  {{ hasStoryboards ? '批量生成视频' : (busyKey === 'storyboards' ? '生成中...' : '生成分镜') }}
+                  {{ generateStoryboardButtonLabel }}
                 </button>
               </div>
             </div>
@@ -3896,7 +3953,7 @@ onBeforeUnmount(() => {
                           :disabled="isBusy || isRowVideoPromptGenerating(row.id) || isRowVideoSubmitting(row.id)"
                           @click="generateSingleStoryboardVideo(row)"
                         >
-                          {{ isRowVideoSubmitting(row.id) ? '提交中...' : '生成视频' }}
+                          {{ isRowVideoSubmitting(row.id) ? '提交中...' : generateSingleVideoLabel(row) }}
                         </button>
                       </div>
                     </section>

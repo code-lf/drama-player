@@ -42,6 +42,13 @@ export const useThemeStore = defineStore('theme', {
     applyToDom() {
       if (!import.meta.client) return
       document.documentElement.dataset.theme = this.mode
+      
+      if (this.mode === 'dark') {
+        document.documentElement.classList.add('dark')
+      } else {
+        document.documentElement.classList.remove('dark')
+      }
+
       // 同步浏览器原生表单/滚动条配色，减少主题切换割裂感。
       document.documentElement.style.colorScheme = this.mode
     }
