@@ -44,14 +44,14 @@ const triggerClassName = computed(() => {
   if (props.tone === 'panel') {
     return [
       'min-h-[68px] rounded-2xl px-4 py-3',
-      'border border-borderSoft bg-panelSoft transition-all duration-200',
+      'border border-borderSoft bg-surfaceBase transition-all duration-200',
       isOpen.value ? 'border-neon/55 shadow-[0_0_0_1px_rgba(69,215,255,0.18)]' : 'hover:border-neon/35'
     ]
   }
 
   return [
     'min-h-[48px] rounded-full px-4 py-2.5',
-    'border border-slate-200 dark:border-borderSoft bg-white/60 dark:bg-white/5 backdrop-blur-sm transition-all duration-200',
+    'border border-borderSoft bg-surfaceOverlay backdrop-blur-sm transition-all duration-200',
     isOpen.value ? 'border-neon/55 shadow-[0_0_0_1px_rgba(69,215,255,0.18)]' : 'hover:border-neon/35'
   ]
 })
@@ -146,7 +146,7 @@ onBeforeUnmount(() => {
     >
       <div
         v-if="isOpen"
-        class="absolute top-[calc(100%+10px)] z-[160] min-w-full overflow-hidden rounded-3xl border border-slate-200 dark:border-borderSoft bg-white/95 dark:bg-panel/95 p-2 shadow-[0_28px_64px_rgba(0,0,0,0.1)] dark:shadow-[0_28px_64px_rgba(0,0,0,0.32)] backdrop-blur-xl"
+        class="absolute top-[calc(100%+10px)] z-[160] min-w-full overflow-hidden rounded-3xl border border-borderSoft bg-surfaceRaised p-2 shadow-[0_28px_64px_rgba(0,0,0,0.18)] backdrop-blur-xl"
         :class="align === 'right' ? 'right-0' : 'left-0'"
       >
         <button
@@ -157,7 +157,7 @@ onBeforeUnmount(() => {
           :class="[
             option.value === modelValue
               ? 'bg-neon/12 text-textMain shadow-[inset_0_0_0_1px_rgba(69,215,255,0.18)]'
-              : 'text-textMuted hover:bg-slate-100 dark:hover:bg-white/5 hover:text-textMain',
+              : 'text-textMuted hover:bg-surfaceHover hover:text-textMain',
             option.disabled ? 'cursor-not-allowed opacity-45' : ''
           ]"
           :disabled="option.disabled"
@@ -168,7 +168,7 @@ onBeforeUnmount(() => {
               <span class="truncate text-sm font-semibold">{{ option.label }}</span>
               <span
                 v-if="option.badge"
-                class="rounded-full border border-borderSoft/80 bg-slate-100 dark:bg-white/5 px-2 py-0.5 text-[10px] text-textMuted"
+                class="rounded-full border border-borderSoft/80 bg-surfaceOverlay px-2 py-0.5 text-[10px] text-textMuted"
               >
                 {{ option.badge }}
               </span>

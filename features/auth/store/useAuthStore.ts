@@ -1,4 +1,5 @@
 import { defineStore } from 'pinia'
+import type { AccountProfile } from '~/entities/account/types'
 import type { AuthSession, WechatLoginStatus } from '~/entities/auth/types'
 
 interface AuthState {
@@ -54,6 +55,21 @@ export const useAuthStore = defineStore('auth', {
       this.loginStatus = session.loggedIn ? 'success' : 'waiting'
       if (import.meta.client) {
         localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(session))
+      }
+    },
+    syncUserProfile(profile: AccountProfile) {
+      // 登录后的昵称、头像、余额统一以后端账户接口为准，避免本地缓存与真实账户数据漂移。
+      if (!this.session.loggedIn) return
+
+      this.session.user = {
+        id: profile.id || this.session.user?.id || '',
+        nickname: profile.nickname || this.session.user?.nickname || '',
+        avatar: profile.avatarUrl || this.session.user?.avatar || '',
+        creditBalance: profile.creditBalance
+      }
+
+      if (import.meta.client) {
+        localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(this.session))
       }
     },
     logout() {

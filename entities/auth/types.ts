@@ -1,7 +1,8 @@
-﻿export interface AuthUser {
+export interface AuthUser {
   id: string
   nickname: string
   avatar: string
+  creditBalance?: number
 }
 
 export interface AuthSession {

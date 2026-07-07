@@ -2,6 +2,7 @@ import { callApi } from '~/shared/api/client'
 import type {
   DramaAnalyzePayload,
   DramaAssetGeneratePayload,
+  DramaCreditPreviewPayload,
   DramaCoverRegeneratePayload,
   DramaDeleteResult,
   DramaProjectCreatePayload,
@@ -45,6 +46,14 @@ export const dramaService = {
 
   async ingestScript(projectId: string, payload: DramaScriptIngestPayload) {
     return callApi('drama/ingestScript', (adapter) => adapter.ingestDramaScript(projectId, payload))
+  },
+
+  async updateIntentRouter(projectId: string, payload: { mode: 'drama' | 'ad' | 'general' }) {
+    return callApi('drama/updateIntentRouter', (adapter) => adapter.updateDramaIntentRouter(projectId, payload))
+  },
+
+  async previewCredits(projectId: string, payload: DramaCreditPreviewPayload) {
+    return callApi('drama/previewCredits', (adapter) => adapter.previewDramaCredits(projectId, payload))
   },
 
   async analyze(projectId: string, payload?: DramaAnalyzePayload) {

@@ -31,10 +31,10 @@ const model = computed({
 const containerClassName = computed(() => {
   // 输入框统一走组件外壳，后续页面不再直接拼裸 input 样式。
   if (props.tone === 'panel') {
-    return 'rounded-2xl border border-borderSoft bg-panelSoft px-4 py-3 transition focus-within:border-neon/55 focus-within:shadow-[0_0_0_1px_rgba(69,215,255,0.18)]'
+    return 'rounded-2xl border border-borderSoft bg-surfaceBase px-4 py-3 transition focus-within:border-neon/55 focus-within:shadow-[0_0_0_1px_rgba(69,215,255,0.18)]'
   }
 
-  return 'rounded-full border border-borderSoft bg-white/60 dark:bg-white/5 px-4 py-2.5 backdrop-blur-sm transition focus-within:border-neon/55 focus-within:shadow-[0_0_0_1px_rgba(69,215,255,0.18)]'
+  return 'rounded-full border border-borderSoft bg-surfaceOverlay px-4 py-2.5 backdrop-blur-sm transition focus-within:border-neon/55 focus-within:shadow-[0_0_0_1px_rgba(69,215,255,0.18)]'
 })
 </script>
 

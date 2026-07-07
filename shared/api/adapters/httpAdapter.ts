@@ -1,18 +1,30 @@
+import type { AccountProfile, CreditLedgerPage, CreditPackage } from '~/entities/account/types'
 import type { CanvasGraph } from '~/entities/canvas/types'
 import type {
+  DramaCreditPreview,
   DramaAssetItem,
+  DramaIntentMode,
   DramaProjectCard,
   DramaProjectDetail,
   DramaRuntimeConfig
 } from '~/entities/drama/types'
 import type { Project } from '~/entities/project/types'
-import type { StoryboardRow } from '~/entities/storyboard/types'
+import type {
+  StoryboardClipContract,
+  StoryboardContinuationPolicy,
+  StoryboardContinuityState,
+  StoryboardPromptLoad,
+  StoryboardReferenceBinding,
+  StoryboardRow
+} from '~/entities/storyboard/types'
 import type { AuthSession } from '~/entities/auth/types'
+import { useAuthStore } from '~/features/auth/store/useAuthStore'
 import { getStoryboardCache, setStoryboardCache } from '~/shared/api/storyboardCache'
 import type {
   ApiAdapter,
   ApiResponse,
   DramaAssetGeneratePayload,
+  DramaCreditPreviewPayload,
   DramaDeleteResult,
   DramaProjectCreatePayload,
   DramaPropUpdatePayload,
@@ -119,6 +131,44 @@ interface BackendRuntimeConfigResponse {
   video_models: BackendRuntimeModelOption[]
 }
 
+interface BackendAccountProfileResponse {
+  id: string
+  nickname: string
+  avatar_url: string
+  credit_balance: number
+}
+
+interface BackendCreditPackageResponse {
+  id: string
+  package_name: string
+  credits_amount: number
+  price_amount: number
+  original_price: number
+  is_active: boolean
+  sort_order: number
+  meta_json: Record<string, unknown>
+  created_at: string
+  updated_at: string
+}
+
+interface BackendCreditLedgerResponse {
+  id: string
+  user_id: string
+  transaction_type: string
+  amount: number
+  balance_after: number
+  reference_id: string
+  description: string
+  created_at: string
+}
+
+interface BackendCreditLedgerPageResponse {
+  items: BackendCreditLedgerResponse[]
+  total: number
+  page: number
+  page_size: number
+}
+
 interface BackendDramaAssetItem {
   id: string
   image_url: string
@@ -203,6 +253,14 @@ interface BackendDramaDetailResponse {
     roles: BackendDramaRole[]
     scenes: BackendDramaScene[]
     props: BackendDramaProp[]
+    intent_router?: {
+      entry_intent?: DramaIntentMode
+      detected_mode?: DramaIntentMode
+      confidence?: number
+      signals?: string[]
+      user_override_mode?: DramaIntentMode | ''
+      effective_mode?: DramaIntentMode
+    }
   }
   analysis_run: {
     status: string
@@ -220,6 +278,25 @@ interface BackendDramaDetailResponse {
   storyboards: BackendStoryboardRow[]
 }
 
+interface BackendDramaCreditPreviewResponse {
+  action: string
+  task_type: string
+  provider: string
+  model: string
+  required_credits: number
+  current_balance: number
+  balance_after: number
+  sufficient: boolean
+  quantity: number
+  quantity_unit: string
+  pricing_snapshot: Record<string, unknown>
+  message: string
+  warnings?: string[]
+  prompt_load?: StoryboardPromptLoad
+  mode_hint?: DramaIntentMode
+  repair_patch_summary?: string
+}
+
 interface BackendStoryboardVideoRunResponse {
   storyboard_row_id: string
   run_id: string
@@ -231,6 +308,42 @@ interface BackendStoryboardVideoPromptResponse {
   video_prompt: string
   video_model: string
   video_duration_sec: number
+  clip_contract?: {
+    intent?: string
+    subject?: string
+    scene_anchor?: string
+    action_anchor?: string
+    endpoint?: string
+    mode?: 'drama' | 'ad' | 'general'
+    story_function?: 'hook' | 'conflict' | 'reveal' | 'transition' | 'payoff' | 'cta'
+    camera_goal?: string
+    performance_focus?: string
+    must_keep?: string[]
+    forbidden_drift?: string[]
+    shot_budget?: string
+  }
+  reference_bindings?: Array<{
+    url?: string
+    type?: 'image' | 'video'
+    role?: 'identity' | 'scene' | 'prop' | 'motion' | 'endpoint'
+    priority?: number
+    label?: string
+    source?: string
+  }>
+  continuity_state?: {
+    accepted_take_id?: string
+    last_frame_summary?: string
+    screen_direction?: string
+    camera_phase?: string
+    locked_appearance?: string[]
+    locked_props?: string[]
+    next_beat?: string
+  }
+  retry_reason?: '' | 'identity' | 'motion' | 'camera' | 'scene' | 'prop' | 'rhythm' | 'quality'
+  warnings?: string[]
+  prompt_load?: StoryboardPromptLoad
+  mode_hint?: DramaIntentMode
+  repair_patch_summary?: string
 }
 
 interface BackendStoryboardVideoBatchResponse {
@@ -372,6 +485,113 @@ function mapDramaProjectCard(raw: BackendDramaProjectCardResponse): DramaProject
   }
 }
 
+function mapAccountProfile(raw: BackendAccountProfileResponse): AccountProfile {
+  return {
+    id: raw.id,
+    nickname: raw.nickname || '',
+    avatarUrl: raw.avatar_url || '',
+    creditBalance: raw.credit_balance || 0
+  }
+}
+
+function mapCreditPackage(raw: BackendCreditPackageResponse): CreditPackage {
+  return {
+    id: raw.id,
+    packageName: raw.package_name,
+    creditsAmount: raw.credits_amount,
+    priceAmount: Number(raw.price_amount || 0),
+    originalPrice: Number(raw.original_price || 0),
+    isActive: raw.is_active,
+    sortOrder: raw.sort_order || 100,
+    metaJson: raw.meta_json || {},
+    createdAt: raw.created_at || '',
+    updatedAt: raw.updated_at || ''
+  }
+}
+
+function mapCreditLedgerPage(raw: BackendCreditLedgerPageResponse): CreditLedgerPage {
+  return {
+    items: (raw.items || []).map((item) => ({
+      id: item.id,
+      userId: item.user_id,
+      transactionType: item.transaction_type,
+      amount: item.amount,
+      balanceAfter: item.balance_after,
+      referenceId: item.reference_id || '',
+      description: item.description || '',
+      createdAt: item.created_at || ''
+    })),
+    total: raw.total || 0,
+    page: raw.page || 1,
+    pageSize: raw.page_size || 10
+  }
+}
+
+function mapStoryboardClipContract(raw?: Record<string, unknown>): StoryboardClipContract {
+  return {
+    intent: String(raw?.intent || ''),
+    subject: String(raw?.subject || ''),
+    sceneAnchor: String(raw?.scene_anchor || raw?.sceneAnchor || ''),
+    actionAnchor: String(raw?.action_anchor || raw?.actionAnchor || ''),
+    endpoint: String(raw?.endpoint || ''),
+    mode: ['drama', 'ad', 'general'].includes(String(raw?.mode || '')) ? raw?.mode as StoryboardClipContract['mode'] : 'drama',
+    storyFunction: ['hook', 'conflict', 'reveal', 'transition', 'payoff', 'cta'].includes(String(raw?.story_function || raw?.storyFunction || ''))
+      ? String(raw?.story_function || raw?.storyFunction) as StoryboardClipContract['storyFunction']
+      : 'transition',
+    cameraGoal: String(raw?.camera_goal || raw?.cameraGoal || ''),
+    performanceFocus: String(raw?.performance_focus || raw?.performanceFocus || ''),
+    mustKeep: Array.isArray(raw?.must_keep) ? raw.must_keep as string[] : (Array.isArray(raw?.mustKeep) ? raw.mustKeep as string[] : []),
+    forbiddenDrift: Array.isArray(raw?.forbidden_drift) ? raw.forbidden_drift as string[] : (Array.isArray(raw?.forbiddenDrift) ? raw.forbiddenDrift as string[] : []),
+    shotBudget: String(raw?.shot_budget || raw?.shotBudget || '')
+  }
+}
+
+function mapStoryboardReferenceBindings(raw?: Array<Record<string, unknown>>): StoryboardReferenceBinding[] {
+  return (raw || []).map((binding) => ({
+    url: String(binding?.url || ''),
+    type: binding?.type === 'video' ? 'video' : 'image',
+    role: ['identity', 'scene', 'prop', 'motion', 'endpoint'].includes(String(binding?.role || ''))
+      ? binding.role as StoryboardReferenceBinding['role']
+      : 'identity',
+    priority: Number(binding?.priority || 100),
+    label: String(binding?.label || ''),
+    source: String(binding?.source || '')
+  })).filter((binding) => binding.url)
+}
+
+function mapStoryboardContinuityState(raw?: Record<string, unknown>): StoryboardContinuityState {
+  return {
+    acceptedTakeId: String(raw?.accepted_take_id || raw?.acceptedTakeId || ''),
+    lastFrameSummary: String(raw?.last_frame_summary || raw?.lastFrameSummary || ''),
+    screenDirection: String(raw?.screen_direction || raw?.screenDirection || ''),
+    cameraPhase: String(raw?.camera_phase || raw?.cameraPhase || ''),
+    lockedAppearance: Array.isArray(raw?.locked_appearance) ? raw.locked_appearance as string[] : (Array.isArray(raw?.lockedAppearance) ? raw.lockedAppearance as string[] : []),
+    lockedProps: Array.isArray(raw?.locked_props) ? raw.locked_props as string[] : (Array.isArray(raw?.lockedProps) ? raw.lockedProps as string[] : []),
+    nextBeat: String(raw?.next_beat || raw?.nextBeat || '')
+  }
+}
+
+function mapStoryboardRuntimeExtra(raw?: Record<string, unknown>) {
+  return {
+    ...raw,
+    clipContract: mapStoryboardClipContract((raw?.clip_contract as Record<string, unknown> | undefined) || (raw?.clipContract as Record<string, unknown> | undefined)),
+    referenceBindings: mapStoryboardReferenceBindings((raw?.reference_bindings as Array<Record<string, unknown>> | undefined) || (raw?.referenceBindings as Array<Record<string, unknown>> | undefined)),
+    continuityState: mapStoryboardContinuityState((raw?.continuity_state as Record<string, unknown> | undefined) || (raw?.continuityState as Record<string, unknown> | undefined)),
+    retryReason: String(raw?.retry_reason || raw?.retryReason || ''),
+    warnings: Array.isArray(raw?.warnings) ? raw.warnings as string[] : [],
+    promptLoad: String(raw?.prompt_load || raw?.promptLoad || 'low') as StoryboardPromptLoad,
+    continuationPolicy: (String(raw?.continuation_policy || raw?.continuationPolicy || 'auto') as StoryboardContinuationPolicy),
+    continuationFromRowId: String(raw?.continuation_from_row_id || raw?.continuationFromRowId || ''),
+    resolvedContinuationFromRowId: String(raw?.resolved_continuation_from_row_id || raw?.resolvedContinuationFromRowId || ''),
+    autoContinuityReason: String(raw?.auto_continuity_reason || raw?.autoContinuityReason || ''),
+    acceptedTakeId: String(raw?.accepted_take_id || raw?.acceptedTakeId || ''),
+    acceptedSummary: String(raw?.accepted_summary || raw?.acceptedSummary || ''),
+    repairPatchSummary: String(raw?.repair_patch_summary || raw?.repairPatchSummary || ''),
+    repairRevision: Number(raw?.repair_revision || raw?.repairRevision || 0),
+    lastRetryReason: String(raw?.last_retry_reason || raw?.lastRetryReason || '')
+  }
+}
+
 function mapStoryboardRows(projectId: string, nodeId: string, rows: BackendStoryboardRow[]): StoryboardRow[] {
   return rows.map((row) => ({
     id: row.id || `${projectId}-${row.source_node_id || nodeId}-${row.shot_no}`,
@@ -406,7 +626,7 @@ function mapStoryboardRows(projectId: string, nodeId: string, rows: BackendStory
     generationStatus: row.generation_status || 'idle',
     generationProgress: row.generation_progress || 0,
     generationErrorMessage: row.generation_error_message || '',
-    extra: row.extra || {}
+    extra: mapStoryboardRuntimeExtra(row.extra || {})
   }))
 }
 
@@ -490,7 +710,15 @@ function mapDramaDetail(raw: BackendDramaDetailResponse): DramaProjectDetail {
         description: prop.description,
         prompt: prop.prompt,
         asset: prop.asset ? mapDramaAsset(prop.asset) : null
-      }))
+      })),
+      intentRouter: {
+        entryIntent: raw.analysis?.intent_router?.entry_intent || 'drama',
+        detectedMode: raw.analysis?.intent_router?.detected_mode || 'drama',
+        confidence: Number(raw.analysis?.intent_router?.confidence || 0.55),
+        signals: raw.analysis?.intent_router?.signals || [],
+        userOverrideMode: raw.analysis?.intent_router?.user_override_mode || '',
+        effectiveMode: raw.analysis?.intent_router?.effective_mode || 'drama'
+      }
     },
     analysisRun: {
       status: raw.analysis_run?.status || 'idle',
@@ -521,6 +749,27 @@ function mapDramaDetail(raw: BackendDramaDetailResponse): DramaProjectDetail {
   }
 }
 
+function mapDramaCreditPreview(raw: BackendDramaCreditPreviewResponse): DramaCreditPreview {
+  return {
+    action: raw.action,
+    taskType: raw.task_type,
+    provider: raw.provider,
+    model: raw.model,
+    requiredCredits: raw.required_credits || 0,
+    currentBalance: raw.current_balance || 0,
+    balanceAfter: raw.balance_after || 0,
+    sufficient: Boolean(raw.sufficient),
+    quantity: Number(raw.quantity || 0),
+    quantityUnit: raw.quantity_unit || '',
+    pricingSnapshot: raw.pricing_snapshot || {},
+    message: raw.message || '',
+    warnings: raw.warnings || [],
+    promptLoad: raw.prompt_load || 'low',
+    modeHint: raw.mode_hint || 'drama',
+    repairPatchSummary: raw.repair_patch_summary || ''
+  }
+}
+
 function createEmptyGraph(): CanvasGraph {
   return {
     version: 1,
@@ -533,9 +782,22 @@ function createEmptyGraph(): CanvasGraph {
 async function request<T>(path: string, options?: Parameters<typeof $fetch<T>>[1]): Promise<T> {
   const config = useRuntimeConfig()
   const baseUrl = config.public.apiBase as string
+  let resolvedUserId = '00000000-0000-0000-0000-000000000001'
+  if (import.meta.client) {
+    try {
+      const authStore = useAuthStore()
+      resolvedUserId = authStore.session.user?.id || resolvedUserId
+    } catch {
+      resolvedUserId = '00000000-0000-0000-0000-000000000001'
+    }
+  }
 
   return $fetch<T>(`${baseUrl}${path}`, {
-    ...options
+    ...options,
+    headers: {
+      ...((options?.headers as Record<string, string>) || {}),
+      'X-User-Id': resolvedUserId
+    }
   })
 }
 
@@ -615,6 +877,21 @@ export const httpAdapter: ApiAdapter = {
         : undefined
     }
     return ok(session)
+  },
+
+  async getAccountProfile() {
+    const response = await request<BackendAccountProfileResponse>('/account/me')
+    return ok(mapAccountProfile(response))
+  },
+
+  async getAccountCreditPackages() {
+    const response = await request<BackendCreditPackageResponse[]>('/account/credit-packages')
+    return ok((response || []).map(mapCreditPackage))
+  },
+
+  async getAccountCreditLedgers(page = 1, pageSize = 10) {
+    const response = await request<BackendCreditLedgerPageResponse>(`/account/credit-ledgers?page=${page}&page_size=${pageSize}`)
+    return ok(mapCreditLedgerPage(response))
   },
 
   async phoneLogin(phone: string, code: string) {
@@ -755,7 +1032,8 @@ export const httpAdapter: ApiAdapter = {
       method: 'POST',
       body: {
         title: payload.title || '未命名短剧项目',
-        theme_mode: payload.themeMode || 'dark'
+        theme_mode: payload.themeMode || 'dark',
+        entry_intent: payload.entryIntent || 'drama'
       }
     })
     return ok(mapDramaDetail(response), 'created')
@@ -775,6 +1053,42 @@ export const httpAdapter: ApiAdapter = {
       }
     })
     return ok(mapDramaDetail(response))
+  },
+
+  async updateDramaIntentRouter(projectId: string, payload: { mode: DramaIntentMode }) {
+    const response = await request<BackendDramaDetailResponse>(`/drama/projects/${projectId}/intent-router`, {
+      method: 'PATCH',
+      body: {
+        mode: payload.mode
+      }
+    })
+    return ok(mapDramaDetail(response))
+  },
+
+  async previewDramaCredits(projectId: string, payload: DramaCreditPreviewPayload) {
+    const response = await request<BackendDramaCreditPreviewResponse>(`/drama/projects/${projectId}/credit-preview`, {
+      method: 'POST',
+      body: {
+        action: payload.action,
+        model: payload.model || '',
+        provider: payload.provider || '',
+        duration_sec: payload.durationSec || 5,
+        resolution: payload.resolution || '',
+        audio: payload.audio ?? true,
+        overwrite: payload.overwrite ?? true,
+        shot_count: payload.shotCount || 12,
+        row_id: payload.rowId || '',
+        role_keys: payload.roleKeys || [],
+        scene_keys: payload.sceneKeys || [],
+        prop_keys: payload.propKeys || [],
+        reference_urls: payload.referenceUrls || [],
+        reference_bindings: payload.referenceBindings || [],
+        continuation_from_row_id: payload.continuationFromRowId || '',
+        continuation_policy: payload.continuationPolicy || 'auto',
+        retry_reason: payload.retryReason || ''
+      }
+    })
+    return ok(mapDramaCreditPreview(response))
   },
 
   async analyzeDrama(projectId: string, payload?: { model?: string; aspectRatio?: string; resolution?: string; style?: string }) {
@@ -952,7 +1266,8 @@ export const httpAdapter: ApiAdapter = {
         prop_keys: payload.propKeys,
         video_prompt: payload.videoPrompt,
         video_model: payload.videoModel,
-        video_duration_sec: payload.videoDurationSec
+        video_duration_sec: payload.videoDurationSec,
+        extra_json: payload.extra
       }
     })
     return ok(mapDramaDetail(response))
@@ -978,14 +1293,26 @@ export const httpAdapter: ApiAdapter = {
       body: {
         model: payload?.model || '',
         duration_sec: payload?.durationSec || 5,
-        resolution: payload?.resolution || '720p'
+        resolution: payload?.resolution || '720p',
+        reference_bindings: payload?.referenceBindings || [],
+        continuation_from_row_id: payload?.continuationFromRowId || '',
+        continuation_policy: payload?.continuationPolicy || 'auto',
+        retry_reason: payload?.retryReason || ''
       }
     })
     return ok({
       storyboardRowId: response.storyboard_row_id,
       videoPrompt: response.video_prompt,
       videoModel: response.video_model,
-      videoDurationSec: response.video_duration_sec
+      videoDurationSec: response.video_duration_sec,
+      clipContract: mapStoryboardClipContract(response.clip_contract),
+      referenceBindings: mapStoryboardReferenceBindings(response.reference_bindings),
+      continuityState: mapStoryboardContinuityState(response.continuity_state),
+      retryReason: response.retry_reason || '',
+      warnings: response.warnings || [],
+      promptLoad: response.prompt_load || 'low',
+      modeHint: response.mode_hint || 'drama',
+      repairPatchSummary: response.repair_patch_summary || ''
     })
   },
 
@@ -997,6 +1324,10 @@ export const httpAdapter: ApiAdapter = {
         duration_sec: payload?.durationSec || 5,
         resolution: payload?.resolution || '720p',
         reference_urls: payload?.referenceUrls || [],
+        reference_bindings: payload?.referenceBindings || [],
+        continuation_from_row_id: payload?.continuationFromRowId || '',
+        continuation_policy: payload?.continuationPolicy || 'auto',
+        retry_reason: payload?.retryReason || '',
         audio: payload?.audioMode !== 'silent'
       }
     })

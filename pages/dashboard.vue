@@ -1,5 +1,10 @@
 <script setup lang="ts">
 import type { DramaProjectCard, DramaProjectDetail, DramaRuntimeConfig } from '~/entities/drama/types'
+import BillingWorkspacePanel from '~/features/billing/components/BillingWorkspacePanel.vue'
+import DashboardSidebar from '~/features/dashboard/components/DashboardSidebar.vue'
+import PlaceholderWorkspacePanel from '~/features/dashboard/components/PlaceholderWorkspacePanel.vue'
+import ProjectDirectoryPanel from '~/features/projects/components/ProjectDirectoryPanel.vue'
+import { useAccountStore } from '~/features/billing/store/useAccountStore'
 import { useThemeStore } from '~/features/ui/store/useThemeStore'
 import { useAuthStore } from '~/features/auth/store/useAuthStore'
 import { dramaService } from '~/shared/api/services/dramaService'
@@ -38,6 +43,7 @@ const fallbackAspectRatioCatalog: DashboardOption[] = [
 
 const router = useRouter()
 const route = useRoute()
+const accountStore = useAccountStore()
 const themeStore = useThemeStore()
 const authStore = useAuthStore()
 
@@ -200,6 +206,10 @@ const projectOverviewLabel = computed(() => {
   return `共 ${projectTotalCount.value} 个项目，第 ${currentProjectPage.value} / ${totalProjectPages.value} 页`
 })
 const deleteDialogVisible = computed(() => pendingDeleteProjectIds.value.length > 0)
+const currentCreditBalance = computed(() => authStore.session.user?.creditBalance ?? accountStore.currentBalance)
+const billingPackages = computed(() => accountStore.packages)
+const billingLedgers = computed(() => accountStore.ledgerPage.items)
+const isBillingLoading = computed(() => accountStore.loadingProfile || accountStore.loadingPackages || accountStore.loadingLedgers)
 const pageNumberList = computed(() => {
   // 分页按钮最多展示 5 个页码，避免页数多时横向撑开太长。
   const total = totalProjectPages.value
@@ -209,13 +219,6 @@ const pageNumberList = computed(() => {
   const normalizedStart = Math.max(1, end - 4)
   return Array.from({ length: end - normalizedStart + 1 }, (_, index) => normalizedStart + index)
 })
-
-function projectStatusLabel(status: string): string {
-  if (status === 'published') return '已发布'
-  if (status === 'generating') return '生成中'
-  if (status === 'analyzing') return '解析中'
-  return '草稿'
-}
 
 function applyRuntimeDefaults(config: DramaRuntimeConfig): void {
   // 运行时模型默认值全部以后端配置中心为准，页面只消费，不写死平台细节。
@@ -242,19 +245,13 @@ function applyRuntimeDefaults(config: DramaRuntimeConfig): void {
   }
 }
 
-function formatProjectDate(value?: string): string {
-  if (!value) return '最近更新'
-  const parsed = new Date(value)
-  if (Number.isNaN(parsed.getTime())) return value.slice(0, 16).replace('T', ' ')
-
-  // 卡片里直接展示到分钟，方便用户判断最近一次编辑时间。
-  return new Intl.DateTimeFormat('zh-CN', {
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false
-  }).format(parsed)
+async function loadBillingData(): Promise<void> {
+  try {
+    await accountStore.refreshBillingOverview()
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error('[livliv] 点数数据加载失败', error)
+  }
 }
 
 async function loadProjectDirectory(): Promise<void> {
@@ -279,10 +276,6 @@ async function loadProjectDirectory(): Promise<void> {
   }
 }
 
-function isProjectSelected(projectId: string): boolean {
-  return selectedProjectIds.value.includes(projectId)
-}
-
 function toggleBatchSelectionMode(): void {
   isBatchSelectingProjects.value = !isBatchSelectingProjects.value
   if (!isBatchSelectingProjects.value) {
@@ -300,7 +293,7 @@ function goToProjectPage(page: number): void {
 function toggleProjectSelection(projectId: string): void {
   if (!isBatchSelectingProjects.value) return
 
-  if (isProjectSelected(projectId)) {
+  if (selectedProjectIds.value.includes(projectId)) {
     selectedProjectIds.value = selectedProjectIds.value.filter((id) => id !== projectId)
     return
   }
@@ -395,7 +388,13 @@ async function bootstrapDashboard(): Promise<void> {
     const config = await dramaService.getRuntimeConfig()
     runtimeConfig.value = config
     applyRuntimeDefaults(config)
-    await loadProjectDirectory()
+    await Promise.all([
+      loadProjectDirectory(),
+      accountStore.refreshProfile()
+    ])
+    if (activeWorkspaceView.value === 'billing') {
+      await loadBillingData()
+    }
     loadingText.value = '输入剧本后即可开始生成短剧项目。'
   } catch (error) {
     // eslint-disable-next-line no-console
@@ -443,7 +442,9 @@ async function ingestAndAnalyze(): Promise<void> {
     () =>
       dramaService.createProject({
         title: buildDramaProjectTitle(),
-        themeMode: themeStore.mode
+        themeMode: themeStore.mode,
+        // 当前页面就是短剧工作流入口，因此默认把入口意图写成 drama。
+        entryIntent: 'drama'
       }),
     '短剧项目已创建。'
   )
@@ -564,7 +565,8 @@ async function createWorkspaceProject(): Promise<void> {
     // 项目列表里的“创建项目”统一创建短剧项目，并直接进入短剧工作流页面。
     const project = await dramaService.createProject({
       title: '未命名短剧项目',
-      themeMode: themeStore.mode
+      themeMode: themeStore.mode,
+      entryIntent: 'drama'
     })
 
     await loadProjectDirectory()
@@ -647,7 +649,16 @@ watch(
   }
 )
 
+watch(
+  () => activeWorkspaceView.value,
+  async (view) => {
+    if (view !== 'billing') return
+    await loadBillingData()
+  }
+)
+
 function handleLogout() {
+  accountStore.reset()
   authStore.logout()
   router.push('/')
 }
@@ -660,129 +671,19 @@ onMounted(async () => {
 <template>
   <main class="min-h-screen bg-bg text-textMain">
     <div class="flex min-h-screen">
-      <aside class="relative flex w-[282px] flex-col border-r border-borderSoft bg-panelSoft/30 px-5 py-6">
-        <div class="mb-10 flex items-center gap-3.5 px-2">
-          <div class="flex h-10 w-10 items-center justify-center rounded-[14px] bg-neon text-white shadow-[0_4px_12px_rgba(69,215,255,0.25)]">
-            <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M5 12c0-3.866 3.134-7 7-7 2.76 0 5 2.24 5 5 0 2.209-1.791 4-4 4H9a3 3 0 1 0 0 6h4" stroke-linecap="round" stroke-linejoin="round" />
-            </svg>
-          </div>
-          <div>
-            <p class="text-base font-bold text-textMain tracking-tight">Livliv</p>
-            <p class="text-[10px] font-semibold tracking-widest text-textMuted uppercase mt-0.5">Short Drama</p>
-          </div>
-        </div>
-
-        <div class="mb-3 px-2">
-          <p class="text-[11px] font-semibold uppercase tracking-wider text-textMuted/70">Workspace</p>
-        </div>
-
-        <nav class="space-y-1">
-          <NuxtLink
-            to="/dashboard"
-            class="group flex w-full items-center gap-3.5 rounded-2xl px-3 py-3 text-left transition-all duration-200"
-            :class="activeMenu === 'drama'
-              ? 'bg-panel text-neon shadow-sm ring-1 ring-borderSoft'
-              : 'text-textMuted hover:bg-panelSoft/80 hover:text-textMain'"
-          >
-            <svg viewBox="0 0 24 24" class="h-5 w-5 transition-transform group-hover:scale-110" :class="activeMenu === 'drama' ? 'text-neon' : 'text-textMuted group-hover:text-textMain'" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M7 6h10M7 12h10M7 18h6" stroke-linecap="round" />
-            </svg>
-            <p class="text-[14px] font-semibold">剧本创作</p>
-          </NuxtLink>
-
-          <NuxtLink
-            to="/dashboard-product"
-            class="group flex w-full items-center gap-3.5 rounded-2xl px-3 py-3 text-left transition-all duration-200"
-            :class="activeMenu === 'product'
-              ? 'bg-panel text-neon shadow-sm ring-1 ring-borderSoft'
-              : 'text-textMuted hover:bg-panelSoft/80 hover:text-textMain'"
-          >
-            <svg viewBox="0 0 24 24" class="h-5 w-5 transition-transform group-hover:scale-110" :class="activeMenu === 'product' ? 'text-neon' : 'text-textMuted group-hover:text-textMain'" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M5 19h14M7 16l3-4 3 3 2-2 2 3" stroke-linecap="round" stroke-linejoin="round" />
-              <path d="M8 8h.01" stroke-linecap="round" stroke-linejoin="round" />
-              <rect x="4" y="5" width="16" height="12" rx="3" />
-            </svg>
-            <p class="text-[14px] font-semibold">商品图生成</p>
-          </NuxtLink>
-
-          <NuxtLink
-            to="/dashboard-canvas"
-            class="group flex w-full items-center gap-3.5 rounded-2xl px-3 py-3 text-left transition-all duration-200"
-            :class="activeMenu === 'canvas'
-              ? 'bg-panel text-neon shadow-sm ring-1 ring-borderSoft'
-              : 'text-textMuted hover:bg-panelSoft/80 hover:text-textMain'"
-          >
-            <svg viewBox="0 0 24 24" class="h-5 w-5 transition-transform group-hover:scale-110" :class="activeMenu === 'canvas' ? 'text-neon' : 'text-textMuted group-hover:text-textMain'" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M5 12h14M12 5v14" stroke-linecap="round" />
-              <rect x="4" y="4" width="16" height="16" rx="3" />
-            </svg>
-            <div class="flex flex-1 items-center justify-between">
-              <p class="text-[14px] font-semibold">无限画布</p>
-              <span class="rounded-md bg-panelSoft px-1.5 py-0.5 text-[10px] font-medium text-textMuted">Beta</span>
-            </div>
-          </NuxtLink>
-        </nav>
-
-        <div class="mt-8 mb-3 px-2">
-          <p class="text-[11px] font-semibold uppercase tracking-wider text-textMuted/70">Manage</p>
-        </div>
-
-        <nav class="space-y-1">
-          <NuxtLink
-            to="/dashboard-projects"
-            class="group flex w-full items-center gap-3.5 rounded-2xl px-3 py-3 text-left transition-all duration-200"
-            :class="activeWorkspaceView === 'projects'
-              ? 'bg-panel text-neon shadow-sm ring-1 ring-borderSoft'
-              : 'text-textMuted hover:bg-panelSoft/80 hover:text-textMain'"
-          >
-            <svg viewBox="0 0 24 24" class="h-5 w-5 transition-transform group-hover:scale-110" :class="activeWorkspaceView === 'projects' ? 'text-neon' : 'text-textMuted group-hover:text-textMain'" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M4 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z" stroke-linecap="round" stroke-linejoin="round" />
-            </svg>
-            <p class="text-[14px] font-semibold">我的项目</p>
-          </NuxtLink>
-        </nav>
-
-        <div class="mt-auto space-y-2 pt-8">
-          <div class="mb-4 rounded-2xl bg-gradient-to-br from-neon/10 to-transparent p-4 border border-neon/20 backdrop-blur-md">
-            <p class="text-xs font-semibold text-neon">点数余额</p>
-            <p class="mt-1 text-2xl font-bold text-slate-900 dark:text-white tracking-tight">12,500 <span class="text-sm text-textMuted font-normal">点</span></p>
-            <NuxtLink to="/dashboard-billing" class="mt-3 flex w-full justify-center items-center rounded-xl bg-neon py-2 text-xs font-bold text-white dark:text-slate-900 transition hover:bg-neon/90 hover:shadow-[0_0_15px_rgba(72,214,255,0.4)]">
-              充值 / 升级
-            </NuxtLink>
-          </div>
-          
-          <button class="flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left text-textMuted transition hover:bg-slate-100 dark:hover:bg-white/5 hover:text-slate-900 dark:hover:text-white" @click="themeStore.toggleMode()">
-            <svg v-if="themeStore.mode === 'dark'" viewBox="0 0 24 24" class="h-5 w-5 text-textMuted" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M12 3v2.5M12 18.5V21M4.93 4.93l1.77 1.77M17.3 17.3l1.77 1.77M3 12h2.5M18.5 12H21M4.93 19.07l1.77-1.77M17.3 6.7l1.77-1.77M12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z" stroke-linecap="round" />
-            </svg>
-            <svg v-else viewBox="0 0 24 24" class="h-5 w-5 text-textMuted" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M20 15.5A8.5 8.5 0 1 1 8.5 4a7 7 0 1 0 11.5 11.5Z" stroke-linecap="round" stroke-linejoin="round" />
-            </svg>
-            <p class="text-[14px] font-semibold">{{ themeStore.mode === 'dark' ? '浅色模式' : '深色模式' }}</p>
-          </button>
-          <NuxtLink to="/" class="flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left text-textMuted transition hover:bg-slate-100 dark:hover:bg-white/5 hover:text-slate-900 dark:hover:text-white">
-            <svg viewBox="0 0 24 24" class="h-5 w-5 text-textMuted" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M10 19l-7-7m0 0l7-7m-7 7h18" stroke-linecap="round" stroke-linejoin="round" />
-            </svg>
-            <p class="text-[14px] font-semibold">返回首页</p>
-          </NuxtLink>
-          <button class="flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left text-red-500/80 transition hover:bg-red-500/10 hover:text-red-500" @click="handleLogout">
-            <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9" stroke-linecap="round" stroke-linejoin="round" />
-            </svg>
-            <p class="text-[14px] font-semibold">退出登录</p>
-          </button>
-        </div>
-      </aside>
+      <DashboardSidebar
+        :active-menu="activeMenu"
+        :active-workspace-view="activeWorkspaceView"
+        :current-credit-balance="currentCreditBalance"
+        :logged-in="authStore.session.loggedIn"
+        :nickname="authStore.session.user?.nickname ?? ''"
+        :avatar-url="authStore.session.user?.avatar ?? ''"
+        :theme-mode="themeStore.mode"
+        @logout="handleLogout"
+        @toggle-theme="themeStore.toggleMode()"
+      />
 
       <section class="min-w-0 flex-1 px-10 py-8">
-        <div v-if="activeWorkspaceView === 'projects'" class="mb-8">
-          <div>
-            <h1 class="text-[40px] font-semibold leading-none">我的项目</h1>
-          </div>
-        </div>
-
         <div v-if="isBooting" class="rounded-3xl border border-borderSoft bg-panel p-8 text-textMuted">
           {{ loadingText }}
         </div>
@@ -795,275 +696,50 @@ onMounted(async () => {
             {{ infoMessage }}
           </div>
 
-          <div v-if="activeWorkspaceView === 'projects'" class="space-y-6">
-            <section class="w-full">
-              <div class="mb-8 flex flex-wrap items-center justify-between gap-4">
-                <div>
-                  <h2 class="text-[28px] font-bold tracking-tight text-textMain">项目列表</h2>
-                  <p class="mt-2 text-[15px] text-textMuted">{{ projectOverviewLabel }}</p>
-                </div>
+          <ProjectDirectoryPanel
+            v-if="activeWorkspaceView === 'projects'"
+            :current-project-page="currentProjectPage"
+            :is-all-current-page-selected="isAllCurrentPageSelected"
+            :is-batch-selecting-projects="isBatchSelectingProjects"
+            :is-creating-workspace-project="isCreatingWorkspaceProject"
+            :is-deleting-projects="isDeletingProjects"
+            :page-number-list="pageNumberList"
+            :project-overview-label="projectOverviewLabel"
+            :selected-project-count="selectedProjectCount"
+            :selected-project-ids="selectedProjectIds"
+            :total-project-pages="totalProjectPages"
+            :workspace-project-cards="workspaceProjectCards"
+            @create-project="createWorkspaceProject"
+            @go-to-page="goToProjectPage"
+            @open-project="openDramaProject"
+            @request-delete-batch="askDeleteBatchProjects"
+            @request-delete-project="askDeleteSingleProject"
+            @toggle-batch-mode="toggleBatchSelectionMode"
+            @toggle-project-selection="toggleProjectSelection"
+            @toggle-select-all="toggleSelectAllProjects"
+          />
 
-                <div class="flex flex-wrap items-center gap-3">
-                  <button
-                    class="rounded-full bg-panel px-5 py-2.5 text-[14px] font-semibold text-textMain shadow-sm ring-1 ring-borderSoft transition hover:bg-panelSoft hover:text-neon"
-                    @click="toggleBatchSelectionMode"
-                  >
-                    {{ isBatchSelectingProjects ? '取消批量操作' : '批量操作' }}
-                  </button>
-                  <button
-                    v-if="isBatchSelectingProjects"
-                    class="rounded-full bg-panel px-5 py-2.5 text-[14px] font-semibold text-textMain shadow-sm ring-1 ring-borderSoft transition hover:bg-panelSoft hover:text-neon"
-                    @click="toggleSelectAllProjects"
-                  >
-                    {{ isAllCurrentPageSelected ? '取消全选' : '全选当前页' }}
-                  </button>
-                  <button
-                    v-if="isBatchSelectingProjects"
-                    class="rounded-full bg-red-500/90 px-5 py-2.5 text-[14px] font-semibold text-white shadow-sm transition hover:bg-red-500 disabled:cursor-not-allowed disabled:bg-red-500/50 disabled:text-white/70 disabled:shadow-none"
-                    :disabled="!hasSelectedProjects || isDeletingProjects"
-                    @click="askDeleteBatchProjects"
-                  >
-                    批量删除<span v-if="hasSelectedProjects">（{{ selectedProjectCount }}）</span>
-                  </button>
-                  <button
-                    class="flex items-center gap-2 rounded-full bg-neon px-5 py-2.5 text-[14px] font-semibold text-white dark:text-slate-900 shadow-sm transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
-                    :disabled="isCreatingWorkspaceProject"
-                    @click="createWorkspaceProject"
-                  >
-                    <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14m-7-7h14" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                    {{ isCreatingWorkspaceProject ? '创建中...' : '新建项目' }}
-                  </button>
-                </div>
-              </div>
+          <PlaceholderWorkspacePanel
+            v-else-if="activeMenu === 'product'"
+            eyebrow="商品图生成"
+            title="下一阶段入口已预留"
+            description="这一页先保留为占位，但模型、主题、供应商切换会复用当前控制台的配置中心。后面我们可以直接在这里接电商主图、详情图、卖点图的整套生成流程。"
+          />
 
-              <div class="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-5">
-                <button
-                  class="group flex h-[280px] flex-col items-center justify-center overflow-hidden rounded-[24px] bg-panelSoft ring-1 ring-borderSoft transition-all hover:bg-neonSoft/10 hover:ring-neon/30 hover:shadow-neon"
-                  type="button"
-                  :disabled="isCreatingWorkspaceProject"
-                  @click="createWorkspaceProject"
-                >
-                  <div class="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-panel shadow-sm ring-1 ring-borderSoft transition-transform group-hover:scale-110 group-hover:text-neon">
-                    <svg viewBox="0 0 24 24" class="h-8 w-8 text-textMuted group-hover:text-neon" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14m-7-7h14" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                  </div>
-                  <h4 class="text-[16px] font-bold text-textMain">创建新项目</h4>
-                  <p class="mt-2 text-[13px] text-textMuted">进入创作工作流界面</p>
-                </button>
+          <PlaceholderWorkspacePanel
+            v-else-if="activeMenu === 'canvas'"
+            eyebrow="无限画布"
+            title="当前入口暂停使用"
+            description="这一页先单独保留为路由占位，方便刷新后仍停留在当前模块。后续恢复无限画布时，我们会直接在这里接回完整工作流。"
+          />
 
-                <div
-                  v-for="project in workspaceProjectCards"
-                  :key="project.id"
-                  class="group relative h-[280px] overflow-hidden rounded-[24px] bg-panel ring-1 ring-borderSoft transition-all hover:-translate-y-1 hover:shadow-panel hover:ring-neon/30"
-                  role="button"
-                  tabindex="0"
-                  @click="openDramaProject(project.id)"
-                  @keydown.enter.prevent="openDramaProject(project.id)"
-                  @keydown.space.prevent="openDramaProject(project.id)"
-                >
-                  <button
-                    v-if="isBatchSelectingProjects"
-                    class="absolute left-4 top-4 z-20 flex h-7 w-7 items-center justify-center rounded-full border border-borderSoft bg-panel shadow-sm transition"
-                    :class="isProjectSelected(project.id)
-                      ? 'border-neon bg-neon text-slate-900 shadow-[0_10px_24px_rgba(69,215,255,0.28)]'
-                      : 'text-transparent hover:border-neon'"
-                    type="button"
-                    @click.stop="toggleProjectSelection(project.id)"
-                  >
-                    <svg viewBox="0 0 20 20" class="h-4 w-4" fill="currentColor">
-                      <path fill-rule="evenodd" d="M16.704 5.29a1 1 0 0 1 .006 1.414l-7.2 7.26a1 1 0 0 1-1.42 0l-3.8-3.83a1 1 0 1 1 1.42-1.408l3.09 3.116 6.49-6.544a1 1 0 0 1 1.414-.008Z" clip-rule="evenodd" />
-                    </svg>
-                  </button>
-                  <button
-                    v-else
-                    class="absolute right-4 top-4 z-20 flex h-8 w-8 items-center justify-center rounded-full bg-panelSoft/90 text-textMuted opacity-0 shadow-sm backdrop-blur ring-1 ring-borderSoft transition hover:bg-rose-500/20 hover:text-rose-400 hover:ring-rose-500/40 group-hover:opacity-100"
-                    type="button"
-                    @click.stop="askDeleteSingleProject(project)"
-                  >
-                    <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2">
-                      <path d="M4 7h16M10 11v6M14 11v6M7 7l1 11a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2l1-11M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" stroke-linecap="round" stroke-linejoin="round" />
-                    </svg>
-                  </button>
-
-                  <div class="relative h-[160px] w-full overflow-hidden bg-panelSoft">
-                    <UiFluidImage
-                      :src="project.coverImageUrl"
-                      :alt="project.title"
-                      wrapper-class="h-full w-full"
-                      img-class="object-cover transition-transform duration-500 group-hover:scale-105"
-                      fallback-text=""
-                      loading-label=""
-                    />
-                    <div class="absolute inset-0 bg-gradient-to-t from-bg/60 to-transparent opacity-0 transition-opacity duration-300 group-hover:opacity-100"></div>
-                  </div>
-
-                  <div class="flex h-[120px] flex-col justify-between p-5">
-                    <div>
-                      <div class="flex items-center justify-between gap-3">
-                        <h4 class="min-w-0 flex-1 truncate text-[16px] font-bold text-textMain">{{ project.title }}</h4>
-                        <span class="flex h-5 items-center rounded-md bg-neonSoft/20 px-2 text-[11px] font-semibold text-neon ring-1 ring-neon/20">
-                          {{ projectStatusLabel(project.status) }}
-                        </span>
-                      </div>
-                      <div class="mt-2 flex flex-wrap items-center gap-1.5">
-                        <span class="rounded-md bg-panelSoft px-2 py-0.5 text-[11px] font-medium text-textMuted">
-                          {{ project.genre || '短剧' }}
-                        </span>
-                        <span
-                          v-for="tag in project.tags.slice(0, 2)"
-                          :key="`${project.id}-${tag}`"
-                          class="rounded-md bg-panelSoft/50 px-2 py-0.5 text-[11px] font-medium text-textMuted ring-1 ring-borderSoft"
-                        >
-                          {{ tag }}
-                        </span>
-                      </div>
-                    </div>
-                    <p class="text-[12px] font-medium text-textMuted/70">{{ formatProjectDate(project.createdAt) }}</p>
-                  </div>
-                </div>
-              </div>
-
-              <div v-if="workspaceProjectCards.length === 0" class="mt-8 flex flex-col items-center justify-center rounded-[32px] border-2 border-dashed border-borderSoft bg-panelSoft/50 py-20 text-center">
-                <div class="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-panel shadow-sm ring-1 ring-borderSoft">
-                  <svg viewBox="0 0 24 24" class="h-8 w-8 text-textMuted/50" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                </div>
-                <h3 class="text-[18px] font-bold text-textMain">还没有项目</h3>
-                <p class="mt-2 text-[14px] text-textMuted">点击上方按钮创建你的第一个短剧项目吧</p>
-              </div>
-
-              <div
-                v-if="totalProjectPages > 1"
-                class="mt-10 flex items-center justify-between border-t border-borderSoft pt-6"
-              >
-                <p class="text-[14px] font-medium text-textMuted">
-                  第 {{ currentProjectPage }} / {{ totalProjectPages }} 页
-                </p>
-
-                <div class="flex items-center gap-2">
-                  <button
-                    class="flex h-10 w-10 items-center justify-center rounded-full bg-panel text-textMuted shadow-sm ring-1 ring-borderSoft transition hover:bg-panelSoft hover:text-textMain disabled:cursor-not-allowed disabled:opacity-50"
-                    :disabled="currentProjectPage === 1"
-                    @click="goToProjectPage(currentProjectPage - 1)"
-                  >
-                    <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                  </button>
-
-                  <div class="flex items-center gap-1 px-2">
-                    <button
-                      v-for="pageNo in pageNumberList"
-                      :key="`project-page-${pageNo}`"
-                      class="flex h-9 min-w-9 items-center justify-center rounded-lg text-[14px] font-semibold transition"
-                      :class="pageNo === currentProjectPage
-                        ? 'bg-textMain text-bg'
-                        : 'text-textMuted hover:bg-panelSoft hover:text-textMain'"
-                      @click="goToProjectPage(pageNo)"
-                    >
-                      {{ pageNo }}
-                    </button>
-                  </div>
-
-                  <button
-                    class="flex h-10 w-10 items-center justify-center rounded-full bg-panel text-textMuted shadow-sm ring-1 ring-borderSoft transition hover:bg-panelSoft hover:text-textMain disabled:cursor-not-allowed disabled:opacity-50"
-                    :disabled="currentProjectPage === totalProjectPages"
-                    @click="goToProjectPage(currentProjectPage + 1)"
-                  >
-                    <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                  </button>
-                </div>
-              </div>
-            </section>
-          </div>
-
-          <div v-else-if="activeMenu === 'product'" class="space-y-5">
-            <section class="rounded-3xl border border-borderSoft bg-panel p-6 shadow-panel">
-              <p class="text-sm uppercase tracking-[0.24em] text-textMuted">商品图生成</p>
-              <h2 class="mt-2 text-2xl font-bold">下一阶段入口已预留</h2>
-              <p class="mt-3 max-w-3xl text-sm leading-7 text-textMuted">
-                这一页先保留为占位，但模型、主题、供应商切换会复用当前控制台的配置中心。后面我们可以直接在这里接电商主图、详情图、卖点图的整套生成流程。
-              </p>
-            </section>
-          </div>
-
-          <div v-else-if="activeMenu === 'canvas'" class="space-y-5">
-            <section class="rounded-3xl border border-borderSoft bg-panel p-6 shadow-panel">
-              <p class="text-sm uppercase tracking-[0.24em] text-textMuted">无限画布</p>
-              <h2 class="mt-2 text-2xl font-bold">当前入口暂停使用</h2>
-              <p class="mt-3 max-w-3xl text-sm leading-7 text-textMuted">
-                这一页先单独保留为路由占位，方便刷新后仍停留在当前模块。后续恢复无限画布时，我们会直接在这里接回完整工作流。
-              </p>
-            </section>
-          </div>
-
-          <div v-else-if="activeWorkspaceView === 'billing'" class="space-y-8">
-            <div class="mb-8">
-              <h1 class="text-[40px] font-semibold leading-none">充值中心</h1>
-              <p class="mt-3 text-[15px] text-textMuted">购买点数或开通高级会员，解锁更多 AI 创作特权</p>
-            </div>
-
-            <div class="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-              <!-- 套餐 1 -->
-              <div class="relative flex flex-col overflow-hidden rounded-[24px] bg-panel p-8 shadow-panel ring-1 ring-borderSoft transition-all hover:-translate-y-1 hover:shadow-neon hover:ring-neon/50">
-                <div class="mb-4 flex items-center justify-between">
-                  <h3 class="text-xl font-bold text-textMain">基础包</h3>
-                  <span class="rounded-full bg-slate-100 dark:bg-white/10 px-3 py-1 text-xs font-semibold text-slate-600 dark:text-textMuted">适合体验体验</span>
-                </div>
-                <div class="mb-6 flex items-baseline gap-1">
-                  <span class="text-3xl font-extrabold text-neon">¥ 9.9</span>
-                  <span class="text-sm text-textMuted line-through ml-2">¥ 15.0</span>
-                  <span class="text-sm text-textMuted ml-1">/ 1,000 点</span>
-                </div>
-                <ul class="mb-8 flex-1 space-y-3 text-sm text-textMuted">
-                  <li class="flex items-center gap-2"><svg class="h-4 w-4 text-neon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.704 5.29a1 1 0 01.006 1.414l-7.2 7.26a1 1 0 01-1.42 0l-3.8-3.83a1 1 0 111.42-1.408l3.09 3.116 6.49-6.544a1 1 0 011.414-.008z" clip-rule="evenodd"/></svg> 约可生成 5 个短剧项目</li>
-                  <li class="flex items-center gap-2"><svg class="h-4 w-4 text-neon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.704 5.29a1 1 0 01.006 1.414l-7.2 7.26a1 1 0 01-1.42 0l-3.8-3.83a1 1 0 111.42-1.408l3.09 3.116 6.49-6.544a1 1 0 011.414-.008z" clip-rule="evenodd"/></svg> 支持基础文本模型</li>
-                </ul>
-                <button class="w-full rounded-xl bg-panelSoft py-3 text-sm font-semibold text-textMain transition-colors hover:bg-neon hover:text-black">
-                  立即购买
-                </button>
-              </div>
-
-              <!-- 套餐 2 (推荐) -->
-              <div class="relative flex flex-col overflow-hidden rounded-[24px] bg-panel p-8 shadow-neon ring-2 ring-neon transition-all hover:-translate-y-1">
-                <div class="absolute right-0 top-0 rounded-bl-[24px] bg-neon px-4 py-1.5 text-xs font-bold text-black">
-                  最受欢迎
-                </div>
-                <div class="mb-4 flex items-center justify-between">
-                  <h3 class="text-xl font-bold text-textMain">创作包</h3>
-                </div>
-                <div class="mb-6 flex items-baseline gap-1">
-                  <span class="text-3xl font-extrabold text-neon">¥ 49.9</span>
-                  <span class="text-sm text-textMuted line-through ml-2">¥ 60.0</span>
-                  <span class="text-sm text-textMuted ml-1">/ 6,000 点</span>
-                </div>
-                <ul class="mb-8 flex-1 space-y-3 text-sm text-textMuted">
-                  <li class="flex items-center gap-2"><svg class="h-4 w-4 text-neon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.704 5.29a1 1 0 01.006 1.414l-7.2 7.26a1 1 0 01-1.42 0l-3.8-3.83a1 1 0 111.42-1.408l3.09 3.116 6.49-6.544a1 1 0 011.414-.008z" clip-rule="evenodd"/></svg> 约可生成 35 个短剧项目</li>
-                  <li class="flex items-center gap-2"><svg class="h-4 w-4 text-neon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.704 5.29a1 1 0 01.006 1.414l-7.2 7.26a1 1 0 01-1.42 0l-3.8-3.83a1 1 0 111.42-1.408l3.09 3.116 6.49-6.544a1 1 0 011.414-.008z" clip-rule="evenodd"/></svg> 支持所有文本模型与图像模型</li>
-                  <li class="flex items-center gap-2"><svg class="h-4 w-4 text-neon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.704 5.29a1 1 0 01.006 1.414l-7.2 7.26a1 1 0 01-1.42 0l-3.8-3.83a1 1 0 111.42-1.408l3.09 3.116 6.49-6.544a1 1 0 011.414-.008z" clip-rule="evenodd"/></svg> 优先排队特权</li>
-                </ul>
-                <button class="w-full rounded-xl bg-neon py-3 text-sm font-bold text-white dark:text-slate-900 transition-all hover:bg-neon/90 hover:shadow-[0_0_15px_rgba(72,214,255,0.4)]">
-                  立即购买
-                </button>
-              </div>
-
-              <!-- 套餐 3 -->
-              <div class="relative flex flex-col overflow-hidden rounded-[24px] bg-panel p-8 shadow-panel ring-1 ring-borderSoft transition-all hover:-translate-y-1 hover:shadow-neon hover:ring-neon/50">
-                <div class="mb-4 flex items-center justify-between">
-                  <h3 class="text-xl font-bold text-textMain">工作室包</h3>
-                </div>
-                <div class="mb-6 flex items-baseline gap-1">
-                  <span class="text-3xl font-extrabold text-neon">¥ 199.0</span>
-                  <span class="text-sm text-textMuted line-through ml-2">¥ 300.0</span>
-                  <span class="text-sm text-textMuted ml-1">/ 30,000 点</span>
-                </div>
-                <ul class="mb-8 flex-1 space-y-3 text-sm text-textMuted">
-                  <li class="flex items-center gap-2"><svg class="h-4 w-4 text-neon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.704 5.29a1 1 0 01.006 1.414l-7.2 7.26a1 1 0 01-1.42 0l-3.8-3.83a1 1 0 111.42-1.408l3.09 3.116 6.49-6.544a1 1 0 011.414-.008z" clip-rule="evenodd"/></svg> 约可生成 200 个短剧项目</li>
-                  <li class="flex items-center gap-2"><svg class="h-4 w-4 text-neon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.704 5.29a1 1 0 01.006 1.414l-7.2 7.26a1 1 0 01-1.42 0l-3.8-3.83a1 1 0 111.42-1.408l3.09 3.116 6.49-6.544a1 1 0 011.414-.008z" clip-rule="evenodd"/></svg> 尊享极速通道</li>
-                  <li class="flex items-center gap-2"><svg class="h-4 w-4 text-neon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.704 5.29a1 1 0 01.006 1.414l-7.2 7.26a1 1 0 01-1.42 0l-3.8-3.83a1 1 0 111.42-1.408l3.09 3.116 6.49-6.544a1 1 0 011.414-.008z" clip-rule="evenodd"/></svg> 1v1专属客服支持</li>
-                </ul>
-                <button class="w-full rounded-xl bg-panelSoft py-3 text-sm font-semibold text-textMain transition-colors hover:bg-neon hover:text-black">
-                  立即购买
-                </button>
-              </div>
-            </div>
-          </div>
+          <BillingWorkspacePanel
+            v-else-if="activeWorkspaceView === 'billing'"
+            :billing-ledgers="billingLedgers"
+            :billing-packages="billingPackages"
+            :current-credit-balance="currentCreditBalance"
+            :is-billing-loading="isBillingLoading"
+          />
 
           <div v-else class="space-y-8">
             <section class="mx-auto max-w-[1080px]">

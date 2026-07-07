@@ -1,5 +1,7 @@
+import type { AccountProfile, CreditLedgerPage, CreditPackage } from '~/entities/account/types'
 import type { AuthSession } from '~/entities/auth/types'
-import type { DramaProjectCard, DramaProjectDetail, DramaRuntimeConfig } from '~/entities/drama/types'
+import type { DramaCreditPreview, DramaProjectCard, DramaProjectDetail, DramaRuntimeConfig } from '~/entities/drama/types'
+import type { StoryboardClipContract, StoryboardContinuationPolicy, StoryboardContinuityState, StoryboardReferenceBinding } from '~/entities/storyboard/types'
 import { defaultNodes } from '~/shared/constants/canvas'
 import { mockProjects } from '~/shared/constants/landing'
 import { mockStoryboardRows } from '~/shared/constants/storyboard'
@@ -8,6 +10,7 @@ import type {
   ApiAdapter,
   ApiResponse,
   DramaAssetGeneratePayload,
+  DramaCreditPreviewPayload,
   DramaPropUpdatePayload,
   DramaProjectCreatePayload,
   DramaRoleUpdatePayload,
@@ -45,7 +48,15 @@ function createEmptyDramaAnalysis() {
     episodeDetails: [],
     roles: [],
     scenes: [],
-    props: []
+    props: [],
+    intentRouter: {
+      entryIntent: 'drama',
+      detectedMode: 'drama',
+      confidence: 0.55,
+      signals: ['默认沿用入口模式'],
+      userOverrideMode: '',
+      effectiveMode: 'drama'
+    }
   }
 }
 
@@ -98,6 +109,102 @@ function createMockSession(loggedIn: boolean): AuthSession {
         }
       : null
   }
+}
+
+function createMockAccountProfile(): AccountProfile {
+  return {
+    id: '00000000-0000-0000-0000-000000000001',
+    nickname: '创作导演',
+    avatarUrl: 'https://placehold.co/120x120/png',
+    creditBalance: 12500
+  }
+}
+
+function createMockCreditPreview(payload: DramaCreditPreviewPayload): DramaCreditPreview {
+  const currentBalance = createMockAccountProfile().creditBalance
+  const count = Math.max(
+    payload.roleKeys?.length || 0,
+    payload.sceneKeys?.length || 0,
+    payload.propKeys?.length || 0,
+    1
+  )
+  const previewMap: Record<string, { taskType: string; credits: number; quantity: number; unit: string }> = {
+    analysis: { taskType: 'text', credits: 18, quantity: 18000, unit: 'token' },
+    roles: { taskType: 'image', credits: count * 30, quantity: count, unit: 'count' },
+    scenes: { taskType: 'image', credits: count * 30, quantity: count, unit: 'count' },
+    props: { taskType: 'image', credits: count * 30, quantity: count, unit: 'count' },
+    storyboards: { taskType: 'text', credits: 24, quantity: 24000, unit: 'token' },
+    storyboard_video: {
+      taskType: 'video',
+      credits: Math.max(2, payload.durationSec || 5) * 15,
+      quantity: Math.max(2, payload.durationSec || 5),
+      unit: 'second'
+    }
+  }
+  const matched = previewMap[payload.action] || { taskType: 'text', credits: 1, quantity: 1, unit: 'count' }
+  return {
+    action: payload.action,
+    taskType: matched.taskType,
+    provider: payload.provider || 'alibaba',
+    model: payload.model || 'mock-model',
+    requiredCredits: matched.credits,
+    currentBalance,
+    balanceAfter: Math.max(currentBalance - matched.credits, 0),
+    sufficient: currentBalance >= matched.credits,
+    quantity: matched.quantity,
+    quantityUnit: matched.unit,
+    pricingSnapshot: {
+      mocked: true,
+      action: payload.action
+    },
+    message: `预计消耗 ${matched.credits} 点（Mock 数据）。`,
+    warnings: payload.action === 'storyboard_video' ? ['Mock 环境提示：当前风险提示仅用于联调展示。'] : [],
+    promptLoad: payload.action === 'storyboard_video' ? 'medium' : 'low',
+    modeHint: 'drama',
+    repairPatchSummary: payload.retryReason ? 'Mock 环境仅模拟单变量修复说明。' : ''
+  }
+}
+
+function createMockClipContract(row: any): StoryboardClipContract {
+  return {
+    intent: row.moodDesc || '推进当前分镜情绪',
+    subject: row.roleName || '主角',
+    sceneAnchor: row.sceneDescription || '当前场景',
+    actionAnchor: row.actionDesc || row.sceneDescription || '执行当前动作',
+    endpoint: '镜头在当前冲突点收束',
+    mode: 'drama',
+    storyFunction: 'transition',
+    cameraGoal: 'Mock 环境下默认突出当前镜头关注点。',
+    performanceFocus: 'Mock 环境下默认突出主体动作与情绪变化。',
+    mustKeep: [row.roleName || '主角'].filter(Boolean),
+    forbiddenDrift: ['禁止人物变脸', '禁止场景跳变'],
+    shotBudget: `${row.videoDurationSec || 5} 秒建议 1-3 个镜头`
+  }
+}
+
+function createEmptyContinuityState(): StoryboardContinuityState {
+  return {
+    acceptedTakeId: '',
+    lastFrameSummary: '',
+    screenDirection: '',
+    cameraPhase: '',
+    lockedAppearance: [],
+    lockedProps: [],
+    nextBeat: ''
+  }
+}
+
+function createMockReferenceBindings(row: any): StoryboardReferenceBinding[] {
+  return [
+    {
+      url: 'https://placehold.co/320x320/png',
+      type: 'image',
+      role: 'identity',
+      priority: 10,
+      label: `${row.roleName || '主角'} 一致性参考`,
+      source: 'mock:identity'
+    }
+  ]
 }
 
 export const mockAdapter: ApiAdapter = {
@@ -155,6 +262,74 @@ export const mockAdapter: ApiAdapter = {
     return ok(createMockSession(false), 'waiting')
   },
 
+  async getAccountProfile() {
+    await sleep(120)
+    return ok(createMockAccountProfile())
+  },
+
+  async getAccountCreditPackages() {
+    await sleep(120)
+    const packages: CreditPackage[] = [
+      {
+        id: 'pkg-basic',
+        packageName: '基础包',
+        creditsAmount: 1000,
+        priceAmount: 9.9,
+        originalPrice: 15,
+        isActive: true,
+        sortOrder: 10,
+        metaJson: {},
+        createdAt: '2026-01-01T00:00:00+08:00',
+        updatedAt: '2026-01-01T00:00:00+08:00'
+      },
+      {
+        id: 'pkg-creator',
+        packageName: '创作包',
+        creditsAmount: 6000,
+        priceAmount: 49.9,
+        originalPrice: 60,
+        isActive: true,
+        sortOrder: 20,
+        metaJson: {},
+        createdAt: '2026-01-01T00:00:00+08:00',
+        updatedAt: '2026-01-01T00:00:00+08:00'
+      }
+    ]
+    return ok(packages)
+  },
+
+  async getAccountCreditLedgers(page = 1, pageSize = 10) {
+    await sleep(120)
+    const ledgerPage: CreditLedgerPage = {
+      items: [
+        {
+          id: 'ledger-1',
+          userId: '00000000-0000-0000-0000-000000000001',
+          transactionType: 'system_grant',
+          amount: 5000,
+          balanceAfter: 12500,
+          referenceId: 'mock-seed',
+          description: '初始化赠送',
+          createdAt: '2026-07-01T10:00:00+08:00'
+        },
+        {
+          id: 'ledger-2',
+          userId: '00000000-0000-0000-0000-000000000001',
+          transactionType: 'consume',
+          amount: -120,
+          balanceAfter: 7500,
+          referenceId: 'storyboard-task',
+          description: '生成分镜',
+          createdAt: '2026-07-02T10:00:00+08:00'
+        }
+      ].slice(0, pageSize),
+      total: 2,
+      page,
+      pageSize
+    }
+    return ok(ledgerPage)
+  },
+
   async phoneLogin(phone: string, _code: string) {
     return ok({
       loggedIn: true,
@@ -187,11 +362,11 @@ export const mockAdapter: ApiAdapter = {
         video_model: 'wan2.7-r2v',
         video_resolution: '360p'
       },
-      textModels: [{ provider: 'alibaba', model: 'Qwen-Plus', label: '阿里文本经济款', description: '适合剧情解析与分镜输出' }],
-      imageModels: [{ provider: 'alibaba', model: 'wanx2.1-t2i-turbo', label: '阿里图像经济款', description: '角色与场景快速出图' }],
+      textModels: [{ provider: 'alibaba', model: 'Qwen-Plus', label: '阿里文本经济款', description: '适合剧情解析与分镜输出', baseCredits: 1, billingMode: 'per_token' }],
+      imageModels: [{ provider: 'alibaba', model: 'wanx2.1-t2i-turbo', label: '阿里图像经济款', description: '角色与场景快速出图', baseCredits: 30, billingMode: 'per_call' }],
       videoModels: [
-        { provider: 'alibaba', model: 'wan2.7-r2v', label: 'wan2.7-r2v', description: '阿里默认参考生视频模型' },
-        { provider: 'bytedance', model: 'Doubao-Seedance-1.0-pro-fast', label: 'Doubao-Seedance-1.0-pro-fast', description: '字节视频备选模型' }
+        { provider: 'alibaba', model: 'wan2.7-r2v', label: 'wan2.7-r2v', description: '阿里默认参考生视频模型', baseCredits: 15, billingMode: 'per_second' },
+        { provider: 'bytedance', model: 'Doubao-Seedance-1.0-pro-fast', label: 'Doubao-Seedance-1.0-pro-fast', description: '字节视频备选模型', baseCredits: 12, billingMode: 'per_second' }
       ]
     }
     return ok(data)
@@ -270,6 +445,7 @@ export const mockAdapter: ApiAdapter = {
   async createDramaProject(payload: DramaProjectCreatePayload) {
     await sleep(180)
     const projectId = `drama-project-${Date.now()}`
+    const initialIntent = payload.entryIntent || 'drama'
     const detail: DramaProjectDetail = {
       id: `drama-${Date.now()}`,
       projectId,
@@ -279,7 +455,17 @@ export const mockAdapter: ApiAdapter = {
       themeMode: payload.themeMode || 'dark',
       sourceScriptText: '',
       sourceFileName: '',
-      analysis: createEmptyDramaAnalysis(),
+      analysis: {
+        ...createEmptyDramaAnalysis(),
+        intentRouter: {
+          entryIntent: initialIntent,
+          detectedMode: initialIntent,
+          confidence: 0.55,
+          signals: ['默认沿用入口模式'],
+          userOverrideMode: '',
+          effectiveMode: initialIntent
+        }
+      },
       analysisRun: createIdleAnalysisRun(),
       storyboards: []
     }
@@ -331,16 +517,48 @@ export const mockAdapter: ApiAdapter = {
   async ingestDramaScript(projectId: string, payload: DramaScriptIngestPayload) {
     await sleep(180)
     const current = mockDramaProjectMap.get(projectId)!
+    const preservedIntent = current.analysis.intentRouter
     const next = {
       ...current,
       sourceScriptText: payload.content,
       sourceFileName: payload.fileName || '',
       currentStage: 'input',
-      analysis: createEmptyDramaAnalysis(),
+      analysis: {
+        ...createEmptyDramaAnalysis(),
+        intentRouter: {
+          ...createEmptyDramaAnalysis().intentRouter,
+          entryIntent: preservedIntent.entryIntent || 'drama',
+          detectedMode: preservedIntent.entryIntent || 'drama',
+          effectiveMode: preservedIntent.entryIntent || 'drama'
+        }
+      },
       analysisRun: createIdleAnalysisRun()
     }
     mockDramaProjectMap.set(projectId, next)
     return ok(next)
+  },
+
+  async updateDramaIntentRouter(projectId: string, payload: { mode: 'drama' | 'ad' | 'general' }) {
+    await sleep(80)
+    const current = mockDramaProjectMap.get(projectId)!
+    const next = {
+      ...current,
+      analysis: {
+        ...current.analysis,
+        intentRouter: {
+          ...current.analysis.intentRouter,
+          userOverrideMode: payload.mode,
+          effectiveMode: payload.mode
+        }
+      }
+    }
+    mockDramaProjectMap.set(projectId, next)
+    return ok(next)
+  },
+
+  async previewDramaCredits(_projectId: string, payload: DramaCreditPreviewPayload) {
+    await sleep(80)
+    return ok(createMockCreditPreview(payload))
   },
 
   async analyzeDrama(projectId: string) {
@@ -389,7 +607,15 @@ export const mockAdapter: ApiAdapter = {
         props: [
           { key: 'phone', name: '手机', description: '穿越前后呼应的关键现代物件', prompt: '', asset: null },
           { key: 'imperial-edict', name: '圣旨', description: '推动朝堂冲突升级的核心道具', prompt: '', asset: null }
-        ]
+        ],
+        intentRouter: {
+          entryIntent: current.analysis.intentRouter.entryIntent || 'drama',
+          detectedMode: 'drama',
+          confidence: 0.92,
+          signals: ['命中分集结构', '命中戏剧冲突信号'],
+          userOverrideMode: current.analysis.intentRouter.userOverrideMode || '',
+          effectiveMode: current.analysis.intentRouter.userOverrideMode || 'drama'
+        }
       },
       analysisRun: {
         ...createIdleAnalysisRun(),
@@ -746,7 +972,8 @@ export const mockAdapter: ApiAdapter = {
             propKeys: payload.propKeys ?? row.propKeys,
             videoPrompt: payload.videoPrompt ?? row.videoPrompt,
             videoModel: payload.videoModel ?? row.videoModel,
-            videoDurationSec: payload.videoDurationSec ?? row.videoDurationSec
+            videoDurationSec: payload.videoDurationSec ?? row.videoDurationSec,
+            extra: payload.extra ?? row.extra
           })
     }
     mockDramaProjectMap.set(projectId, next)
@@ -804,12 +1031,13 @@ export const mockAdapter: ApiAdapter = {
 
     const activeModel = payload?.model || target.videoModel || 'wan2.7-r2v'
     const activeDuration = payload?.durationSec || target.videoDurationSec || 5
+    const clipContract = createMockClipContract(target)
+    const referenceBindings = payload?.referenceBindings?.length ? payload.referenceBindings : createMockReferenceBindings(target)
+    const continuityState = createEmptyContinuityState()
+    const repairPatchSummary = payload?.retryReason ? 'Mock 环境仅模拟单变量修复说明。' : ''
     const nextPrompt = [
-      `目标视频模型：${activeModel}`,
-      `目标成片时长：${activeDuration}秒`,
-      `分镜场景设定在：${target.sceneDescription || '当前分镜场景'}`,
-      `分镜动作描述：${target.actionDesc || target.sceneDescription || '按当前分镜动作执行'}`,
-      target.dialogue ? `对白情绪：${target.dialogue}` : ''
+      `镜头1 0-${activeDuration}s时间:日，[中景/推进]${clipContract.subject}在${clipContract.sceneAnchor}中执行${clipContract.actionAnchor}。`,
+      target.dialogue ? `镜头2 ${Math.max(activeDuration - 1, 0)}-${activeDuration}s时间:日，[近景/固定]通过表演传达对白情绪：${target.dialogue}` : ''
     ].filter(Boolean).join('\n')
 
     const next = {
@@ -820,7 +1048,23 @@ export const mockAdapter: ApiAdapter = {
             ...row,
             videoPrompt: nextPrompt,
             videoModel: activeModel,
-            videoDurationSec: activeDuration
+            videoDurationSec: activeDuration,
+            extra: {
+              ...(row.extra || {}),
+              clipContract,
+              referenceBindings,
+              continuityState,
+              retryReason: payload?.retryReason || '',
+              warnings: ['Mock 环境仅模拟任务卡与重修入口。'],
+              promptLoad: 'medium',
+              continuationPolicy: (payload?.continuationPolicy || 'auto') as StoryboardContinuationPolicy,
+              continuationFromRowId: payload?.continuationFromRowId || '',
+              resolvedContinuationFromRowId: payload?.continuationFromRowId || '',
+              autoContinuityReason: payload?.continuationPolicy === 'none' ? '当前已关闭自动承接' : 'Mock 环境默认沿用当前承接选择。',
+              repairPatchSummary,
+              repairRevision: payload?.retryReason ? Number((row.extra as any)?.repairRevision || 0) + 1 : Number((row.extra as any)?.repairRevision || 0),
+              lastRetryReason: payload?.retryReason || ''
+            }
           })
     }
     mockDramaProjectMap.set(projectId, next)
@@ -828,7 +1072,15 @@ export const mockAdapter: ApiAdapter = {
       storyboardRowId: rowId,
       videoPrompt: nextPrompt,
       videoModel: activeModel,
-      videoDurationSec: activeDuration
+      videoDurationSec: activeDuration,
+      clipContract,
+      referenceBindings,
+      continuityState,
+      retryReason: payload?.retryReason || '',
+      warnings: ['Mock 环境仅模拟任务卡与重修入口。'],
+      promptLoad: 'medium',
+      modeHint: current.analysis.intentRouter.effectiveMode || 'drama',
+      repairPatchSummary
     })
   },
 

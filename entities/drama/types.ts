@@ -1,4 +1,4 @@
-import type { StoryboardRow } from '~/entities/storyboard/types'
+import type { StoryboardPromptLoad, StoryboardRow } from '~/entities/storyboard/types'
 
 export interface DramaAssetItem {
   id: string
@@ -77,6 +77,17 @@ export interface DramaAnalysisRunState {
   errorMessage: string
 }
 
+export type DramaIntentMode = 'drama' | 'ad' | 'general'
+
+export interface DramaIntentRouter {
+  entryIntent: DramaIntentMode
+  detectedMode: DramaIntentMode
+  confidence: number
+  signals: string[]
+  userOverrideMode: DramaIntentMode | ''
+  effectiveMode: DramaIntentMode
+}
+
 export interface DramaStoryboardRunState {
   status: string
   totalEpisodes: number
@@ -110,6 +121,7 @@ export interface DramaAnalysis {
   roles: DramaRoleProfile[]
   scenes: DramaSceneProfile[]
   props: DramaPropProfile[]
+  intentRouter: DramaIntentRouter
 }
 
 export interface DramaProjectDetail {
@@ -163,4 +175,23 @@ export interface DramaRuntimeConfig {
   textModels: RuntimeModelOption[]
   imageModels: RuntimeModelOption[]
   videoModels: RuntimeModelOption[]
+}
+
+export interface DramaCreditPreview {
+  action: string
+  taskType: string
+  provider: string
+  model: string
+  requiredCredits: number
+  currentBalance: number
+  balanceAfter: number
+  sufficient: boolean
+  quantity: number
+  quantityUnit: string
+  pricingSnapshot: Record<string, unknown>
+  message: string
+  warnings: string[]
+  promptLoad: StoryboardPromptLoad
+  modeHint: DramaIntentMode
+  repairPatchSummary: string
 }

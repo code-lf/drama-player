@@ -17,11 +17,19 @@ export default {
         bg: 'var(--color-bg)',
         panel: 'var(--color-panel)',
         panelSoft: 'var(--color-panel-soft)',
+        surfaceBase: 'var(--color-surface-base)',
+        surfaceRaised: 'var(--color-surface-raised)',
+        surfaceOverlay: 'var(--color-surface-overlay)',
+        surfaceHover: 'var(--color-surface-hover)',
         textMain: 'var(--color-text-main)',
         textMuted: 'var(--color-text-muted)',
+        textInverse: 'var(--color-text-inverse)',
         neon: 'var(--color-neon)',
         neonSoft: 'var(--color-neon-soft)',
-        borderSoft: 'var(--color-border-soft)'
+        borderSoft: 'var(--color-border-soft)',
+        stateSuccess: 'var(--color-state-success)',
+        stateWarning: 'var(--color-state-warning)',
+        stateDanger: 'var(--color-state-danger)'
       },
       boxShadow: {
         neon: 'var(--shadow-neon)',

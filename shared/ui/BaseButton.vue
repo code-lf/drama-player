@@ -17,9 +17,9 @@ withDefaults(defineProps<Props>(), {
     class="rounded-full px-6 py-3 text-sm font-semibold transition-all duration-300"
     :class="[
       full ? 'w-full' : '',
-      variant === 'primary' && 'bg-neon text-slate-950 hover:brightness-105 neon-border',
-      variant === 'ghost' && 'bg-transparent text-textMain hover:bg-white/10',
-      variant === 'outline' && 'border border-borderSoft bg-panelSoft text-textMain hover:border-neon/60'
+      variant === 'primary' && 'bg-neon text-textInverse hover:brightness-105 neon-border',
+      variant === 'ghost' && 'bg-transparent text-textMain hover:bg-surfaceHover',
+      variant === 'outline' && 'border border-borderSoft bg-surfaceBase text-textMain hover:border-neon/60'
     ]"
   >
     <slot>{{ label }}</slot>

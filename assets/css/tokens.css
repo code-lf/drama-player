@@ -5,16 +5,30 @@
   --color-panel: rgba(16, 21, 34, 0.88);
   /* 次级面板背景：用于弱层级容器 */
   --color-panel-soft: rgba(19, 26, 40, 0.62);
+  /* 基础表面色：适用于输入框、次级容器等可交互区域 */
+  --color-surface-base: rgba(23, 31, 48, 0.88);
+  /* 抬升表面色：适用于弹层、下拉与悬浮卡片 */
+  --color-surface-raised: rgba(18, 25, 40, 0.96);
+  /* 覆盖层表面色：适用于玻璃态、半透明输入区 */
+  --color-surface-overlay: rgba(255, 255, 255, 0.06);
+  /* Hover 表面色：统一交互悬浮反馈 */
+  --color-surface-hover: rgba(255, 255, 255, 0.08);
   /* 主文本色 */
   --color-text-main: #e9edf7;
   /* 次文本色 */
   --color-text-muted: #95a4c4;
+  /* 反色文本：用于高亮按钮、深色品牌块 */
+  --color-text-inverse: #07111d;
   /* 霓虹主色：交互高亮 */
   --color-neon: #45d7ff;
   /* 霓虹柔和色：边框和阴影过渡 */
   --color-neon-soft: rgba(69, 215, 255, 0.35);
   /* 柔和边框色 */
   --color-border-soft: rgba(137, 170, 235, 0.2);
+  /* 状态色：统一成功/警告/危险场景 */
+  --color-state-success: #34d399;
+  --color-state-warning: #f59e0b;
+  --color-state-danger: #f87171;
 
   /* 圆角令牌：中大型卡片统一 */
   --radius-lg: 14px;
@@ -33,11 +47,19 @@
   --color-bg: #f4f7fb;
   --color-panel: rgba(255, 255, 255, 0.94);
   --color-panel-soft: rgba(245, 248, 255, 0.88);
+  --color-surface-base: rgba(255, 255, 255, 0.96);
+  --color-surface-raised: rgba(255, 255, 255, 0.98);
+  --color-surface-overlay: rgba(255, 255, 255, 0.72);
+  --color-surface-hover: rgba(19, 118, 255, 0.08);
   --color-text-main: #101522;
   --color-text-muted: #5b6783;
+  --color-text-inverse: #ffffff;
   --color-neon: #1376ff;
   --color-neon-soft: rgba(19, 118, 255, 0.22);
   --color-border-soft: rgba(19, 41, 84, 0.14);
+  --color-state-success: #059669;
+  --color-state-warning: #d97706;
+  --color-state-danger: #dc2626;
   --shadow-panel: 0 16px 60px rgba(13, 31, 66, 0.12);
   --shadow-neon: 0 0 0 1px rgba(19, 118, 255, 0.25), 0 10px 28px rgba(19, 118, 255, 0.12);
 }

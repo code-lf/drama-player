@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { authService } from '~/shared/api/services/authService'
+import { useAccountStore } from '~/features/billing/store/useAccountStore'
 import { useAuthStore } from '~/features/auth/store/useAuthStore'
 import { ref, computed, watch, onBeforeUnmount } from 'vue'
 
@@ -14,6 +15,7 @@ const emit = defineEmits<{
 }>()
 
 const authStore = useAuthStore()
+const accountStore = useAccountStore()
 const qrCode = ref('')
 const secLeft = ref(0)
 const polling = ref(false)
@@ -95,6 +97,7 @@ function startPolling(): void {
       const session = await authService.pollWechatLogin(authStore.ticketId)
       if (session.loggedIn) {
         authStore.applySession(session)
+        await accountStore.refreshProfile()
         localStatus.value = 'success'
         clearTicker()
         polling.value = false
@@ -149,6 +152,7 @@ async function handlePhoneLogin() {
     const session = await authService.phoneLogin(phone.value, verifyCode.value)
     if (session.loggedIn) {
       authStore.applySession(session)
+      await accountStore.refreshProfile()
       localStatus.value = 'success'
       setTimeout(() => {
         opened.value = false

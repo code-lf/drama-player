@@ -8,6 +8,7 @@
     "build": "nuxt build",
     "preview": "nuxt preview",
     "lint": "eslint .",
+    "theme:check": "node ./scripts/check-theme-usage.cjs",
     "dev:local": "nuxt dev",
     "dev:host": "nuxt dev --host 0.0.0.0 --port 3000"
   },

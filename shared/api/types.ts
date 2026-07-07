@@ -1,13 +1,24 @@
 import type { AuthSession } from '~/entities/auth/types'
+import type { AccountProfile, CreditLedgerPage, CreditPackage } from '~/entities/account/types'
 import type { CanvasGraph } from '~/entities/canvas/types'
 import type {
+  DramaCreditPreview,
+  DramaIntentMode,
   DramaProjectCard,
   DramaProjectDetail,
   DramaProjectPage,
   DramaRuntimeConfig
 } from '~/entities/drama/types'
 import type { Project } from '~/entities/project/types'
-import type { StoryboardRow } from '~/entities/storyboard/types'
+import type {
+  StoryboardClipContract,
+  StoryboardContinuationPolicy,
+  StoryboardContinuityState,
+  StoryboardPromptLoad,
+  StoryboardReferenceBinding,
+  StoryboardRetryReason,
+  StoryboardRow
+} from '~/entities/storyboard/types'
 
 export interface ApiResponse<T> {
   data: T
@@ -51,6 +62,7 @@ export interface WorkflowRunInfo {
 export interface DramaProjectCreatePayload {
   title?: string
   themeMode?: 'dark' | 'light'
+  entryIntent?: DramaIntentMode
 }
 
 export interface DramaScriptIngestPayload {
@@ -111,6 +123,30 @@ export interface DramaStoryboardGeneratePayload {
   resolution?: string
 }
 
+export interface DramaCreditPreviewPayload {
+  action: 'analysis' | 'roles' | 'scenes' | 'props' | 'storyboards' | 'storyboard_video'
+  model?: string
+  provider?: string
+  durationSec?: number
+  resolution?: string
+  audio?: boolean
+  overwrite?: boolean
+  shotCount?: number
+  rowId?: string
+  roleKeys?: string[]
+  sceneKeys?: string[]
+  propKeys?: string[]
+  referenceUrls?: string[]
+  referenceBindings?: StoryboardReferenceBinding[]
+  continuationFromRowId?: string
+  continuationPolicy?: StoryboardContinuationPolicy
+  retryReason?: StoryboardRetryReason
+}
+
+export interface DramaIntentRouterUpdatePayload {
+  mode: DramaIntentMode
+}
+
 export interface StoryboardCreatePayload {
   episodeNo?: number
   afterSortIndex?: number | null
@@ -132,6 +168,7 @@ export interface StoryboardUpdatePayload {
   videoPrompt?: string
   videoModel?: string
   videoDurationSec?: number
+  extra?: Record<string, unknown>
 }
 
 export interface StoryboardVideoGeneratePayload {
@@ -139,6 +176,10 @@ export interface StoryboardVideoGeneratePayload {
   durationSec?: number
   resolution?: string
   referenceUrls?: string[]
+  referenceBindings?: StoryboardReferenceBinding[]
+  continuationFromRowId?: string
+  continuationPolicy?: StoryboardContinuationPolicy
+  retryReason?: StoryboardRetryReason
   audioMode?: 'sound' | 'silent'
 }
 
@@ -146,6 +187,10 @@ export interface StoryboardVideoPromptGeneratePayload {
   model?: string
   durationSec?: number
   resolution?: string
+  referenceBindings?: StoryboardReferenceBinding[]
+  continuationFromRowId?: string
+  continuationPolicy?: StoryboardContinuationPolicy
+  retryReason?: StoryboardRetryReason
 }
 
 export interface StoryboardVideoPromptInfo {
@@ -153,6 +198,14 @@ export interface StoryboardVideoPromptInfo {
   videoPrompt: string
   videoModel: string
   videoDurationSec: number
+  clipContract: StoryboardClipContract
+  referenceBindings: StoryboardReferenceBinding[]
+  continuityState: StoryboardContinuityState
+  retryReason: StoryboardRetryReason | ''
+  warnings: string[]
+  promptLoad: StoryboardPromptLoad
+  modeHint: DramaIntentMode
+  repairPatchSummary: string
 }
 
 export interface StoryboardVideoRunInfo {
@@ -178,6 +231,11 @@ export interface ApiAdapter {
   createProject(payload: { title?: string; category?: string }): Promise<ApiResponse<Project>>
   getWechatLoginTicket(): Promise<ApiResponse<WechatLoginTicket>>
   checkWechatLogin(ticketId: string): Promise<ApiResponse<AuthSession>>
+  phoneLogin?(phone: string, code: string): Promise<ApiResponse<AuthSession>>
+  sendSmsCode?(phone: string): Promise<ApiResponse<Record<string, unknown>>>
+  getAccountProfile(): Promise<ApiResponse<AccountProfile>>
+  getAccountCreditPackages(): Promise<ApiResponse<CreditPackage[]>>
+  getAccountCreditLedgers(page?: number, pageSize?: number): Promise<ApiResponse<CreditLedgerPage>>
   getRuntimeConfig(): Promise<ApiResponse<DramaRuntimeConfig>>
   getCanvasGraph(projectId: string): Promise<ApiResponse<CanvasGraph>>
   saveCanvasGraph(projectId: string, graph: CanvasGraph): Promise<ApiResponse<boolean>>
@@ -191,6 +249,8 @@ export interface ApiAdapter {
   batchDeleteDramaProjects(ids: string[]): Promise<ApiResponse<DramaDeleteResult>>
   getDramaProject(projectId: string): Promise<ApiResponse<DramaProjectDetail>>
   ingestDramaScript(projectId: string, payload: DramaScriptIngestPayload): Promise<ApiResponse<DramaProjectDetail>>
+  updateDramaIntentRouter(projectId: string, payload: DramaIntentRouterUpdatePayload): Promise<ApiResponse<DramaProjectDetail>>
+  previewDramaCredits(projectId: string, payload: DramaCreditPreviewPayload): Promise<ApiResponse<DramaCreditPreview>>
   analyzeDrama(projectId: string, payload?: DramaAnalyzePayload): Promise<ApiResponse<DramaProjectDetail>>
   regenerateDramaCover(projectId: string, payload?: DramaCoverRegeneratePayload): Promise<ApiResponse<DramaProjectDetail>>
   createDramaRole(projectId: string, payload: DramaRoleCreatePayload): Promise<ApiResponse<DramaProjectDetail>>

@@ -2,15 +2,27 @@
 import type {
   DramaAnalysis,
   DramaAnalysisRunState,
+  DramaCreditPreview,
+  DramaIntentMode,
   DramaProjectDetail,
   DramaRuntimeConfig,
   DramaRoleProfile,
   DramaSceneProfile,
   DramaPropProfile
 } from '~/entities/drama/types'
-import type { StoryboardRow } from '~/entities/storyboard/types'
+import type {
+  StoryboardClipContract,
+  StoryboardContinuationPolicy,
+  StoryboardContinuityState,
+  StoryboardPromptLoad,
+  StoryboardReferenceBinding,
+  StoryboardRetryReason,
+  StoryboardVideoPromptSource,
+  StoryboardRow
+} from '~/entities/storyboard/types'
 import type {
   DramaAnalyzePayload,
+  DramaCreditPreviewPayload,
   DramaPropUpdatePayload,
   DramaRoleCreatePayload,
   DramaRoleUpdatePayload,
@@ -20,6 +32,7 @@ import type {
   StoryboardVideoPromptGeneratePayload,
   WorkflowRunInfo
 } from '~/shared/api/types'
+import CreditAmount from '~/components/ui/CreditAmount.vue'
 import { Copy, Ellipsis, Plus, Trash2 } from '@lucide/vue'
 import { dramaService } from '~/shared/api/services/dramaService'
 import { workflowService } from '~/shared/api/services/workflowService'
@@ -41,6 +54,44 @@ type SettingEditorDraft = {
   subtitle: string
   description: string
   prompt: string
+}
+type StoryboardAdvice = {
+  autoHandledItems: string[]
+  userDecisionItems: string[]
+}
+type StoryboardVideoConfirmState = {
+  visible: boolean
+  rowId: string
+  preview: DramaCreditPreview | null
+  payload: StoryboardVideoGeneratePayload | null
+  taskLines: string[]
+  userDecisionItems: string[]
+  promptSource: StoryboardVideoPromptSource
+}
+type AppConfirmDialogSection = {
+  title: string
+  lines: string[]
+}
+type AppConfirmDialogDetail = {
+  label: string
+  value: string
+}
+type AppConfirmInlineCredit = {
+  cost: number
+  balance: number
+  balanceAfter: number
+}
+type AppConfirmDialogState = {
+  visible: boolean
+  title: string
+  description: string
+  confirmText: string
+  cancelText: string
+  tone: 'default' | 'danger'
+  preview: DramaCreditPreview | null
+  inlineCredit: AppConfirmInlineCredit | null
+  details: AppConfirmDialogDetail[]
+  sections: AppConfirmDialogSection[]
 }
 type DramaAnalysisEventPayload = {
   event: string
@@ -180,6 +231,40 @@ const roleGenderCatalog: PageOption[] = [
   { label: '女', value: '女' },
   { label: '中性', value: '中性' }
 ]
+const storyboardRetryReasonCatalog: Array<{ label: string; value: StoryboardRetryReason }> = [
+  { label: '修人物一致性', value: 'identity' },
+  { label: '修动作幅度', value: 'motion' },
+  { label: '修运镜', value: 'camera' },
+  { label: '修场景稳定性', value: 'scene' },
+  { label: '修道具存在感', value: 'prop' },
+  { label: '修节奏', value: 'rhythm' },
+  { label: '修清晰度', value: 'quality' }
+]
+const dramaIntentModeCatalog: Array<{ label: string; value: DramaIntentMode; description: string }> = [
+  { label: '短剧版', value: 'drama', description: '强调冲突推进、情绪转折、反转与悬念。' },
+  { label: '广告版', value: 'ad', description: '强调卖点展示、产品露出、动作清晰与记忆点。' },
+  { label: '通用版', value: 'general', description: '强调主体清晰、信息稳定和镜头负担适中。' }
+]
+const storyboardContinuationPolicyCatalog: Array<{ label: string; value: StoryboardContinuationPolicy; description: string }> = [
+  { label: '自动承接', value: 'auto', description: '优先自动寻找上一条已采用镜头作为连续性基准。' },
+  { label: '手动指定', value: 'manual', description: '由你明确指定承接哪一条镜头。' },
+  { label: '不承接', value: 'none', description: '当前镜头完全独立生成，不沿用上一条成片。' }
+]
+const storyboardReferenceRoleLabelMap: Record<StoryboardReferenceBinding['role'], string> = {
+  identity: '角色一致性',
+  scene: '场景锚点',
+  prop: '关键道具',
+  motion: '动作承接',
+  endpoint: '结尾状态'
+}
+const storyboardStoryFunctionLabelMap: Record<StoryboardClipContract['storyFunction'], string> = {
+  hook: '开场钩子',
+  conflict: '冲突推进',
+  reveal: '信息揭示',
+  transition: '承接过渡',
+  payoff: '结果落点',
+  cta: '行动召回'
+}
 
 const workflowSteps: Array<{ key: WorkflowStepKey; label: string; hint: string }> = [
   { key: 'script', label: '剧本', hint: '上传并解析剧本' },
@@ -279,6 +364,33 @@ const assetUploadPreviewMap = ref<Record<string, { url: string; fileName: string
 const storyboardKeyActionMenu = ref('')
 // 记录当前哪一条分镜正在调用后端重生成视频提示词，给用户明确的局部 loading 反馈。
 const regeneratingStoryboardPromptRowId = ref('')
+const videoGenerationConfirm = ref<StoryboardVideoConfirmState>({
+  visible: false,
+  rowId: '',
+  preview: null,
+  payload: null,
+  taskLines: [],
+  userDecisionItems: [],
+  promptSource: 'system'
+})
+// 提示词建议弹窗只在用户主动查看时打开，避免把导演工作流细节常驻堆在主界面。
+const storyboardAdvicePreviewRowId = ref('')
+const storyboardAdvicePreviewRow = computed(() => {
+  return storyboardAdvicePreviewRowId.value ? findStoryboardRowById(storyboardAdvicePreviewRowId.value) || null : null
+})
+const appConfirmDialog = ref<AppConfirmDialogState>({
+  visible: false,
+  title: '',
+  description: '',
+  confirmText: '确定',
+  cancelText: '取消',
+  tone: 'default',
+  preview: null,
+  inlineCredit: null,
+  details: [],
+  sections: []
+})
+let appConfirmResolver: ((confirmed: boolean) => void) | null = null
 
 function calculateModelCost(modelCode: string, taskType: 'text' | 'image' | 'video', unitCount: number = 1): number {
   if (!runtimeConfig.value) return 1
@@ -294,7 +406,7 @@ function calculateModelCost(modelCode: string, taskType: 'text' | 'image' | 'vid
   const mode = modelOption.billingMode || 'per_call'
   
   if (mode === 'per_second') return baseCredits * unitCount
-  if (mode === 'per_token') return Math.max(1, Math.floor(baseCredits * (unitCount / 1000)))
+  if (mode === 'per_token') return Math.max(1, Math.ceil(baseCredits * (unitCount / 1000)))
   return baseCredits * unitCount
 }
 // 记录当前哪一条分镜正在提交视频任务，避免“点了没反应”的错觉。
@@ -507,6 +619,17 @@ const headerInfoItems = computed(() => [
 const confirmedStepIndex = ref(0)
 const scriptCoverUrl = computed(() => projectDetail.value?.analysis.coverImageUrl || '')
 const scriptTagList = computed(() => projectDetail.value?.analysis.tags || [])
+const currentIntentRouter = computed(() => projectDetail.value?.analysis.intentRouter || {
+  entryIntent: 'drama' as DramaIntentMode,
+  detectedMode: 'drama' as DramaIntentMode,
+  confidence: 0.55,
+  signals: [] as string[],
+  userOverrideMode: '' as DramaIntentMode | '',
+  effectiveMode: 'drama' as DramaIntentMode
+})
+const currentIntentModeOption = computed(() => {
+  return dramaIntentModeCatalog.find((item) => item.value === currentIntentRouter.value.effectiveMode) || dramaIntentModeCatalog[0]
+})
 const selectedEpisodeDetail = computed(() => {
   const details = projectDetail.value?.analysis.episodeDetails || []
   return details.find((item) => item.episodeNo === selectedEpisodeNo.value) || details[0] || null
@@ -654,17 +777,23 @@ const generateStoryboardButtonLabel = computed(() => {
   if (hasStoryboards.value) {
     const ungeneratedVideos = storyboardRowsForCurrentEpisode.value.filter(row => !row.videoUrl && row.status !== 'success').length
     if (ungeneratedVideos === 0) return '批量生成视频'
-    
-    // Fallback to 5 seconds if selectedStoryboardVideoDuration is not available
-    const duration = 5
-    const cost = calculateModelCost(selectedVideoModel.value, 'video', ungeneratedVideos * duration)
-    return `批量生成本集视频 (✨ ${cost})`
+    return '批量生成本集视频'
   }
   
   if (busyKey.value === 'storyboards') return '生成中...'
+  return '生成分镜'
+})
+
+const generateStoryboardButtonCost = computed(() => {
+  if (busyKey.value === 'storyboards') return 0
+  if (hasStoryboards.value) {
+    const ungeneratedVideos = storyboardRowsForCurrentEpisode.value.filter(row => !row.videoUrl && row.status !== 'success').length
+    if (ungeneratedVideos === 0) return 0
+    return calculateModelCost(selectedVideoModel.value, 'video', ungeneratedVideos * 5)
+  }
+
   const scriptLen = projectDetail.value?.sourceScriptText?.length || 0
-  const cost = calculateModelCost(selectedTextModel.value, 'text', scriptLen)
-  return `生成分镜 (✨ ${cost})`
+  return calculateModelCost(selectedTextModel.value, 'text', scriptLen)
 })
 
 const activeSettingPrimaryButtonLabel = computed(() => {
@@ -674,18 +803,28 @@ const activeSettingPrimaryButtonLabel = computed(() => {
     if (busyKey.value === 'scenes') return '生成中...'
     const ungeneratedScenes = (projectDetail.value?.analysis.scenes || []).filter(s => !s.asset).length
     if (ungeneratedScenes === 0) return '重新生成所有场景'
-    const cost = calculateModelCost(selectedImageModel.value, 'image', ungeneratedScenes)
-    return `生成剩余场景 (✨ ${cost})`
+    return '生成剩余场景'
   }
   
   if (activeSettingTab.value === 'props') {
     if (busyKey.value === 'props') return '生成中...'
     const ungeneratedProps = (projectDetail.value?.analysis.props || []).filter(s => !s.asset).length
     if (ungeneratedProps === 0) return '重新生成所有道具'
-    const cost = calculateModelCost(selectedImageModel.value, 'image', ungeneratedProps)
-    return `生成剩余道具 (✨ ${cost})`
+    return '生成剩余道具'
   }
   return '生成'
+})
+const activeSettingPrimaryButtonCost = computed(() => {
+  if (activeSettingTab.value === 'roles' || busyKey.value === 'roles') return 0
+  if (activeSettingTab.value === 'scenes') {
+    if (busyKey.value === 'scenes') return 0
+    const ungeneratedScenes = (projectDetail.value?.analysis.scenes || []).filter(s => !s.asset).length
+    return ungeneratedScenes > 0 ? calculateModelCost(selectedImageModel.value, 'image', ungeneratedScenes) : 0
+  }
+
+  if (busyKey.value === 'props') return 0
+  const ungeneratedProps = (projectDetail.value?.analysis.props || []).filter(s => !s.asset).length
+  return ungeneratedProps > 0 ? calculateModelCost(selectedImageModel.value, 'image', ungeneratedProps) : 0
 })
 const refreshCurrentSettingButtonLabel = computed(() => {
   if (activeSettingTab.value === 'roles') return busyKey.value === 'roles' ? '刷新中...' : '刷新角色'
@@ -704,10 +843,12 @@ const selectedStoryboardVideoDurationOptions = computed(() => {
 })
 
 function generateSingleVideoLabel(row: any): string {
-  // Fallback to 5 seconds if selectedStoryboardVideoDuration is not available
+  return '生成视频'
+}
+
+function generateSingleVideoCost(row: any): number {
   const duration = row.videoDurationSec || 5
-  const cost = calculateModelCost(row.videoModel || selectedVideoModel.value, 'video', duration)
-  return `生成视频 (✨ ${cost})`
+  return calculateModelCost(row.videoModel || selectedVideoModel.value, 'video', duration)
 }
 
 function getWorkflowProgressStorageKey(): string {
@@ -1144,8 +1285,275 @@ function mapStoryboardRowFromEvent(row: DramaStoryboardEventPayload['storyboards
     generationStatus: row.generation_status || 'idle',
     generationProgress: Number(row.generation_progress || 0),
     generationErrorMessage: row.generation_error_message || '',
-    extra: row.extra || {}
+    extra: normalizeStoryboardRuntimeExtra(row.extra || {}, {
+      id: row.id,
+      sourceNodeId: row.source_node_id,
+      episodeNo: row.episode_no,
+      sortIndex: row.sort_index,
+      shotNo: row.shot_no,
+      durationSec: row.duration_sec,
+      sceneDescription: row.scene_description,
+      roleName: row.role_name,
+      shotType: row.shot_type,
+      actionDesc: row.action_desc,
+      moodDesc: row.mood_desc,
+      soundFx: row.sound_fx,
+      dialogue: row.dialogue,
+      storyboardPrompt: row.storyboard_prompt,
+      cameraMotionPrompt: row.camera_motion_prompt,
+      roleKeys: row.role_keys || [],
+      sceneKeys: row.scene_keys || [],
+      propKeys: row.prop_keys || [],
+      videoPrompt: resolvedVideoPromptSource,
+      videoModel: row.video_model || '',
+      videoDurationSec: Number(row.video_duration_sec || row.duration_sec || 12),
+      videoStatus: row.video_status || 'idle',
+      videoProgress: Number(row.video_progress || 0),
+      videoTaskId: row.video_task_id || '',
+      videoUrl: row.video_url || '',
+      videoErrorMessage: formatDisplayErrorMessage(row.video_error_message || ''),
+      generationStatus: row.generation_status || 'idle',
+      generationProgress: Number(row.generation_progress || 0),
+      generationErrorMessage: row.generation_error_message || '',
+      extra: {}
+    } as StoryboardRow)
   }
+}
+
+function emptyStoryboardClipContract(): StoryboardClipContract {
+  return {
+    intent: '',
+    subject: '',
+    sceneAnchor: '',
+    actionAnchor: '',
+    endpoint: '',
+    mode: 'drama',
+    storyFunction: 'transition',
+    cameraGoal: '',
+    performanceFocus: '',
+    mustKeep: [],
+    forbiddenDrift: [],
+    shotBudget: ''
+  }
+}
+
+function emptyStoryboardContinuityState(): StoryboardContinuityState {
+  return {
+    acceptedTakeId: '',
+    lastFrameSummary: '',
+    screenDirection: '',
+    cameraPhase: '',
+    lockedAppearance: [],
+    lockedProps: [],
+    nextBeat: ''
+  }
+}
+
+function resolveStoryboardShotBudget(durationSec: number): { min: number; max: number; label: string } {
+  const safeDuration = Math.max(2, Math.round(Number(durationSec || 5)))
+  if (safeDuration <= 5) return { min: 1, max: 3, label: `${safeDuration} 秒建议 1-3 个镜头` }
+  if (safeDuration <= 8) return { min: 2, max: 4, label: `${safeDuration} 秒建议 2-4 个镜头` }
+  return { min: 3, max: 5, label: `${safeDuration} 秒建议 3-5 个镜头` }
+}
+
+function buildStoryboardReferenceBindings(row: StoryboardRow): StoryboardReferenceBinding[] {
+  const fromExtra = Array.isArray(row.extra?.referenceBindings) ? row.extra.referenceBindings : []
+  const preservedBindings = fromExtra.filter((binding) => ['motion', 'endpoint'].includes(binding.role))
+  const bindings: StoryboardReferenceBinding[] = []
+  row.roleKeys.forEach((key, index) => {
+    const url = roleAssetByKey(key)
+    if (!url) return
+    bindings.push({
+      url,
+      type: 'image',
+      role: 'identity',
+      priority: 10 + index,
+      label: `角色一致性：${roleNameByKey(key)}`,
+      source: `role:${key}`
+    })
+  })
+  row.sceneKeys.forEach((key, index) => {
+    const url = sceneAssetByKey(key)
+    if (!url) return
+    bindings.push({
+      url,
+      type: 'image',
+      role: 'scene',
+      priority: 20 + index,
+      label: `场景锚点：${sceneNameByKey(key)}`,
+      source: `scene:${key}`
+    })
+  })
+  row.propKeys.forEach((key, index) => {
+    const url = propAssetByKey(key)
+    if (!url) return
+    bindings.push({
+      url,
+      type: 'image',
+      role: 'prop',
+      priority: 30 + index,
+      label: `关键道具：${propNameByKey(key)}`,
+      source: `prop:${key}`
+    })
+  })
+  return [...bindings, ...preservedBindings].slice(0, 5)
+}
+
+function buildStoryboardClipContract(row: StoryboardRow): StoryboardClipContract {
+  const existing = row.extra?.clipContract
+  if (existing?.intent || existing?.subject || existing?.sceneAnchor) return existing
+
+  const effectiveMode = currentIntentRouter.value.effectiveMode || 'drama'
+  const roleNames = row.roleKeys.map((key) => roleNameByKey(key)).filter(Boolean)
+  const propNames = row.propKeys.map((key) => propNameByKey(key)).filter(Boolean)
+  const sceneAnchor = row.sceneDescription || row.sceneKeys.map((key) => sceneNameByKey(key)).filter(Boolean).join('、') || '当前分镜场景'
+  const actionAnchor = (row.actionDesc || row.sceneDescription || '执行当前分镜动作').split(/[。；\n]/)[0]?.trim() || '执行当前分镜动作'
+  const shotBudget = resolveStoryboardShotBudget(row.videoDurationSec || row.durationSec || 5)
+  const storyFunction: StoryboardClipContract['storyFunction'] = effectiveMode === 'ad'
+    ? (row.shotNo === 1 ? 'hook' : 'payoff')
+    : effectiveMode === 'general'
+      ? (row.shotNo === 1 ? 'hook' : 'transition')
+      : ((row.moodDesc || row.actionDesc || '').includes('冲突') ? 'conflict' : (row.shotNo === 1 ? 'hook' : 'transition'))
+  return {
+    intent: row.moodDesc || '推进当前分镜情绪',
+    subject: roleNames.join('、') || row.roleName || '当前主角',
+    sceneAnchor,
+    actionAnchor,
+    endpoint: (row.actionDesc || row.sceneDescription || '镜头在当前动作完成点收束').split(/[。；\n]/).filter(Boolean).slice(-1)[0] || '镜头在当前动作完成点收束',
+    mode: effectiveMode,
+    storyFunction,
+    cameraGoal: effectiveMode === 'ad'
+      ? '优先让主体和卖点在短时间内被看清，运镜服务展示而不是抢戏。'
+      : effectiveMode === 'general'
+        ? '用稳定镜头交代主体、动作与场景关系，减少无效调度。'
+        : '镜头优先服务情绪推进、冲突落点和观看焦点。',
+    performanceFocus: effectiveMode === 'ad'
+      ? '动作保持利落明确，优先突出展示、使用或结果反馈。'
+      : effectiveMode === 'general'
+        ? '动作保持单一明确，优先把信息交代清楚。'
+        : (row.dialogue || '').trim()
+          ? '重点突出对白前后的眼神、停顿和情绪递进。'
+          : '重点突出动作发力点和情绪变化。',
+    mustKeep: Array.from(new Set([...roleNames.slice(0, 2), ...propNames.slice(0, 3)])).filter(Boolean),
+    forbiddenDrift: propNames.length > 0 ? ['禁止人物变脸', '禁止场景跳变', '禁止关键道具丢失'] : ['禁止人物变脸', '禁止场景跳变'],
+    shotBudget: shotBudget.label
+  }
+}
+
+function buildStoryboardWarnings(row: StoryboardRow, clipContract: StoryboardClipContract, referenceBindings: StoryboardReferenceBinding[]): { warnings: string[]; promptLoad: StoryboardPromptLoad } {
+  const existingWarnings = Array.isArray(row.extra?.warnings) ? row.extra.warnings : []
+  const existingPromptLoad = row.extra?.promptLoad
+  if (existingWarnings.length || existingPromptLoad) {
+    return {
+      warnings: existingWarnings,
+      promptLoad: (existingPromptLoad || 'low') as StoryboardPromptLoad
+    }
+  }
+
+  const warnings: string[] = []
+  const shotMatches = Array.from((row.actionDesc || '').matchAll(/镜头\d+/g))
+  const shotBudget = resolveStoryboardShotBudget(row.videoDurationSec || row.durationSec || 5)
+  if (shotMatches.length > shotBudget.max) {
+    warnings.push(`当前镜头数 ${shotMatches.length} 个，超过 ${shotBudget.label}。`)
+  }
+  if (clipContract.mustKeep.length > 5) {
+    warnings.push('当前必须保留元素偏多，建议继续做减法。')
+  }
+  if (referenceBindings.length <= 1 && (row.roleKeys.length + row.sceneKeys.length + row.propKeys.length) >= 3) {
+    warnings.push('当前参考图职责偏少，建议至少补到 2-3 张锚点图。')
+  }
+  if ((row.dialogue || '').trim().length >= 18) {
+    warnings.push('对白较长，建议继续用表演和情绪替代原文台词。')
+  }
+
+  const promptLoad: StoryboardPromptLoad = warnings.length >= 3 ? 'high' : warnings.length >= 1 ? 'medium' : 'low'
+  return { warnings, promptLoad }
+}
+
+function normalizeStoryboardRuntimeExtra(rawExtra: Record<string, unknown>, row: StoryboardRow): StoryboardRow['extra'] {
+  const clipContract = buildStoryboardClipContract({ ...row, extra: { ...rawExtra, clipContract: rawExtra?.clipContract || rawExtra?.clip_contract } } as StoryboardRow)
+  const referenceBindings = Array.isArray(rawExtra?.referenceBindings)
+    ? rawExtra.referenceBindings as StoryboardReferenceBinding[]
+    : Array.isArray(rawExtra?.reference_bindings)
+      ? rawExtra.reference_bindings as StoryboardReferenceBinding[]
+      : buildStoryboardReferenceBindings(row)
+  const continuityStateRaw = (rawExtra?.continuityState || rawExtra?.continuity_state || {}) as Record<string, unknown>
+  const continuityState: StoryboardContinuityState = {
+    ...emptyStoryboardContinuityState(),
+    acceptedTakeId: String(continuityStateRaw.acceptedTakeId || continuityStateRaw.accepted_take_id || ''),
+    lastFrameSummary: String(continuityStateRaw.lastFrameSummary || continuityStateRaw.last_frame_summary || ''),
+    screenDirection: String(continuityStateRaw.screenDirection || continuityStateRaw.screen_direction || ''),
+    cameraPhase: String(continuityStateRaw.cameraPhase || continuityStateRaw.camera_phase || ''),
+    lockedAppearance: Array.isArray(continuityStateRaw.lockedAppearance) ? continuityStateRaw.lockedAppearance as string[] : (Array.isArray(continuityStateRaw.locked_appearance) ? continuityStateRaw.locked_appearance as string[] : []),
+    lockedProps: Array.isArray(continuityStateRaw.lockedProps) ? continuityStateRaw.lockedProps as string[] : (Array.isArray(continuityStateRaw.locked_props) ? continuityStateRaw.locked_props as string[] : []),
+    nextBeat: String(continuityStateRaw.nextBeat || continuityStateRaw.next_beat || '')
+  }
+  const { warnings, promptLoad } = buildStoryboardWarnings(row, clipContract, referenceBindings)
+  return {
+    ...rawExtra,
+    clipContract: clipContract || emptyStoryboardClipContract(),
+    referenceBindings,
+    continuityState,
+    retryReason: String(rawExtra?.retryReason || rawExtra?.retry_reason || '') as StoryboardRetryReason | '',
+    warnings,
+    promptLoad,
+    continuationPolicy: String(rawExtra?.continuationPolicy || rawExtra?.continuation_policy || 'auto') as StoryboardContinuationPolicy,
+    continuationFromRowId: String(rawExtra?.continuationFromRowId || rawExtra?.continuation_from_row_id || ''),
+    resolvedContinuationFromRowId: String(rawExtra?.resolvedContinuationFromRowId || rawExtra?.resolved_continuation_from_row_id || ''),
+    autoContinuityReason: String(rawExtra?.autoContinuityReason || rawExtra?.auto_continuity_reason || ''),
+    acceptedTakeId: String(rawExtra?.acceptedTakeId || rawExtra?.accepted_take_id || ''),
+    acceptedSummary: String(rawExtra?.acceptedSummary || rawExtra?.accepted_summary || ''),
+    repairPatchSummary: String(rawExtra?.repairPatchSummary || rawExtra?.repair_patch_summary || ''),
+    repairRevision: Number(rawExtra?.repairRevision || rawExtra?.repair_revision || 0),
+    lastRetryReason: String(rawExtra?.lastRetryReason || rawExtra?.last_retry_reason || '') as StoryboardRetryReason | '',
+    videoPromptSource: String(rawExtra?.videoPromptSource || rawExtra?.video_prompt_source || (row.videoPrompt ? 'system' : 'system')) as StoryboardVideoPromptSource
+  }
+}
+
+function storyboardTaskCard(row: StoryboardRow) {
+  const extra = normalizeStoryboardRuntimeExtra(row.extra || {}, row)
+  return {
+    clipContract: extra.clipContract || emptyStoryboardClipContract(),
+    referenceBindings: extra.referenceBindings || [],
+    continuityState: extra.continuityState || emptyStoryboardContinuityState(),
+    warnings: extra.warnings || [],
+    promptLoad: extra.promptLoad || 'low',
+    retryReason: (extra.retryReason || '') as StoryboardRetryReason | '',
+    continuationPolicy: (extra.continuationPolicy || 'auto') as StoryboardContinuationPolicy,
+    continuationFromRowId: extra.continuationFromRowId || '',
+    resolvedContinuationFromRowId: extra.resolvedContinuationFromRowId || '',
+    autoContinuityReason: extra.autoContinuityReason || '',
+    acceptedTakeId: extra.acceptedTakeId || '',
+    repairPatchSummary: extra.repairPatchSummary || '',
+    repairRevision: Number(extra.repairRevision || 0),
+    videoPromptSource: (extra.videoPromptSource || 'system') as StoryboardVideoPromptSource
+  }
+}
+
+function buildStoryboardAdvice(row: StoryboardRow): StoryboardAdvice {
+  const taskCard = storyboardTaskCard(row)
+  const referenceCount = taskCard.referenceBindings.filter((binding) => Boolean(binding.url)).length
+  const lockedInputCount = row.roleKeys.length + row.sceneKeys.length + row.propKeys.length
+  const autoHandledItems = [
+    `已按 ${row.videoDurationSec || row.durationSec || 5}s 时长适配镜头节奏`,
+    referenceCount > 0 ? '已按参考图职责组织提示词' : '等待补充参考图后组织提示词',
+    taskCard.promptLoad === 'high' ? '已自动收敛复杂镜头信息' : '当前提示词已完成模型适配'
+  ]
+  const userDecisionItems: string[] = []
+
+  if (referenceCount === 0) {
+    userDecisionItems.push('当前还没有可用参考图，需先绑定角色图、场景图或道具图。')
+  } else if (referenceCount <= 1 && lockedInputCount >= 3) {
+    userDecisionItems.push('当前参考图职责较少，建议补充角色、场景或道具锚点。')
+  }
+  if (taskCard.clipContract.mustKeep.length > 5) {
+    userDecisionItems.push('当前必保元素较多，生成前建议确认是否都必须保留。')
+  }
+  if (taskCard.videoPromptSource === 'user') {
+    userDecisionItems.push('检测到你手动修改过视频提示词，可先智能适配当前视频模型。')
+  }
+
+  return { autoHandledItems, userDecisionItems }
 }
 
 function replaceEpisodeStoryboards(episodeNo: number, rows: StoryboardRow[]): void {
@@ -1387,11 +1795,106 @@ async function runPageAction<T>(key: typeof busyKey.value, action: () => Promise
   }
 }
 
+function formatPreviewQuantity(quantity: number, unit: string): string {
+  if (unit === 'token') return `${Math.round(quantity)} Tokens`
+  if (unit === 'second') return `${Math.round(quantity)} 秒`
+  return `${Math.round(quantity)} 次`
+}
+
+function openAppConfirmDialog(options: Partial<AppConfirmDialogState> & Pick<AppConfirmDialogState, 'title' | 'description'>): Promise<boolean> {
+  if (!import.meta.client) return Promise.resolve(true)
+  if (appConfirmResolver) {
+    appConfirmResolver(false)
+    appConfirmResolver = null
+  }
+  appConfirmDialog.value = {
+    visible: true,
+    title: options.title,
+    description: options.description,
+    confirmText: options.confirmText || '确定',
+    cancelText: options.cancelText || '取消',
+    tone: options.tone || 'default',
+    preview: options.preview || null,
+    inlineCredit: options.inlineCredit || null,
+    details: options.details || [],
+    sections: options.sections || []
+  }
+  // 用 Promise 保持调用点顺序清晰，所有确认类交互统一走自定义弹窗。
+  return new Promise((resolve) => {
+    appConfirmResolver = resolve
+  })
+}
+
+function resolveAppConfirmDialog(confirmed: boolean): void {
+  const resolver = appConfirmResolver
+  appConfirmResolver = null
+  appConfirmDialog.value = {
+    visible: false,
+    title: '',
+    description: '',
+    confirmText: '确定',
+    cancelText: '取消',
+    tone: 'default',
+    preview: null,
+    inlineCredit: null,
+    details: [],
+    sections: []
+  }
+  resolver?.(confirmed)
+}
+
+async function confirmCreditPreview(
+  actionLabel: string,
+  payload: DramaCreditPreviewPayload,
+  options?: { detailLines?: string[] }
+): Promise<boolean> {
+  if (!projectDetail.value) return false
+  errorMessage.value = ''
+  infoMessage.value = ''
+
+  try {
+    const preview = await dramaService.previewCredits(projectDetail.value.projectId, payload)
+    const detailSummary = `${actionLabel}预计消耗 ${preview.requiredCredits} 点，当前余额 ${preview.currentBalance} 点，执行后剩余 ${preview.balanceAfter} 点。`
+    if (!preview.sufficient) {
+      errorMessage.value = `${detailSummary} 余额不足，请先充值后再试。`
+      return false
+    }
+    if (import.meta.client) {
+      const sections: AppConfirmDialogSection[] = []
+      if (preview.repairPatchSummary) sections.push({ title: '修复策略', lines: [preview.repairPatchSummary] })
+      if (preview.warnings?.length) sections.push({ title: '生成前确认', lines: preview.warnings })
+      if (options?.detailLines?.length) sections.push({ title: '镜头任务', lines: options.detailLines })
+      const shouldContinue = await openAppConfirmDialog({
+        title: `${actionLabel}确认`,
+        description: '系统已完成扣点预估，请确认本次操作范围与点数消耗。',
+        confirmText: '确认执行',
+        cancelText: '暂不执行',
+        preview,
+        details: [
+          { label: '计费口径', value: formatPreviewQuantity(preview.quantity, preview.quantityUnit) },
+          { label: '模型', value: preview.model },
+          { label: '模式', value: dramaIntentModeLabel(preview.modeHint) },
+          { label: '提示词状态', value: '已完成生成适配' }
+        ],
+        sections
+      })
+      if (!shouldContinue) {
+        infoMessage.value = `${actionLabel}已取消。`
+        return false
+      }
+    }
+    infoMessage.value = preview.message || detailSummary
+    return true
+  } catch (error) {
+    errorMessage.value = formatDisplayErrorMessage(extractActionErrorMessage(error))
+    return false
+  }
+}
+
 async function analyzeScript(): Promise<void> {
   const project = projectDetail.value
   if (!project?.sourceScriptText.trim()) return
 
-  busyKey.value = 'analyze'
   errorMessage.value = ''
   infoMessage.value = ''
 
@@ -1401,6 +1904,15 @@ async function analyzeScript(): Promise<void> {
     resolution: selectedResolution.value,
     style: resolvedVisualStyle.value
   }
+
+  const confirmed = await confirmCreditPreview('剧本解析', {
+    action: 'analysis',
+    model: selectedTextModel.value,
+    resolution: selectedResolution.value
+  })
+  if (!confirmed) return
+
+  busyKey.value = 'analyze'
 
   try {
     const queuedProject = await dramaService.analyze(project.projectId, payload)
@@ -1422,6 +1934,13 @@ async function analyzeScript(): Promise<void> {
 
 async function generateRoleAssets(options?: { overwrite?: boolean; successMessage?: string; roleKeys?: string[] }): Promise<void> {
   if (!projectDetail.value) return
+  const confirmed = await confirmCreditPreview('角色设定生成', {
+    action: 'roles',
+    model: selectedImageModel.value,
+    overwrite: options?.overwrite ?? true,
+    roleKeys: options?.roleKeys || []
+  })
+  if (!confirmed) return
   const result = await runPageAction(
     'roles',
     () =>
@@ -1487,6 +2006,14 @@ async function generateSceneAssets(options?: { overwrite?: boolean; successMessa
     ? options.sceneKeys
     : (projectDetail.value.analysis.scenes || []).map((scene) => scene.key)
 
+  const confirmed = await confirmCreditPreview('场景设定生成', {
+    action: 'scenes',
+    model: selectedImageModel.value,
+    overwrite: options?.overwrite ?? true,
+    sceneKeys
+  })
+  if (!confirmed) return
+
   pendingSceneKeys.value = sceneKeys
   const result = await runPageAction(
     'scenes',
@@ -1511,6 +2038,14 @@ async function generatePropAssets(options?: { overwrite?: boolean; successMessag
   const propKeys = options?.propKeys?.length
     ? options.propKeys
     : (projectDetail.value.analysis.props || []).map((prop) => prop.key)
+
+  const confirmed = await confirmCreditPreview('道具设定生成', {
+    action: 'props',
+    model: selectedImageModel.value,
+    overwrite: options?.overwrite ?? true,
+    propKeys
+  })
+  if (!confirmed) return
 
   pendingPropKeys.value = propKeys
   const result = await runPageAction(
@@ -1549,6 +2084,14 @@ async function refreshCurrentSettingTab(): Promise<void> {
 
 async function generateStoryboards(): Promise<void> {
   if (!projectDetail.value) return
+  const confirmed = await confirmCreditPreview('分镜策划', {
+    action: 'storyboards',
+    model: selectedTextModel.value,
+    shotCount: 12,
+    provider: selectedVideoProvider.value,
+    resolution: selectedResolution.value
+  })
+  if (!confirmed) return
   const result = await runPageAction(
     'storyboards',
     () =>
@@ -1583,8 +2126,30 @@ async function regenerateAllStoryboards(): Promise<void> {
     return
   }
 
-  // 重新生成会覆盖当前项目下已存在的分镜表，因此这里加一层显式确认，避免误触。
-  const shouldRegenerate = window.confirm('重新生成会覆盖当前项目的全部分镜内容，是否继续？')
+  // 重新生成会覆盖当前项目下已存在的分镜表，因此这里加一层自定义确认，避免误触。
+  const regeneratePreview = await dramaService.previewCredits(projectDetail.value.projectId, {
+    action: 'storyboards',
+    model: selectedTextModel.value,
+    shotCount: 12,
+    provider: selectedVideoProvider.value,
+    resolution: selectedResolution.value
+  })
+  if (!regeneratePreview.sufficient) {
+    errorMessage.value = `预计消耗 ${regeneratePreview.requiredCredits} 点，当前余额 ${regeneratePreview.currentBalance} 点，余额不足，请先充值后再试。`
+    return
+  }
+  const shouldRegenerate = await openAppConfirmDialog({
+    title: '确认重新生成',
+    description: '重新生成会覆盖当前项目的全部分镜内容，是否继续？',
+    confirmText: '确认',
+    cancelText: '取消',
+    tone: 'danger',
+    inlineCredit: {
+      cost: regeneratePreview.requiredCredits,
+      balance: regeneratePreview.currentBalance,
+      balanceAfter: regeneratePreview.balanceAfter
+    }
+  })
   if (!shouldRegenerate) return
   selectedStoryboardId.value = ''
   await generateStoryboards()
@@ -1633,6 +2198,143 @@ function propNameByKey(propKey: string): string {
 
 function propAssetByKey(propKey: string): string {
   return projectDetail.value?.analysis.props.find((prop) => prop.key === propKey)?.asset?.imageUrl || ''
+}
+
+function storyboardContinuationOptions(row: StoryboardRow): PageOption[] {
+  return storyboardRowsForCurrentEpisode.value
+    .filter((item) => Number(item.sortIndex || item.shotNo || 0) < Number(row.sortIndex || row.shotNo || 0))
+    .filter((item) => Boolean(item.videoUrl))
+    .filter((item) => Boolean(storyboardTaskCard(item).acceptedTakeId))
+    .map((item) => ({
+      label: `承接分镜 ${item.shotNo}`,
+      value: item.id,
+      description: item.sceneDescription || item.actionDesc || '沿用上一条采用镜头的结尾状态'
+    }))
+}
+
+function dramaIntentModeLabel(mode: DramaIntentMode): string {
+  return dramaIntentModeCatalog.find((item) => item.value === mode)?.label || '短剧版'
+}
+
+async function updateProjectIntentMode(mode: DramaIntentMode): Promise<void> {
+  if (!projectDetail.value) return
+  busyKey.value = 'boot'
+  errorMessage.value = ''
+  infoMessage.value = ''
+  try {
+    projectDetail.value = await dramaService.updateIntentRouter(projectDetail.value.projectId, { mode })
+    infoMessage.value = `当前创作模式已切换为${dramaIntentModeLabel(mode)}。`
+  } catch (error) {
+    console.error('[livliv] 创作模式更新失败', error)
+    errorMessage.value = formatDisplayErrorMessage(extractActionErrorMessage(error))
+  } finally {
+    busyKey.value = ''
+  }
+}
+
+function storyboardPromptLoadToneClass(load: StoryboardPromptLoad): string {
+  if (load === 'high') return 'border-[#fecaca] bg-[#fff1f2] text-[#dc2626]'
+  if (load === 'medium') return 'border-[#fde68a] bg-[#fffbeb] text-[#d97706]'
+  return 'border-[#bbf7d0] bg-[#f0fdf4] text-[#16a34a]'
+}
+
+function storyboardPromptLoadLabel(load: StoryboardPromptLoad): string {
+  if (load === 'high') return '高负载'
+  if (load === 'medium') return '中负载'
+  return '低负载'
+}
+
+function storyboardReferenceBindingsForRequest(row: StoryboardRow): StoryboardReferenceBinding[] {
+  return storyboardTaskCard(row).referenceBindings.filter((binding) => Boolean(binding.url)).slice(0, 5)
+}
+
+function storyboardContinuationPolicy(row: StoryboardRow): StoryboardContinuationPolicy {
+  return storyboardTaskCard(row).continuationPolicy || 'auto'
+}
+
+function storyboardContinuationRowId(row: StoryboardRow): string {
+  return storyboardTaskCard(row).continuationFromRowId || ''
+}
+
+function storyboardResolvedContinuationRowId(row: StoryboardRow): string {
+  return storyboardTaskCard(row).resolvedContinuationFromRowId || ''
+}
+
+function storyboardAcceptedSummary(row: StoryboardRow): string {
+  return `${row.sceneDescription || '当前场景'}；${(row.actionDesc || row.sceneDescription || '当前动作').split(/[。；\n]/)[0] || '当前动作'}`
+}
+
+function updateStoryboardRuntimeExtra(row: StoryboardRow, patch: Record<string, unknown>, persist = true): void {
+  row.extra = normalizeStoryboardRuntimeExtra({
+    ...(row.extra || {}),
+    ...patch
+  }, row)
+  if (persist) {
+    queueStoryboardAutosave(row.id, { extra: row.extra })
+  }
+}
+
+function markStoryboardVideoPromptSource(row: StoryboardRow, source: StoryboardVideoPromptSource, persist = true): void {
+  updateStoryboardRuntimeExtra(row, { videoPromptSource: source }, persist)
+}
+
+function handleStoryboardVideoPromptInput(row: StoryboardRow, value: string): void {
+  row.videoPrompt = value
+  markStoryboardVideoPromptSource(row, 'user', false)
+}
+
+function queueStoryboardVideoPromptAutosave(row: StoryboardRow): void {
+  queueStoryboardAutosave(row.id, {
+    videoPrompt: row.videoPrompt,
+    extra: normalizeStoryboardRuntimeExtra({ ...(row.extra || {}), videoPromptSource: storyboardTaskCard(row).videoPromptSource || 'user' }, row)
+  })
+}
+
+function updateStoryboardContinuation(row: StoryboardRow, continuationRowId: string): void {
+  updateStoryboardRuntimeExtra(row, {
+    continuationPolicy: 'manual',
+    continuationFromRowId: continuationRowId || '',
+    resolvedContinuationFromRowId: continuationRowId || '',
+    autoContinuityReason: continuationRowId ? '当前按用户手动指定的连续性基准承接。' : '当前处于手动承接模式，但尚未指定上一条镜头。',
+    continuityState: continuationRowId ? storyboardTaskCard(row).continuityState : emptyStoryboardContinuityState()
+  })
+}
+
+function updateStoryboardContinuationPolicy(row: StoryboardRow, policy: StoryboardContinuationPolicy): void {
+  if (policy === 'manual') {
+    updateStoryboardRuntimeExtra(row, {
+      continuationPolicy: policy,
+      continuationFromRowId: storyboardContinuationRowId(row)
+    })
+    return
+  }
+  updateStoryboardRuntimeExtra(row, {
+    continuationPolicy: policy,
+    continuationFromRowId: '',
+    resolvedContinuationFromRowId: '',
+    autoContinuityReason: policy === 'none' ? '当前已关闭自动承接。' : '当前将由系统自动寻找上一条已采用镜头。',
+    continuityState: policy === 'none' ? emptyStoryboardContinuityState() : storyboardTaskCard(row).continuityState
+  })
+}
+
+function toggleStoryboardAcceptedTake(row: StoryboardRow): void {
+  const nextAcceptedTakeId = storyboardTaskCard(row).acceptedTakeId ? '' : (row.videoTaskId || row.id)
+  updateStoryboardRuntimeExtra(row, {
+    acceptedTakeId: nextAcceptedTakeId,
+    acceptedSummary: nextAcceptedTakeId ? storyboardAcceptedSummary(row) : '',
+    continuityState: nextAcceptedTakeId
+      ? {
+          ...storyboardTaskCard(row).continuityState,
+          acceptedTakeId: nextAcceptedTakeId,
+          lastFrameSummary: storyboardAcceptedSummary(row),
+          screenDirection: '保持当前人物视线与运动方向',
+          cameraPhase: row.shotType || '',
+          lockedAppearance: row.roleKeys.map((key) => roleNameByKey(key)).filter(Boolean),
+          lockedProps: row.propKeys.map((key) => propNameByKey(key)).filter(Boolean),
+          nextBeat: (row.actionDesc || row.sceneDescription || '当前动作').split(/[。；\n]/)[0] || '当前动作'
+        }
+      : emptyStoryboardContinuityState()
+  })
 }
 
 function storyboardEpisodeSummaryText(episodeNo: number): string {
@@ -1886,7 +2588,7 @@ function handleStoryboardVideoModelChange(row: StoryboardRow, nextModel: string)
   queueStoryboardAutosave(row.id, { videoModel: row.videoModel, videoDurationSec: row.videoDurationSec })
 }
 
-async function resetStoryboardVideoPrompt(row: StoryboardRow): Promise<void> {
+async function resetStoryboardVideoPrompt(row: StoryboardRow, retryReason: StoryboardRetryReason | '' = '', promptSource: StoryboardVideoPromptSource = 'system'): Promise<void> {
   if (!projectDetail.value) return
   regeneratingStoryboardPromptRowId.value = row.id
 
@@ -1894,10 +2596,15 @@ async function resetStoryboardVideoPrompt(row: StoryboardRow): Promise<void> {
     const activeModel = row.videoModel || selectedVideoModel.value
     const normalizedDuration = resolvedStoryboardVideoDuration(row)
     const normalizedResolution = normalizeStoryboardVideoResolution(selectedResolution.value, activeModel)
+    const referenceBindings = storyboardReferenceBindingsForRequest(row)
     const payload: StoryboardVideoPromptGeneratePayload = {
       model: activeModel,
       durationSec: normalizedDuration,
-      resolution: normalizedResolution
+      resolution: normalizedResolution,
+      referenceBindings,
+      continuationFromRowId: storyboardContinuationRowId(row),
+      continuationPolicy: storyboardContinuationPolicy(row),
+      retryReason
     }
     const result = await runPageAction(
       'video',
@@ -1909,12 +2616,26 @@ async function resetStoryboardVideoPrompt(row: StoryboardRow): Promise<void> {
       row.videoModel = payload.model || row.videoModel
       row.videoDurationSec = Number(payload.durationSec || row.videoDurationSec || 10)
       row.videoPrompt = composeStoryboardVideoPrompt(row)
+      updateStoryboardRuntimeExtra(row, { retryReason, videoPromptSource: promptSource }, false)
       return
     }
 
     row.videoPrompt = result.videoPrompt
     row.videoModel = result.videoModel
     row.videoDurationSec = result.videoDurationSec
+    row.extra = normalizeStoryboardRuntimeExtra({
+      ...(row.extra || {}),
+      clipContract: result.clipContract,
+      referenceBindings: result.referenceBindings,
+      continuityState: result.continuityState,
+      retryReason: result.retryReason,
+      warnings: result.warnings,
+      promptLoad: result.promptLoad,
+      continuationPolicy: payload.continuationPolicy || 'auto',
+      continuationFromRowId: payload.continuationFromRowId || '',
+      videoPromptSource: promptSource
+    }, row)
+    queueStoryboardAutosave(row.id, { extra: row.extra })
   } finally {
     regeneratingStoryboardPromptRowId.value = ''
   }
@@ -2032,12 +2753,88 @@ function removeStoryboardKey(row: StoryboardRow, type: 'role' | 'scene' | 'prop'
   queueStoryboardAutosave(row.id, { propKeys: [...row.propKeys] })
 }
 
-async function generateSingleStoryboardVideo(row: StoryboardRow): Promise<void> {
-  if (!projectDetail.value) return
+function findStoryboardRowById(rowId: string): StoryboardRow | undefined {
+  return (projectDetail.value?.storyboards || []).find((item) => item.id === rowId)
+}
+
+function buildStoryboardVideoTaskLines(row: StoryboardRow, runtimeCard = storyboardTaskCard(row)): string[] {
+  return [
+    `创作模式：${dramaIntentModeLabel(runtimeCard.clipContract.mode || currentIntentRouter.value.effectiveMode || 'drama')}`,
+    `镜头意图：${runtimeCard.clipContract.intent || '推进当前分镜情绪'}`,
+    `必须保留：${runtimeCard.clipContract.mustKeep.length ? runtimeCard.clipContract.mustKeep.join('、') : '无'}`,
+    `参考职责：${runtimeCard.referenceBindings.length ? runtimeCard.referenceBindings.map((binding) => storyboardReferenceRoleLabelMap[binding.role]).join('、') : '无'}`,
+    `镜头预算：${runtimeCard.clipContract.shotBudget || resolveStoryboardShotBudget(row.videoDurationSec || row.durationSec || 5).label}`,
+    `连续性策略：${storyboardContinuationPolicy(row) === 'auto' ? '自动承接' : storyboardContinuationPolicy(row) === 'manual' ? '手动指定' : '不承接'}`
+  ]
+}
+
+function buildStoryboardVideoGeneratePayload(row: StoryboardRow): { payload: StoryboardVideoGeneratePayload; previewPayload: DramaCreditPreviewPayload; runtimeCard: ReturnType<typeof storyboardTaskCard>; referenceUrls: string[] } | null {
   const activeModel = row.videoModel || selectedVideoModel.value
   const activeDuration = resolvedStoryboardVideoDuration(row)
   const activeResolution = normalizeStoryboardVideoResolution(selectedResolution.value, activeModel)
-  const referenceUrls = buildStoryboardVideoReferenceUrls(row)
+  const runtimeCard = storyboardTaskCard(row)
+  const referenceBindings = storyboardReferenceBindingsForRequest(row)
+  const referenceUrls = referenceBindings.filter((binding) => binding.type === 'image').map((binding) => binding.url)
+  if (!referenceUrls.length) {
+    const message = '当前分镜没有可用参考图。请先绑定至少一张已生成的角色图、场景图或道具图，再生成视频。'
+    row.videoStatus = 'failed'
+    row.videoErrorMessage = message
+    errorMessage.value = message
+    infoMessage.value = ''
+    return null
+  }
+
+  submittingStoryboardVideoRowId.value = row.id
+  errorMessage.value = ''
+  infoMessage.value = ''
+  row.videoErrorMessage = ''
+  const payload: StoryboardVideoGeneratePayload = {
+    model: activeModel,
+    durationSec: activeDuration,
+    resolution: activeResolution,
+    referenceUrls,
+    referenceBindings,
+    continuationFromRowId: runtimeCard.continuationFromRowId || '',
+    continuationPolicy: runtimeCard.continuationPolicy || 'auto',
+    retryReason: runtimeCard.retryReason || '',
+    audioMode: resolvedStoryboardVideoAudioMode(row)
+  }
+  const previewPayload: DramaCreditPreviewPayload = {
+    action: 'storyboard_video',
+    rowId: row.id,
+    model: activeModel,
+    durationSec: activeDuration,
+    resolution: activeResolution,
+    audio: payload.audioMode !== 'silent',
+    referenceUrls,
+    referenceBindings,
+    continuationFromRowId: payload.continuationFromRowId,
+    continuationPolicy: payload.continuationPolicy,
+    retryReason: payload.retryReason
+  }
+
+  return { payload, previewPayload, runtimeCard, referenceUrls }
+}
+
+function closeStoryboardVideoConfirm(): void {
+  videoGenerationConfirm.value = {
+    visible: false,
+    rowId: '',
+    preview: null,
+    payload: null,
+    taskLines: [],
+    userDecisionItems: [],
+    promptSource: 'system'
+  }
+}
+
+async function openStoryboardVideoConfirm(row: StoryboardRow): Promise<void> {
+  if (!projectDetail.value) return
+  const payloadPack = buildStoryboardVideoGeneratePayload(row)
+  if (!payloadPack) return
+  const { payload, previewPayload, runtimeCard, referenceUrls } = payloadPack
+  const advice = buildStoryboardAdvice(row)
+
   if (!referenceUrls.length) {
     const message = '当前分镜没有可用参考图。请先绑定至少一张已生成的角色图、场景图或道具图，再生成视频。'
     row.videoStatus = 'failed'
@@ -2050,14 +2847,32 @@ async function generateSingleStoryboardVideo(row: StoryboardRow): Promise<void> 
   submittingStoryboardVideoRowId.value = row.id
   errorMessage.value = ''
   infoMessage.value = ''
-  row.videoErrorMessage = ''
-  const payload: StoryboardVideoGeneratePayload = {
-    model: activeModel,
-    durationSec: activeDuration,
-    resolution: activeResolution,
-    referenceUrls,
-    audioMode: resolvedStoryboardVideoAudioMode(row)
+  try {
+    const preview = await dramaService.previewCredits(projectDetail.value.projectId, previewPayload)
+    const detailSummary = `分镜 ${row.shotNo} 视频生成预计消耗 ${preview.requiredCredits} 点，当前余额 ${preview.currentBalance} 点，执行后剩余 ${preview.balanceAfter} 点。`
+    if (!preview.sufficient) {
+      errorMessage.value = `${detailSummary} 余额不足，请先充值后再试。`
+      return
+    }
+
+    videoGenerationConfirm.value = {
+      visible: true,
+      rowId: row.id,
+      preview,
+      payload,
+      taskLines: buildStoryboardVideoTaskLines(row, runtimeCard),
+      userDecisionItems: advice.userDecisionItems,
+      promptSource: runtimeCard.videoPromptSource || 'system'
+    }
+  } catch (error) {
+    errorMessage.value = formatDisplayErrorMessage(extractActionErrorMessage(error))
+  } finally {
+    submittingStoryboardVideoRowId.value = ''
   }
+}
+
+async function submitStoryboardVideoTask(row: StoryboardRow, payload: StoryboardVideoGeneratePayload): Promise<void> {
+  if (!projectDetail.value) return
   row.videoStatus = 'queued'
   row.videoProgress = 0
   if ((activeStep.value === 'storyboard' || activeStep.value === 'video') && shouldTrackStoryboardStream(projectDetail.value)) {
@@ -2085,14 +2900,34 @@ async function generateSingleStoryboardVideo(row: StoryboardRow): Promise<void> 
   }
 }
 
+async function executeStoryboardVideoConfirm(mode: 'direct' | 'adapted'): Promise<void> {
+  const state = videoGenerationConfirm.value
+  const row = findStoryboardRowById(state.rowId)
+  if (!row || !state.payload) return
+
+  closeStoryboardVideoConfirm()
+  submittingStoryboardVideoRowId.value = row.id
+  if (mode === 'adapted') {
+    await resetStoryboardVideoPrompt(row, '', 'adapted')
+  }
+  const payloadPack = buildStoryboardVideoGeneratePayload(row)
+  if (!payloadPack) return
+  await submitStoryboardVideoTask(row, mode === 'adapted' ? payloadPack.payload : state.payload)
+}
+
+async function generateSingleStoryboardVideo(row: StoryboardRow): Promise<void> {
+  await openStoryboardVideoConfirm(row)
+}
+
 async function batchGenerateCurrentEpisodeVideos(): Promise<void> {
   if (!projectDetail.value) return
+  const batchDuration = Math.max(2, Math.min(10, Number(selectedStoryboard.value?.videoDurationSec || 5)))
   await runPageAction(
     'video',
     () => dramaService.batchGenerateStoryboardVideos(projectDetail.value!.projectId, {
       episodeNo: selectedEpisodeNo.value,
       model: selectedVideoModel.value,
-      durationSec: 12,
+      durationSec: batchDuration,
       resolution: selectedResolution.value
     }),
     `第 ${selectedEpisodeNo.value} 集可生成分镜已批量入队。`
@@ -2106,6 +2941,14 @@ function openStoryboardEpisodePreview(): void {
 
 function closeStoryboardEpisodePreview(): void {
   storyboardEpisodePreviewVisible.value = false
+}
+
+function openStoryboardAdvicePreview(row: StoryboardRow): void {
+  storyboardAdvicePreviewRowId.value = row.id
+}
+
+function closeStoryboardAdvicePreview(): void {
+  storyboardAdvicePreviewRowId.value = ''
 }
 
 function storyboardGenerationStatusLabel(row: StoryboardRow): string {
@@ -3031,6 +3874,42 @@ onBeforeUnmount(() => {
                       </div>
 
                       <div class="flex flex-wrap items-center gap-2 pt-5">
+                        <div class="w-full rounded-[20px] border border-borderSoft bg-panelSoft p-4">
+                          <div class="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                            <div class="min-w-0">
+                              <p class="text-xs font-semibold uppercase tracking-[0.14em] text-textMuted">创作模式识别</p>
+                              <p class="mt-2 text-base font-semibold text-textMain">
+                                当前推荐 {{ currentIntentModeOption.label }}
+                                <span class="ml-2 text-sm font-medium text-textMuted">置信度 {{ Math.round((currentIntentRouter.confidence || 0) * 100) }}%</span>
+                              </p>
+                              <p class="mt-2 text-sm leading-6 text-textMuted">
+                                检测结果：入口 {{ dramaIntentModeLabel(currentIntentRouter.entryIntent) }} · 识别 {{ dramaIntentModeLabel(currentIntentRouter.detectedMode) }} · 生效 {{ dramaIntentModeLabel(currentIntentRouter.effectiveMode) }}
+                              </p>
+                              <div class="mt-3 flex flex-wrap gap-2">
+                                <span
+                                  v-for="signal in currentIntentRouter.signals"
+                                  :key="signal"
+                                  class="rounded-full border border-borderSoft bg-panel px-3 py-1 text-xs font-semibold text-textMuted"
+                                >
+                                  {{ signal }}
+                                </span>
+                              </div>
+                            </div>
+                            <div class="flex flex-wrap gap-2">
+                              <button
+                                v-for="modeItem in dramaIntentModeCatalog"
+                                :key="modeItem.value"
+                                type="button"
+                                class="rounded-full border px-4 py-2 text-sm font-semibold transition"
+                                :class="currentIntentRouter.effectiveMode === modeItem.value ? 'border-neon bg-neonSoft/20 text-neon' : 'border-borderSoft bg-panel text-textMain'"
+                                :disabled="isBusy"
+                                @click="updateProjectIntentMode(modeItem.value)"
+                              >
+                                {{ modeItem.label }}
+                              </button>
+                            </div>
+                          </div>
+                        </div>
                         <span
                           v-for="(tag, index) in scriptTagList"
                           :key="`${tag}-${index}`"
@@ -3173,7 +4052,10 @@ onBeforeUnmount(() => {
                 :disabled="isBusy"
                 @click="activeSettingTab === 'roles' ? openRoleDialog() : activeSettingTab === 'scenes' ? generateSceneAssets() : generatePropAssets()"
               >
-                {{ activeSettingPrimaryButtonLabel }}
+                <span class="inline-flex items-center gap-2">
+                  <span>{{ activeSettingPrimaryButtonLabel }}</span>
+                  <CreditAmount v-if="activeSettingPrimaryButtonCost > 0" :value="activeSettingPrimaryButtonCost" size="xs" tone="inherit" />
+                </span>
               </button>
             </div>
           </div>
@@ -3273,7 +4155,10 @@ onBeforeUnmount(() => {
                         :disabled="isBusy"
                         @click="generateRoleAssets({ overwrite: true, roleKeys: [role.key], successMessage: `${role.name} 四视图已刷新。` })"
                       >
-                        重绘 (✨ {{ calculateModelCost(selectedImageModel, 'image', 1) }})
+                        <span class="inline-flex items-center gap-1.5">
+                          <span>重绘</span>
+                          <CreditAmount :value="calculateModelCost(selectedImageModel, 'image', 1)" size="xs" tone="muted" />
+                        </span>
                       </button>
                     </div>
                   </div>
@@ -3377,7 +4262,10 @@ onBeforeUnmount(() => {
                         :disabled="isBusy"
                         @click="generateSceneAssets({ overwrite: true, sceneKeys: [scene.key], successMessage: `${scene.name} 场景图已刷新。` })"
                       >
-                        重绘 (✨ {{ calculateModelCost(selectedImageModel, 'image', 1) }})
+                        <span class="inline-flex items-center gap-1.5">
+                          <span>重绘</span>
+                          <CreditAmount :value="calculateModelCost(selectedImageModel, 'image', 1)" size="xs" tone="muted" />
+                        </span>
                       </button>
                     </div>
                   </div>
@@ -3454,7 +4342,10 @@ onBeforeUnmount(() => {
                         :disabled="isBusy"
                         @click="generatePropAssets({ overwrite: true, propKeys: [prop.key], successMessage: `${prop.name} 道具图已刷新。` })"
                       >
-                        重绘 (✨ {{ calculateModelCost(selectedImageModel, 'image', 1) }})
+                        <span class="inline-flex items-center gap-1.5">
+                          <span>重绘</span>
+                          <CreditAmount :value="calculateModelCost(selectedImageModel, 'image', 1)" size="xs" tone="muted" />
+                        </span>
                       </button>
                     </div>
                   </div>
@@ -3542,7 +4433,10 @@ onBeforeUnmount(() => {
                   :disabled="isBusy"
                   @click="hasStoryboards ? batchGenerateCurrentEpisodeVideos() : generateStoryboards()"
                 >
-                  {{ generateStoryboardButtonLabel }}
+                  <span class="inline-flex items-center gap-2">
+                    <span>{{ generateStoryboardButtonLabel }}</span>
+                    <CreditAmount v-if="generateStoryboardButtonCost > 0" :value="generateStoryboardButtonCost" size="xs" :tone="hasStoryboards ? 'muted' : 'inherit'" />
+                  </span>
                 </button>
               </div>
             </div>
@@ -3882,24 +4776,39 @@ onBeforeUnmount(() => {
                           正在重新生成当前分镜的视频提示词...
                         </div>
                       </div>
-                      <h3 class="text-[22px] font-semibold shrink-0">分镜视频生成</h3>
-                      <div class="mt-3 flex flex-wrap items-center gap-2 text-xs font-semibold text-textMuted">
-                        <span class="rounded-full border border-borderSoft bg-panelSoft px-3 py-1">当前分辨率 {{ selectedResolution }}</span>
-                        <span class="rounded-full border border-borderSoft bg-panelSoft px-3 py-1">
-                          {{ isSilentCapableStoryboardVideoModel(row.videoModel || selectedVideoModel) ? `输出模式 ${resolvedStoryboardVideoAudioMode(row) === 'silent' ? '无声' : '有声'}` : '输出模式 有声' }}
-                        </span>
+                      <div class="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <h3 class="text-[22px] font-semibold shrink-0">分镜视频生成</h3>
+                          <div class="mt-3 flex flex-wrap items-center gap-2 text-xs font-semibold text-textMuted">
+                            <span class="rounded-full border border-borderSoft bg-panelSoft px-3 py-1">当前分辨率 {{ selectedResolution }}</span>
+                            <span class="rounded-full border border-borderSoft bg-panelSoft px-3 py-1">
+                              {{ isSilentCapableStoryboardVideoModel(row.videoModel || selectedVideoModel) ? `输出模式 ${resolvedStoryboardVideoAudioMode(row) === 'silent' ? '无声' : '有声'}` : '输出模式 有声' }}
+                            </span>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          class="rounded-full border border-borderSoft bg-panelSoft px-4 py-2 text-sm font-semibold text-textMuted transition hover:border-neon/45 hover:text-neon"
+                          @click="openStoryboardAdvicePreview(row)"
+                        >
+                          提示词建议
+                          <span v-if="buildStoryboardAdvice(row).userDecisionItems.length" class="ml-1 text-neon">
+                            {{ buildStoryboardAdvice(row).userDecisionItems.length }}
+                          </span>
+                        </button>
                       </div>
                       <div class="mt-5 flex-1 flex flex-col min-h-0">
                         <p class="mb-2 text-sm font-semibold text-textMuted shrink-0">视频提示词</p>
                         <div class="flex-1 min-h-0">
                           <UiBaseTextarea
-                            v-model="row.videoPrompt"
+                            :model-value="row.videoPrompt"
                             placeholder="镜头1 [0-3秒] 全景：请描述镜头调度、角色动作、场景氛围与运镜节奏。"
                             full
                             size="md"
                             class="h-full min-h-[200px] leading-loose"
                             :disabled="isRowVideoPromptGenerating(row.id) || isRowVideoSubmitting(row.id)"
-                            @blur="queueStoryboardAutosave(row.id, { videoPrompt: row.videoPrompt })"
+                            @update:model-value="(value) => handleStoryboardVideoPromptInput(row, String(value))"
+                            @blur="queueStoryboardVideoPromptAutosave(row)"
                           />
                         </div>
                       </div>
@@ -3953,20 +4862,59 @@ onBeforeUnmount(() => {
                           :disabled="isBusy || isRowVideoPromptGenerating(row.id) || isRowVideoSubmitting(row.id)"
                           @click="generateSingleStoryboardVideo(row)"
                         >
-                          {{ isRowVideoSubmitting(row.id) ? '提交中...' : generateSingleVideoLabel(row) }}
+                          <span v-if="isRowVideoSubmitting(row.id)">提交中...</span>
+                          <span v-else class="inline-flex items-center gap-2">
+                            <span>{{ generateSingleVideoLabel(row) }}</span>
+                            <CreditAmount :value="generateSingleVideoCost(row)" size="xs" tone="inherit" />
+                          </span>
                         </button>
                       </div>
+                      <div class="mt-3 flex flex-wrap items-center gap-2 shrink-0">
+                        <span class="mr-1 text-xs font-semibold text-textMuted">定向修复</span>
+                        <button
+                          v-for="retryItem in storyboardRetryReasonCatalog"
+                          :key="`${row.id}-${retryItem.value}`"
+                          type="button"
+                          class="rounded-full border border-borderSoft bg-transparent px-2.5 py-1 text-[11px] font-medium text-textMuted transition hover:border-neon/45 hover:bg-panelSoft hover:text-neon"
+                          :disabled="isBusy || isRowVideoPromptGenerating(row.id) || isRowVideoSubmitting(row.id)"
+                          @click="resetStoryboardVideoPrompt(row, retryItem.value)"
+                        >
+                          {{ retryItem.label }}
+                        </button>
+                        <button
+                          type="button"
+                          class="rounded-full border border-borderSoft bg-transparent px-2.5 py-1 text-[11px] font-medium text-textMuted transition hover:border-neon/45 hover:bg-panelSoft hover:text-neon"
+                          :disabled="isBusy || isRowVideoPromptGenerating(row.id) || isRowVideoSubmitting(row.id)"
+                          @click="openStoryboardAdvicePreview(row)"
+                        >
+                          查看提示词建议
+                        </button>
+                      </div>
+                      <p v-if="storyboardTaskCard(row).repairPatchSummary" class="mt-2 text-xs leading-5 text-textMuted">
+                        第 {{ storyboardTaskCard(row).repairRevision || 0 }} 次修复：{{ storyboardTaskCard(row).repairPatchSummary }}
+                      </p>
                     </section>
 
                     <section class="rounded-[22px] border border-borderSoft bg-panel p-4">
                       <div class="flex items-center justify-between gap-3">
                         <h3 class="text-[22px] font-semibold">当前分镜视频</h3>
-                        <span
-                          class="rounded-full border px-3 py-1 text-xs font-semibold"
-                          :class="storyboardVideoStatusToneClass(row.videoStatus)"
-                        >
-                          {{ storyboardVideoBadgeLabel(row) }}
-                        </span>
+                        <div class="flex flex-wrap items-center gap-2">
+                          <button
+                            v-if="row.videoUrl"
+                            type="button"
+                            class="rounded-full border px-3 py-1 text-xs font-semibold transition"
+                            :class="storyboardTaskCard(row).acceptedTakeId ? 'border-[#bbf7d0] bg-[#f0fdf4] text-[#166534]' : 'border-borderSoft bg-panel text-textMain hover:border-[#94a3b8]'"
+                            @click="toggleStoryboardAcceptedTake(row)"
+                          >
+                            {{ storyboardTaskCard(row).acceptedTakeId ? '已采用' : '标记采用' }}
+                          </button>
+                          <span
+                            class="rounded-full border px-3 py-1 text-xs font-semibold"
+                            :class="storyboardVideoStatusToneClass(row.videoStatus)"
+                          >
+                            {{ storyboardVideoBadgeLabel(row) }}
+                          </span>
+                        </div>
                       </div>
 
                       <div class="mt-5">
@@ -4022,6 +4970,20 @@ onBeforeUnmount(() => {
                               </p>
                             </div>
                           </div>
+                        </div>
+                      </div>
+                      <div class="mt-4 grid gap-3 md:grid-cols-2">
+                        <div class="rounded-[18px] border border-borderSoft bg-panelSoft px-4 py-3">
+                          <p class="text-xs font-semibold uppercase tracking-[0.14em] text-textMuted">采用状态</p>
+                          <p class="mt-2 text-sm text-textMain">
+                            {{ storyboardTaskCard(row).acceptedTakeId ? `当前成片已作为连续性基准保存。` : '当前成片尚未被标记为采用。' }}
+                          </p>
+                        </div>
+                        <div class="rounded-[18px] border border-borderSoft bg-panelSoft px-4 py-3">
+                          <p class="text-xs font-semibold uppercase tracking-[0.14em] text-textMuted">连续性账本</p>
+                          <p class="mt-2 text-sm text-textMain">
+                            {{ storyboardTaskCard(row).continuityState.lastFrameSummary || '未承接上一条采用镜头。' }}
+                          </p>
                         </div>
                       </div>
                     </section>
@@ -4298,7 +5260,10 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
-        <div class="flex flex-wrap items-center justify-end gap-3 border-t border-borderSoft px-6 py-5">
+        <div
+          class="flex flex-wrap items-center justify-end gap-3 px-6 py-5"
+          :class="(appConfirmDialog.preview || appConfirmDialog.details.length || appConfirmDialog.sections.length) ? 'border-t border-borderSoft' : 'border-t border-transparent pt-2'"
+        >
           <button
             type="button"
             class="rounded-full border border-borderSoft bg-panel px-5 py-2.5 text-sm font-semibold text-textMuted transition hover:border-[#94a3b8]"
@@ -4392,6 +5357,365 @@ onBeforeUnmount(() => {
           </button>
         </div>
       </div>
+    </div>
+
+    <div
+      v-if="appConfirmDialog.visible"
+      class="fixed inset-0 z-[90] flex items-center justify-center bg-[rgba(15,23,42,0.56)] px-4 py-8 backdrop-blur-sm"
+      @click.self="resolveAppConfirmDialog(false)"
+    >
+      <section class="w-full max-w-[660px] overflow-hidden rounded-[30px] border border-borderSoft bg-panel shadow-[0_30px_90px_rgba(15,23,42,0.24)]">
+        <div class="border-b border-borderSoft px-6 py-5">
+          <p class="text-xs font-semibold uppercase tracking-[0.18em] text-textMuted">操作确认</p>
+          <h3 class="mt-2 text-[26px] font-semibold tracking-[-0.03em] text-textMain">{{ appConfirmDialog.title }}</h3>
+          <p class="mt-2 text-sm leading-6 text-textMuted">{{ appConfirmDialog.description }}</p>
+          <p v-if="appConfirmDialog.inlineCredit" class="mt-3 text-sm leading-6 text-textMuted">
+            本次预计消耗
+            <span class="font-semibold text-neon">{{ appConfirmDialog.inlineCredit.cost }}</span>
+            ，当前余额
+            <span class="font-semibold text-textMain">{{ appConfirmDialog.inlineCredit.balance }}</span>
+            ，执行后剩余
+            <span class="font-semibold text-emerald-600">{{ appConfirmDialog.inlineCredit.balanceAfter }}</span>
+            。
+          </p>
+        </div>
+
+        <div v-if="appConfirmDialog.preview || appConfirmDialog.details.length || appConfirmDialog.sections.length" class="max-h-[68vh] space-y-5 overflow-y-auto px-6 py-5">
+          <div v-if="appConfirmDialog.preview" class="grid gap-3 md:grid-cols-3">
+            <div class="rounded-[20px] border border-borderSoft bg-panelSoft px-4 py-3">
+              <p class="text-xs font-semibold text-textMuted">预计消耗</p>
+              <CreditAmount :value="appConfirmDialog.preview.requiredCredits" size="md" tone="accent" class="mt-2" />
+            </div>
+            <div class="rounded-[20px] border border-borderSoft bg-panelSoft px-4 py-3">
+              <p class="text-xs font-semibold text-textMuted">当前余额</p>
+              <CreditAmount :value="appConfirmDialog.preview.currentBalance" size="md" tone="inherit" class="mt-2" />
+            </div>
+            <div class="rounded-[20px] border border-borderSoft bg-panelSoft px-4 py-3">
+              <p class="text-xs font-semibold text-textMuted">执行后余额</p>
+              <CreditAmount :value="appConfirmDialog.preview.balanceAfter" size="md" tone="muted" class="mt-2" />
+            </div>
+          </div>
+
+          <div v-if="appConfirmDialog.details.length" class="grid gap-3 md:grid-cols-2">
+            <div
+              v-for="detail in appConfirmDialog.details"
+              :key="`${detail.label}-${detail.value}`"
+              class="rounded-[18px] border border-borderSoft bg-panelSoft px-4 py-3"
+            >
+              <p class="text-xs font-semibold text-textMuted">{{ detail.label }}</p>
+              <p class="mt-2 text-sm font-semibold text-textMain">{{ detail.value }}</p>
+            </div>
+          </div>
+
+          <div
+            v-for="section in appConfirmDialog.sections"
+            :key="section.title"
+            class="rounded-[22px] border border-borderSoft bg-panelSoft px-4 py-4"
+          >
+            <p class="text-sm font-semibold text-textMain">{{ section.title }}</p>
+            <div class="mt-3 space-y-2">
+              <p
+                v-for="line in section.lines"
+                :key="`${section.title}-${line}`"
+                class="rounded-2xl border border-borderSoft bg-panel px-3 py-2 text-sm leading-6 text-textMuted"
+              >
+                {{ line }}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div class="flex flex-wrap items-center justify-end gap-3 border-t border-borderSoft px-6 py-5">
+          <button
+            type="button"
+            class="rounded-full border border-borderSoft bg-panel px-5 py-2.5 text-sm font-semibold text-textMuted transition hover:border-[#94a3b8] hover:text-textMain"
+            @click="resolveAppConfirmDialog(false)"
+          >
+            {{ appConfirmDialog.cancelText }}
+          </button>
+          <button
+            type="button"
+            class="rounded-full px-6 py-2.5 text-sm font-semibold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+            :class="appConfirmDialog.tone === 'danger' ? 'bg-[#ef4444]' : 'bg-gradient-to-r from-[#2463ff] to-[#7c3aed]'"
+            @click="resolveAppConfirmDialog(true)"
+          >
+            {{ appConfirmDialog.confirmText }}
+          </button>
+        </div>
+      </section>
+    </div>
+
+    <div
+      v-if="storyboardAdvicePreviewRow"
+      class="fixed inset-0 z-[72] flex items-center justify-center bg-[rgba(15,23,42,0.56)] px-4 py-8 backdrop-blur-sm"
+      @click.self="closeStoryboardAdvicePreview"
+    >
+      <section class="w-full max-w-[760px] overflow-hidden rounded-[30px] border border-borderSoft bg-panel shadow-[0_30px_90px_rgba(15,23,42,0.22)]">
+        <div class="flex items-start justify-between gap-4 border-b border-borderSoft px-6 py-5">
+          <div>
+            <p class="text-xs font-semibold uppercase tracking-[0.18em] text-textMuted">提示词建议</p>
+            <h3 class="mt-2 text-[26px] font-semibold tracking-[-0.03em] text-textMain">当前镜头的生成说明</h3>
+            <p class="mt-2 text-sm leading-6 text-textMuted">
+              这里展示的是系统对当前分镜的导演式理解，方便你确认要保留什么、是否承接上一条，以及是否需要定向修复。
+            </p>
+          </div>
+          <button
+            type="button"
+            class="rounded-full border border-borderSoft bg-panel px-3 py-1.5 text-sm text-textMuted transition hover:text-textMain"
+            @click="closeStoryboardAdvicePreview"
+          >
+            关闭
+          </button>
+        </div>
+
+        <div class="max-h-[68vh] space-y-5 overflow-y-auto px-6 py-5">
+          <div class="rounded-[22px] border border-borderSoft bg-panelSoft px-4 py-4">
+            <div class="flex flex-wrap items-center gap-2">
+              <span class="rounded-full border border-borderSoft bg-panel px-3 py-1 text-xs font-semibold text-textMain">
+                {{ dramaIntentModeLabel(storyboardTaskCard(storyboardAdvicePreviewRow).clipContract.mode || 'drama') }}
+              </span>
+              <span class="rounded-full border border-borderSoft bg-panel px-3 py-1 text-xs font-semibold text-textMuted">
+                {{ storyboardStoryFunctionLabelMap[storyboardTaskCard(storyboardAdvicePreviewRow).clipContract.storyFunction || 'transition'] }}
+              </span>
+              <span class="rounded-full border border-borderSoft bg-panel px-3 py-1 text-xs font-semibold text-textMuted">
+                {{ storyboardTaskCard(storyboardAdvicePreviewRow).clipContract.shotBudget || resolveStoryboardShotBudget(storyboardAdvicePreviewRow.videoDurationSec || storyboardAdvicePreviewRow.durationSec || 5).label }}
+              </span>
+            </div>
+            <p class="mt-3 text-base font-semibold text-textMain">
+              {{ storyboardTaskCard(storyboardAdvicePreviewRow).clipContract.intent || '推进当前分镜情绪' }}
+            </p>
+            <div class="mt-3 space-y-2 text-sm leading-6 text-textMuted">
+              <p>主体：{{ storyboardTaskCard(storyboardAdvicePreviewRow).clipContract.subject || (storyboardAdvicePreviewRow.roleName || '当前主角') }}</p>
+              <p>场景：{{ storyboardTaskCard(storyboardAdvicePreviewRow).clipContract.sceneAnchor || (storyboardAdvicePreviewRow.sceneDescription || '当前场景') }}</p>
+              <p>动作锚点：{{ storyboardTaskCard(storyboardAdvicePreviewRow).clipContract.actionAnchor || '执行当前分镜动作' }}</p>
+              <p>运镜目标：{{ storyboardTaskCard(storyboardAdvicePreviewRow).clipContract.cameraGoal || '优先把当前镜头关注点交代清楚。' }}</p>
+              <p>表演重点：{{ storyboardTaskCard(storyboardAdvicePreviewRow).clipContract.performanceFocus || '优先突出当前镜头动作与情绪变化。' }}</p>
+              <p>结尾状态：{{ storyboardTaskCard(storyboardAdvicePreviewRow).clipContract.endpoint || '镜头在当前动作完成点收束' }}</p>
+            </div>
+          </div>
+
+          <div class="grid gap-4 md:grid-cols-2">
+            <div class="rounded-[22px] border border-borderSoft bg-panelSoft px-4 py-4">
+              <p class="text-sm font-semibold text-textMain">必保元素</p>
+              <div class="mt-3 flex flex-wrap gap-2">
+                <span
+                  v-for="item in storyboardTaskCard(storyboardAdvicePreviewRow).clipContract.mustKeep"
+                  :key="`advice-must-${item}`"
+                  class="rounded-full border border-[#bfdbfe] bg-[#eff6ff] px-3 py-1 text-xs font-semibold text-[#2563eb]"
+                >
+                  {{ item }}
+                </span>
+                <span
+                  v-if="storyboardTaskCard(storyboardAdvicePreviewRow).clipContract.mustKeep.length === 0"
+                  class="rounded-full border border-borderSoft bg-panel px-3 py-1 text-xs text-textMuted"
+                >
+                  当前未额外锁定
+                </span>
+              </div>
+            </div>
+
+            <div class="rounded-[22px] border border-borderSoft bg-panelSoft px-4 py-4">
+              <p class="text-sm font-semibold text-textMain">参考图职责</p>
+              <div class="mt-3 flex flex-wrap gap-2">
+                <span
+                  v-for="binding in storyboardTaskCard(storyboardAdvicePreviewRow).referenceBindings"
+                  :key="`advice-${binding.role}-${binding.url}`"
+                  class="rounded-full border border-borderSoft bg-panel px-3 py-1 text-xs font-semibold text-textMain"
+                >
+                  {{ storyboardReferenceRoleLabelMap[binding.role] }}
+                </span>
+                <span
+                  v-if="storyboardTaskCard(storyboardAdvicePreviewRow).referenceBindings.length === 0"
+                  class="rounded-full border border-borderSoft bg-panel px-3 py-1 text-xs text-textMuted"
+                >
+                  暂无可用参考图
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div class="rounded-[22px] border border-borderSoft bg-panelSoft px-4 py-4">
+            <p class="text-sm font-semibold text-textMain">生成适配说明</p>
+            <div class="mt-3 space-y-2">
+              <p
+                v-for="item in buildStoryboardAdvice(storyboardAdvicePreviewRow).autoHandledItems"
+                :key="`advice-auto-${item}`"
+                class="rounded-2xl border border-[#bbf7d0] bg-[#f0fdf4] px-3 py-2 text-sm leading-6 text-[#166534]"
+              >
+                {{ item }}
+              </p>
+              <p
+                v-for="item in buildStoryboardAdvice(storyboardAdvicePreviewRow).userDecisionItems"
+                :key="`advice-decision-${item}`"
+                class="rounded-2xl border border-[#dbeafe] bg-[#eff6ff] px-3 py-2 text-sm leading-6 text-[#1d4ed8]"
+              >
+                {{ item }}
+              </p>
+              <p
+                v-if="buildStoryboardAdvice(storyboardAdvicePreviewRow).userDecisionItems.length === 0"
+                class="rounded-2xl border border-borderSoft bg-panel px-3 py-2 text-sm leading-6 text-textMuted"
+              >
+                当前提示词已适配，可直接生成。
+              </p>
+            </div>
+          </div>
+
+          <div class="rounded-[22px] border border-borderSoft bg-panelSoft px-4 py-4">
+            <p class="text-sm font-semibold text-textMain">连续性承接</p>
+            <p class="mt-2 text-xs leading-5 text-textMuted">
+              自动承接会优先读取上一条“已采用”视频的结尾状态、人物朝向、服装道具和镜头相位，让下一条更像同一段连续画面；如果没有已采用镜头，系统会按当前分镜独立生成。
+            </p>
+            <div class="mt-3 flex flex-wrap gap-2">
+              <button
+                v-for="policyItem in storyboardContinuationPolicyCatalog"
+                :key="`advice-policy-${policyItem.value}`"
+                type="button"
+                class="rounded-full border px-3 py-1.5 text-xs font-semibold transition"
+                :class="storyboardContinuationPolicy(storyboardAdvicePreviewRow) === policyItem.value ? 'border-neon bg-neonSoft/20 text-neon' : 'border-borderSoft bg-panel text-textMain'"
+                @click="updateStoryboardContinuationPolicy(storyboardAdvicePreviewRow, policyItem.value)"
+              >
+                {{ policyItem.label }}
+              </button>
+            </div>
+            <div class="mt-3 flex items-center gap-2">
+              <UiBaseSelect
+                :model-value="storyboardContinuationRowId(storyboardAdvicePreviewRow)"
+                :options="storyboardContinuationOptions(storyboardAdvicePreviewRow)"
+                placeholder="不承接上一条"
+                full
+                size="sm"
+                class="min-w-0 flex-1"
+                :disabled="storyboardContinuationPolicy(storyboardAdvicePreviewRow) !== 'manual'"
+                @update:model-value="(value) => updateStoryboardContinuation(storyboardAdvicePreviewRow, String(value || ''))"
+              />
+              <button
+                type="button"
+                class="shrink-0 rounded-full border border-borderSoft bg-panel px-3 py-1.5 text-xs font-semibold text-textMuted transition hover:text-textMain"
+                @click="updateStoryboardContinuation(storyboardAdvicePreviewRow, '')"
+              >
+                清空
+              </button>
+            </div>
+            <p class="mt-3 text-xs leading-5 text-textMuted">
+              {{
+                storyboardTaskCard(storyboardAdvicePreviewRow).autoContinuityReason
+                  || (storyboardContinuationPolicy(storyboardAdvicePreviewRow) === 'none'
+                    ? '当前已关闭连续性承接。'
+                    : '系统会优先寻找上一条已采用镜头作为连续性基准。')
+              }}
+            </p>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <div
+      v-if="videoGenerationConfirm.visible && videoGenerationConfirm.preview && videoGenerationConfirm.payload"
+      class="fixed inset-0 z-[72] flex items-center justify-center bg-[rgba(15,23,42,0.56)] px-4 py-8 backdrop-blur-sm"
+      @click.self="closeStoryboardVideoConfirm"
+    >
+      <section class="w-full max-w-[720px] overflow-hidden rounded-[30px] border border-borderSoft bg-panel shadow-[0_30px_90px_rgba(15,23,42,0.22)]">
+        <div class="border-b border-borderSoft px-6 py-5">
+          <p class="text-xs font-semibold uppercase tracking-[0.18em] text-textMuted">生成前确认</p>
+          <h3 class="mt-2 text-[26px] font-semibold tracking-[-0.03em] text-textMain">确认生成分镜视频</h3>
+          <p class="mt-2 text-sm leading-6 text-textMuted">
+            {{
+              videoGenerationConfirm.promptSource === 'user'
+                ? '检测到你手动调整过提示词，可以先让系统重新适配当前视频模型，也可以直接按当前内容生成。'
+                : '当前镜头任务已经按模型、时长和参考图职责完成适配。'
+            }}
+          </p>
+        </div>
+
+        <div class="max-h-[68vh] space-y-5 overflow-y-auto px-6 py-5">
+          <div class="grid gap-3 md:grid-cols-3">
+            <div class="rounded-[20px] border border-borderSoft bg-panelSoft px-4 py-3">
+              <p class="text-xs font-semibold text-textMuted">预计消耗</p>
+              <CreditAmount :value="videoGenerationConfirm.preview.requiredCredits" size="md" tone="accent" class="mt-2" />
+            </div>
+            <div class="rounded-[20px] border border-borderSoft bg-panelSoft px-4 py-3">
+              <p class="text-xs font-semibold text-textMuted">当前余额</p>
+              <CreditAmount :value="videoGenerationConfirm.preview.currentBalance" size="md" tone="inherit" class="mt-2" />
+            </div>
+            <div class="rounded-[20px] border border-borderSoft bg-panelSoft px-4 py-3">
+              <p class="text-xs font-semibold text-textMuted">生成后余额</p>
+              <CreditAmount :value="videoGenerationConfirm.preview.balanceAfter" size="md" tone="muted" class="mt-2" />
+            </div>
+          </div>
+
+          <div class="grid gap-3 md:grid-cols-2">
+            <div class="rounded-[20px] border border-borderSoft bg-panelSoft px-4 py-3">
+              <p class="text-xs font-semibold text-textMuted">模型与规格</p>
+              <p class="mt-2 text-sm font-semibold text-textMain">
+                {{ videoGenerationConfirm.payload.model }} · {{ videoGenerationConfirm.payload.durationSec }} 秒 · {{ videoGenerationConfirm.payload.resolution }}
+              </p>
+            </div>
+            <div class="rounded-[20px] border border-borderSoft bg-panelSoft px-4 py-3">
+              <p class="text-xs font-semibold text-textMuted">适配状态</p>
+              <p class="mt-2 text-sm font-semibold text-textMain">
+                {{ dramaIntentModeLabel(videoGenerationConfirm.preview.modeHint) }} · 已完成生成适配
+              </p>
+            </div>
+          </div>
+
+          <div class="rounded-[22px] border border-borderSoft bg-panelSoft px-4 py-4">
+            <p class="text-sm font-semibold text-textMain">镜头任务摘要</p>
+            <div class="mt-3 space-y-2">
+              <p
+                v-for="line in videoGenerationConfirm.taskLines"
+                :key="line"
+                class="rounded-2xl border border-borderSoft bg-panel px-3 py-2 text-sm leading-6 text-textMuted"
+              >
+                {{ line }}
+              </p>
+            </div>
+          </div>
+
+          <div
+            v-if="videoGenerationConfirm.userDecisionItems.length"
+            class="rounded-[22px] border border-[#bfdbfe] bg-[#eff6ff] px-4 py-4"
+          >
+            <p class="text-sm font-semibold text-[#1d4ed8]">需要你确认的内容</p>
+            <div class="mt-3 space-y-2">
+              <p
+                v-for="item in videoGenerationConfirm.userDecisionItems"
+                :key="item"
+                class="rounded-2xl border border-[#dbeafe] bg-white/70 px-3 py-2 text-sm leading-6 text-[#1e40af]"
+              >
+                {{ item }}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div class="flex flex-wrap items-center justify-end gap-3 border-t border-borderSoft px-6 py-5">
+          <button
+            type="button"
+            class="rounded-full border border-borderSoft bg-panel px-5 py-2.5 text-sm font-semibold text-textMuted transition hover:border-[#94a3b8] hover:text-textMain"
+            :disabled="isBusy || isRowVideoSubmitting(videoGenerationConfirm.rowId)"
+            @click="closeStoryboardVideoConfirm"
+          >
+            取消
+          </button>
+          <button
+            v-if="videoGenerationConfirm.promptSource === 'user'"
+            type="button"
+            class="rounded-full border border-borderSoft bg-panel px-5 py-2.5 text-sm font-semibold text-textMain transition hover:border-neon/45 hover:text-neon disabled:cursor-not-allowed disabled:opacity-60"
+            :disabled="isBusy || isRowVideoSubmitting(videoGenerationConfirm.rowId)"
+            @click="executeStoryboardVideoConfirm('direct')"
+          >
+            直接按当前提示词生成
+          </button>
+          <button
+            type="button"
+            class="rounded-full bg-gradient-to-r from-[#2463ff] to-[#7c3aed] px-6 py-2.5 text-sm font-semibold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+            :disabled="isBusy || isRowVideoSubmitting(videoGenerationConfirm.rowId)"
+            @click="executeStoryboardVideoConfirm(videoGenerationConfirm.promptSource === 'user' ? 'adapted' : 'direct')"
+          >
+            {{ videoGenerationConfirm.promptSource === 'user' ? '智能适配后生成' : '确认生成' }}
+          </button>
+        </div>
+      </section>
     </div>
 
     <div

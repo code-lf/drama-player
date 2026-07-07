@@ -65,13 +65,13 @@ function handleError(): void {
       <div class="fluid-image-sheen absolute inset-0" />
       <div
         v-if="loadingLabel && !hasError"
-        class="absolute left-3 top-3 rounded-full border border-white/30 bg-white/20 px-3 py-1 text-xs font-semibold text-white backdrop-blur-sm"
+        class="absolute left-3 top-3 rounded-full border border-borderSoft bg-surfaceOverlay px-3 py-1 text-xs font-semibold text-textMain backdrop-blur-sm"
       >
         {{ loadingLabel }}
       </div>
       <div
         v-if="showFallbackText"
-        class="absolute inset-x-6 bottom-6 rounded-2xl bg-white/88 px-4 py-3 text-sm font-medium text-[#334155]"
+        class="absolute inset-x-6 bottom-6 rounded-2xl border border-borderSoft bg-surfaceRaised px-4 py-3 text-sm font-medium text-textMain"
       >
         {{ fallbackText }}
       </div>
