@@ -1,4 +1,5 @@
 import type { AuthSession } from '~/entities/auth/types'
+import type { SystemAnnouncement } from '~/entities/announcement/types'
 import type { AccountProfile, CreditLedgerPage, CreditPackage } from '~/entities/account/types'
 import type { CanvasGraph } from '~/entities/canvas/types'
 import type {
@@ -10,6 +11,12 @@ import type {
   DramaRuntimeConfig
 } from '~/entities/drama/types'
 import type { Project } from '~/entities/project/types'
+import type {
+  ProductImageCreditPreview,
+  ProductImageGeneratePayload,
+  ProductImageGenerateResult,
+  ProductSellingPoint
+} from '~/entities/product-image/types'
 import type {
   StoryboardClipContract,
   StoryboardContinuationPolicy,
@@ -103,6 +110,10 @@ export interface DramaRoleUpdatePayload {
   personality?: string
   appearance?: string
   prompt?: string
+}
+
+export interface DramaRoleVoiceUpdatePayload {
+  voiceRef: string
 }
 
 export interface DramaSceneUpdatePayload {
@@ -236,6 +247,7 @@ export interface ApiAdapter {
   getAccountProfile(): Promise<ApiResponse<AccountProfile>>
   getAccountCreditPackages(): Promise<ApiResponse<CreditPackage[]>>
   getAccountCreditLedgers(page?: number, pageSize?: number): Promise<ApiResponse<CreditLedgerPage>>
+  getActiveAnnouncements(placement?: string): Promise<ApiResponse<SystemAnnouncement[]>>
   getRuntimeConfig(): Promise<ApiResponse<DramaRuntimeConfig>>
   getCanvasGraph(projectId: string): Promise<ApiResponse<CanvasGraph>>
   saveCanvasGraph(projectId: string, graph: CanvasGraph): Promise<ApiResponse<boolean>>
@@ -255,6 +267,9 @@ export interface ApiAdapter {
   regenerateDramaCover(projectId: string, payload?: DramaCoverRegeneratePayload): Promise<ApiResponse<DramaProjectDetail>>
   createDramaRole(projectId: string, payload: DramaRoleCreatePayload): Promise<ApiResponse<DramaProjectDetail>>
   updateDramaRole(projectId: string, roleKey: string, payload: DramaRoleUpdatePayload): Promise<ApiResponse<DramaProjectDetail>>
+  uploadDramaRoleVoice(projectId: string, roleKey: string, file: File): Promise<ApiResponse<DramaProjectDetail>>
+  updateDramaRoleVoice(projectId: string, roleKey: string, payload: DramaRoleVoiceUpdatePayload): Promise<ApiResponse<DramaProjectDetail>>
+  deleteDramaRoleVoice(projectId: string, roleKey: string): Promise<ApiResponse<DramaProjectDetail>>
   generateDramaRoleAssets(projectId: string, payload?: DramaAssetGeneratePayload): Promise<ApiResponse<DramaProjectDetail>>
   updateDramaScene(projectId: string, sceneKey: string, payload: DramaSceneUpdatePayload): Promise<ApiResponse<DramaProjectDetail>>
   generateDramaSceneAssets(projectId: string, payload?: DramaAssetGeneratePayload): Promise<ApiResponse<DramaProjectDetail>>
@@ -269,4 +284,7 @@ export interface ApiAdapter {
   generateStoryboardVideoPrompt(projectId: string, rowId: string, payload?: StoryboardVideoPromptGeneratePayload): Promise<ApiResponse<StoryboardVideoPromptInfo>>
   generateStoryboardVideo(projectId: string, rowId: string, payload?: StoryboardVideoGeneratePayload): Promise<ApiResponse<StoryboardVideoRunInfo>>
   batchGenerateStoryboardVideos(projectId: string, payload: StoryboardVideoBatchPayload): Promise<ApiResponse<StoryboardVideoRunInfo[]>>
+  previewProductImageCredits(payload: Pick<ProductImageGeneratePayload, 'count' | 'model' | 'prompt' | 'splitSellingPoints'>): Promise<ApiResponse<ProductImageCreditPreview>>
+  splitProductSellingPoints(payload: { prompt: string; count: number }): Promise<ApiResponse<ProductSellingPoint[]>>
+  generateProductImages(payload: ProductImageGeneratePayload): Promise<ApiResponse<ProductImageGenerateResult>>
 }

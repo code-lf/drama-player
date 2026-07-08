@@ -39,6 +39,15 @@ function resetFailure(endpoint: string): void {
   failureCounter.set(endpoint, 0)
 }
 
+function normalizeApiErrorMessage(detail: unknown): string {
+  // 后端 AppException 会返回 { error_code, message }，这里统一提取用户能看懂的中文文案。
+  if (typeof detail === 'string') return detail
+  if (detail && typeof detail === 'object' && 'message' in detail) {
+    return String((detail as { message?: unknown }).message || '接口返回失败')
+  }
+  return '接口返回失败'
+}
+
 export async function callApi<T>(endpoint: string, task: (adapter: ApiAdapter) => Promise<ApiResponse<T>>): Promise<T> {
   const adapter = pickAdapter()
 
@@ -62,7 +71,7 @@ export async function callApi<T>(endpoint: string, task: (adapter: ApiAdapter) =
     if (error && typeof error === 'object' && 'response' in error) {
       const response = (error as any).response
       if (response && response._data && response._data.detail) {
-        throw new ApiClientError(response._data.detail, 'BIZ_ERROR')
+        throw new ApiClientError(normalizeApiErrorMessage(response._data.detail), 'BIZ_ERROR')
       }
     }
 

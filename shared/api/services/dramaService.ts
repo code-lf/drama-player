@@ -9,6 +9,7 @@ import type {
   DramaPropUpdatePayload,
   DramaRoleCreatePayload,
   DramaRoleUpdatePayload,
+  DramaRoleVoiceUpdatePayload,
   DramaSceneUpdatePayload,
   DramaScriptIngestPayload,
   DramaStoryboardGeneratePayload,
@@ -70,6 +71,18 @@ export const dramaService = {
 
   async updateRole(projectId: string, roleKey: string, payload: DramaRoleUpdatePayload) {
     return callApi('drama/updateRole', (adapter) => adapter.updateDramaRole(projectId, roleKey, payload))
+  },
+
+  async uploadRoleVoice(projectId: string, roleKey: string, file: File) {
+    return callApi('drama/uploadRoleVoice', (adapter) => adapter.uploadDramaRoleVoice(projectId, roleKey, file))
+  },
+
+  async updateRoleVoice(projectId: string, roleKey: string, payload: DramaRoleVoiceUpdatePayload) {
+    return callApi('drama/updateRoleVoice', (adapter) => adapter.updateDramaRoleVoice(projectId, roleKey, payload))
+  },
+
+  async deleteRoleVoice(projectId: string, roleKey: string) {
+    return callApi('drama/deleteRoleVoice', (adapter) => adapter.deleteDramaRoleVoice(projectId, roleKey))
   },
 
   async generateRoleAssets(projectId: string, payload?: DramaAssetGeneratePayload) {

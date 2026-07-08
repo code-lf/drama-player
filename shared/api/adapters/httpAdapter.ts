@@ -10,6 +10,13 @@ import type {
 } from '~/entities/drama/types'
 import type { Project } from '~/entities/project/types'
 import type {
+  ProductImageCreditPreview,
+  ProductImageGeneratePayload,
+  ProductImageGenerateResult,
+  ProductImageResult,
+  ProductSellingPoint
+} from '~/entities/product-image/types'
+import type {
   StoryboardClipContract,
   StoryboardContinuationPolicy,
   StoryboardContinuityState,
@@ -18,6 +25,7 @@ import type {
   StoryboardRow
 } from '~/entities/storyboard/types'
 import type { AuthSession } from '~/entities/auth/types'
+import type { SystemAnnouncement } from '~/entities/announcement/types'
 import { useAuthStore } from '~/features/auth/store/useAuthStore'
 import { getStoryboardCache, setStoryboardCache } from '~/shared/api/storyboardCache'
 import type {
@@ -29,6 +37,7 @@ import type {
   DramaProjectCreatePayload,
   DramaPropUpdatePayload,
   DramaRoleUpdatePayload,
+  DramaRoleVoiceUpdatePayload,
   DramaSceneUpdatePayload,
   DramaScriptIngestPayload,
   DramaStoryboardGeneratePayload,
@@ -169,12 +178,81 @@ interface BackendCreditLedgerPageResponse {
   page_size: number
 }
 
+interface BackendAnnouncementResponse {
+  id: string
+  title: string
+  content: string
+  level: SystemAnnouncement['level']
+  placement: string
+  link_text: string
+  link_url: string
+  is_pinned: boolean
+  dismissible: boolean
+  sort_order: number
+  starts_at: string | null
+  ends_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+interface BackendProductSellingPointResponse {
+  index: number
+  title: string
+  description: string
+}
+
+interface BackendProductImageCreditPreviewResponse {
+  provider: string
+  model: string
+  required_credits: number
+  current_balance: number
+  balance_after: number
+  count: number
+  split_selling_points: boolean
+  sufficient: boolean
+  message: string
+}
+
+interface BackendProductImageResultResponse {
+  id: string
+  image_url: string
+  prompt: string
+  selling_point: BackendProductSellingPointResponse | null
+  provider: string
+  model: string
+  status: string
+}
+
+interface BackendProductImageGenerateResponse {
+  batch_id: string
+  provider: string
+  model: string
+  required_credits: number
+  current_balance: number
+  balance_after: number
+  count: number
+  split_selling_points: boolean
+  selling_points: BackendProductSellingPointResponse[]
+  results: BackendProductImageResultResponse[]
+}
+
 interface BackendDramaAssetItem {
   id: string
   image_url: string
   prompt: string
   status: string
   meta: Record<string, unknown>
+}
+
+interface BackendDramaVoiceAssetItem {
+  id: string
+  audio_url: string
+  file_name: string
+  mime_type: string
+  size_bytes: number
+  duration_sec: number | null
+  meta: Record<string, unknown>
+  created_at: string
 }
 
 interface BackendDramaRole {
@@ -189,6 +267,7 @@ interface BackendDramaRole {
   generation_progress: number
   generation_error_message: string
   assets: BackendDramaAssetItem[]
+  voice_asset?: BackendDramaVoiceAssetItem | null
 }
 
 interface BackendDramaScene {
@@ -527,6 +606,92 @@ function mapCreditLedgerPage(raw: BackendCreditLedgerPageResponse): CreditLedger
   }
 }
 
+function mapAnnouncement(raw: BackendAnnouncementResponse): SystemAnnouncement {
+  return {
+    id: raw.id,
+    title: raw.title || '',
+    content: raw.content || '',
+    level: raw.level || 'info',
+    placement: raw.placement || 'global',
+    linkText: raw.link_text || '',
+    linkUrl: raw.link_url || '',
+    isPinned: Boolean(raw.is_pinned),
+    dismissible: Boolean(raw.dismissible),
+    sortOrder: Number(raw.sort_order || 100),
+    startsAt: raw.starts_at || '',
+    endsAt: raw.ends_at || '',
+    createdAt: raw.created_at || '',
+    updatedAt: raw.updated_at || ''
+  }
+}
+
+function mapProductSellingPoint(raw: BackendProductSellingPointResponse): ProductSellingPoint {
+  return {
+    index: raw.index || 1,
+    title: raw.title || '',
+    description: raw.description || ''
+  }
+}
+
+function mapProductImageCreditPreview(raw: BackendProductImageCreditPreviewResponse): ProductImageCreditPreview {
+  return {
+    provider: raw.provider || '',
+    model: raw.model || '',
+    requiredCredits: raw.required_credits || 0,
+    currentBalance: raw.current_balance || 0,
+    balanceAfter: raw.balance_after || 0,
+    count: raw.count || 1,
+    splitSellingPoints: Boolean(raw.split_selling_points),
+    sufficient: Boolean(raw.sufficient),
+    message: raw.message || ''
+  }
+}
+
+function mapProductImageResult(raw: BackendProductImageResultResponse): ProductImageResult {
+  return {
+    id: raw.id || '',
+    imageUrl: raw.image_url || '',
+    prompt: raw.prompt || '',
+    sellingPoint: raw.selling_point ? mapProductSellingPoint(raw.selling_point) : null,
+    provider: raw.provider || '',
+    model: raw.model || '',
+    status: raw.status || ''
+  }
+}
+
+function mapProductImageGenerateResult(raw: BackendProductImageGenerateResponse): ProductImageGenerateResult {
+  return {
+    batchId: raw.batch_id || '',
+    provider: raw.provider || '',
+    model: raw.model || '',
+    requiredCredits: raw.required_credits || 0,
+    currentBalance: raw.current_balance || 0,
+    balanceAfter: raw.balance_after || 0,
+    count: raw.count || 0,
+    splitSellingPoints: Boolean(raw.split_selling_points),
+    sellingPoints: (raw.selling_points || []).map(mapProductSellingPoint),
+    results: (raw.results || []).map(mapProductImageResult)
+  }
+}
+
+function buildProductImagePayload(payload: ProductImageGeneratePayload) {
+  // 商品图请求统一在这里转成后端 snake_case，页面组件只维护 camelCase。
+  return {
+    prompt: payload.prompt,
+    model: payload.model || '',
+    count: payload.count,
+    split_selling_points: payload.splitSellingPoints,
+    aspect_ratio: payload.aspectRatio,
+    resolution: payload.resolution,
+    style: payload.style,
+    negative_prompt: payload.negativePrompt || '',
+    reference_images: (payload.referenceImages || []).map((item) => ({
+      name: item.name,
+      data_url: item.dataUrl
+    }))
+  }
+}
+
 function mapStoryboardClipContract(raw?: Record<string, unknown>): StoryboardClipContract {
   return {
     intent: String(raw?.intent || ''),
@@ -640,6 +805,20 @@ function mapDramaAsset(raw: BackendDramaAssetItem): DramaAssetItem {
   }
 }
 
+function mapDramaVoiceAsset(raw?: BackendDramaVoiceAssetItem | null) {
+  if (!raw) return null
+  return {
+    id: raw.id,
+    audioUrl: raw.audio_url || '',
+    fileName: raw.file_name || '',
+    mimeType: raw.mime_type || '',
+    sizeBytes: Number(raw.size_bytes || 0),
+    durationSec: raw.duration_sec === null || raw.duration_sec === undefined ? null : Number(raw.duration_sec),
+    meta: raw.meta || {},
+    createdAt: raw.created_at || ''
+  }
+}
+
 function mapDramaDetail(raw: BackendDramaDetailResponse): DramaProjectDetail {
   return {
     id: raw.id,
@@ -695,7 +874,8 @@ function mapDramaDetail(raw: BackendDramaDetailResponse): DramaProjectDetail {
         generationStatus: role.generation_status || 'idle',
         generationProgress: role.generation_progress || 0,
         generationErrorMessage: role.generation_error_message || '',
-        assets: (role.assets || []).map(mapDramaAsset)
+        assets: (role.assets || []).map(mapDramaAsset),
+        voiceAsset: mapDramaVoiceAsset(role.voice_asset)
       })),
       scenes: (raw.analysis?.scenes || []).map((scene) => ({
         key: scene.key,
@@ -892,6 +1072,40 @@ export const httpAdapter: ApiAdapter = {
   async getAccountCreditLedgers(page = 1, pageSize = 10) {
     const response = await request<BackendCreditLedgerPageResponse>(`/account/credit-ledgers?page=${page}&page_size=${pageSize}`)
     return ok(mapCreditLedgerPage(response))
+  },
+
+  async getActiveAnnouncements(placement = 'global') {
+    const response = await request<BackendAnnouncementResponse[]>(`/announcements/active?placement=${encodeURIComponent(placement)}`)
+    return ok((response || []).map(mapAnnouncement))
+  },
+
+  async previewProductImageCredits(payload) {
+    const response = await request<BackendProductImageCreditPreviewResponse>('/product-image/credit-preview', {
+      method: 'POST',
+      body: {
+        prompt: payload.prompt,
+        model: payload.model || '',
+        count: payload.count,
+        split_selling_points: payload.splitSellingPoints
+      }
+    })
+    return ok(mapProductImageCreditPreview(response))
+  },
+
+  async splitProductSellingPoints(payload) {
+    const response = await request<BackendProductSellingPointResponse[]>('/product-image/selling-points', {
+      method: 'POST',
+      body: payload
+    })
+    return ok((response || []).map(mapProductSellingPoint))
+  },
+
+  async generateProductImages(payload) {
+    const response = await request<BackendProductImageGenerateResponse>('/product-image/generate', {
+      method: 'POST',
+      body: buildProductImagePayload(payload)
+    })
+    return ok(mapProductImageGenerateResult(response))
   },
 
   async phoneLogin(phone: string, code: string) {
@@ -1137,6 +1351,38 @@ export const httpAdapter: ApiAdapter = {
         appearance: payload.appearance || '',
         prompt: payload.prompt || ''
       }
+    })
+    return ok(mapDramaDetail(response))
+  },
+
+  async uploadDramaRoleVoice(projectId: string, roleKey: string, file: File) {
+    // 角色音色上传走原始二进制 body，避免后端额外依赖 multipart 解析包。
+    const response = await request<BackendDramaDetailResponse>(
+      `/drama/projects/${projectId}/roles/${encodeURIComponent(roleKey)}/voice/upload?file_name=${encodeURIComponent(file.name)}`,
+      {
+        method: 'POST',
+        body: file,
+        headers: {
+          'Content-Type': file.type || 'application/octet-stream'
+        }
+      }
+    )
+    return ok(mapDramaDetail(response))
+  },
+
+  async updateDramaRoleVoice(projectId: string, roleKey: string, payload: DramaRoleVoiceUpdatePayload) {
+    const response = await request<BackendDramaDetailResponse>(`/drama/projects/${projectId}/roles/${encodeURIComponent(roleKey)}/voice`, {
+      method: 'PATCH',
+      body: {
+        voice_ref: payload.voiceRef || ''
+      }
+    })
+    return ok(mapDramaDetail(response))
+  },
+
+  async deleteDramaRoleVoice(projectId: string, roleKey: string) {
+    const response = await request<BackendDramaDetailResponse>(`/drama/projects/${projectId}/roles/${encodeURIComponent(roleKey)}/voice`, {
+      method: 'DELETE'
     })
     return ok(mapDramaDetail(response))
   },

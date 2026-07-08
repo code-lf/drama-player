@@ -1,0 +1,149 @@
+<svg width="1600" height="900" viewBox="0 0 1600 900" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="pageBg" x1="0" y1="0" x2="1600" y2="900" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F3F7FD"/>
+      <stop offset="0.48" stop-color="#EEF4FB"/>
+      <stop offset="1" stop-color="#F7F9FC"/>
+    </linearGradient>
+    <linearGradient id="brand" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#1377FF"/>
+      <stop offset="1" stop-color="#18B6FF"/>
+    </linearGradient>
+    <linearGradient id="heroGlow" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#EAF4FF"/>
+      <stop offset="0.58" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#F4F8FF"/>
+    </linearGradient>
+    <linearGradient id="cta" x1="0" y1="0" x2="1" y2="0">
+      <stop stop-color="#0E7AFF"/>
+      <stop offset="1" stop-color="#20A4FF"/>
+    </linearGradient>
+    <linearGradient id="softChip" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#F8FBFF"/>
+      <stop offset="1" stop-color="#EEF5FF"/>
+    </linearGradient>
+    <filter id="cardShadow" x="-40" y="-40" width="120%" height="125%" filterUnits="objectBoundingBox">
+      <feDropShadow dx="0" dy="24" stdDeviation="24" flood-color="#416181" flood-opacity="0.13"/>
+    </filter>
+    <filter id="smallShadow" x="-50%" y="-50%" width="200%" height="200%">
+      <feDropShadow dx="0" dy="10" stdDeviation="10" flood-color="#334E68" flood-opacity="0.10"/>
+    </filter>
+    <style>
+      .title { font-family: "Microsoft YaHei", "PingFang SC", sans-serif; fill:#07162F; font-weight:800; }
+      .text { font-family: "Microsoft YaHei", "PingFang SC", sans-serif; fill:#314462; }
+      .muted { font-family: "Microsoft YaHei", "PingFang SC", sans-serif; fill:#6B7A92; }
+      .tiny { font-family: "Microsoft YaHei", "PingFang SC", sans-serif; fill:#7B8AA3; font-size:13px; }
+      .label { font-family: "Microsoft YaHei", "PingFang SC", sans-serif; fill:#193A6A; font-weight:700; }
+    </style>
+  </defs>
+
+  <rect width="1600" height="900" fill="url(#pageBg)"/>
+
+  <!-- 左侧导航：只保留品牌、导航和轻量点数，用户信息移到顶部，避免底部堆积。 -->
+  <rect x="0" y="0" width="246" height="900" fill="#F8FBFF"/>
+  <line x1="246" y1="0" x2="246" y2="900" stroke="#D7E1EF"/>
+  <rect x="28" y="28" width="42" height="42" rx="14" fill="url(#brand)"/>
+  <path d="M46 42.5C50.8 38.4 58 41.8 58 48.1C58 54.4 50.8 57.8 46 53.7L40 48.6L46 42.5Z" fill="white" opacity=".92"/>
+  <text x="82" y="43" class="title" font-size="20">灵映 Liviv</text>
+  <text x="82" y="64" class="muted" font-size="12" font-weight="700" letter-spacing="1.8">AI 短剧工作台</text>
+
+  <text x="28" y="122" class="label" font-size="13" letter-spacing="1.2">创作空间</text>
+  <rect x="18" y="140" width="210" height="48" rx="16" fill="#FFFFFF" stroke="#C8D7EA"/>
+  <rect x="31" y="153" width="22" height="22" rx="8" fill="#E8F2FF"/>
+  <path d="M36 164H48M36 159H45M36 169H42" stroke="#1677FF" stroke-width="2" stroke-linecap="round"/>
+  <text x="64" y="170" class="label" font-size="15">剧本创作</text>
+  <rect x="18" y="198" width="210" height="44" rx="14" fill="transparent"/>
+  <rect x="31" y="209" width="22" height="22" rx="8" fill="#F0F4FA"/>
+  <path d="M36 225L40 220L44 223L48 216" stroke="#52657F" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="64" y="226" class="text" font-size="15" font-weight="700">商品图生成</text>
+  <rect x="18" y="252" width="210" height="44" rx="14" fill="transparent"/>
+  <rect x="31" y="263" width="22" height="22" rx="8" fill="#F0F4FA"/>
+  <path d="M36 268H48V280H36V268Z" stroke="#52657F" stroke-width="1.8"/>
+  <text x="64" y="280" class="text" font-size="15" font-weight="700">无限画布</text>
+  <rect x="186" y="266" width="34" height="18" rx="9" fill="#EBF2FF"/>
+  <text x="194" y="279" class="tiny" font-size="11">Beta</text>
+
+  <text x="28" y="344" class="label" font-size="13" letter-spacing="1.2">项目管理</text>
+  <rect x="18" y="362" width="210" height="44" rx="14" fill="transparent"/>
+  <rect x="31" y="373" width="22" height="22" rx="8" fill="#F0F4FA"/>
+  <path d="M36 380H42L44 383H50V392H36V380Z" stroke="#52657F" stroke-width="1.7" stroke-linejoin="round"/>
+  <text x="64" y="390" class="text" font-size="15" font-weight="700">我的项目</text>
+
+  <rect x="20" y="718" width="206" height="104" rx="20" fill="#FFFFFF" stroke="#D7E1EF"/>
+  <text x="38" y="748" class="label" font-size="13">点数余额</text>
+  <path d="M49 765L53.3 773.6L62.8 775L55.9 781.7L57.5 791.1L49 786.6L40.5 791.1L42.1 781.7L35.2 775L44.7 773.6L49 765Z" fill="#07162F"/>
+  <text x="72" y="788" class="title" font-size="28">200</text>
+  <rect x="38" y="794" width="150" height="36" rx="14" fill="url(#cta)"/>
+  <text x="84" y="817" font-family="Microsoft YaHei, PingFang SC, sans-serif" font-weight="800" font-size="14" fill="#FFFFFF">充值 / 升级</text>
+  <text x="36" y="856" class="muted" font-size="14">深色模式</text>
+  <circle cx="172" cy="851" r="15" fill="#EEF4FB" stroke="#D1DDEC"/>
+  <path d="M174 842C168 844 166 851 169.5 856C173 861 180 860 182.5 855C177 856 172.5 851 174 842Z" fill="#52657F"/>
+
+  <!-- 顶部栏：承载用户、退出、通知和全局操作。 -->
+  <rect x="246" y="0" width="1354" height="76" fill="#F8FBFF" opacity=".92"/>
+  <line x1="246" y1="76" x2="1600" y2="76" stroke="#D8E2EF"/>
+  <text x="292" y="45" class="title" font-size="20">控制台</text>
+  <text x="374" y="45" class="muted" font-size="14">今天从一个清晰的短剧方案开始</text>
+  <rect x="1200" y="20" width="44" height="36" rx="14" fill="#FFFFFF" stroke="#D6E1EF"/>
+  <path d="M1215 39H1229M1222 32V46" stroke="#52657F" stroke-width="1.8" stroke-linecap="round"/>
+  <rect x="1260" y="18" width="236" height="40" rx="20" fill="#FFFFFF" stroke="#D6E1EF"/>
+  <circle cx="1284" cy="38" r="14" fill="#D9D9D9"/>
+  <text x="1306" y="34" class="title" font-size="14">管理员开发者</text>
+  <text x="1306" y="51" class="muted" font-size="11">已登录账号</text>
+  <path d="M1474 34L1481 41L1488 34" stroke="#52657F" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="1510" y="18" width="58" height="40" rx="20" fill="#FFF4F4" stroke="#FFD7D7"/>
+  <text x="1527" y="43" font-family="Microsoft YaHei, PingFang SC, sans-serif" fill="#F04444" font-size="14" font-weight="800">退出</text>
+
+  <!-- 主创作卡片：把输入、导入、参数和 CTA 分层。 -->
+  <rect x="392" y="116" width="988" height="638" rx="34" fill="url(#heroGlow)" stroke="#CDD9E8" filter="url(#cardShadow)"/>
+  <circle cx="472" cy="190" r="90" fill="#E8F4FF" opacity=".65"/>
+  <circle cx="1294" cy="648" r="130" fill="#EAF6FF" opacity=".62"/>
+  <text x="576" y="190" class="title" font-size="38">从灵感出发，生成短剧方案</text>
+  <text x="604" y="226" class="text" font-size="16">输入故事大纲、角色设定或直接拖入剧本，AI 会生成结构化分镜与镜头任务。</text>
+
+  <rect x="526" y="272" width="720" height="314" rx="28" fill="#FFFFFF" stroke="#D5E1F0" filter="url(#smallShadow)"/>
+  <rect x="548" y="294" width="676" height="52" rx="18" fill="#F6FAFF" stroke="#DFE8F5"/>
+  <text x="570" y="327" class="label" font-size="15">剧本 / 灵感输入</text>
+  <rect x="548" y="362" width="676" height="146" rx="18" fill="#FBFDFF" stroke="#E1E9F4"/>
+  <text x="574" y="398" class="muted" font-size="17">写下你想讲的故事、场景或角色设定...</text>
+  <text x="574" y="440" class="tiny">例：废灵根少年被同门欺辱，意外获得古剑传承，第一集要有强钩子和反转。</text>
+
+  <rect x="548" y="526" width="318" height="42" rx="16" fill="#F8FBFF" stroke="#DDE7F3"/>
+  <path d="M574 548L574 536M568 542L574 536L580 542" stroke="#1677FF" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="592" y="552" class="text" font-size="14" font-weight="700">拖拽导入 .txt / .docx 剧本</text>
+  <rect x="884" y="526" width="340" height="42" rx="16" fill="#F8FBFF" stroke="#DDE7F3"/>
+  <circle cx="908" cy="547" r="5" fill="#1677FF"/>
+  <text x="922" y="552" class="text" font-size="14" font-weight="700">输入后自动估算点数与生成耗时</text>
+
+  <rect x="526" y="610" width="720" height="58" rx="22" fill="#FFFFFF" stroke="#D5E1F0"/>
+  <rect x="548" y="622" width="174" height="34" rx="15" fill="#EDF5FF"/>
+  <rect x="552" y="626" width="82" height="26" rx="11" fill="#FFFFFF" stroke="#D6E2F0"/>
+  <text x="567" y="644" class="title" font-size="13">Agent 模式</text>
+  <text x="650" y="644" class="muted" font-size="13">人工模式</text>
+  <rect x="744" y="622" width="116" height="34" rx="14" fill="#FFFFFF" stroke="#D6E2F0"/>
+  <text x="764" y="644" class="title" font-size="13">Seed 2.0 mini</text>
+  <rect x="876" y="622" width="90" height="34" rx="14" fill="#FFFFFF" stroke="#D6E2F0"/>
+  <text x="908" y="644" class="title" font-size="13">16:9</text>
+  <rect x="982" y="622" width="90" height="34" rx="14" fill="#FFFFFF" stroke="#D6E2F0"/>
+  <text x="1012" y="644" class="title" font-size="13">720p</text>
+  <rect x="1088" y="622" width="116" height="34" rx="14" fill="#FFFFFF" stroke="#D6E2F0"/>
+  <text x="1110" y="644" class="title" font-size="13">写实通用</text>
+
+  <rect x="780" y="696" width="346" height="54" rx="22" fill="url(#cta)" filter="url(#smallShadow)"/>
+  <text x="890" y="730" font-family="Microsoft YaHei, PingFang SC, sans-serif" fill="#FFFFFF" font-size="17" font-weight="900">开始生成方案</text>
+  <path d="M1058 723H1078M1070 715L1078 723L1070 731" stroke="#FFFFFF" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- 右侧说明：作为确认稿标注，不会出现在最终实现中。 -->
+  <rect x="1404" y="116" width="150" height="262" rx="24" fill="#FFFFFF" stroke="#D6E1EF"/>
+  <text x="1430" y="154" class="title" font-size="18">设计调整</text>
+  <circle cx="1434" cy="188" r="12" fill="#E8F2FF"/><text x="1430" y="193" class="label" font-size="13">1</text>
+  <text x="1454" y="193" class="text" font-size="13">导航全中文</text>
+  <circle cx="1434" cy="226" r="12" fill="#E8F2FF"/><text x="1430" y="231" class="label" font-size="13">2</text>
+  <text x="1454" y="231" class="text" font-size="13">用户区右上</text>
+  <circle cx="1434" cy="264" r="12" fill="#E8F2FF"/><text x="1430" y="269" class="label" font-size="13">3</text>
+  <text x="1454" y="269" class="text" font-size="13">侧栏减负</text>
+  <circle cx="1434" cy="302" r="12" fill="#E8F2FF"/><text x="1430" y="307" class="label" font-size="13">4</text>
+  <text x="1454" y="307" class="text" font-size="13">输入分层</text>
+  <circle cx="1434" cy="340" r="12" fill="#E8F2FF"/><text x="1430" y="345" class="label" font-size="13">5</text>
+  <text x="1454" y="345" class="text" font-size="13">蓝色主按钮</text>
+</svg>

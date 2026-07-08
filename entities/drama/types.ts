@@ -8,6 +8,17 @@ export interface DramaAssetItem {
   meta: Record<string, unknown>
 }
 
+export interface DramaVoiceAssetItem {
+  id: string
+  audioUrl: string
+  fileName: string
+  mimeType: string
+  sizeBytes: number
+  durationSec: number | null
+  meta: Record<string, unknown>
+  createdAt: string
+}
+
 export interface DramaRoleProfile {
   key: string
   name: string
@@ -20,6 +31,7 @@ export interface DramaRoleProfile {
   generationProgress: number
   generationErrorMessage: string
   assets: DramaAssetItem[]
+  voiceAsset: DramaVoiceAssetItem | null
 }
 
 export interface DramaSceneProfile {

@@ -1,6 +1,8 @@
 import type { AccountProfile, CreditLedgerPage, CreditPackage } from '~/entities/account/types'
+import type { SystemAnnouncement } from '~/entities/announcement/types'
 import type { AuthSession } from '~/entities/auth/types'
 import type { DramaCreditPreview, DramaProjectCard, DramaProjectDetail, DramaRuntimeConfig } from '~/entities/drama/types'
+import type { ProductImageGeneratePayload, ProductSellingPoint } from '~/entities/product-image/types'
 import type { StoryboardClipContract, StoryboardContinuationPolicy, StoryboardContinuityState, StoryboardReferenceBinding } from '~/entities/storyboard/types'
 import { defaultNodes } from '~/shared/constants/canvas'
 import { mockProjects } from '~/shared/constants/landing'
@@ -14,6 +16,7 @@ import type {
   DramaPropUpdatePayload,
   DramaProjectCreatePayload,
   DramaRoleUpdatePayload,
+  DramaRoleVoiceUpdatePayload,
   DramaSceneUpdatePayload,
   DramaScriptIngestPayload,
   DramaStoryboardGeneratePayload,
@@ -24,6 +27,71 @@ import type {
 
 const mockTicketState = new Map<string, { startTime: number; done: boolean }>()
 const mockDramaProjectMap = new Map<string, DramaProjectDetail>()
+const mockAnnouncements: SystemAnnouncement[] = [
+  {
+    id: 'mock-announcement-1',
+    title: '系统公告',
+    content: '<p><strong>短剧创作工作流已更新</strong>，新增更清晰的视频生成确认与点数提示。</p>',
+    level: 'info',
+    placement: 'global',
+    linkText: '',
+    linkUrl: '',
+    isPinned: true,
+    dismissible: true,
+    sortOrder: 1,
+    startsAt: '',
+    endsAt: '',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  }
+]
+
+function splitMockProductSellingPoints(prompt: string, count: number): ProductSellingPoint[] {
+  const parts = (prompt || '')
+    .split(/[，,。；;\n、]/)
+    .map(item => item.trim())
+    .filter(Boolean)
+  const fallback = ['主卖点', '使用场景', '品质细节', '转化记忆点', '社媒封面', '活动促销']
+  return Array.from({ length: count }, (_, index) => {
+    const description = parts[index] || `${fallback[index % fallback.length]}：${(prompt || '商品优势').slice(0, 24)}`
+    return {
+      index: index + 1,
+      title: description.replace(/^(主卖点|使用场景|品质细节|转化记忆点|社媒封面|活动促销)[:：]/, '').slice(0, 12) || `卖点 ${index + 1}`,
+      description
+    }
+  })
+}
+
+function buildMockProductImage(payload: ProductImageGeneratePayload, index: number, title: string): string {
+  // mock 模式使用内联 SVG，避免依赖外部占位图站点导致网络不可控。
+  const ratioSizeMap: Record<string, [number, number]> = {
+    '16:9': [1280, 720],
+    '9:16': [720, 1280],
+    '4:3': [1024, 768],
+    '3:4': [768, 1024],
+    '1:1': [1024, 1024]
+  }
+  const [width, height] = ratioSizeMap[payload.aspectRatio] || ratioSizeMap['1:1']
+  const safeTitle = title.slice(0, 18)
+  const svg = `
+<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#f8fbff"/>
+      <stop offset="52%" stop-color="#dbeafe"/>
+      <stop offset="100%" stop-color="#c4b5fd"/>
+    </linearGradient>
+  </defs>
+  <rect width="100%" height="100%" rx="36" fill="url(#bg)"/>
+  <circle cx="${width * 0.72}" cy="${height * 0.24}" r="${Math.min(width, height) * 0.18}" fill="#60a5fa" opacity="0.28"/>
+  <ellipse cx="${width / 2}" cy="${height * 0.62}" rx="${width * 0.23}" ry="${height * 0.07}" fill="#0f172a" opacity="0.08"/>
+  <rect x="${width * 0.36}" y="${height * 0.28}" width="${width * 0.28}" height="${height * 0.28}" rx="34" fill="#ffffff" opacity="0.86"/>
+  <rect x="${width * 0.4}" y="${height * 0.33}" width="${width * 0.2}" height="${height * 0.07}" rx="18" fill="#2563eb" opacity="0.72"/>
+  <text x="${width / 2}" y="${height * 0.74}" text-anchor="middle" font-size="${Math.max(26, width / 28)}" font-weight="800" fill="#0f172a">${safeTitle}</text>
+  <text x="${width / 2}" y="${height * 0.8}" text-anchor="middle" font-size="${Math.max(16, width / 46)}" fill="#475569">${payload.style || '电商商品图'} · ${index + 1}</text>
+</svg>`.trim()
+  return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`
+}
 
 function createEmptyDramaAnalysis() {
   return {
@@ -330,6 +398,62 @@ export const mockAdapter: ApiAdapter = {
     return ok(ledgerPage)
   },
 
+  async getActiveAnnouncements(placement = 'global') {
+    await sleep(80)
+    return ok(mockAnnouncements.filter((item) => item.placement === placement))
+  },
+
+  async previewProductImageCredits(payload) {
+    await sleep(120)
+    const requiredCredits = Math.max(1, payload.count || 1) * 30
+    return ok({
+      provider: 'alibaba',
+      model: payload.model || 'wanx2.1-t2i-turbo',
+      requiredCredits,
+      currentBalance: createMockAccountProfile().creditBalance,
+      balanceAfter: createMockAccountProfile().creditBalance - requiredCredits,
+      count: payload.count || 1,
+      splitSellingPoints: Boolean(payload.splitSellingPoints),
+      sufficient: createMockAccountProfile().creditBalance >= requiredCredits,
+      message: '点数充足，可开始生成'
+    })
+  },
+
+  async splitProductSellingPoints(payload) {
+    await sleep(120)
+    return ok(splitMockProductSellingPoints(payload.prompt, payload.count))
+  },
+
+  async generateProductImages(payload) {
+    await sleep(700)
+    const sellingPoints = payload.splitSellingPoints ? splitMockProductSellingPoints(payload.prompt, payload.count) : []
+    const requiredCredits = Math.max(1, payload.count || 1) * 30
+    return ok({
+      batchId: `mock-product-${Date.now()}`,
+      provider: 'alibaba',
+      model: payload.model || 'wanx2.1-t2i-turbo',
+      requiredCredits,
+      currentBalance: createMockAccountProfile().creditBalance,
+      balanceAfter: createMockAccountProfile().creditBalance - requiredCredits,
+      count: payload.count,
+      splitSellingPoints: payload.splitSellingPoints,
+      sellingPoints,
+      results: Array.from({ length: payload.count }, (_, index) => {
+        const sellingPoint = sellingPoints[index] || null
+        const title = sellingPoint?.title || `商品图 ${index + 1}`
+        return {
+          id: `mock-product-result-${index + 1}`,
+          imageUrl: buildMockProductImage(payload, index, title),
+          prompt: `${payload.prompt}，${payload.style}，${sellingPoint?.description || '按用户需求直接生成变体'}`,
+          sellingPoint,
+          provider: 'alibaba',
+          model: payload.model || 'wanx2.1-t2i-turbo',
+          status: 'mock'
+        }
+      })
+    })
+  },
+
   async phoneLogin(phone: string, _code: string) {
     return ok({
       loggedIn: true,
@@ -597,8 +721,8 @@ export const mockAdapter: ApiAdapter = {
           { episodeNo: 1, title: '第1集 意外入局', content: '主角在现实生活中压抑疲惫，某次意外之后穿越至盛唐权力中心边缘。她一边试图确认自身处境，一边被更大的阴谋裹挟，凭借现代认知与应变能力，艰难完成第一次自救。' }
         ],
         roles: [
-          { key: 'shen-zhaozhao', name: '沈昭昭', ageIdentity: '28岁，现代打工人', personality: '坚韧、敏锐、嘴硬心软', appearance: '清秀锐利，现代与唐装皆有辨识度', voiceRef: '', prompt: '', assets: [] },
-          { key: 'huangdi', name: '皇帝', ageIdentity: '中年帝王', personality: '威压、克制、多疑', appearance: '金色龙袍，仪态威严', voiceRef: '', prompt: '', assets: [] }
+          { key: 'shen-zhaozhao', name: '沈昭昭', ageIdentity: '28岁，现代打工人', personality: '坚韧、敏锐、嘴硬心软', appearance: '清秀锐利，现代与唐装皆有辨识度', voiceRef: '', prompt: '', generationStatus: 'idle', generationProgress: 0, generationErrorMessage: '', assets: [], voiceAsset: null },
+          { key: 'huangdi', name: '皇帝', ageIdentity: '中年帝王', personality: '威压、克制、多疑', appearance: '金色龙袍，仪态威严', voiceRef: '', prompt: '', generationStatus: 'idle', generationProgress: 0, generationErrorMessage: '', assets: [], voiceAsset: null }
         ],
         scenes: [
           { key: 'office-night', name: '深夜办公室', description: '冷白屏幕光与凌乱工位构成现代压迫感', prompt: '', asset: null },
@@ -680,7 +804,8 @@ export const mockAdapter: ApiAdapter = {
             generationStatus: 'idle',
             generationProgress: 0,
             generationErrorMessage: '',
-            assets: []
+            assets: [],
+            voiceAsset: null
           }
         ],
         characterBios: [
@@ -720,6 +845,77 @@ export const mockAdapter: ApiAdapter = {
               summary: payload.appearance || payload.personality || payload.prompt || bio.summary
             }
           : bio)
+      }
+    }
+    mockDramaProjectMap.set(projectId, next)
+    return ok(next)
+  },
+
+  async uploadDramaRoleVoice(projectId: string, roleKey: string, file: File) {
+    await sleep(160)
+    const current = mockDramaProjectMap.get(projectId)!
+    const assetId = `mock-voice-${roleKey}-${Date.now()}`
+    const audioUrl = URL.createObjectURL(file)
+    const next: DramaProjectDetail = {
+      ...current,
+      analysis: {
+        ...current.analysis,
+        roles: current.analysis.roles.map((role) => role.key === roleKey
+          ? {
+              ...role,
+              voiceRef: assetId,
+              voiceAsset: {
+                id: assetId,
+                audioUrl,
+                fileName: file.name,
+                mimeType: file.type || 'audio/mpeg',
+                sizeBytes: file.size || 0,
+                durationSec: null,
+                meta: { drama_group: 'voice', role_key: roleKey, voice_kind: 'custom_sample' },
+                createdAt: new Date().toISOString()
+              }
+            }
+          : role)
+      }
+    }
+    mockDramaProjectMap.set(projectId, next)
+    return ok(next)
+  },
+
+  async updateDramaRoleVoice(projectId: string, roleKey: string, payload: DramaRoleVoiceUpdatePayload) {
+    await sleep(80)
+    const current = mockDramaProjectMap.get(projectId)!
+    const next: DramaProjectDetail = {
+      ...current,
+      analysis: {
+        ...current.analysis,
+        roles: current.analysis.roles.map((role) => role.key === roleKey
+          ? {
+              ...role,
+              voiceRef: payload.voiceRef || '',
+              voiceAsset: null
+            }
+          : role)
+      }
+    }
+    mockDramaProjectMap.set(projectId, next)
+    return ok(next)
+  },
+
+  async deleteDramaRoleVoice(projectId: string, roleKey: string) {
+    await sleep(80)
+    const current = mockDramaProjectMap.get(projectId)!
+    const next: DramaProjectDetail = {
+      ...current,
+      analysis: {
+        ...current.analysis,
+        roles: current.analysis.roles.map((role) => role.key === roleKey
+          ? {
+              ...role,
+              voiceRef: '',
+              voiceAsset: null
+            }
+          : role)
       }
     }
     mockDramaProjectMap.set(projectId, next)

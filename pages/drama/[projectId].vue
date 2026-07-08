@@ -333,7 +333,9 @@ const selectedAspectRatio = ref('16:9')
 const selectedVisualStyle = ref('写实通用')
 const customVisualStyle = ref('')
 const roleVoiceSelections = ref<Record<string, string>>({})
-const roleAudioFileNames = ref<Record<string, string>>({})
+// 角色音色上传当前一次只处理一个角色，避免同一卡片重复点击导致状态混乱。
+const roleVoiceUploadingKey = ref('')
+const roleVoiceSavingKey = ref('')
 const autoRoleGenerationProjectId = ref('')
 // 记录“设定”页回访时，场景自动补生成是否已经为当前项目触发过，避免重复排队。
 const autoSceneGenerationProjectId = ref('')
@@ -1000,6 +1002,12 @@ function syncSelectionsFromAnalysis(project: DramaProjectDetail): void {
     }
   }
   selectedEpisodeNo.value = project.analysis.currentEpisodeNo || project.analysis.episodeDetails[0]?.episodeNo || 1
+  roleVoiceSelections.value = Object.fromEntries(
+    (project.analysis.roles || []).map((role) => {
+      const isPresetVoice = voiceToneCatalog.some((option) => option.value === role.voiceRef)
+      return [role.key, isPresetVoice ? role.voiceRef : '']
+    })
+  )
 }
 
 function normalizeStreamUrl(path: string): string {
@@ -1105,19 +1113,14 @@ function mapAnalysisFromEvent(raw: NonNullable<DramaAnalysisEventPayload['analys
   const roles = (raw.roles || []).map((item) => {
     const role = item as Record<string, unknown>
     const roleKey = String(role.key || '')
-    let voice = String(role.voice_ref || '')
-    if (!voice) {
-      // Deterministic pseudo-random voice based on key length/chars
-      const hash = roleKey.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0)
-      voice = voiceToneCatalog[hash % voiceToneCatalog.length]?.value || ''
-    }
+    const voiceAsset = role.voice_asset as Record<string, unknown> | null | undefined
     return {
       key: roleKey,
       name: String(role.name || ''),
       ageIdentity: String(role.age_identity || ''),
       personality: String(role.personality || ''),
       appearance: String(role.appearance || ''),
-      voiceRef: voice,
+      voiceRef: String(role.voice_ref || ''),
       prompt: String(role.prompt || ''),
       generationStatus: String(role.generation_status || 'idle'),
       generationProgress: Number(role.generation_progress || 0),
@@ -1133,7 +1136,19 @@ function mapAnalysisFromEvent(raw: NonNullable<DramaAnalysisEventPayload['analys
             meta: (assetItem.meta || {}) as Record<string, unknown>
           }
         })
-        : []
+        : [],
+      voiceAsset: voiceAsset
+        ? {
+          id: String(voiceAsset.id || ''),
+          audioUrl: String(voiceAsset.audio_url || ''),
+          fileName: String(voiceAsset.file_name || ''),
+          mimeType: String(voiceAsset.mime_type || ''),
+          sizeBytes: Number(voiceAsset.size_bytes || 0),
+          durationSec: voiceAsset.duration_sec === null || voiceAsset.duration_sec === undefined ? null : Number(voiceAsset.duration_sec),
+          meta: (voiceAsset.meta || {}) as Record<string, unknown>,
+          createdAt: String(voiceAsset.created_at || '')
+        }
+        : null
     }
   })
   const scenes = (raw.scenes || []).map((item) => {
@@ -3234,15 +3249,89 @@ function stepStatus(step: WorkflowStepKey): 'done' | 'active' | 'locked' {
   return 'locked'
 }
 
-function handleAudioUpload(roleKey: string, event: Event): void {
+function formatVoiceFileSize(sizeBytes: number): string {
+  if (!sizeBytes) return ''
+  if (sizeBytes < 1024 * 1024) return `${Math.max(1, Math.round(sizeBytes / 1024))}KB`
+  return `${(sizeBytes / 1024 / 1024).toFixed(1)}MB`
+}
+
+function isRoleVoiceBusy(roleKey: string): boolean {
+  return roleVoiceUploadingKey.value === roleKey || roleVoiceSavingKey.value === roleKey
+}
+
+function roleVoiceStatusText(role: DramaRoleProfile): string {
+  if (role.voiceAsset) {
+    const sizeText = formatVoiceFileSize(role.voiceAsset.sizeBytes)
+    return `自定义音频样本：${role.voiceAsset.fileName || '已上传'}${sizeText ? ` · ${sizeText}` : ''}`
+  }
+  return role.voiceRef ? `预设音色：${role.voiceRef}` : '暂未绑定角色音色'
+}
+
+async function handleRoleVoiceSelect(roleKey: string, voiceRef: string): Promise<void> {
+  const project = projectDetail.value
+  if (!project || isRoleVoiceBusy(roleKey)) return
+
+  roleVoiceSavingKey.value = roleKey
+  errorMessage.value = ''
+  infoMessage.value = ''
+
+  try {
+    // 选择预设音色时会清理该角色旧的自定义样本，保证“当前音色来源”只有一个。
+    projectDetail.value = await dramaService.updateRoleVoice(project.projectId, roleKey, { voiceRef })
+    syncSelectionsFromAnalysis(projectDetail.value)
+    infoMessage.value = voiceRef ? '角色预设音色已保存。' : '角色音色已清空。'
+  } catch (error) {
+    console.error('[livliv] 保存角色音色失败', { roleKey, voiceRef, error })
+    errorMessage.value = error instanceof Error ? error.message : '保存角色音色失败'
+    syncSelectionsFromAnalysis(project)
+  } finally {
+    roleVoiceSavingKey.value = ''
+  }
+}
+
+async function handleAudioUpload(roleKey: string, event: Event): Promise<void> {
   const input = event.target as HTMLInputElement | null
   const file = input?.files?.[0]
   if (!file) return
 
-  // 语音上传暂时只做前端占位，先把文件名存起来，等后端有接口后再接真实上传。
-  roleAudioFileNames.value = {
-    ...roleAudioFileNames.value,
-    [roleKey]: file.name
+  const project = projectDetail.value
+  if (!project || isRoleVoiceBusy(roleKey)) return
+
+  roleVoiceUploadingKey.value = roleKey
+  errorMessage.value = ''
+  infoMessage.value = ''
+
+  try {
+    // 当前上传的是“音色参考样本”，后续接真实 TTS/声音克隆供应商后再消费这个资产。
+    projectDetail.value = await dramaService.uploadRoleVoice(project.projectId, roleKey, file)
+    syncSelectionsFromAnalysis(projectDetail.value)
+    infoMessage.value = '角色自定义音频样本已上传并绑定。'
+  } catch (error) {
+    console.error('[livliv] 上传角色音色样本失败', { roleKey, fileName: file.name, fileType: file.type, fileSize: file.size, error })
+    errorMessage.value = error instanceof Error ? error.message : '上传角色音色样本失败'
+  } finally {
+    roleVoiceUploadingKey.value = ''
+    if (input) input.value = ''
+  }
+}
+
+async function removeRoleVoice(roleKey: string): Promise<void> {
+  const project = projectDetail.value
+  if (!project || isRoleVoiceBusy(roleKey)) return
+
+  roleVoiceSavingKey.value = roleKey
+  errorMessage.value = ''
+  infoMessage.value = ''
+
+  try {
+    projectDetail.value = await dramaService.deleteRoleVoice(project.projectId, roleKey)
+    syncSelectionsFromAnalysis(projectDetail.value)
+    infoMessage.value = '角色音色已移除。'
+  } catch (error) {
+    console.error('[livliv] 移除角色音色失败', { roleKey, error })
+    errorMessage.value = error instanceof Error ? error.message : '移除角色音色失败'
+  } finally {
+    roleVoiceSavingKey.value = ''
   }
 }
 
@@ -4184,11 +4273,41 @@ onBeforeUnmount(() => {
                       placeholder="选择音色"
                       size="sm"
                       class="relative z-[80] min-w-[140px]"
+                      :disabled="isRoleVoiceBusy(role.key)"
+                      @update:model-value="handleRoleVoiceSelect(role.key, $event)"
                     />
-                    <label class="flex cursor-pointer items-center justify-center rounded-[14px] border border-borderSoft bg-panel px-4 py-2 text-sm font-semibold text-textMain transition hover:border-[#94a3b8]">
-                      上传音频
-                      <input type="file" accept="audio/*" class="hidden" @change="handleAudioUpload(role.key, $event)" />
+                    <label
+                      class="flex items-center justify-center rounded-[14px] border border-borderSoft bg-panel px-4 py-2 text-sm font-semibold text-textMain transition hover:border-[#94a3b8]"
+                      :class="isRoleVoiceBusy(role.key) ? 'cursor-not-allowed opacity-55' : 'cursor-pointer'"
+                    >
+                      {{ roleVoiceUploadingKey === role.key ? '上传中…' : '上传样本' }}
+                      <input type="file" accept="audio/*" class="hidden" :disabled="isRoleVoiceBusy(role.key)" @change="handleAudioUpload(role.key, $event)" />
                     </label>
+                  </div>
+
+                  <div class="mt-3 rounded-[16px] border border-borderSoft bg-panel/70 p-3">
+                    <div class="flex items-start justify-between gap-3">
+                      <div class="min-w-0">
+                        <p class="text-xs font-semibold text-textMain">{{ roleVoiceStatusText(role) }}</p>
+                        <p class="mt-1 text-[11px] leading-5 text-textMuted">当前仅作为角色音色参考样本，真实配音/克隆会在后续供应商接入后启用。</p>
+                      </div>
+                      <button
+                        v-if="role.voiceRef || role.voiceAsset"
+                        type="button"
+                        class="shrink-0 rounded-full border border-borderSoft px-2.5 py-1 text-[11px] font-semibold text-textMuted transition hover:border-danger/40 hover:text-danger"
+                        :disabled="isRoleVoiceBusy(role.key)"
+                        @click="removeRoleVoice(role.key)"
+                      >
+                        移除
+                      </button>
+                    </div>
+                    <audio
+                      v-if="role.voiceAsset?.audioUrl"
+                      class="mt-2 h-8 w-full"
+                      :src="role.voiceAsset.audioUrl"
+                      controls
+                      preload="none"
+                    />
                   </div>
                 </div>
               </article>

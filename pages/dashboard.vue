@@ -4,6 +4,7 @@ import BillingWorkspacePanel from '~/features/billing/components/BillingWorkspac
 import DashboardSidebar from '~/features/dashboard/components/DashboardSidebar.vue'
 import PlaceholderWorkspacePanel from '~/features/dashboard/components/PlaceholderWorkspacePanel.vue'
 import ProjectDirectoryPanel from '~/features/projects/components/ProjectDirectoryPanel.vue'
+import ProductImageWorkspacePanel from '~/features/product-image/components/ProductImageWorkspacePanel.vue'
 import { useAccountStore } from '~/features/billing/store/useAccountStore'
 import { useThemeStore } from '~/features/ui/store/useThemeStore'
 import { useAuthStore } from '~/features/auth/store/useAuthStore'
@@ -719,11 +720,11 @@ onMounted(async () => {
             @toggle-select-all="toggleSelectAllProjects"
           />
 
-          <PlaceholderWorkspacePanel
+          <ProductImageWorkspacePanel
             v-else-if="activeMenu === 'product'"
-            eyebrow="商品图生成"
-            title="下一阶段入口已预留"
-            description="这一页先保留为占位，但模型、主题、供应商切换会复用当前控制台的配置中心。后面我们可以直接在这里接电商主图、详情图、卖点图的整套生成流程。"
+            :current-credit-balance="currentCreditBalance"
+            :default-image-model="selectedImageModel"
+            :image-model-options="imageModelOptions"
           />
 
           <PlaceholderWorkspacePanel
