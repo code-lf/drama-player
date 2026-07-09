@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import type { DramaProjectCard, DramaProjectDetail, DramaRuntimeConfig } from '~/entities/drama/types'
+import AnnouncementWorkspacePanel from '~/features/dashboard/components/AnnouncementWorkspacePanel.vue'
 import BillingWorkspacePanel from '~/features/billing/components/BillingWorkspacePanel.vue'
+import DashboardAnnouncementCenter from '~/features/dashboard/components/DashboardAnnouncementCenter.vue'
 import DashboardSidebar from '~/features/dashboard/components/DashboardSidebar.vue'
 import PlaceholderWorkspacePanel from '~/features/dashboard/components/PlaceholderWorkspacePanel.vue'
 import ProjectDirectoryPanel from '~/features/projects/components/ProjectDirectoryPanel.vue'
@@ -11,7 +13,7 @@ import { useAuthStore } from '~/features/auth/store/useAuthStore'
 import { dramaService } from '~/shared/api/services/dramaService'
 
 type DashboardMenuKey = 'drama' | 'product' | 'canvas' | 'billing' | 'none'
-type DashboardWorkspaceView = 'console' | 'projects' | 'billing'
+type DashboardWorkspaceView = 'console' | 'projects' | 'billing' | 'announcements'
 type DashboardOption = {
   label: string
   value: string
@@ -80,6 +82,17 @@ const selectedAspectRatio = ref('16:9')
 const selectedResolution = ref('720p')
 const selectedVisualStyle = ref('写实通用')
 const customVisualStyle = ref('')
+const selectedCreationMode = ref('agent')
+const selectedLanguage = ref('中文')
+const isUserMenuOpen = ref(false)
+const isCreationModeMenuOpen = ref(false)
+const activeProjectMenuId = ref('')
+
+// 创作模式在首页需要保留蓝色胶囊视觉，但交互上仍然是可扩展的下拉选择。
+const creationModeOptions = [
+  { label: '创作模式', value: 'agent' },
+  { label: '人工模式', value: 'manual' }
+]
 
 const visualStyleOptions = [
   '写实通用',
@@ -220,6 +233,66 @@ const pageNumberList = computed(() => {
   const normalizedStart = Math.max(1, end - 4)
   return Array.from({ length: end - normalizedStart + 1 }, (_, index) => normalizedStart + index)
 })
+const scriptCharacterCount = computed(() => scriptDraft.value.length)
+const recentProjectCards = computed(() => projectItems.value.slice(0, 4))
+const userAvatarUrl = computed(() => authStore.session.user?.avatar || 'https://api.dicebear.com/7.x/avataaars/svg?seed=livliv-admin')
+const userNickname = computed(() => authStore.session.user?.nickname || '管理员开发者')
+const selectedCreationModeLabel = computed(() => creationModeOptions.find((item) => item.value === selectedCreationMode.value)?.label || '创作模式')
+
+function formatProjectUpdatedAt(value: string): string {
+  if (!value) return '更新于 --'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '更新于 --'
+  const pad = (input: number) => String(input).padStart(2, '0')
+  return `更新于 ${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
+
+function projectCoverStyle(project: DramaProjectCard, index: number): Record<string, string> {
+  if (project.coverImageUrl) {
+    return {
+      backgroundImage: `linear-gradient(90deg, rgba(15,23,42,0.18), rgba(15,23,42,0.06)), url(${project.coverImageUrl})`
+    }
+  }
+  const gradients = [
+    'linear-gradient(120deg, #252b5b 0%, #654ea3 52%, #ff9f7f 100%)',
+    'linear-gradient(120deg, #0b1220 0%, #152238 50%, #2b405e 100%)',
+    'linear-gradient(120deg, #063b32 0%, #0f766e 48%, #86efac 100%)',
+    'linear-gradient(120deg, #6b3b14 0%, #a16207 48%, #f5d0a5 100%)'
+  ]
+  return { backgroundImage: gradients[index % gradients.length] || gradients[0] }
+}
+
+function toggleUserMenu(): void {
+  isUserMenuOpen.value = !isUserMenuOpen.value
+}
+
+function closeUserMenu(): void {
+  isUserMenuOpen.value = false
+}
+
+function closeRecentProjectMenu(): void {
+  activeProjectMenuId.value = ''
+}
+
+function toggleRecentProjectMenu(projectId: string): void {
+  // 最近项目卡片里的“三个点”只控制当前卡片菜单，避免多个浮层同时打开造成误操作。
+  activeProjectMenuId.value = activeProjectMenuId.value === projectId ? '' : projectId
+}
+
+function openRecentProject(project: DramaProjectCard): void {
+  closeRecentProjectMenu()
+  openDramaProject(project.projectId)
+}
+
+function requestDeleteRecentProject(project: DramaProjectCard): void {
+  closeRecentProjectMenu()
+  askDeleteSingleProject(project)
+}
+
+function selectCreationMode(value: string): void {
+  selectedCreationMode.value = value
+  isCreationModeMenuOpen.value = false
+}
 
 function applyRuntimeDefaults(config: DramaRuntimeConfig): void {
   // 运行时模型默认值全部以后端配置中心为准，页面只消费，不写死平台细节。
@@ -617,6 +690,12 @@ function syncWorkspaceRouteState(path: string): void {
     return
   }
 
+  if (path === '/dashboard-announcements') {
+    activeMenu.value = 'none'
+    activeWorkspaceView.value = 'announcements'
+    return
+  }
+
   activeMenu.value = 'drama'
   activeWorkspaceView.value = 'console'
 }
@@ -659,18 +738,47 @@ watch(
 )
 
 function handleLogout() {
+  closeUserMenu()
+  closeRecentProjectMenu()
   accountStore.reset()
   authStore.logout()
   router.push('/')
 }
 
+function toggleDashboardTheme(): void {
+  const nextMode = themeStore.mode === 'dark' ? 'light' : 'dark'
+  // 主题切换如果后续再次失效，这条日志可以直接确认点击事件和 store 状态是否正常。
+  console.info('[livliv] 切换控制台主题', {
+    from: themeStore.mode,
+    to: nextMode
+  })
+  themeStore.setMode(nextMode)
+}
+
+function handleDashboardDocumentClick(): void {
+  // 点击页面其它区域时统一收起浮层，让顶部用户菜单和项目操作菜单表现一致。
+  closeUserMenu()
+  closeRecentProjectMenu()
+  isCreationModeMenuOpen.value = false
+}
+
 onMounted(async () => {
+  // 控制台是主题最重的页面，进入时主动恢复一次本地主题，防止刷新后组件先使用默认浅色。
+  themeStore.hydrate()
+  document.addEventListener('click', handleDashboardDocumentClick)
   await bootstrapDashboard()
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('click', handleDashboardDocumentClick)
 })
 </script>
 
 <template>
-  <main class="min-h-screen bg-bg text-textMain">
+  <main
+    class="dashboard-shell min-h-screen bg-[#f5f9ff] text-[#0f172a]"
+    :class="themeStore.mode === 'dark' ? 'dashboard-shell--dark' : 'dashboard-shell--light'"
+  >
     <div class="flex min-h-screen">
       <DashboardSidebar
         :active-menu="activeMenu"
@@ -684,7 +792,82 @@ onMounted(async () => {
         @toggle-theme="themeStore.toggleMode()"
       />
 
-      <section class="min-w-0 flex-1 px-10 py-8">
+      <section class="min-w-0 flex-1">
+        <header class="dashboard-topbar relative z-40 flex h-[58px] items-center justify-end border-b border-[#e2e8f2] bg-white px-7">
+          <div class="flex items-center gap-3">
+            <button
+              class="dashboard-theme-toggle flex h-7 items-center gap-1 rounded-full border border-[#d7e1ef] bg-white px-1.5 shadow-[0_10px_28px_rgba(15,23,42,0.06)] transition hover:border-[#005FFE]/40"
+              type="button"
+              :aria-label="themeStore.mode === 'dark' ? '切换浅色主题' : '切换深色主题'"
+              @click.stop="toggleDashboardTheme"
+            >
+              <span class="dashboard-theme-icon flex h-5 w-5 items-center justify-center rounded-full text-[#0f172a]">
+                <svg v-if="themeStore.mode === 'light'" viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M12 2.5v2.2M12 19.3v2.2M4.6 4.6l1.6 1.6M17.8 17.8l1.6 1.6M2.5 12h2.2M19.3 12h2.2M4.6 19.4l1.6-1.6M17.8 6.2l1.6-1.6" stroke-linecap="round" />
+                  <circle cx="12" cy="12" r="4.2" />
+                </svg>
+                <svg v-else viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M20 15.7A8.4 8.4 0 1 1 8.3 4a6.5 6.5 0 0 0 11.7 11.7Z" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+              </span>
+              <span class="relative h-6 w-[42px] rounded-full bg-[#005FFE] p-1">
+                <span
+                  class="absolute left-1 top-1 h-4 w-4 rounded-full bg-white shadow-[0_6px_16px_rgba(15,23,42,0.18)] transition-transform duration-200"
+                  :class="themeStore.mode === 'dark' ? 'translate-x-[18px]' : 'translate-x-0'"
+                ></span>
+              </span>
+            </button>
+
+            <DashboardAnnouncementCenter />
+
+            <div class="relative" @click.stop>
+              <button class="dashboard-user-trigger flex items-center gap-2.5 rounded-full px-2 py-1 transition hover:bg-[#f5f8fd]" type="button" @click="toggleUserMenu">
+                <img :src="userAvatarUrl" alt="avatar" class="dashboard-user-avatar h-9 w-9 rounded-full object-cover ring-[3px] ring-[#edf4ff]" />
+                <span class="dashboard-user-name text-[14px] font-black text-[#111827]">{{ userNickname }}</span>
+                <svg viewBox="0 0 24 24" class="dashboard-user-chevron h-4 w-4 text-[#53627c]" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="m6 9 6 6 6-6" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+              </button>
+
+              <div
+                v-if="isUserMenuOpen"
+                class="dashboard-floating-menu absolute right-0 top-[48px] w-[220px] overflow-hidden rounded-[18px] border border-[#dbe4f0] bg-white shadow-[0_24px_70px_rgba(15,23,42,0.18)]"
+              >
+                <div class="flex items-center gap-3 px-5 py-5">
+                  <img :src="userAvatarUrl" alt="avatar" class="h-12 w-12 rounded-full object-cover" />
+                  <div class="min-w-0">
+                    <p class="truncate text-[16px] font-black text-[#111827]">{{ userNickname }}</p>
+                    <p class="mt-1 text-[13px] font-semibold text-[#7a879d]">管理员账号</p>
+                  </div>
+                </div>
+                <div class="h-px bg-[#edf2f7]"></div>
+                <button class="flex h-[52px] w-full items-center gap-4 px-6 text-left text-[15px] font-bold text-[#53627c] hover:bg-[#f7faff]" type="button">
+                  <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M20 21a8 8 0 0 0-16 0" stroke-linecap="round" />
+                    <circle cx="12" cy="7" r="4" />
+                  </svg>
+                  个人资料
+                </button>
+                <button class="flex h-[52px] w-full items-center gap-4 px-6 text-left text-[15px] font-bold text-[#53627c] hover:bg-[#f7faff]" type="button">
+                  <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M12 15.5A3.5 3.5 0 1 0 12 8a3.5 3.5 0 0 0 0 7.5Z" />
+                    <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21a2 2 0 0 1-4 0v-.09A1.7 1.7 0 0 0 8.6 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3a2 2 0 0 1 0-4h.09A1.7 1.7 0 0 0 4.6 8.6a1.7 1.7 0 0 0-.34-1.88l-.06-.06A2 2 0 1 1 7.03 3.8l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3a2 2 0 0 1 4 0v.09A1.7 1.7 0 0 0 15.4 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9c.2.4.6.8 1 .6h.6a2 2 0 0 1 0 4h-.09A1.7 1.7 0 0 0 19.4 15Z" stroke-linecap="round" stroke-linejoin="round" />
+                  </svg>
+                  账户设置
+                </button>
+                <div class="h-px bg-[#edf2f7]"></div>
+                <button class="flex h-[64px] w-full items-center gap-4 px-6 text-left text-[16px] font-black text-[#ff2d36] hover:bg-[#fff5f5]" type="button" @click="handleLogout">
+                  <svg viewBox="0 0 24 24" class="h-6 w-6" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9" stroke-linecap="round" stroke-linejoin="round" />
+                  </svg>
+                  退出登录
+                </button>
+              </div>
+            </div>
+          </div>
+        </header>
+
+        <div class="px-8 py-9">
         <div v-if="isBooting" class="rounded-3xl border border-borderSoft bg-panel p-8 text-textMuted">
           {{ loadingText }}
         </div>
@@ -742,122 +925,241 @@ onMounted(async () => {
             :is-billing-loading="isBillingLoading"
           />
 
+          <AnnouncementWorkspacePanel
+            v-else-if="activeWorkspaceView === 'announcements'"
+          />
+
           <div v-else class="space-y-8">
-            <section class="mx-auto max-w-[1080px]">
-              <div class="relative overflow-hidden rounded-[32px] bg-panel px-8 py-12 shadow-panel ring-1 ring-borderSoft transition-all">
-                <!-- 纯净的高级背景光晕 -->
-                <div class="pointer-events-none absolute -right-20 -top-20 h-[300px] w-[300px] rounded-full bg-gradient-to-br from-neonSoft/40 to-neonSoft/20 blur-[80px]"></div>
-                <div class="pointer-events-none absolute -bottom-20 -left-20 h-[300px] w-[300px] rounded-full bg-gradient-to-tr from-neonSoft/40 to-neonSoft/20 blur-[80px]"></div>
+            <section class="mx-auto max-w-[1235px]">
+              <div class="pt-1 text-center">
+                <h1 class="text-[34px] font-black leading-tight tracking-[-0.055em] text-[#0b1220]">
+                  从灵感出发，生成你的<span class="text-[#005FFE]">短剧方案</span>
+                </h1>
+                <p class="mt-2 text-[15px] font-semibold text-[#61718c]">输入你的创意或故事，AI 将为你生成结构化的短剧方案、角色与分镜。</p>
+              </div>
 
-                <div class="relative z-10 mx-auto max-w-[840px]">
-                  <div class="text-center">
-                    <h2 class="text-[38px] font-bold tracking-tight text-textMain">
-                      从灵感出发，生成
-                      <span class="bg-gradient-to-r from-neon to-[#7a88ff] bg-clip-text text-transparent">短剧方案</span>
-                    </h2>
-                    <p class="mt-3 text-[15px] text-textMuted">输入剧情大纲或直接拖拽脚本文件，AI 将自动解析并生成结构化分镜。</p>
-                  </div>
+              <div
+                class="dashboard-input-card mx-auto mt-7 overflow-visible rounded-[20px] border border-[#dfe7f2] bg-white shadow-[0_22px_70px_rgba(15,23,42,0.07)] transition"
+                :class="isDraggingFile ? 'scale-[1.01] border-[#005FFE] shadow-[0_24px_80px_rgba(0,95,254,0.14)]' : ''"
+                style="max-width: 910px;"
+                @dragenter.prevent="isDraggingFile = true"
+                @dragover.prevent="isDraggingFile = true"
+                @dragleave.prevent="isDraggingFile = false"
+                @drop="handleDroppedFile"
+              >
+                <div class="relative px-7 py-5">
+                  <textarea
+                    v-model="scriptDraft"
+                    class="dashboard-textarea h-[118px] w-full resize-none border-0 bg-transparent text-[15px] font-semibold leading-7 text-[#0f172a] outline-none placeholder:text-[#8190a9]"
+                    :maxlength="2000"
+                    :placeholder="isDraggingFile ? '松开鼠标即可导入 TXT 剧本' : '写下你的故事、场景或角色设定... 支持 txt 拖拽导入'"
+                  ></textarea>
+                  <span class="absolute bottom-4 right-7 text-[13px] font-semibold text-[#7b8aa3]">{{ scriptCharacterCount }} / 2000</span>
+                </div>
 
-                  <div
-                    class="group relative mt-10 flex flex-col rounded-[24px] bg-white/60 dark:bg-[#0c0f16]/60 shadow-[0_8px_32px_rgba(0,0,0,0.04)] dark:shadow-[0_16px_48px_rgba(0,0,0,0.4)] ring-1 ring-slate-200/80 dark:ring-white/5 backdrop-blur-2xl transition-all duration-300 focus-within:ring-neon/50 focus-within:shadow-[0_0_20px_rgba(69,215,255,0.15)]"
-                    :class="isDraggingFile ? 'bg-neon/5 ring-neon/50 scale-[1.01]' : 'hover:ring-slate-300 dark:hover:ring-white/10'"
-                    @dragenter.prevent="isDraggingFile = true"
-                    @dragover.prevent="isDraggingFile = true"
-                    @dragleave.prevent="isDraggingFile = false"
-                    @drop="handleDroppedFile"
-                  >
-                    <!-- 输入区 -->
-                    <div class="p-6 pb-2">
-                      <UiBaseTextarea
-                        v-model="scriptDraft"
-                        :placeholder="isDraggingFile ? '松开鼠标即可导入 TXT 剧本' : '写下你想讲的故事、场景或角色设定...'"
-                        frame="plain"
-                        full
-                        size="lg"
-                        class="min-h-[160px] resize-none text-[16px] leading-relaxed text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-textMuted/50 bg-transparent focus:ring-0 focus:outline-none"
-                      />
-                    </div>
-                    
-                    <!-- 底部控制栏 -->
-                    <div class="relative z-50 flex flex-col gap-4 border-t border-slate-200/60 dark:border-white/5 bg-slate-50/50 dark:bg-black/40 px-6 py-4 lg:flex-row lg:items-center lg:justify-between rounded-b-[24px]">
-                      <div class="flex items-center gap-1.5 rounded-xl bg-slate-200/50 dark:bg-white/5 p-1 backdrop-blur-md">
-                        <button class="rounded-lg bg-white dark:bg-[#1a1f2e] px-4 py-1.5 text-sm font-semibold text-slate-900 dark:text-white shadow-sm ring-1 ring-slate-200/80 dark:ring-white/10 transition-all">Agent模式</button>
-                        <button class="rounded-lg px-4 py-1.5 text-sm font-medium text-slate-500 dark:text-textMuted hover:text-slate-900 dark:hover:text-white transition-colors">人工模式</button>
-                      </div>
-
-                      <div class="flex flex-wrap items-center gap-3 lg:justify-end">
-                        <UiBaseSelect
-                          v-model="selectedTextModel"
-                          :options="textModelOptions"
-                          placeholder="文本模型"
-                          size="sm"
-                          class="min-w-[140px]"
-                        />
-                        <div class="h-4 w-px bg-slate-300 dark:bg-borderSoft"></div>
-                        <UiBaseSelect
-                          v-model="selectedAspectRatio"
-                          :options="aspectRatioOptions"
-                          placeholder="比例"
-                          size="sm"
-                          class="min-w-[90px]"
-                        />
-                        <UiBaseSelect
-                          v-model="selectedResolution"
-                          :options="resolutionOptions"
-                          placeholder="分辨率"
-                          size="sm"
-                          class="min-w-[100px]"
-                        />
-                        <UiBaseSelect
-                          v-model="selectedVisualStyle"
-                          :options="visualStyleSelectOptions"
-                          placeholder="风格"
-                          size="sm"
-                          align="right"
-                          class="min-w-[120px]"
-                        />
-                      </div>
-                    </div>
-                  </div>
-
-
-
-                  <div v-if="selectedVisualStyle === '自定义风格'" class="mt-4">
-                    <UiBaseInput
-                      v-model="customVisualStyle"
-                      placeholder="输入自定义风格，例如：电影感写实、霓虹都市、古风水墨"
-                      full
-                      class="rounded-[16px] bg-white/60 dark:bg-panelSoft/40 ring-1 ring-slate-200/80 dark:ring-borderSoft shadow-sm"
-                    />
-                  </div>
-
-                  <div class="mt-5 flex flex-wrap items-center justify-between gap-2 px-2 text-[13px] text-textMuted">
-                    <span class="flex items-center gap-2">
-                      <span class="relative flex h-2 w-2">
-                        <span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-neon/80 opacity-75"></span>
-                        <span class="relative inline-flex h-2 w-2 rounded-full bg-neon"></span>
-                      </span>
-                      {{ scriptFileName ? `已载入：${scriptFileName}` : stageLabel }}
-                    </span>
-                    <span class="flex items-center gap-1.5">
-                      <svg viewBox="0 0 24 24" class="h-4 w-4 opacity-70" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                      支持 txt 拖拽导入
-                    </span>
-                  </div>
-
-                  <div class="mt-10 flex justify-center">
+                <div class="dashboard-input-toolbar flex flex-wrap items-center gap-3 border-t border-[#edf2f7] bg-[#fbfdff] px-4 py-2.5">
+                  <div class="relative z-[80] min-w-[130px]" @click.stop>
                     <button
-                      class="group relative inline-flex min-w-[200px] items-center justify-center gap-2 overflow-hidden rounded-full bg-textMain px-8 py-3.5 text-[15px] font-semibold text-bg shadow-md transition-all hover:brightness-110 hover:shadow-neon disabled:cursor-not-allowed disabled:opacity-50"
-                      :disabled="isBusy || !scriptDraft.trim()"
-                      @click="ingestAndAnalyze"
+                      class="dashboard-select-trigger flex h-10 w-full items-center justify-between gap-2 rounded-[13px] border border-[#cfe0f6] bg-white px-4 text-[13px] font-black text-[#005FFE] shadow-[0_8px_22px_rgba(0,95,254,0.06)] transition hover:border-[#005FFE]/45"
+                      type="button"
+                      @click="isCreationModeMenuOpen = !isCreationModeMenuOpen"
                     >
-                      <svg v-if="busyKey === 'ingest' || busyKey === 'analyze'" class="h-4 w-4 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                      <svg v-else class="h-4 w-4 transition-transform group-hover:translate-x-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                      <span>{{ busyKey === 'ingest' || busyKey === 'analyze' ? '解析中...' : '开始创建' }}</span>
+                      <span class="flex min-w-0 items-center gap-2">
+                        <span class="flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-full bg-[#005FFE] text-white">
+                          <svg viewBox="0 0 24 24" class="h-3 w-3" fill="none" stroke="currentColor" stroke-width="2.4">
+                            <path d="M12 5v14M5 12h14" stroke-linecap="round" />
+                          </svg>
+                        </span>
+                        <span class="truncate">{{ selectedCreationModeLabel }}</span>
+                      </span>
+                      <svg viewBox="0 0 24 24" class="h-4 w-4 shrink-0 transition" :class="isCreationModeMenuOpen ? 'rotate-180' : ''" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="m6 9 6 6 6-6" stroke-linecap="round" stroke-linejoin="round" />
+                      </svg>
                     </button>
+
+                    <div
+                      v-if="isCreationModeMenuOpen"
+                      class="dashboard-floating-menu absolute left-0 top-[calc(100%+8px)] z-[120] w-full overflow-hidden rounded-[14px] border border-[#dbe7f7] bg-white p-1.5 shadow-[0_18px_42px_rgba(15,23,42,0.14)]"
+                    >
+                      <button
+                        v-for="item in creationModeOptions"
+                        :key="item.value"
+                        class="dashboard-creation-option flex h-9 w-full items-center rounded-[10px] px-3 text-left text-[13px] font-bold transition"
+                        :class="item.value === selectedCreationMode ? 'dashboard-creation-option--active bg-[#eff6ff] text-[#005FFE]' : 'text-[#53627c] hover:bg-[#f6f8fc]'"
+                        type="button"
+                        @click="selectCreationMode(item.value)"
+                      >
+                        {{ item.label }}
+                      </button>
+                    </div>
                   </div>
+
+                  <UiBaseSelect v-model="selectedTextModel" :options="textModelOptions" placeholder="模型" size="sm" class="min-w-[225px]" />
+                  <UiBaseSelect v-model="selectedAspectRatio" :options="aspectRatioOptions" placeholder="画幅比例" size="sm" class="min-w-[170px]" />
+                  <UiBaseSelect v-model="selectedResolution" :options="resolutionOptions" placeholder="清晰度" size="sm" class="min-w-[150px]" />
+                  <UiBaseSelect
+                    v-model="selectedLanguage"
+                    :options="[{ label: '中文', value: '中文' }, { label: 'English', value: 'English' }]"
+                    placeholder="语言"
+                    size="sm"
+                    class="min-w-[120px]"
+                  />
                 </div>
               </div>
+
+              <div v-if="selectedVisualStyle === '自定义风格'" class="mx-auto mt-4 max-w-[910px]">
+                <UiBaseInput
+                  v-model="customVisualStyle"
+                  placeholder="输入自定义风格，例如：电影感写实、霓虹都市、古风水墨"
+                  full
+                  class="dashboard-custom-style-input rounded-[16px] bg-white ring-1 ring-[#dfe7f2]"
+                />
+              </div>
+
+              <div class="mt-6 flex justify-center">
+                <button
+                  class="group flex h-[50px] min-w-[330px] items-center justify-center gap-3 rounded-[12px] bg-[#005FFE] px-9 text-[16px] font-black text-white shadow-[0_18px_42px_rgba(0,95,254,0.26)] transition hover:bg-[#0054E0] disabled:cursor-not-allowed disabled:bg-[#005FFE]/65 disabled:shadow-none"
+                  :disabled="isBusy || !scriptDraft.trim()"
+                  @click="ingestAndAnalyze"
+                >
+                  <svg v-if="busyKey === 'ingest' || busyKey === 'analyze' || busyKey === 'create-drama'" class="h-5 w-5 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 0 1 8-8V0C5.37 0 0 5.37 0 12h4Z"></path>
+                  </svg>
+                  <svg v-else viewBox="0 0 24 24" class="h-6 w-6" fill="currentColor">
+                    <path d="M12 2.8 14.1 8 19.2 10.1 14.1 12.2 12 17.2 9.9 12.2 4.8 10.1 9.9 8 12 2.8Z" />
+                    <path d="M18.2 14.2 19.1 16.3 21.2 17.2 19.1 18.1 18.2 20.2 17.3 18.1 15.2 17.2 17.3 16.3 18.2 14.2Z" opacity=".8" />
+                  </svg>
+                  <span>{{ busyKey === 'ingest' || busyKey === 'analyze' || busyKey === 'create-drama' ? '生成中...' : '开始生成方案' }}</span>
+                </button>
+              </div>
+
+              <div class="mx-auto mt-5 grid max-w-[1148px] grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+                <article class="dashboard-feature-card flex h-[86px] items-center gap-4 rounded-[14px] border border-[#dfe7f2] bg-white px-5 shadow-[0_12px_38px_rgba(15,23,42,0.04)]">
+                  <div class="flex h-12 w-12 items-center justify-center rounded-full bg-[#edf5ff] text-[#005FFE]">
+                    <svg viewBox="0 0 24 24" class="h-7 w-7" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M12 3.5 13.7 8.1 18.3 9.8 13.7 11.5 12 16.1 10.3 11.5 5.7 9.8 10.3 8.1 12 3.5Z" />
+                      <path d="M18 15.5 18.7 17.3 20.5 18 18.7 18.7 18 20.5 17.3 18.7 15.5 18 17.3 17.3 18 15.5Z" />
+                    </svg>
+                  </div>
+                  <div>
+                    <p class="text-[14px] font-black text-[#111827]">智能生成</p>
+                    <p class="mt-1 text-[12px] font-semibold leading-5 text-[#7b8aa3]">AI 深度理解，生成结构化方案</p>
+                  </div>
+                </article>
+                <article class="dashboard-feature-card flex h-[86px] items-center gap-4 rounded-[14px] border border-[#dfe7f2] bg-white px-5 shadow-[0_12px_38px_rgba(15,23,42,0.04)]">
+                  <div class="flex h-12 w-12 items-center justify-center rounded-full bg-[#edf5ff] text-[#005FFE]">
+                    <svg viewBox="0 0 24 24" class="h-7 w-7" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M20 21a8 8 0 0 0-16 0" stroke-linecap="round" />
+                      <circle cx="12" cy="8" r="4" />
+                    </svg>
+                  </div>
+                  <div>
+                    <p class="text-[14px] font-black text-[#111827]">角色塑造</p>
+                    <p class="mt-1 text-[12px] font-semibold leading-5 text-[#7b8aa3]">生成角色设定，丰富人物形象</p>
+                  </div>
+                </article>
+                <article class="dashboard-feature-card flex h-[86px] items-center gap-4 rounded-[14px] border border-[#dfe7f2] bg-white px-5 shadow-[0_12px_38px_rgba(15,23,42,0.04)]">
+                  <div class="flex h-12 w-12 items-center justify-center rounded-full bg-[#edf5ff] text-[#005FFE]">
+                    <svg viewBox="0 0 24 24" class="h-7 w-7" fill="none" stroke="currentColor" stroke-width="2">
+                      <rect x="5" y="4" width="14" height="16" rx="2" />
+                      <path d="M9 8h6M9 12h2M14 12h1M9 16h6" stroke-linecap="round" />
+                    </svg>
+                  </div>
+                  <div>
+                    <p class="text-[14px] font-black text-[#111827]">分镜设计</p>
+                    <p class="mt-1 text-[12px] font-semibold leading-5 text-[#7b8aa3]">自动生成分镜，画面更直观</p>
+                  </div>
+                </article>
+                <article class="dashboard-feature-card flex h-[86px] items-center gap-4 rounded-[14px] border border-[#dfe7f2] bg-white px-5 shadow-[0_12px_38px_rgba(15,23,42,0.04)]">
+                  <div class="flex h-12 w-12 items-center justify-center rounded-full bg-[#edf5ff] text-[#005FFE]">
+                    <svg viewBox="0 0 24 24" class="h-7 w-7" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M12 4v11M8 11l4 4 4-4" stroke-linecap="round" stroke-linejoin="round" />
+                      <path d="M5 19h14" stroke-linecap="round" />
+                    </svg>
+                  </div>
+                  <div>
+                    <p class="text-[14px] font-black text-[#111827]">一键导出</p>
+                    <p class="mt-1 text-[12px] font-semibold leading-5 text-[#7b8aa3]">支持多格式导出，便捷分享</p>
+                  </div>
+                </article>
+              </div>
+
+              <section class="mx-auto mt-6 max-w-[1235px]">
+                <div class="mb-3 flex items-center justify-between">
+                  <h2 class="text-[18px] font-black text-[#111827]">最近项目</h2>
+                  <NuxtLink to="/dashboard-projects" class="flex items-center gap-2 text-[14px] font-bold text-[#64748b] hover:text-[#005FFE]">
+                    查看全部
+                    <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2.5">
+                      <path d="m9 18 6-6-6-6" stroke-linecap="round" stroke-linejoin="round" />
+                    </svg>
+                  </NuxtLink>
+                </div>
+                <div class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+                  <article
+                    v-for="(project, index) in recentProjectCards"
+                    :key="project.id"
+                    class="dashboard-project-card group relative cursor-pointer rounded-[12px] border border-[#dfe7f2] bg-white p-3 shadow-[0_18px_48px_rgba(15,23,42,0.06)] transition hover:-translate-y-1 hover:shadow-[0_22px_58px_rgba(15,23,42,0.12)]"
+                    @click="openRecentProject(project)"
+                  >
+                    <div class="relative h-[86px] overflow-hidden rounded-[8px] bg-cover bg-center" :style="projectCoverStyle(project, index)">
+                      <span class="absolute left-3 top-3 rounded bg-white/90 px-2 py-1 text-[11px] font-black text-[#334155] shadow-sm">草稿</span>
+                    </div>
+                    <div class="flex items-start justify-between gap-3 px-1 pb-2 pt-3">
+                      <div class="min-w-0">
+                        <p class="truncate text-[16px] font-black text-[#111827]">{{ project.title }}</p>
+                        <p class="mt-2 text-[13px] font-semibold text-[#7b8aa3]">{{ formatProjectUpdatedAt(project.updatedAt) }}</p>
+                      </div>
+                      <button
+                        class="mt-1 rounded-full p-1 text-[#627798] opacity-90 transition hover:bg-[#eef5ff] hover:text-[#005FFE] group-hover:text-[#005FFE]"
+                        type="button"
+                        aria-label="项目操作"
+                        :aria-expanded="activeProjectMenuId === project.id"
+                        @click.stop="toggleRecentProjectMenu(project.id)"
+                      >
+                        <svg viewBox="0 0 24 24" class="h-5 w-5" fill="currentColor">
+                          <circle cx="5" cy="12" r="1.8" />
+                          <circle cx="12" cy="12" r="1.8" />
+                          <circle cx="19" cy="12" r="1.8" />
+                        </svg>
+                      </button>
+                    </div>
+
+                    <div
+                      v-if="activeProjectMenuId === project.id"
+                      class="dashboard-project-menu dashboard-floating-menu absolute bottom-[54px] right-3 z-[90] w-[132px] overflow-hidden rounded-[14px] border border-[#dbe7f7] bg-white p-1.5 shadow-[0_18px_48px_rgba(15,23,42,0.16)]"
+                      @click.stop
+                    >
+                      <button
+                        class="flex h-9 w-full items-center gap-2 rounded-[10px] px-3 text-left text-[13px] font-bold text-[#334155] transition hover:bg-[#f3f7ff] hover:text-[#005FFE]"
+                        type="button"
+                        @click="openRecentProject(project)"
+                      >
+                        <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2">
+                          <path d="M8 5h9.5A1.5 1.5 0 0 1 19 6.5v11A1.5 1.5 0 0 1 17.5 19h-11A1.5 1.5 0 0 1 5 17.5V8" stroke-linecap="round" stroke-linejoin="round" />
+                          <path d="M10 4H5v5M5 4l7 7" stroke-linecap="round" stroke-linejoin="round" />
+                        </svg>
+                        打开项目
+                      </button>
+                      <button
+                        class="flex h-9 w-full items-center gap-2 rounded-[10px] px-3 text-left text-[13px] font-bold text-[#ef4444] transition hover:bg-[#fff1f2]"
+                        type="button"
+                        @click="requestDeleteRecentProject(project)"
+                      >
+                        <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2">
+                          <path d="M9 4h6M4 7h16M10 11v6M14 11v6" stroke-linecap="round" />
+                          <path d="M6.5 7 7.4 19a2 2 0 0 0 2 1.8h5.2a2 2 0 0 0 2-1.8l.9-12" stroke-linejoin="round" />
+                        </svg>
+                        删除项目
+                      </button>
+                    </div>
+                  </article>
+                  <article v-if="recentProjectCards.length === 0" class="col-span-full rounded-[16px] border border-dashed border-[#cdd9e8] bg-white/70 px-8 py-12 text-center">
+                    <p class="text-[18px] font-black text-[#111827]">还没有最近项目</p>
+                    <p class="mt-2 text-[15px] font-semibold text-[#7b8aa3]">输入一个故事灵感，生成你的第一个短剧方案。</p>
+                  </article>
+                </div>
+              </section>
             </section>
 
             <section v-if="hasAnalysis" class="rounded-3xl border border-borderSoft bg-panel p-6 shadow-panel">
@@ -1110,6 +1412,7 @@ onMounted(async () => {
             </section>
           </div>
         </template>
+        </div>
       </section>
     </div>
 
@@ -1150,3 +1453,173 @@ onMounted(async () => {
     </div>
   </main>
 </template>
+
+<style scoped>
+.dashboard-shell {
+  background: #f5f9ff;
+  color: #0f172a;
+  transition: background var(--motion-normal), color var(--motion-normal);
+}
+
+/* 控制台设计稿使用了大量固定色，这里用语义层统一接入明暗主题。 */
+.dashboard-shell--dark,
+:global([data-theme='dark']) .dashboard-shell {
+  background:
+    radial-gradient(circle at 52% 8%, rgba(0, 95, 254, 0.18), transparent 34%),
+    linear-gradient(180deg, #08111f 0%, #060912 100%) !important;
+  color: var(--color-text-main) !important;
+}
+
+:global([data-theme='dark']) .dashboard-shell,
+.dashboard-shell--dark {
+  --dashboard-panel-bg: rgba(16, 21, 34, 0.88);
+  --dashboard-panel-soft-bg: rgba(19, 26, 40, 0.82);
+  --dashboard-raised-bg: rgba(18, 25, 40, 0.96);
+  --dashboard-text-main: #e9edf7;
+  --dashboard-text-muted: #95a4c4;
+  --dashboard-border: rgba(137, 170, 235, 0.2);
+}
+
+.dashboard-shell--dark .dashboard-topbar,
+.dashboard-shell--dark .dashboard-input-card,
+.dashboard-shell--dark .dashboard-feature-card,
+.dashboard-shell--dark .dashboard-project-card,
+.dashboard-shell--dark .dashboard-floating-menu,
+:global([data-theme='dark']) .dashboard-topbar,
+:global([data-theme='dark']) .dashboard-input-card,
+:global([data-theme='dark']) .dashboard-feature-card,
+:global([data-theme='dark']) .dashboard-project-card,
+:global([data-theme='dark']) .dashboard-floating-menu {
+  border-color: var(--dashboard-border, var(--color-border-soft)) !important;
+  background: var(--dashboard-panel-bg, var(--color-panel)) !important;
+  box-shadow: var(--shadow-panel) !important;
+}
+
+.dashboard-shell--dark .dashboard-input-toolbar,
+:global([data-theme='dark']) .dashboard-input-toolbar {
+  border-color: var(--dashboard-border, var(--color-border-soft)) !important;
+  background: var(--dashboard-panel-soft-bg, var(--color-panel-soft)) !important;
+}
+
+.dashboard-shell--dark .dashboard-theme-toggle,
+.dashboard-shell--dark .dashboard-user-trigger,
+.dashboard-shell--dark .dashboard-select-trigger,
+.dashboard-shell--dark .dashboard-project-menu,
+:global([data-theme='dark']) .dashboard-theme-toggle,
+:global([data-theme='dark']) .dashboard-user-trigger,
+:global([data-theme='dark']) .dashboard-select-trigger,
+:global([data-theme='dark']) .dashboard-project-menu {
+  border-color: var(--dashboard-border, var(--color-border-soft)) !important;
+  background: var(--dashboard-raised-bg, var(--color-surface-raised)) !important;
+  color: var(--dashboard-text-main, var(--color-text-main)) !important;
+}
+
+.dashboard-shell--dark .dashboard-theme-icon,
+:global([data-theme='dark']) .dashboard-theme-icon {
+  color: #c8d7f2 !important;
+}
+
+.dashboard-shell--dark .dashboard-user-name,
+.dashboard-shell--dark .dashboard-user-chevron,
+:global([data-theme='dark']) .dashboard-user-name,
+:global([data-theme='dark']) .dashboard-user-chevron {
+  color: var(--dashboard-text-main, var(--color-text-main)) !important;
+}
+
+.dashboard-shell--dark .dashboard-user-avatar,
+:global([data-theme='dark']) .dashboard-user-avatar {
+  --tw-ring-color: rgba(125, 177, 255, 0.26) !important;
+}
+
+.dashboard-shell--dark .dashboard-creation-option,
+:global([data-theme='dark']) .dashboard-creation-option {
+  color: var(--dashboard-text-main, var(--color-text-main)) !important;
+}
+
+.dashboard-shell--dark .dashboard-creation-option:hover,
+:global([data-theme='dark']) .dashboard-creation-option:hover {
+  background: rgba(0, 95, 254, 0.14) !important;
+  color: #dbeafe !important;
+}
+
+.dashboard-shell--dark .dashboard-creation-option--active,
+:global([data-theme='dark']) .dashboard-creation-option--active {
+  background: rgba(0, 95, 254, 0.22) !important;
+  color: #ffffff !important;
+}
+
+.dashboard-shell--dark .dashboard-textarea,
+:global([data-theme='dark']) .dashboard-textarea {
+  color: var(--dashboard-text-main, var(--color-text-main)) !important;
+}
+
+.dashboard-shell--dark .dashboard-textarea::placeholder,
+:global([data-theme='dark']) .dashboard-textarea::placeholder {
+  color: var(--dashboard-text-muted, var(--color-text-muted)) !important;
+}
+
+.dashboard-shell--dark h1,
+.dashboard-shell--dark h2,
+.dashboard-shell--dark .dashboard-feature-card p,
+.dashboard-shell--dark .dashboard-project-card p,
+.dashboard-shell--dark .dashboard-floating-menu p,
+.dashboard-shell--dark .dashboard-floating-menu button,
+:global([data-theme='dark']) .dashboard-shell h1,
+:global([data-theme='dark']) .dashboard-shell h2,
+:global([data-theme='dark']) .dashboard-feature-card p,
+:global([data-theme='dark']) .dashboard-project-card p,
+:global([data-theme='dark']) .dashboard-floating-menu p,
+:global([data-theme='dark']) .dashboard-floating-menu button {
+  color: var(--dashboard-text-main, var(--color-text-main)) !important;
+}
+
+.dashboard-shell--dark h1 span,
+.dashboard-shell--dark a:hover,
+.dashboard-shell--dark .dashboard-select-trigger,
+.dashboard-shell--dark .dashboard-project-card button:hover,
+:global([data-theme='dark']) .dashboard-shell h1 span,
+:global([data-theme='dark']) .dashboard-shell a:hover,
+:global([data-theme='dark']) .dashboard-select-trigger,
+:global([data-theme='dark']) .dashboard-project-card button:hover {
+  color: #7db1ff !important;
+}
+
+.dashboard-shell--dark section > div > p,
+.dashboard-shell--dark .dashboard-feature-card p + p,
+.dashboard-shell--dark .dashboard-project-card p + p,
+.dashboard-shell--dark a,
+:global([data-theme='dark']) .dashboard-shell section > div > p,
+:global([data-theme='dark']) .dashboard-feature-card p + p,
+:global([data-theme='dark']) .dashboard-project-card p + p,
+:global([data-theme='dark']) .dashboard-shell a {
+  color: var(--dashboard-text-muted, var(--color-text-muted)) !important;
+}
+
+.dashboard-shell--dark .dashboard-feature-card > div:first-child,
+.dashboard-shell--dark .bg-\[\#edf5ff\],
+:global([data-theme='dark']) .dashboard-feature-card > div:first-child,
+:global([data-theme='dark']) .dashboard-shell .bg-\[\#edf5ff\] {
+  background: rgba(0, 95, 254, 0.16) !important;
+  color: #7db1ff !important;
+}
+
+.dashboard-shell--dark :deep(.bg-white),
+.dashboard-shell--dark :deep(.bg-\[\#fbfdff\]),
+.dashboard-shell--dark :deep(.bg-\[\#f7faff\]),
+:global([data-theme='dark']) .dashboard-shell :deep(.bg-white),
+:global([data-theme='dark']) .dashboard-shell :deep(.bg-\[\#fbfdff\]),
+:global([data-theme='dark']) .dashboard-shell :deep(.bg-\[\#f7faff\]) {
+  background-color: var(--dashboard-raised-bg, var(--color-surface-raised)) !important;
+}
+
+.dashboard-shell--dark :deep(.border-\[\#dfe7f2\]),
+.dashboard-shell--dark :deep(.border-\[\#dbe7f7\]),
+.dashboard-shell--dark :deep(.border-\[\#dbe4f0\]),
+.dashboard-shell--dark :deep(.border-\[\#edf2f7\]),
+:global([data-theme='dark']) .dashboard-shell :deep(.border-\[\#dfe7f2\]),
+:global([data-theme='dark']) .dashboard-shell :deep(.border-\[\#dbe7f7\]),
+:global([data-theme='dark']) .dashboard-shell :deep(.border-\[\#dbe4f0\]),
+:global([data-theme='dark']) .dashboard-shell :deep(.border-\[\#edf2f7\]) {
+  border-color: var(--dashboard-border, var(--color-border-soft)) !important;
+}
+</style>

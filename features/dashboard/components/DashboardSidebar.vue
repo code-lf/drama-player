@@ -3,7 +3,7 @@ import CreditAmount from '~/components/ui/CreditAmount.vue'
 
 interface Props {
   activeMenu: 'drama' | 'product' | 'canvas' | 'none'
-  activeWorkspaceView: 'console' | 'projects' | 'billing'
+  activeWorkspaceView: 'console' | 'projects' | 'billing' | 'announcements'
   currentCreditBalance: number | string
   loggedIn: boolean
   nickname: string
@@ -11,150 +11,173 @@ interface Props {
   themeMode: 'dark' | 'light'
 }
 
-const props = withDefaults(defineProps<Props>(), {
+withDefaults(defineProps<Props>(), {
   avatarUrl: ''
 })
 
-const emit = defineEmits<{
-  (event: 'logout'): void
-  (event: 'toggle-theme'): void
-}>()
+const createMenuItems = [
+  {
+    key: 'drama',
+    label: '剧本创作',
+    to: '/dashboard',
+    icon: 'script'
+  },
+  {
+    key: 'product',
+    label: '商品图生成',
+    to: '/dashboard-product',
+    icon: 'image'
+  },
+  {
+    key: 'canvas',
+    label: '无限画布',
+    to: '/dashboard-canvas',
+    icon: 'grid',
+    badge: 'Beta'
+  }
+] as const
 </script>
 
 <template>
-  <aside class="relative flex w-[282px] flex-col border-r border-borderSoft bg-panelSoft/30 px-5 py-6">
-    <div class="mb-10 flex items-center gap-3.5 px-2">
-      <div class="flex h-10 w-10 items-center justify-center rounded-[14px] bg-neon text-white shadow-[0_4px_12px_rgba(69,215,255,0.25)]">
-        <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M5 12c0-3.866 3.134-7 7-7 2.76 0 5 2.24 5 5 0 2.209-1.791 4-4 4H9a3 3 0 1 0 0 6h4" stroke-linecap="round" stroke-linejoin="round" />
+  <aside
+    class="dashboard-sidebar flex h-screen w-[282px] shrink-0 flex-col border-r border-[#e2e8f2] bg-white px-6 py-7 text-[#0f172a]"
+    :class="themeMode === 'dark' ? 'dashboard-sidebar--dark' : 'dashboard-sidebar--light'"
+  >
+    <NuxtLink to="/dashboard" class="flex items-center gap-3">
+      <div class="flex h-12 w-12 items-center justify-center rounded-[12px] bg-[#005FFE] shadow-[0_14px_28px_rgba(0,95,254,0.24)]">
+        <svg viewBox="0 0 28 28" class="h-6 w-6 text-white" fill="none" stroke="currentColor" stroke-width="2.2">
+          <path d="M7 20.5h14" stroke-linecap="round" />
+          <path d="M9.4 17.4 19.8 7a2.2 2.2 0 0 1 3.1 3.1L12.5 20.5 8 21.7l1.4-4.3Z" stroke-linecap="round" stroke-linejoin="round" />
         </svg>
       </div>
       <div>
-        <p class="text-base font-bold tracking-tight text-textMain">Livliv</p>
-        <p class="mt-0.5 text-[10px] font-semibold uppercase tracking-widest text-textMuted">Short Drama</p>
+        <p class="dashboard-brand-title text-[21px] font-black leading-none tracking-[-0.04em] text-[#111827]">Livliv</p>
+        <p class="dashboard-brand-subtitle mt-2 text-[14px] font-semibold text-[#64748b]">短剧创作平台</p>
       </div>
+    </NuxtLink>
+
+    <div class="mt-11">
+      <p class="mb-4 px-1 text-[16px] font-black text-[#0f172a]">创作</p>
+      <nav class="space-y-3">
+        <NuxtLink
+          v-for="item in createMenuItems"
+          :key="item.key"
+          :to="item.to"
+          class="group flex h-[48px] items-center gap-3 rounded-[13px] px-5 text-[15px] font-bold transition"
+          :class="item.key === activeMenu
+            ? 'bg-[#f0f4ff] text-[#005FFE]'
+            : 'text-[#53627c] hover:bg-[#f6f8fc] hover:text-[#005FFE]'"
+        >
+          <svg v-if="item.icon === 'script'" viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M8 7h8M8 12h8M8 17h5" stroke-linecap="round" />
+            <path d="M4 6h1M4 12h1M4 18h1M19 6h1M19 12h1M19 18h1" stroke-linecap="round" />
+          </svg>
+          <svg v-else-if="item.icon === 'image'" viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="4" y="5" width="16" height="14" rx="2.5" />
+            <path d="m5 16 4.2-4.2a2 2 0 0 1 2.8 0L16 16" stroke-linecap="round" stroke-linejoin="round" />
+            <path d="m14 14 1.2-1.2a2 2 0 0 1 2.8 0L20 15" stroke-linecap="round" stroke-linejoin="round" />
+            <path d="M8 9.2h.01" stroke-linecap="round" />
+          </svg>
+          <svg v-else viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="4" y="4" width="7" height="7" rx="1.5" />
+            <rect x="13" y="4" width="7" height="7" rx="1.5" />
+            <rect x="4" y="13" width="7" height="7" rx="1.5" />
+            <rect x="13" y="13" width="7" height="7" rx="1.5" />
+          </svg>
+          <span>{{ item.label }}</span>
+          <span v-if="'badge' in item" class="ml-auto text-[11px] font-black text-[#64748b]">{{ item.badge }}</span>
+        </NuxtLink>
+      </nav>
     </div>
 
-    <div class="mb-3 px-2">
-      <p class="text-[11px] font-semibold uppercase tracking-wider text-textMuted/70">Workspace</p>
-    </div>
-
-    <nav class="space-y-1">
-      <NuxtLink
-        to="/dashboard"
-        class="group flex w-full items-center gap-3.5 rounded-2xl px-3 py-3 text-left transition-all duration-200"
-        :class="activeMenu === 'drama'
-          ? 'bg-panel text-neon shadow-sm ring-1 ring-borderSoft'
-          : 'text-textMuted hover:bg-panelSoft/80 hover:text-textMain'"
-      >
-        <svg viewBox="0 0 24 24" class="h-5 w-5 transition-transform group-hover:scale-110" :class="activeMenu === 'drama' ? 'text-neon' : 'text-textMuted group-hover:text-textMain'" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M7 6h10M7 12h10M7 18h6" stroke-linecap="round" />
-        </svg>
-        <p class="text-[14px] font-semibold">剧本创作</p>
-      </NuxtLink>
-
-      <NuxtLink
-        to="/dashboard-product"
-        class="group flex w-full items-center gap-3.5 rounded-2xl px-3 py-3 text-left transition-all duration-200"
-        :class="activeMenu === 'product'
-          ? 'bg-panel text-neon shadow-sm ring-1 ring-borderSoft'
-          : 'text-textMuted hover:bg-panelSoft/80 hover:text-textMain'"
-      >
-        <svg viewBox="0 0 24 24" class="h-5 w-5 transition-transform group-hover:scale-110" :class="activeMenu === 'product' ? 'text-neon' : 'text-textMuted group-hover:text-textMain'" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M5 19h14M7 16l3-4 3 3 2-2 2 3" stroke-linecap="round" stroke-linejoin="round" />
-          <path d="M8 8h.01" stroke-linecap="round" stroke-linejoin="round" />
-          <rect x="4" y="5" width="16" height="12" rx="3" />
-        </svg>
-        <p class="text-[14px] font-semibold">商品图生成</p>
-      </NuxtLink>
-
-      <NuxtLink
-        to="/dashboard-canvas"
-        class="group flex w-full items-center gap-3.5 rounded-2xl px-3 py-3 text-left transition-all duration-200"
-        :class="activeMenu === 'canvas'
-          ? 'bg-panel text-neon shadow-sm ring-1 ring-borderSoft'
-          : 'text-textMuted hover:bg-panelSoft/80 hover:text-textMain'"
-      >
-        <svg viewBox="0 0 24 24" class="h-5 w-5 transition-transform group-hover:scale-110" :class="activeMenu === 'canvas' ? 'text-neon' : 'text-textMuted group-hover:text-textMain'" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M5 12h14M12 5v14" stroke-linecap="round" />
-          <rect x="4" y="4" width="16" height="16" rx="3" />
-        </svg>
-        <div class="flex flex-1 items-center justify-between">
-          <p class="text-[14px] font-semibold">无限画布</p>
-          <span class="rounded-md bg-panelSoft px-1.5 py-0.5 text-[10px] font-medium text-textMuted">Beta</span>
-        </div>
-      </NuxtLink>
-    </nav>
-
-    <div class="mb-3 mt-8 px-2">
-      <p class="text-[11px] font-semibold uppercase tracking-wider text-textMuted/70">Manage</p>
-    </div>
-
-    <nav class="space-y-1">
+    <div class="mt-10">
+      <p class="mb-4 px-1 text-[16px] font-black text-[#0f172a]">项目管理</p>
       <NuxtLink
         to="/dashboard-projects"
-        class="group flex w-full items-center gap-3.5 rounded-2xl px-3 py-3 text-left transition-all duration-200"
+        class="group flex h-[48px] items-center gap-3 rounded-[13px] px-5 text-[15px] font-bold transition"
         :class="activeWorkspaceView === 'projects'
-          ? 'bg-panel text-neon shadow-sm ring-1 ring-borderSoft'
-          : 'text-textMuted hover:bg-panelSoft/80 hover:text-textMain'"
+          ? 'bg-[#f0f4ff] text-[#005FFE]'
+          : 'text-[#53627c] hover:bg-[#f6f8fc] hover:text-[#005FFE]'"
       >
-        <svg viewBox="0 0 24 24" class="h-5 w-5 transition-transform group-hover:scale-110" :class="activeWorkspaceView === 'projects' ? 'text-neon' : 'text-textMuted group-hover:text-textMain'" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M4 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z" stroke-linecap="round" stroke-linejoin="round" />
+        <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M4 7.5A2.5 2.5 0 0 1 6.5 5H10l2 2.5h5.5A2.5 2.5 0 0 1 20 10v7a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 17V7.5Z" stroke-linejoin="round" />
         </svg>
-        <p class="text-[14px] font-semibold">我的项目</p>
+        <span>我的项目</span>
       </NuxtLink>
-    </nav>
+    </div>
 
-    <div class="mt-auto space-y-2 pt-8">
-      <div class="mb-4 rounded-2xl border border-neon/20 bg-gradient-to-br from-neon/10 to-transparent p-4 backdrop-blur-md">
-        <p class="text-xs font-semibold text-neon">点数余额</p>
-        <div class="mt-2">
-          <CreditAmount :value="currentCreditBalance" size="lg" tone="default" />
-        </div>
-        <NuxtLink to="/dashboard-billing" class="mt-3 flex w-full items-center justify-center rounded-xl bg-neon py-2 text-xs font-bold text-white transition hover:bg-neon/90 hover:shadow-[0_0_15px_rgba(72,214,255,0.4)]">
-          充值 / 升级
-        </NuxtLink>
+    <div class="mt-auto rounded-[18px] border border-[#dbe4f0] bg-white p-4 shadow-[0_18px_50px_rgba(15,23,42,0.06)]">
+      <p class="text-[14px] font-bold text-[#005FFE]">点数余额</p>
+      <div class="mt-3">
+        <CreditAmount :value="currentCreditBalance" size="lg" tone="default" />
       </div>
-
-      <button class="flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left text-textMuted transition hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-white/5 dark:hover:text-white" @click="emit('toggle-theme')">
-        <svg v-if="themeMode === 'dark'" viewBox="0 0 24 24" class="h-5 w-5 text-textMuted" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M12 3v2.5M12 18.5V21M4.93 4.93l1.77 1.77M17.3 17.3l1.77 1.77M3 12h2.5M18.5 12H21M4.93 19.07l1.77-1.77M17.3 6.7l1.77-1.77M12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z" stroke-linecap="round" />
-        </svg>
-        <svg v-else viewBox="0 0 24 24" class="h-5 w-5 text-textMuted" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M20 15.5A8.5 8.5 0 1 1 8.5 4a7 7 0 1 0 11.5 11.5Z" stroke-linecap="round" stroke-linejoin="round" />
-        </svg>
-        <p class="text-[14px] font-semibold">{{ themeMode === 'dark' ? '浅色模式' : '深色模式' }}</p>
-      </button>
-
-      <NuxtLink to="/" class="flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left text-textMuted transition hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-white/5 dark:hover:text-white">
-        <svg viewBox="0 0 24 24" class="h-5 w-5 text-textMuted" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M10 19l-7-7m0 0l7-7m-7 7h18" stroke-linecap="round" stroke-linejoin="round" />
-        </svg>
-        <p class="text-[14px] font-semibold">返回首页</p>
-      </NuxtLink>
-
-      <div
-        v-if="props.loggedIn"
-        class="rounded-2xl border border-borderSoft bg-panel/80 p-3 shadow-sm backdrop-blur"
+      <NuxtLink
+        to="/dashboard-billing"
+        class="dashboard-credit-button mt-4 flex h-11 w-full items-center justify-center rounded-[12px] bg-[#005FFE] text-[15px] font-bold text-white shadow-[0_12px_28px_rgba(0,95,254,0.22)] transition hover:bg-[#0054E0]"
       >
-        <!-- 侧边栏补齐当前登录用户展示，和首页一样把头像、昵称、退出动作收在同一组里。 -->
-        <div class="flex items-center gap-3 rounded-xl px-2 py-2">
-          <div class="h-11 w-11 overflow-hidden rounded-full bg-slate-200 ring-1 ring-borderSoft dark:bg-slate-700">
-            <img :src="props.avatarUrl || 'https://api.dicebear.com/7.x/avataaars/svg?seed=livliv'" alt="avatar" class="h-full w-full object-cover" />
-          </div>
-          <div class="min-w-0 flex-1">
-            <p class="truncate text-[14px] font-semibold text-textMain">{{ props.nickname || '当前用户' }}</p>
-            <p class="mt-0.5 text-[11px] text-textMuted">已登录账号</p>
-          </div>
-        </div>
-
-        <button class="mt-2 flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-red-500/80 transition hover:bg-red-500/10 hover:text-red-500" @click="emit('logout')">
-          <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9" stroke-linecap="round" stroke-linejoin="round" />
-          </svg>
-          <p class="text-[14px] font-semibold">退出登录</p>
-        </button>
-      </div>
+        充值 / 升级
+      </NuxtLink>
     </div>
   </aside>
 </template>
+
+<style scoped>
+.dashboard-sidebar {
+  transition: background var(--motion-normal), border-color var(--motion-normal), color var(--motion-normal);
+}
+
+/* 侧边栏之前按设计稿写死浅色，这里集中接回主题 token，避免深色模式下仍是白底黑字。 */
+.dashboard-sidebar--dark,
+:global([data-theme='dark']) .dashboard-sidebar {
+  border-color: var(--color-border-soft) !important;
+  background:
+    linear-gradient(180deg, rgba(15, 23, 42, 0.96), rgba(7, 11, 20, 0.98)) !important;
+  color: var(--color-text-main) !important;
+}
+
+.dashboard-sidebar--dark p,
+.dashboard-sidebar--dark span,
+:global([data-theme='dark']) .dashboard-sidebar p,
+:global([data-theme='dark']) .dashboard-sidebar span {
+  color: var(--color-text-main) !important;
+}
+
+.dashboard-sidebar--dark .dashboard-brand-subtitle,
+:global([data-theme='dark']) .dashboard-sidebar .dashboard-brand-subtitle {
+  color: #b8c7e3 !important;
+}
+
+.dashboard-sidebar--dark nav a,
+.dashboard-sidebar--dark > div a,
+:global([data-theme='dark']) .dashboard-sidebar nav a,
+:global([data-theme='dark']) .dashboard-sidebar > div a {
+  color: var(--color-text-muted) !important;
+}
+
+.dashboard-sidebar--dark .dashboard-credit-button,
+:global([data-theme='dark']) .dashboard-sidebar .dashboard-credit-button {
+  background: #005FFE !important;
+  color: #ffffff !important;
+}
+
+.dashboard-sidebar--dark nav a:hover,
+.dashboard-sidebar--dark > div a:hover,
+:global([data-theme='dark']) .dashboard-sidebar nav a:hover,
+:global([data-theme='dark']) .dashboard-sidebar > div a:hover {
+  background: var(--color-surface-hover) !important;
+  color: #7db1ff !important;
+}
+
+.dashboard-sidebar--dark nav .router-link-active,
+:global([data-theme='dark']) .dashboard-sidebar nav .router-link-active {
+  background: rgba(0, 95, 254, 0.18) !important;
+  color: #7db1ff !important;
+}
+
+.dashboard-sidebar--dark > div:last-child,
+:global([data-theme='dark']) .dashboard-sidebar > div:last-child {
+  border-color: var(--color-border-soft) !important;
+  background: var(--color-panel) !important;
+  box-shadow: var(--shadow-panel) !important;
+}
+</style>

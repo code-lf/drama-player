@@ -8,6 +8,7 @@ interface ThemeState {
 }
 
 const THEME_STORAGE_KEY = 'livliv-theme-mode'
+const LEGACY_THEME_STORAGE_KEY = 'livliv:theme-mode'
 
 export const useThemeStore = defineStore('theme', {
   state: (): ThemeState => ({
@@ -21,7 +22,7 @@ export const useThemeStore = defineStore('theme', {
       if (!import.meta.client) return
       // 客户端启动后优先读取本地已缓存主题，
       // 这样用户刷新或重新进入页面时能恢复上次选择。
-      const cachedMode = localStorage.getItem(THEME_STORAGE_KEY)
+      const cachedMode = localStorage.getItem(THEME_STORAGE_KEY) || localStorage.getItem(LEGACY_THEME_STORAGE_KEY)
       if (cachedMode === 'dark' || cachedMode === 'light') {
         this.mode = cachedMode
       }
@@ -32,8 +33,9 @@ export const useThemeStore = defineStore('theme', {
       this.mode = mode
       this.applyToDom()
       if (import.meta.client) {
-        // 主题切换结果持久化到本地，供下次首屏恢复。
+        // 主题切换结果持久化到本地，供下次首屏恢复；兼容历史 key，避免旧页面刷新后读不到。
         localStorage.setItem(THEME_STORAGE_KEY, mode)
+        localStorage.setItem(LEGACY_THEME_STORAGE_KEY, mode)
       }
     },
     toggleMode() {

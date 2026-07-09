@@ -32,12 +32,15 @@ export default defineNuxtConfig({
             (() => {
               try {
                 const storageKey = 'livliv-theme-mode';
-                const cachedMode = window.localStorage.getItem(storageKey);
+                const legacyStorageKey = 'livliv:theme-mode';
+                const cachedMode = window.localStorage.getItem(storageKey) || window.localStorage.getItem(legacyStorageKey);
                 const mode = cachedMode === 'dark' || cachedMode === 'light' ? cachedMode : 'light';
                 document.documentElement.dataset.theme = mode;
+                document.documentElement.classList.toggle('dark', mode === 'dark');
                 document.documentElement.style.colorScheme = mode;
               } catch (error) {
                 document.documentElement.dataset.theme = 'light';
+                document.documentElement.classList.remove('dark');
                 document.documentElement.style.colorScheme = 'light';
               }
             })();

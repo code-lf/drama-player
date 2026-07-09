@@ -65,3 +65,103 @@ body {
   background: rgba(98, 143, 233, 0.45);
   border-radius: 100px;
 }
+
+/* 公告中心全局主题适配：组件可能出现在顶栏、工作区和 Teleport 弹窗里，统一在全局层兜底。 */
+[data-theme='dark'] .announcement-bell {
+  background: var(--color-surface-raised) !important;
+  color: var(--color-text-main) !important;
+}
+
+[data-theme='dark'] .announcement-bell:hover {
+  background: var(--color-surface-hover) !important;
+}
+
+[data-theme='dark'] .announcement-bell span {
+  --tw-ring-color: var(--color-bg) !important;
+}
+
+[data-theme='dark'] .announcement-panel,
+[data-theme='dark'] .announcement-detail-modal,
+[data-theme='dark'] .announcement-workspace-card,
+[data-theme='dark'] .announcement-workspace-detail-modal {
+  background: var(--color-panel) !important;
+  border-color: var(--color-border-soft) !important;
+  color: var(--color-text-main) !important;
+  box-shadow: var(--shadow-panel) !important;
+}
+
+[data-theme='dark'] .announcement-panel-arrow {
+  background: var(--color-panel) !important;
+  border-color: var(--color-border-soft) !important;
+}
+
+[data-theme='dark'] .announcement-empty-state,
+[data-theme='dark'] .announcement-workspace-empty {
+  background: var(--color-surface-base) !important;
+  border-color: var(--color-border-soft) !important;
+  color: var(--color-text-muted) !important;
+}
+
+[data-theme='dark'] .announcement-panel-title,
+[data-theme='dark'] .announcement-detail-title,
+[data-theme='dark'] .announcement-workspace-title,
+[data-theme='dark'] .announcement-workspace-empty-title,
+[data-theme='dark'] .announcement-workspace-detail-title,
+[data-theme='dark'] .announcement-list-item .text-\[\#1f2937\],
+[data-theme='dark'] .announcement-workspace-item .text-\[\#111827\] {
+  color: var(--color-text-main) !important;
+}
+
+[data-theme='dark'] .announcement-detail-time,
+[data-theme='dark'] .announcement-workspace-subtitle,
+[data-theme='dark'] .announcement-workspace-empty-desc,
+[data-theme='dark'] .announcement-workspace-detail-time,
+[data-theme='dark'] .announcement-list-item .text-\[\#7b8aa3\],
+[data-theme='dark'] .announcement-list-item .text-\[\#8a98ad\],
+[data-theme='dark'] .announcement-workspace-item .text-\[\#64748b\],
+[data-theme='dark'] .announcement-workspace-item .text-\[\#8a98ad\] {
+  color: var(--color-text-muted) !important;
+}
+
+[data-theme='dark'] .announcement-list-item:hover,
+[data-theme='dark'] .announcement-workspace-item:hover,
+[data-theme='dark'] .announcement-page-link:hover,
+[data-theme='dark'] .announcement-workspace-action:hover,
+[data-theme='dark'] .announcement-detail-close:hover,
+[data-theme='dark'] .announcement-workspace-detail-close:hover {
+  background: var(--color-surface-hover) !important;
+}
+
+[data-theme='dark'] .announcement-page-link,
+[data-theme='dark'] .announcement-workspace-action,
+[data-theme='dark'] .announcement-detail-close,
+[data-theme='dark'] .announcement-workspace-detail-close {
+  background: var(--color-surface-raised) !important;
+  border-color: var(--color-border-soft) !important;
+  color: var(--color-neon) !important;
+}
+
+[data-theme='dark'] .announcement-detail-section,
+[data-theme='dark'] .announcement-workspace-detail-section {
+  border-color: var(--color-border-soft) !important;
+}
+
+[data-theme='dark'] .announcement-rich-content {
+  color: var(--color-text-main) !important;
+}
+
+[data-theme='dark'] .announcement-rich-content h1,
+[data-theme='dark'] .announcement-rich-content h2,
+[data-theme='dark'] .announcement-rich-content h3,
+[data-theme='dark'] .announcement-rich-content h4 {
+  color: var(--color-text-main) !important;
+}
+
+[data-theme='dark'] .announcement-rich-content blockquote {
+  color: var(--color-text-muted) !important;
+}
+
+[data-theme='dark'] .announcement-rich-content code,
+[data-theme='dark'] .announcement-rich-content pre {
+  background: var(--color-surface-base) !important;
+}
