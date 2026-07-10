@@ -4,27 +4,17 @@ import { useAuthStore } from '~/features/auth/store/useAuthStore'
 import { useAccountStore } from '~/features/billing/store/useAccountStore'
 import {
   ArrowRight,
-  BrainCircuit,
   CheckCircle2,
   ChevronDown,
-  Clapperboard,
   CreditCard,
-  FileText,
   Grid2X2,
-  Image as ImageIcon,
   LayoutDashboard,
   Lightbulb,
   LogOut,
-  MessageSquareText,
   Play,
-  Plus,
-  Rocket,
   Sparkles,
-  UploadCloud,
-  UserRound,
   UsersRound,
   WandSparkles,
-  Zap
 } from '@lucide/vue'
 
 const authStore = useAuthStore()
@@ -47,66 +37,66 @@ const navItems = [
   { label: '帮助中心', href: '#footer', hasMenu: true }
 ]
 
-// 核心能力卡片：图片由提供的素材精确裁切，保持设计稿中的 3D 玻璃图标质感。
+// 核心能力卡片：统一使用 public/landing/icon 下的语义化图标文件。
 const capabilityCards = [
   {
     title: 'AI 剧本解析',
     desc: '深度理解剧情结构，提炼人物关系与冲突亮点',
-    image: '/landing/core-script.png'
+    image: '/landing/icon/core-script.png'
   },
   {
     title: '角色设定',
     desc: '智能生成角色画像，轻松导入多风格设定',
-    image: '/landing/core-role.png'
+    image: '/landing/icon/core-role.png'
   },
   {
     title: '分镜生成',
     desc: '自动拆解剧情，生成专业分镜脚本',
-    image: '/landing/core-storyboard.png'
+    image: '/landing/icon/core-storyboard.png'
   },
   {
     title: '智景创作',
     desc: '多风格场景生成，匹配剧情氛围',
-    image: '/landing/core-scene.png'
+    image: '/landing/icon/core-scene.png'
   },
   {
     title: '台词优化',
     desc: 'AI 润色台词，更加贴近短剧张力',
-    image: '/landing/core-dialogue.png'
+    image: '/landing/icon/core-dialogue.png'
   },
   {
     title: '一键导出',
     desc: '支持视频剧本分镜/PDF，主流格式导出',
-    image: '/landing/core-export.png'
+    image: '/landing/icon/core-export.png'
   }
 ]
 
-// 五步流程配置：使用精灵图定位还原设计稿中的圆形流程图标。
+// 五步流程配置：使用独立图标，避免依赖精灵图裁切位置。
 const workflowSteps = [
   {
     title: '输入灵感/剧本',
     desc: '上传短剧人设或故事，支持多种文本格式',
-    spritePosition: '0% 50%'
+    image: '/landing/icon/workflow-input.png'
   },
   {
     title: 'AI 理解剧情',
     desc: '分析剧情结构与节奏，提炼关键要素',
-    spritePosition: '25% 50%'
+    image: '/landing/icon/workflow-analysis.png'
   },
   {
     title: '生成角色与世界观',
     desc: '创建角色设定与关系网，构建完整世界观',
-    spritePosition: '50% 50%'
+    image: '/landing/icon/workflow-character.png'
   },
   {
     title: '输出分镜与场景',
     desc: '自动生成分镜脚本，匹配场景与镜头建议',
-    spritePosition: '75% 50%'
+    image: '/landing/icon/workflow-storyboard.png'
   },
   {
     title: '进入创作与发布',
     desc: '导出成稿并进入拍摄发布同步平台',
-    spritePosition: '100% 50%'
+    image: '/landing/icon/workflow-publish.png'
   }
 ]
 
@@ -146,7 +136,7 @@ const toolCards = [
   {
     title: '创意提案',
     desc: '生成创意大纲与提案，快速打动客户',
-    image: '/landing/tool-idea.png'
+    image: '/landing/tool-idea.jpeg'
   }
 ]
 
@@ -182,37 +172,37 @@ const caseCards = [
   }
 ]
 
-// 选择理由卡片：图标使用精灵图位置，保证与素材中的渐变玻璃图标一致。
+// 选择理由卡片：图标文件按模块命名，后续替换单个图标时更直观。
 const whyCards = [
   {
     value: '10x',
     title: '脚本生成效率提升',
     desc: 'AI 助力创作效率提升 10 倍+',
-    spritePosition: '0% 50%'
+    image: '/landing/icon/why-efficiency.png'
   },
   {
     value: '分钟级',
     title: '分镜输出速度',
     desc: '从脚本到分镜仅需分钟级',
-    spritePosition: '25% 50%'
+    image: '/landing/icon/why-speed.png'
   },
   {
     value: '100+',
     title: '风格与场景支持',
     desc: '覆盖多种风格与场景类型',
-    spritePosition: '50% 50%'
+    image: '/landing/icon/why-library.png'
   },
   {
     value: '多端协作',
     title: '团队高效协同',
     desc: '多人在线协作，版本管理清晰',
-    spritePosition: '75% 50%'
+    image: '/landing/icon/why-collaboration.png'
   },
   {
     value: '安全可靠',
     title: '数据与版权保障',
     desc: '企业级安全与隐私保护',
-    spritePosition: '100% 50%'
+    image: '/landing/icon/why-security.png'
   }
 ]
 
@@ -377,25 +367,25 @@ watch(
 
     <section class="relative overflow-hidden border-b border-[#dce7f8] bg-[#f4f8ff]">
       <div class="hero-shell absolute inset-0" />
-      <div class="mx-auto grid min-h-[590px] w-full max-w-[1320px] items-center px-5 py-16 lg:grid-cols-[0.47fr_0.53fr] lg:px-6 lg:py-10">
+      <div class="mx-auto grid min-h-[700px] w-full max-w-[1400px] items-start px-5 pt-16 lg:grid-cols-[0.47fr_0.53fr] lg:px-0 lg:pt-[78px]">
         <div class="relative z-10 max-w-[560px]">
-          <div class="mb-7 inline-flex items-center gap-2 rounded-full border border-[#b9d3ff] bg-white/70 px-5 py-2 text-[15px] font-bold text-[#005ffe] shadow-[0_12px_28px_rgba(39,111,255,0.08)] backdrop-blur">
+          <div class="mb-7 inline-flex items-center gap-2 rounded-full border border-[#b9d3ff] bg-white/70 px-6 py-2.5 text-[16px] font-bold text-[#005ffe] shadow-[0_12px_28px_rgba(39,111,255,0.08)] backdrop-blur">
             <Sparkles class="h-4 w-4" />
             <span>AI 短剧创作平台</span>
           </div>
 
-          <h1 class="text-[46px] font-black leading-[1.08] tracking-normal text-[#07142e] sm:text-[58px] lg:text-[64px]">
+          <h1 class="text-[50px] font-black leading-[1.06] tracking-normal text-[#07142e] sm:text-[62px] lg:text-[78px]">
             用 <span class="text-[#005ffe]">AI</span> 重塑<br />
             <span class="text-[#005ffe]">短剧创作</span>流程
           </h1>
 
-          <p class="mt-7 max-w-[520px] text-[18px] font-medium leading-[1.9] text-[#43516e]">
+          <p class="mt-8 max-w-[410px] text-[18px] font-medium leading-[1.9] text-[#43516e]">
             从剧本理解、角色设定、分镜生成到短剧创作，一站式 AI 驱动短剧生产，创意变快，制作更轻松。
           </p>
 
-          <div class="mt-9 flex flex-wrap items-center gap-4">
+          <div class="mt-11 flex flex-wrap items-center gap-4">
             <button
-              class="inline-flex h-14 items-center gap-2 rounded-full bg-[#0068ff] px-8 text-[16px] font-black text-white shadow-[0_18px_34px_rgba(0,104,255,0.28)] transition hover:-translate-y-0.5 hover:bg-[#0058df]"
+              class="inline-flex h-16 items-center gap-2 rounded-full bg-[#0068ff] px-9 text-[17px] font-black text-white shadow-[0_18px_34px_rgba(0,104,255,0.28)] transition hover:-translate-y-0.5 hover:bg-[#0058df]"
               type="button"
               @click="startCreateFromHome"
             >
@@ -403,7 +393,7 @@ watch(
               立即开始创作
             </button>
             <button
-              class="inline-flex h-14 items-center gap-2 rounded-full border border-[#c9d8f0] bg-white/80 px-8 text-[16px] font-black text-[#102044] shadow-[0_12px_30px_rgba(20,47,88,0.08)] transition hover:border-[#9fbfff] hover:text-[#005ffe]"
+              class="inline-flex h-16 items-center gap-2 rounded-full border border-[#c9d8f0] bg-white/80 px-9 text-[17px] font-black text-[#102044] shadow-[0_12px_30px_rgba(20,47,88,0.08)] transition hover:border-[#9fbfff] hover:text-[#005ffe]"
               type="button"
               @click="scrollToCases"
             >
@@ -412,7 +402,7 @@ watch(
             </button>
           </div>
 
-          <div class="mt-9 flex flex-wrap gap-x-8 gap-y-3 text-[14px] font-semibold text-[#60708f]">
+          <div class="mt-12 flex flex-wrap gap-x-8 gap-y-3 text-[14px] font-semibold text-[#60708f]">
             <span class="inline-flex items-center gap-2">
               <CheckCircle2 class="h-4 w-4 text-[#0068ff]" />
               分钟级生成分镜
@@ -464,8 +454,11 @@ watch(
               v-if="index < workflowSteps.length - 1"
               class="workflow-line absolute left-[calc(50%+52px)] top-[40px] hidden h-px w-[calc(100%-70px)] border-t border-dashed border-[#80adff] lg:block"
             />
-            <div class="mx-auto flex h-[86px] w-[86px] items-center justify-center rounded-full bg-[#f1f6ff] shadow-[inset_0_0_0_1px_#d7e5ff,0_12px_30px_rgba(48,108,214,0.12)]">
-              <span class="workflow-icon" :style="{ '--sprite-position': step.spritePosition }" />
+            <div
+              class="mx-auto flex h-[86px] w-[86px] items-center justify-center rounded-full bg-[#f1f6ff] shadow-[inset_0_0_0_1px_#d7e5ff,0_12px_30px_rgba(48,108,214,0.12)]"
+              :class="{ 'workflow-node--purple': index === workflowSteps.length - 1 }"
+            >
+              <img class="workflow-art h-16 w-16 object-contain" :src="step.image" :alt="step.title" />
             </div>
             <div class="mt-4 flex justify-center">
               <span class="mr-2 flex h-5 w-5 items-center justify-center rounded-full bg-[#1c74ff] text-xs font-black text-white">{{ index + 1 }}</span>
@@ -555,7 +548,7 @@ watch(
             :key="item.title"
             class="flex min-h-[112px] items-center gap-4 rounded-[14px] border border-[#dce6f5] bg-white px-5 py-4 shadow-[0_10px_28px_rgba(28,62,112,0.05)]"
           >
-            <span class="why-icon shrink-0" :style="{ '--sprite-position': item.spritePosition }" />
+            <img class="icon-art h-[54px] w-[54px] shrink-0 object-contain" :src="item.image" :alt="item.title" />
             <div>
               <div class="text-[27px] font-black leading-none text-[#245bff]">{{ item.value }}</div>
               <h3 class="mt-2 text-[15px] font-black text-[#102044]">{{ item.title }}</h3>
@@ -658,35 +651,23 @@ watch(
 }
 
 .hero-shell {
-  /* 首屏大图：使用设计稿提供的整张控制台图，左侧留白刚好承载标题文案。 */
-  background-image:
-    linear-gradient(90deg, rgba(245, 249, 255, 0.82) 0%, rgba(245, 249, 255, 0.5) 36%, rgba(245, 249, 255, 0.08) 68%),
-    url('/landing/hero-console.png');
-  background-position: center;
+  /* 首屏大图只保留原始素材，避免渐变蒙层影响控制台清晰度和对比度。 */
+  background-image: url('/landing/hero-console.png');
+  /* 首屏加高后保留控制台顶部，避免面板从导航下方直接被截断。 */
+  background-position: center 46%;
   background-size: cover;
 }
 
-.workflow-icon,
-.why-icon {
-  display: block;
-  background-repeat: no-repeat;
-  background-position: var(--sprite-position);
+.workflow-art,
+.icon-art {
+  /* 独立素材带有白色画布，使用正片叠底去除方形底色，保留玻璃高光和阴影。 */
+  mix-blend-mode: multiply;
 }
 
-.workflow-icon {
-  /* 流程图标精灵图：五个图标横向排列，通过变量控制定位。 */
-  width: 64px;
-  height: 64px;
-  background-image: url('/landing/workflow-icons.png');
-  background-size: 520% auto;
-}
-
-.why-icon {
-  /* 选择理由图标精灵图：复用素材中的火箭、时钟、网格、协作、安全图标。 */
-  width: 54px;
-  height: 54px;
-  background-image: url('/landing/why-icons.png');
-  background-size: 530% auto;
+.workflow-node--purple {
+  /* 发布节点沿用设计稿最后一个紫色流程气泡的色调。 */
+  background: #f5efff;
+  box-shadow: inset 0 0 0 1px #e1d5ff, 0 12px 30px rgba(137, 83, 255, 0.14);
 }
 
 .cta-orbit::before {
@@ -736,7 +717,7 @@ watch(
 
 @media (max-width: 1023px) {
   .hero-shell {
-    background-position: 62% center;
+    background-position: 62% 46%;
     opacity: 0.44;
   }
 }
