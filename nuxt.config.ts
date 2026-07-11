@@ -1,14 +1,16 @@
 import { fileURLToPath } from 'node:url'
 
-// 统一收口 Nuxt 生成目录，默认走 `.nuxt-app`，同时允许通过环境变量切换到独立目录。
-// 这样在“dev 正在运行”时，我们可以把校验构建切到别的目录，避免两个 Nuxt 进程互相清理生成物。
-const nuxtBuildDir = process.env.NUXT_BUILD_DIR || '.nuxt-app'
-
 // Nuxt 3.21 在部分 Windows + Vite dev 场景下会出现 `#app-manifest` 无法被预解析的问题。
 // 这里不再依赖 `.nuxt-app/manifest/meta/dev.json` 这类会在热更新时被重建的文件，
 // 而是改成一个仓库内稳定存在的本地模块，彻底切断和临时生成目录的耦合。
 const devAppManifestPath = fileURLToPath(new URL('./app-manifest-dev.mjs', import.meta.url))
-const isProductionBuild = process.env.NODE_ENV === 'production'
+
+// Nuxt 在不同启动方式下设置 NODE_ENV 的时机并不完全一致，所以同时检查命令参数。
+// 这样 `pnpm dev` 固定使用 `.nuxt-app`，`pnpm build` 固定使用 `.nuxt-build`，
+// 避免生产构建覆盖正在运行的开发服务，导致浏览器热刷新时拿到半成品 SSR 文件。
+const isBuildCommand = process.argv.some((argument) => argument === 'build' || argument.endsWith('/build') || argument.endsWith('\\build'))
+const isProductionBuild = process.env.NODE_ENV === 'production' || isBuildCommand
+const nuxtBuildDir = process.env.NUXT_BUILD_DIR || (isProductionBuild ? '.nuxt-build' : '.nuxt-app')
 // 本地开发默认走 Nuxt 同源代理，直接绕开浏览器跨域预检。
 // 如果后续接正式环境或远端测试环境，仍然可以通过 `NUXT_PUBLIC_API_BASE` 显式覆盖。
 const defaultApiBase = process.env.NUXT_PUBLIC_API_BASE || (isProductionBuild ? 'http://127.0.0.1:8000/api' : '/api')

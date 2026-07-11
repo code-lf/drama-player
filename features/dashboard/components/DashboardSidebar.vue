@@ -1,9 +1,8 @@
 <script setup lang="ts">
-import CreditAmount from '~/components/ui/CreditAmount.vue'
-
 interface Props {
   activeMenu: 'drama' | 'product' | 'canvas' | 'none'
   activeWorkspaceView: 'console' | 'projects' | 'billing' | 'announcements'
+  billingView: 'recharge' | 'orders'
   currentCreditBalance: number | string
   loggedIn: boolean
   nickname: string
@@ -18,7 +17,7 @@ withDefaults(defineProps<Props>(), {
 const createMenuItems = [
   {
     key: 'drama',
-    label: '剧本创作',
+    label: 'AI创作',
     to: '/dashboard',
     icon: 'script'
   },
@@ -44,11 +43,9 @@ const createMenuItems = [
     :class="themeMode === 'dark' ? 'dashboard-sidebar--dark' : 'dashboard-sidebar--light'"
   >
     <NuxtLink to="/dashboard" class="flex items-center gap-3">
-      <div class="flex h-12 w-12 items-center justify-center rounded-[12px] bg-[#005FFE] shadow-[0_14px_28px_rgba(0,95,254,0.24)]">
-        <svg viewBox="0 0 28 28" class="h-6 w-6 text-white" fill="none" stroke="currentColor" stroke-width="2.2">
-          <path d="M7 20.5h14" stroke-linecap="round" />
-          <path d="M9.4 17.4 19.8 7a2.2 2.2 0 0 1 3.1 3.1L12.5 20.5 8 21.7l1.4-4.3Z" stroke-linecap="round" stroke-linejoin="round" />
-        </svg>
+      <div class="flex h-12 w-12 items-center justify-center overflow-hidden rounded-[12px] bg-[#005FFE] shadow-[0_14px_28px_rgba(0,95,254,0.24)]">
+        <!-- Logo 原图是带黑色外边画布的 JPEG，因此放大裁切后只保留蓝色品牌图标。 -->
+        <img src="/branding/livliv-logo.jpeg" alt="Livliv Logo" class="h-full w-full scale-[1.28] object-cover" />
       </div>
       <div>
         <p class="dashboard-brand-title text-[21px] font-black leading-none tracking-[-0.04em] text-[#111827]">Livliv</p>
@@ -56,6 +53,7 @@ const createMenuItems = [
       </div>
     </NuxtLink>
 
+    <template v-if="activeWorkspaceView !== 'billing'">
     <div class="mt-11">
       <p class="mb-4 px-1 text-[16px] font-black text-[#0f172a]">创作</p>
       <nav class="space-y-3">
@@ -89,7 +87,32 @@ const createMenuItems = [
         </NuxtLink>
       </nav>
     </div>
+    </template>
 
+    <div v-else class="mt-8 space-y-2">
+      <NuxtLink to="/dashboard" class="group flex h-[42px] items-center gap-3 rounded-[11px] px-4 text-[13px] font-bold text-[#53627c] transition hover:bg-[#f6f8fc] hover:text-[#005FFE]">
+        <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2"><path d="m11 5-6 6 6 6M5 11h14" stroke-linecap="round" stroke-linejoin="round" /></svg>
+        返回工作台
+      </NuxtLink>
+      <NuxtLink to="/dashboard-billing" class="group flex h-[44px] items-center gap-3 rounded-[11px] px-4 text-[13px] font-bold transition" :class="billingView === 'recharge' ? 'bg-[#eff4ff] text-[#005FFE]' : 'text-[#53627c] hover:bg-[#f6f8fc] hover:text-[#005FFE]'">
+        <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5v9M8.5 12h7" stroke-linecap="round" /></svg>
+        积分充值
+      </NuxtLink>
+      <NuxtLink to="/dashboard-billing?view=orders" class="group flex h-[44px] items-center gap-3 rounded-[11px] px-4 text-[13px] font-bold transition" :class="billingView === 'orders' ? 'bg-[#eff4ff] text-[#005FFE]' : 'text-[#53627c] hover:bg-[#f6f8fc] hover:text-[#005FFE]'">
+        <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 4h12v16H6zM9 8h6M9 12h6M9 16h3" stroke-linecap="round" stroke-linejoin="round" /></svg>
+        订单记录
+      </NuxtLink>
+      <button class="flex h-[44px] w-full items-center gap-3 rounded-[11px] px-4 text-left text-[13px] font-bold text-[#9aa6b7]" type="button" disabled>
+        <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16v13H4zM7 7V5h10v2M8 11h8M8 15h5" stroke-linecap="round" stroke-linejoin="round" /></svg>
+        发票管理
+      </button>
+      <NuxtLink to="/dashboard-announcements" class="group flex h-[44px] items-center gap-3 rounded-[11px] px-4 text-[13px] font-bold text-[#53627c] transition hover:bg-[#f6f8fc] hover:text-[#005FFE]">
+        <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="8.5" /><path d="M12 16.5v-.1M12 13c0-2.1 2.5-2 2.5-4A2.5 2.5 0 0 0 12 6.5 2.7 2.7 0 0 0 9.3 9" stroke-linecap="round" /></svg>
+        常见问题
+      </NuxtLink>
+    </div>
+
+    <template v-if="activeWorkspaceView !== 'billing'">
     <div class="mt-10">
       <p class="mb-4 px-1 text-[16px] font-black text-[#0f172a]">项目管理</p>
       <NuxtLink
@@ -106,18 +129,29 @@ const createMenuItems = [
       </NuxtLink>
     </div>
 
-    <div class="mt-auto rounded-[18px] border border-[#dbe4f0] bg-white p-4 shadow-[0_18px_50px_rgba(15,23,42,0.06)]">
-      <p class="text-[14px] font-bold text-[#005FFE]">点数余额</p>
-      <div class="mt-3">
-        <CreditAmount :value="currentCreditBalance" size="lg" tone="default" />
-      </div>
+    <div v-if="activeWorkspaceView !== 'billing'" class="mt-auto space-y-4">
       <NuxtLink
-        to="/dashboard-billing"
-        class="dashboard-credit-button mt-4 flex h-11 w-full items-center justify-center rounded-[12px] bg-[#005FFE] text-[15px] font-bold text-white shadow-[0_12px_28px_rgba(0,95,254,0.22)] transition hover:bg-[#0054E0]"
+        to="/dashboard-announcements"
+        class="group flex h-[48px] items-center gap-3 rounded-[13px] px-2 text-[15px] font-bold text-[#53627c] transition hover:bg-[#f6f8fc] hover:text-[#005FFE]"
       >
-        充值 / 升级
+        <svg viewBox="0 0 24 24" class="h-6 w-6" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="9.2" />
+          <path d="M12 17v-1.2M12 13.2c0-2.4 2.6-2 2.6-4.3A2.6 2.6 0 0 0 12 6.4a2.7 2.7 0 0 0-2.8 2.4" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+        <span>帮助中心</span>
       </NuxtLink>
+      <button
+        class="group flex h-[48px] w-full items-center gap-3 rounded-[13px] px-2 text-left text-[15px] font-bold text-[#53627c] transition hover:bg-[#f6f8fc] hover:text-[#005FFE]"
+        type="button"
+      >
+        <svg viewBox="0 0 24 24" class="h-6 w-6" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M4.5 6.8A2.8 2.8 0 0 1 7.3 4h9.4a2.8 2.8 0 0 1 2.8 2.8v6.4a2.8 2.8 0 0 1-2.8 2.8H10l-4.2 3.4V16H7.3a2.8 2.8 0 0 1-2.8-2.8V6.8Z" stroke-linejoin="round" />
+          <path d="M8.5 9.2h7M8.5 12.2h4.8" stroke-linecap="round" />
+        </svg>
+        <span>意见反馈</span>
+      </button>
     </div>
+    </template>
   </aside>
 </template>
 

@@ -276,8 +276,8 @@ watch(
     <header class="sticky top-0 z-50 border-b border-[#dce6f7] bg-white/90 backdrop-blur-2xl">
       <div class="mx-auto flex h-[78px] w-full max-w-[1320px] items-center justify-between px-5 lg:px-6">
         <NuxtLink to="/" class="flex items-center gap-3" aria-label="Livliv AI 首页">
-          <span class="flex h-9 w-9 items-center justify-center rounded-[10px] bg-[#0866ff] text-white shadow-[0_12px_24px_rgba(0,95,254,0.22)]">
-            <WandSparkles class="h-5 w-5" />
+          <span class="flex h-9 w-9 items-center justify-center overflow-hidden rounded-[10px] bg-[#0866ff] shadow-[0_12px_24px_rgba(0,95,254,0.22)]">
+            <img src="/branding/livliv-logo.jpeg" alt="Livliv Logo" class="h-full w-full scale-[1.28] object-cover" />
           </span>
           <span class="text-[23px] font-black leading-none tracking-[-0.01em] text-[#07142e]">Livliv AI</span>
         </NuxtLink>

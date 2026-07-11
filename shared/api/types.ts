@@ -70,6 +70,10 @@ export interface DramaProjectCreatePayload {
   title?: string
   themeMode?: 'dark' | 'light'
   entryIntent?: DramaIntentMode
+  style?: string
+  aspectRatio?: string
+  resolution?: string
+  episodeCount?: number
 }
 
 export interface DramaScriptIngestPayload {
@@ -261,6 +265,7 @@ export interface ApiAdapter {
   batchDeleteDramaProjects(ids: string[]): Promise<ApiResponse<DramaDeleteResult>>
   getDramaProject(projectId: string): Promise<ApiResponse<DramaProjectDetail>>
   ingestDramaScript(projectId: string, payload: DramaScriptIngestPayload): Promise<ApiResponse<DramaProjectDetail>>
+  ingestDramaScriptFile(projectId: string, file: File): Promise<ApiResponse<DramaProjectDetail>>
   updateDramaIntentRouter(projectId: string, payload: DramaIntentRouterUpdatePayload): Promise<ApiResponse<DramaProjectDetail>>
   previewDramaCredits(projectId: string, payload: DramaCreditPreviewPayload): Promise<ApiResponse<DramaCreditPreview>>
   analyzeDrama(projectId: string, payload?: DramaAnalyzePayload): Promise<ApiResponse<DramaProjectDetail>>

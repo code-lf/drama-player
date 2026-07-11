@@ -49,6 +49,10 @@ export const dramaService = {
     return callApi('drama/ingestScript', (adapter) => adapter.ingestDramaScript(projectId, payload))
   },
 
+  async ingestScriptFile(projectId: string, file: File) {
+    return callApi('drama/ingestScriptFile', (adapter) => adapter.ingestDramaScriptFile(projectId, file))
+  },
+
   async updateIntentRouter(projectId: string, payload: { mode: 'drama' | 'ad' | 'general' }) {
     return callApi('drama/updateIntentRouter', (adapter) => adapter.updateDramaIntentRouter(projectId, payload))
   },

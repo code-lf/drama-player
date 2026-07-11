@@ -361,6 +361,18 @@ export const mockAdapter: ApiAdapter = {
         metaJson: {},
         createdAt: '2026-01-01T00:00:00+08:00',
         updatedAt: '2026-01-01T00:00:00+08:00'
+      },
+      {
+        id: 'pkg-professional',
+        packageName: '专业包',
+        creditsAmount: 30000,
+        priceAmount: 199,
+        originalPrice: 260,
+        isActive: true,
+        sortOrder: 30,
+        metaJson: {},
+        createdAt: '2026-01-01T00:00:00+08:00',
+        updatedAt: '2026-01-01T00:00:00+08:00'
       }
     ]
     return ok(packages)
@@ -389,9 +401,39 @@ export const mockAdapter: ApiAdapter = {
           referenceId: 'storyboard-task',
           description: '生成分镜',
           createdAt: '2026-07-02T10:00:00+08:00'
+        },
+        {
+          id: 'ledger-3',
+          userId: '00000000-0000-0000-0000-000000000001',
+          transactionType: 'recharge',
+          amount: 6000,
+          balanceAfter: 13500,
+          referenceId: '202607070001',
+          description: '充值 6,000 积分',
+          createdAt: '2026-07-07T18:30:00+08:00'
+        },
+        {
+          id: 'ledger-4',
+          userId: '00000000-0000-0000-0000-000000000001',
+          transactionType: 'consume',
+          amount: -25,
+          balanceAfter: 13475,
+          referenceId: 'role-regenerate-task',
+          description: '角色重新生成',
+          createdAt: '2026-07-08T14:20:00+08:00'
+        },
+        {
+          id: 'ledger-5',
+          userId: '00000000-0000-0000-0000-000000000001',
+          transactionType: 'system_grant',
+          amount: 200,
+          balanceAfter: 13675,
+          referenceId: 'new-user-reward',
+          description: '新用户奖励',
+          createdAt: '2026-07-09T10:00:00+08:00'
         }
       ].slice(0, pageSize),
-      total: 2,
+      total: 5,
       page,
       pageSize
     }
@@ -581,6 +623,12 @@ export const mockAdapter: ApiAdapter = {
       sourceFileName: '',
       analysis: {
         ...createEmptyDramaAnalysis(),
+        totalEpisodes: payload.episodeCount || 1,
+        displayMeta: {
+          aspectRatio: payload.aspectRatio || '16:9',
+          resolution: payload.resolution || '720p',
+          style: payload.style || '东方玄幻 · 电影写实'
+        },
         intentRouter: {
           entryIntent: initialIntent,
           detectedMode: initialIntent,
@@ -660,6 +708,15 @@ export const mockAdapter: ApiAdapter = {
     }
     mockDramaProjectMap.set(projectId, next)
     return ok(next)
+  },
+
+  async ingestDramaScriptFile(projectId: string, file: File) {
+    await sleep(180)
+    const fileContent = file.name.toLowerCase().endsWith('.txt') ? await file.text() : `已上传文件：${file.name}`
+    return this.ingestDramaScript(projectId, {
+      content: fileContent,
+      fileName: file.name
+    })
   },
 
   async updateDramaIntentRouter(projectId: string, payload: { mode: 'drama' | 'ad' | 'general' }) {

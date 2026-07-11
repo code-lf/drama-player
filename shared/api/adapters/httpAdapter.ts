@@ -144,7 +144,12 @@ interface BackendAccountProfileResponse {
   id: string
   nickname: string
   avatar_url: string
-  credit_balance: number
+  credit_balance?: number
+  creditBalance?: number
+  credits_balance?: number
+  credits?: number
+  points?: number
+  balance?: number
 }
 
 interface BackendCreditPackageResponse {
@@ -565,11 +570,19 @@ function mapDramaProjectCard(raw: BackendDramaProjectCardResponse): DramaProject
 }
 
 function mapAccountProfile(raw: BackendAccountProfileResponse): AccountProfile {
+  // 后端历史版本和管理端可能返回不同命名，这里统一兜底映射，避免后台显示 200、用户端因为字段名不一致显示 0。
+  const creditBalance = raw.credit_balance
+    ?? raw.creditBalance
+    ?? raw.credits_balance
+    ?? raw.credits
+    ?? raw.points
+    ?? raw.balance
+    ?? 0
   return {
     id: raw.id,
     nickname: raw.nickname || '',
     avatarUrl: raw.avatar_url || '',
-    creditBalance: raw.credit_balance || 0
+    creditBalance: Number(creditBalance || 0)
   }
 }
 
@@ -1247,7 +1260,11 @@ export const httpAdapter: ApiAdapter = {
       body: {
         title: payload.title || '未命名短剧项目',
         theme_mode: payload.themeMode || 'dark',
-        entry_intent: payload.entryIntent || 'drama'
+        entry_intent: payload.entryIntent || 'drama',
+        style: payload.style || '',
+        aspect_ratio: payload.aspectRatio || '',
+        resolution: payload.resolution || '',
+        episode_count: payload.episodeCount || 1
       }
     })
     return ok(mapDramaDetail(response), 'created')
@@ -1265,6 +1282,16 @@ export const httpAdapter: ApiAdapter = {
         content: payload.content,
         file_name: payload.fileName || ''
       }
+    })
+    return ok(mapDramaDetail(response))
+  },
+
+  async ingestDramaScriptFile(projectId: string, file: File) {
+    const body = new FormData()
+    body.append('file', file)
+    const response = await request<BackendDramaDetailResponse>(`/drama/projects/${projectId}/script-file-ingest`, {
+      method: 'POST',
+      body
     })
     return ok(mapDramaDetail(response))
   },

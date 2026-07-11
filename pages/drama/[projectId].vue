@@ -33,6 +33,7 @@ import type {
   WorkflowRunInfo
 } from '~/shared/api/types'
 import CreditAmount from '~/components/ui/CreditAmount.vue'
+import DramaScriptWorkspace from '~/features/drama/components/script/DramaScriptWorkspace.vue'
 import { Copy, Ellipsis, Plus, Trash2 } from '@lucide/vue'
 import { dramaService } from '~/shared/api/services/dramaService'
 import { workflowService } from '~/shared/api/services/workflowService'
@@ -267,10 +268,10 @@ const storyboardStoryFunctionLabelMap: Record<StoryboardClipContract['storyFunct
 }
 
 const workflowSteps: Array<{ key: WorkflowStepKey; label: string; hint: string }> = [
-  { key: 'script', label: '剧本', hint: '上传并解析剧本' },
-  { key: 'setting', label: '设定', hint: '生成角色场景道具' },
-  { key: 'storyboard', label: '分镜', hint: '整理结构化镜头' },
-  { key: 'video', label: '视频', hint: '生成视频工作流' }
+  { key: 'script', label: '剧本', hint: '脚本创作与体验' },
+  { key: 'setting', label: '资产', hint: '角色与场景生成' },
+  { key: 'storyboard', label: '分镜', hint: '镜头设计与分镜' },
+  { key: 'video', label: '成片', hint: '视频生成与合成' }
 ]
 
 const scriptProgressStages: Array<{ key: AnalysisStageKey; label: string }> = [
@@ -758,6 +759,8 @@ const showRegenerateAllStoryboardsButton = computed(() => {
   return hasStoryboards.value || currentStoryboardRun.value.status !== 'idle'
 })
 const showFloatingConfirmButton = computed(() => {
+  // 剧本阶段已经由新的 DramaScriptWorkspace 自己承载底部确认条，父级浮动按钮只服务后续阶段。
+  if (activeStep.value === 'script') return false
   if (activeStep.value === 'script') return isScriptAnalysisReady.value
   if (activeStep.value === 'setting') return true
   if (activeStep.value === 'storyboard') return true
@@ -770,9 +773,9 @@ const floatingConfirmButtonDisabled = computed(() => {
   return true
 })
 const floatingConfirmButtonLabel = computed(() => {
-  if (activeStep.value === 'script') return '已确认，进入设定'
-  if (activeStep.value === 'setting') return '已确认，进入分镜'
-  if (activeStep.value === 'storyboard') return '已确认，进入视频'
+  if (activeStep.value === 'script') return '确认剧本，进入资产制作'
+  if (activeStep.value === 'setting') return '确认资产，进入分镜设计'
+  if (activeStep.value === 'storyboard') return '确认分镜，进入成片制作'
   return '继续'
 })
 const generateStoryboardButtonLabel = computed(() => {
@@ -1760,9 +1763,10 @@ async function loadWorkflowPage(): Promise<void> {
       await connectStoryboardEventStream()
     }
 
-    // 首次从入口页跳过来时自动启动剧本解析，符合“点击创建短剧项目后进入新流程页再开始解析”的交互。
+    // 新版剧本阶段会先用已上传/粘贴的 sourceScriptText 展示“本地草稿工作台”，
+    // 不再从入口页自动扣点发起后端 AI 解析，避免 0 积分用户刚进项目就看到余额不足错误。
+    // 这里保留对旧链接 autostart=1 的兼容：只清理参数，不执行 analyzeScript。
     if (getQueryValue('autostart') === '1' && !project.analysis.title && project.sourceScriptText.trim()) {
-      await analyzeScript()
       await router.replace({ query: { ...route.query, autostart: undefined } })
     }
   } catch (error) {
@@ -3809,8 +3813,26 @@ onBeforeUnmount(() => {
       </section>
 
       <template v-else>
-        <section
+        <DramaScriptWorkspace
           v-if="activeStep === 'script'"
+          v-model:selected-episode-no="selectedEpisodeNo"
+          :project-detail="projectDetail"
+          :is-busy="isBusy"
+          :busy-key="busyKey"
+          :current-analysis-run="currentAnalysisRun"
+          :is-script-analysis-ready="isScriptAnalysisReady"
+          :show-script-progress-panel="showScriptProgressPanel"
+          :should-prefer-analysis-result-view="shouldPreferAnalysisResultView"
+          :script-progress-title="scriptProgressTitle"
+          :script-progress-subtitle="scriptProgressSubtitle"
+          :script-progress-items="scriptProgressItems"
+          :analyze-action="analyzeScript"
+          :change-intent-mode-action="updateProjectIntentMode"
+          :confirm-script-action="goNextStep"
+        />
+
+        <section
+          v-else-if="false && activeStep === 'script'"
           class="rounded-[32px] border border-[#e8edf5] bg-panel p-8 shadow-[0_18px_60px_rgba(15,23,42,0.06)]"
         >
           <div v-if="showScriptProgressPanel && !shouldPreferAnalysisResultView" class="flex min-h-[520px] flex-col items-center justify-center">

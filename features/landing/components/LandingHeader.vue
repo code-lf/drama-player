@@ -2,7 +2,7 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { useThemeStore } from '~/features/ui/store/useThemeStore'
 import CreditAmount from '~/components/ui/CreditAmount.vue'
-import { LogOut, LayoutDashboard, CreditCard, Sparkles } from '@lucide/vue'
+import { LogOut, LayoutDashboard, CreditCard } from '@lucide/vue'
 
 const props = withDefaults(defineProps<{
   loggedIn: boolean
@@ -46,8 +46,8 @@ onUnmounted(() => {
 <template>
   <header class="mx-auto flex w-full max-w-[1440px] items-center justify-between px-6 py-5 lg:px-10">
     <div class="flex items-center gap-3">
-      <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-neon shadow-[0_0_15px_rgba(72,214,255,0.4)]">
-        <Sparkles class="h-6 w-6 text-slate-900" />
+      <div class="flex h-10 w-10 items-center justify-center overflow-hidden rounded-xl bg-neon shadow-[0_0_15px_rgba(72,214,255,0.4)]">
+        <img src="/branding/livliv-logo.jpeg" alt="Livliv Logo" class="h-full w-full scale-[1.28] object-cover" />
       </div>
       <span class="text-2xl font-extrabold tracking-wider text-textMain">Livliv AI</span>        
     </div>
