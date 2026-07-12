@@ -62,6 +62,15 @@ export interface DramaCharacterBio {
   identity: string
   summary: string
   traits: string[]
+  ageLabel?: string
+  roleLabel?: string
+  gender?: string
+  appearance?: string
+  personality?: string
+  goal?: string
+  motivation?: string
+  conflict?: string
+  arcSteps?: Array<Record<string, string>>
 }
 
 export interface DramaEpisodeSummary {
@@ -100,6 +109,133 @@ export interface DramaIntentRouter {
   effectiveMode: DramaIntentMode
 }
 
+export interface DramaRelationshipNode {
+  key: string
+  name: string
+  role: string
+  tone: string
+  x: number
+  y: number
+}
+
+export interface DramaRelationshipLink {
+  source: string
+  target: string
+  label: string
+  color: string
+  strength: number
+  summary: string
+}
+
+export interface DramaCharacterRelationships {
+  nodes: DramaRelationshipNode[]
+  links: DramaRelationshipLink[]
+  summaries: string[]
+  arcSteps: Array<Record<string, string>>
+}
+
+export interface DramaEpisodeBeat {
+  key: string
+  label: string
+  timeRange: string
+  summary: string
+  sceneRefs: string[]
+  status: string
+}
+
+export interface DramaEpisodeJudgement {
+  title: string
+  detail: string
+  status: string
+}
+
+export interface DramaEpisodeStructure {
+  episodeNo: number
+  title: string
+  status: string
+  estimatedDuration: string
+  sceneCount: number
+  mainCharacters: string[]
+  beats: DramaEpisodeBeat[]
+  aiJudgements: DramaEpisodeJudgement[]
+}
+
+export interface DramaScriptScene {
+  episodeNo: number
+  index: number
+  title: string
+  place: string
+  timeOfDay: string
+  characters: string[]
+  content: string
+  dialogues: string[]
+  suggestions: string[]
+}
+
+export interface DramaReviewDimension {
+  label: string
+  value: number
+}
+
+export interface DramaReviewIssue {
+  title: string
+  status: string
+  detail: string
+}
+
+export interface DramaScriptReview {
+  title: string
+  score: number
+  tone: string
+  dimensions: DramaReviewDimension[]
+  strengths: DramaReviewIssue[]
+  warnings: DramaReviewIssue[]
+  updatedAt: string
+}
+
+export interface DramaScriptReviews {
+  overview: DramaScriptReview
+  characters: DramaScriptReview
+  episodes: DramaScriptReview
+  fullText: DramaScriptReview
+}
+
+export interface DramaProductionEstimate {
+  roles: number
+  scenes: number
+  props: number
+  shots: number
+  credits: number
+  episodeDuration: string
+  keyEpisodeCount: number
+}
+
+export interface DramaOptimizationSuggestion {
+  id: string
+  scope: string
+  priority: string
+  title: string
+  problem: string
+  advice: string
+  affected: string
+  boost: string
+  detail: string
+  originalText: string
+  suggestedText: string
+  status: string
+}
+
+export interface DramaScriptVersion {
+  version: string
+  status: string
+  current: boolean
+  optimized: boolean
+  createdAt: string
+  appliedAt: string
+  summary: string
+  score: number
+}
+
 export interface DramaStoryboardRunState {
   status: string
   totalEpisodes: number
@@ -115,6 +251,7 @@ export interface DramaStoryboardRunState {
 }
 
 export interface DramaAnalysis {
+  schemaVersion: string
   title: string
   genre: string
   logline: string
@@ -134,6 +271,14 @@ export interface DramaAnalysis {
   scenes: DramaSceneProfile[]
   props: DramaPropProfile[]
   intentRouter: DramaIntentRouter
+  characterRelationships: DramaCharacterRelationships
+  episodeStructures: DramaEpisodeStructure[]
+  scriptScenes: DramaScriptScene[]
+  scriptReviews: DramaScriptReviews
+  productionEstimate: DramaProductionEstimate
+  optimizationSuggestions: DramaOptimizationSuggestion[]
+  scriptVersions: DramaScriptVersion[]
+  currentScriptVersion: string
 }
 
 export interface DramaProjectDetail {

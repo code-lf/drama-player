@@ -6,8 +6,11 @@ import type {
   DramaEpisodeDetail,
   DramaEpisodeSummary,
   DramaIntentMode,
+  DramaOptimizationSuggestion as BackendOptimizationSuggestion,
   DramaProjectDetail
 } from '~/entities/drama/types'
+import { useAccountStore } from '~/features/billing/store/useAccountStore'
+import { dramaService } from '~/shared/api/services/dramaService'
 import {
   AlertTriangle,
   ArrowRight,
@@ -36,7 +39,8 @@ import ScriptRelationGraph from './ScriptRelationGraph.vue'
 
 type ScriptTabKey = 'overview' | 'characters' | 'episodes' | 'full'
 type SuggestionScope = 'all' | 'character' | 'episode' | 'text' | 'cost'
-type OptimizationKind = 'global' | 'character' | 'episode'
+type OptimizationKind = 'global' | 'suggestion' | 'character' | 'episode' | 'scene' | 'text'
+type OptimizationRequestState = 'idle' | 'submitting' | 'success' | 'failed'
 type ProgressItem = {
   key: string
   label: string
@@ -66,12 +70,10 @@ type OptimizationSuggestion = {
   advice: string
   affected: string
   boost: string
-}
-type LocalScriptVersionState = {
-  version: string
-  optimized: boolean
-  appliedAt: string
-  score: number
+  detail?: string
+  originalText?: string
+  suggestedText?: string
+  status?: string
 }
 type DisplayCharacterBio = DramaCharacterBio & {
   ageLabel: string
@@ -122,6 +124,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (event: 'update:selectedEpisodeNo', value: number): void
+  (event: 'refresh'): void
 }>()
 
 const activeTab = ref<ScriptTabKey>('overview')
@@ -134,11 +137,12 @@ const suggestionFilter = ref<SuggestionScope>('all')
 const selectedSuggestionId = ref('')
 const suggestionDetailVisible = ref(false)
 const suggestionAdjustVisible = ref(false)
-const selectedSuggestionIds = ref<string[]>(['hook', 'motive', 'cost'])
+const selectedSuggestionIds = ref<string[]>([])
 const suggestionBatchConfirmVisible = ref(false)
 const globalOptimizeSettingsVisible = ref(false)
 const progressVisible = ref(false)
 const progressKind = ref<OptimizationKind>('global')
+const optimizationRequestState = ref<OptimizationRequestState>('idle')
 const globalResultVisible = ref(false)
 const detailChangesVisible = ref(false)
 const resultAdjustVisible = ref(false)
@@ -149,14 +153,28 @@ const episodeOptimizeSettingsVisible = ref(false)
 const episodeResultVisible = ref(false)
 const sceneOptimizeVisible = ref(false)
 const activeSceneAction = ref('增强冲突')
-const localVersion = ref<LocalScriptVersionState | null>(null)
-const progressPercent = ref(0)
-const progressTimer = ref<ReturnType<typeof setInterval> | null>(null)
+const serverOptimizedDetail = ref<DramaProjectDetail | null>(null)
+const pendingOptimizedDetail = ref<DramaProjectDetail | null>(null)
+const optimizationErrorMessage = ref('')
+const optimizationFailed = ref(false)
+const suggestionAdjustmentInstruction = ref('')
+const resultAdjustmentInstruction = ref('')
+const sceneAdjustmentInstruction = ref('')
+const sceneSaveBusy = ref(false)
+const sceneSaveMessage = ref('')
+const sceneSaveFailed = ref(false)
+// 完整剧本页的场次正文先进入本地草稿，再由“保存当前场次”写回后端：
+// - 用户手动修文不属于 AI 生成动作，不扣积分；
+// - 保存后会更新 analysis.script_scenes，让刷新页面、进入后续资产阶段都能读到最新剧本；
+// - 如果接口失败，本地草稿仍保留，避免用户刚改的文字丢失。
+const editableSceneContents = ref<Record<string, string>>({})
+const accountStore = useAccountStore()
 
-const projectId = computed(() => props.projectDetail?.projectId || props.projectDetail?.id || 'unknown')
-const sourceScriptText = computed(() => props.projectDetail?.sourceScriptText || '')
+const effectiveProjectDetail = computed(() => serverOptimizedDetail.value || props.projectDetail)
+const projectId = computed(() => effectiveProjectDetail.value?.projectId || effectiveProjectDetail.value?.id || 'unknown')
+const sourceScriptText = computed(() => effectiveProjectDetail.value?.sourceScriptText || '')
 const hasBackendAnalysis = computed(() => {
-  const backendAnalysis = props.projectDetail?.analysis
+  const backendAnalysis = effectiveProjectDetail.value?.analysis
   return Boolean(
     backendAnalysis?.title
     || backendAnalysis?.outline
@@ -175,15 +193,14 @@ const shouldShowScriptProgressPanel = computed(() => {
   return props.showScriptProgressPanel && !isScriptWorkbenchReady.value
 })
 const analysis = computed<DramaAnalysis | null>(() => {
-  if (!props.projectDetail) return null
-  if (hasBackendAnalysis.value) return props.projectDetail.analysis
-  if (!sourceScriptText.value.trim()) return props.projectDetail.analysis || null
+  const detail = effectiveProjectDetail.value
+  if (!detail) return null
+  if (hasBackendAnalysis.value) return detail.analysis
+  if (!sourceScriptText.value.trim()) return detail.analysis || null
   // 用户端第一版允许“已上传/粘贴剧本但余额不足未触发后端 analyze”的情况先进入工作台。
   // 这里基于原始剧本文本派生一份轻量结构化结果，只用于前端展示和 AI 体检模拟，不写回后端、不生成资产。
-  return buildLocalAnalysisFromScript(props.projectDetail)
+  return buildLocalAnalysisFromScript(detail)
 })
-
-const storageKey = computed(() => `livliv:script-version:${projectId.value}`)
 
 function normalizeScriptLines(script: string) {
   return script
@@ -359,12 +376,28 @@ const modeLabel = computed(() => {
 })
 
 const headerVersion = computed(() => {
-  if (localVersion.value?.optimized) return `${localVersion.value.version}（已优化）`
-  return '当前版本 v1.2'
+  const backendCurrentVersion = analysis.value?.scriptVersions?.find((item) => item.current)
+  if (backendCurrentVersion?.version) {
+    return backendCurrentVersion.optimized ? `${backendCurrentVersion.version}（已优化）` : `当前版本 ${backendCurrentVersion.version}`
+  }
+  return analysis.value?.currentScriptVersion ? `当前版本 ${analysis.value.currentScriptVersion}` : '当前版本 v1.2'
 })
 
-const healthScore = computed(() => localVersion.value?.score || 82)
-const projectTitle = computed(() => analysis.value?.title || props.projectDetail?.title || '废灵根的少年')
+const currentOptimizedVersion = computed(() => {
+  return analysis.value?.scriptVersions?.find((item) => item.current && item.optimized) || null
+})
+const pendingDraftVersionItem = computed(() => {
+  // 后端 script-optimizations 返回的是“草稿版本”，前端不再把 v1.3 写死到本地。
+  // 这里统一从待应用的后端版本中取值，应用时再调用 script-versions/{version}/apply。
+  return pendingOptimizedDetail.value?.analysis?.scriptVersions?.find((item) => item.optimized && !item.current)
+    || analysis.value?.scriptVersions?.find((item) => item.optimized && !item.current)
+    || null
+})
+const pendingDraftVersion = computed(() => pendingDraftVersionItem.value?.version || '优化草稿')
+const pendingOptimizationAnalysis = computed(() => pendingOptimizedDetail.value?.analysis || null)
+const pendingReviewScore = computed(() => pendingOptimizationAnalysis.value?.scriptReviews?.overview?.score || healthScore.value)
+const healthScore = computed(() => analysis.value?.scriptReviews?.overview?.score || 82)
+const projectTitle = computed(() => analysis.value?.title || effectiveProjectDetail.value?.title || '废灵根的少年')
 const projectGenre = computed(() => analysis.value?.genre || '东方玄幻短剧')
 const projectCover = computed(() => analysis.value?.coverImageUrl || '')
 const totalEpisodes = computed(() => Math.max(1, Number(analysis.value?.totalEpisodes || analysis.value?.episodeSummaries?.length || 12)))
@@ -409,15 +442,19 @@ const characterBios = computed<DramaCharacterBio[]>(() => {
 const displayCharacterBios = computed<DisplayCharacterBio[]>(() => {
   return characterBios.value.map((bio, index) => {
     const mergedText = `${bio.identity || ''} ${bio.summary || ''}`
-    const roleLabel = (bio.identity || (index === 0 ? '主角' : '角色')).replace(/\d{1,3}\s*岁/g, '').trim() || '角色'
+    const roleLabel = (
+      bio.roleLabel
+      || bio.identity
+      || (index === 0 ? '主角' : '角色')
+    ).replace(/\d{1,3}\s*岁/g, '').trim() || '角色'
     const traits = bio.traits?.length ? bio.traits : extractTraitPhrases(mergedText)
 
     return {
       ...bio,
       identity: bio.identity || roleLabel,
       traits: traits.length ? traits : ['文本识别', '待补全'],
-      // 后端目前不稳定返回年龄字段，先从身份/描述里提取；提取不到时按短剧常见角色类型给合理占位。
-      ageLabel: inferCharacterAgeLabel(bio, index),
+      // 新版后端会直接返回 ageLabel；旧项目没有时，再从人物描述里兜底提取。
+      ageLabel: bio.ageLabel || inferCharacterAgeLabel(bio, index),
       roleLabel
     }
   })
@@ -435,6 +472,27 @@ function inferCharacterAgeLabel(bio: DramaCharacterBio, index: number) {
 }
 
 const currentSceneList = computed(() => {
+  const backendScenes = (analysis.value?.scriptScenes || [])
+    .filter((scene) => Number(scene.episodeNo || 1) === Number(props.selectedEpisodeNo || 1))
+    .sort((a, b) => Number(a.index || 0) - Number(b.index || 0))
+
+  if (backendScenes.length) {
+    return backendScenes.map((scene, index) => {
+      const sceneTitle = scene.title || `场 ${index + 1}`
+      const place = [scene.place, scene.timeOfDay].filter(Boolean).join(' · ') || sceneTitle
+      return {
+        // UI 里场次导航按 0 基下标选中，后端返回 1 基 index 时在这里统一转换。
+        index,
+        title: sceneTitle,
+        place,
+        timeOfDay: scene.timeOfDay || '',
+        characters: scene.characters || [],
+        content: scene.content || scene.dialogues.join('\n') || '当前场次正文待补全。',
+        suggestions: scene.suggestions || []
+      }
+    })
+  }
+
   const text = selectedEpisodeDetail.value?.content || ''
   const chunks = text
     .split(/\n{2,}|(?=场景[:：])/)
@@ -445,14 +503,136 @@ const currentSceneList = computed(() => {
     index,
     title: content.match(/场景[:：]([^\n]+)/)?.[1]?.trim() || `场 ${index + 1}`,
     place: content.match(/场景[:：]([^\n]+)/)?.[1]?.trim() || (index === 0 ? '青云宗外门 · 日' : '淬灵崖山路 · 黄昏'),
+    timeOfDay: '',
+    characters: [],
     content
   }))
 })
 
 const currentScene = computed(() => currentSceneList.value[selectedSceneIndex.value] || currentSceneList.value[0])
+const currentSceneDraftKey = computed(() => {
+  const scene = currentScene.value
+  return `${projectId.value}:${props.selectedEpisodeNo}:${scene?.index ?? selectedSceneIndex.value}`
+})
+const editableCurrentSceneContent = computed({
+  get() {
+    const draftKey = currentSceneDraftKey.value
+    // 如果用户已经编辑过当前场，就优先展示本地草稿；否则展示后端解析出来的场次正文。
+    return editableSceneContents.value[draftKey] ?? currentScene.value?.content ?? ''
+  },
+  set(value: string) {
+    const draftKey = currentSceneDraftKey.value
+    editableSceneContents.value = {
+      ...editableSceneContents.value,
+      [draftKey]: value
+    }
+  }
+})
+const currentSceneSuggestionText = computed(() => {
+  // 当前场优化必须来自后端模型输出；前端只做展示，不能再用模板文案伪造 AI 结果。
+  const optimizedScene = (pendingOptimizedDetail.value?.analysis as unknown as {
+    optimizedScene?: { content?: string }
+  } | null)?.optimizedScene
+  if (optimizedScene?.content) return optimizedScene.content
+
+  const backendScenes = pendingOptimizedDetail.value?.analysis?.scriptScenes || []
+  const matchedScene = backendScenes.find((scene) => {
+    return Number(scene.episodeNo || 1) === Number(props.selectedEpisodeNo || 1)
+      && (Number(scene.index) === Number((currentScene.value?.index ?? selectedSceneIndex.value) + 1)
+        || Number(scene.index) === Number(currentScene.value?.index ?? selectedSceneIndex.value))
+  })
+  return matchedScene?.content || ''
+})
+
+async function saveCurrentScene() {
+  const scene = currentScene.value
+  if (!scene || projectId.value === 'unknown') {
+    sceneSaveFailed.value = true
+    sceneSaveMessage.value = '当前场次不存在，无法保存'
+    return
+  }
+
+  try {
+    sceneSaveBusy.value = true
+    sceneSaveFailed.value = false
+    sceneSaveMessage.value = ''
+
+    const detail = await dramaService.updateScriptScene(projectId.value, {
+      episodeNo: props.selectedEpisodeNo,
+      sceneIndex: scene.index ?? selectedSceneIndex.value,
+      title: scene.title || `场 ${selectedSceneIndex.value + 1}`,
+      place: scene.place || '',
+      timeOfDay: scene.timeOfDay || '',
+      characters: scene.characters || [],
+      content: editableCurrentSceneContent.value
+    })
+
+    // 保存成功后立刻用后端返回详情刷新当前页面数据，保证后续资产阶段读取的是同一份剧本。
+    serverOptimizedDetail.value = detail
+    const draftKey = currentSceneDraftKey.value
+    const { [draftKey]: _savedDraft, ...restDrafts } = editableSceneContents.value
+    editableSceneContents.value = restDrafts
+    sceneSaveMessage.value = '已保存到当前剧本版本'
+    emit('refresh')
+  } catch (error) {
+    console.error(error)
+    sceneSaveFailed.value = true
+    sceneSaveMessage.value = '保存失败，草稿已保留，请稍后重试'
+  } finally {
+    sceneSaveBusy.value = false
+  }
+}
+
+function normalizeReviewStatus(status: string): ReviewIssue['status'] {
+  if (status === 'warning' || status === 'needs_attention') return 'warning'
+  if (status === 'good') return 'good'
+  return 'excellent'
+}
+
+function normalizeReviewTone(tone: string, score: number) {
+  if (tone === 'excellent' || score >= 88) return '优秀'
+  if (tone === 'warning' || score < 70) return '待优化'
+  return '良好'
+}
+
+function getBackendReviewForActiveTab(): ReviewModel | null {
+  const reviews = analysis.value?.scriptReviews
+  const review = activeTab.value === 'characters'
+    ? reviews?.characters
+    : activeTab.value === 'episodes'
+      ? reviews?.episodes
+      : activeTab.value === 'full'
+        ? reviews?.fullText
+        : reviews?.overview
+
+  if (!review?.dimensions?.length) return null
+
+  return {
+    title: review.title || 'AI 剧本体检',
+    score: Number(review.score || 82),
+    tone: normalizeReviewTone(review.tone, Number(review.score || 82)),
+    dimensions: review.dimensions.map((item) => ({
+      label: item.label,
+      value: Number(item.value || 0)
+    })),
+    strengths: (review.strengths || []).map((item) => ({
+      title: item.title,
+      status: normalizeReviewStatus(item.status),
+      detail: item.detail
+    })),
+    warnings: (review.warnings || []).map((item) => ({
+      title: item.title,
+      status: 'warning',
+      detail: item.detail
+    }))
+  }
+}
 
 const reviewModel = computed<ReviewModel>(() => {
-  const optimized = Boolean(localVersion.value?.optimized)
+  const backendReview = getBackendReviewForActiveTab()
+  if (backendReview) return backendReview
+
+  const optimized = Boolean(currentOptimizedVersion.value)
   if (activeTab.value === 'characters') {
     return {
       title: 'AI 人物体检',
@@ -524,11 +704,11 @@ const reviewModel = computed<ReviewModel>(() => {
     score: healthScore.value,
     tone: healthScore.value >= 88 ? '优秀' : '良好',
     dimensions: [
-      { label: '故事结构', value: localVersion.value?.optimized ? 90 : 82 },
-      { label: '人物动机', value: localVersion.value?.optimized ? 88 : 76 },
-      { label: '短剧节奏', value: localVersion.value?.optimized ? 86 : 78 },
-      { label: '制作难度', value: localVersion.value?.optimized ? 82 : 72 },
-      { label: '商业钩子', value: localVersion.value?.optimized ? 84 : 75 }
+      { label: '故事结构', value: optimized ? 90 : 82 },
+      { label: '人物动机', value: optimized ? 88 : 76 },
+      { label: '短剧节奏', value: optimized ? 86 : 78 },
+      { label: '制作难度', value: optimized ? 82 : 72 },
+      { label: '商业钩子', value: optimized ? 84 : 75 }
     ],
     strengths: [
       { title: '主要人物关系完整', status: 'excellent', detail: '主角、对手与导师关系清晰。' },
@@ -543,48 +723,43 @@ const reviewModel = computed<ReviewModel>(() => {
   }
 })
 
-const suggestions = computed<OptimizationSuggestion[]>(() => [
-  {
-    id: 'hook',
-    scope: 'text',
-    priority: 'high',
-    title: '第 1 集开场钩子偏弱',
-    problem: '前 20 秒信息铺垫较多，冲突进入偏慢。',
-    advice: '将赵磊嘲讽和宗门试炼冲突前置，快速建立观看承诺。',
-    affected: '第 1 集 · 场 1-2',
-    boost: '留存提升'
-  },
-  {
-    id: 'motive',
-    scope: 'character',
-    priority: 'high',
-    title: '赵磊动机表达较弱',
-    problem: '赵磊行为更像工具人，压迫主角的动机不够立体。',
-    advice: '增加资源争夺、家族压力与身份焦虑，使冲突更可信。',
-    affected: '第 2-3 集 · 2 处',
-    boost: '人物体检 +5'
-  },
-  {
-    id: 'episode',
-    scope: 'episode',
-    priority: 'medium',
-    title: '第 4 集结构可优化',
-    problem: '开场铺垫较长，核心冲突没有足够前置。',
-    advice: '压缩过渡，把宗门广场冲突提前到开场 15 秒内。',
-    affected: '第 4 集 · 3 处',
-    boost: '节奏 +12%'
-  },
-  {
-    id: 'cost',
-    scope: 'cost',
-    priority: 'medium',
-    title: '场景数量偏多，制作成本较高',
-    problem: '部分场景功能重复，外景占比高。',
-    advice: '合并重复场景，保留叙事关键空间。',
-    affected: '第 1-6 集 · 2 处',
-    boost: '成本 -12%'
+function normalizeSuggestionScope(scope: string): SuggestionScope {
+  if (['characters', 'character', 'people'].includes(scope)) return 'character'
+  if (['episodes', 'episode', 'rhythm'].includes(scope)) return 'episode'
+  if (['full_text', 'text', 'dialogue'].includes(scope)) return 'text'
+  if (scope === 'cost') return 'cost'
+  return 'all'
+}
+
+function normalizeSuggestionPriority(priority: string): OptimizationSuggestion['priority'] {
+  if (priority === 'high') return 'high'
+  if (priority === 'low') return 'low'
+  return 'medium'
+}
+
+function mapBackendSuggestion(item: BackendOptimizationSuggestion): OptimizationSuggestion {
+  return {
+    id: item.id,
+    scope: normalizeSuggestionScope(item.scope),
+    priority: normalizeSuggestionPriority(item.priority),
+    title: item.title,
+    problem: item.problem,
+    advice: item.advice,
+    affected: item.affected,
+    boost: item.boost,
+    detail: item.detail,
+    originalText: item.originalText,
+    suggestedText: item.suggestedText,
+    status: item.status
   }
-])
+}
+
+const suggestions = computed<OptimizationSuggestion[]>(() => {
+  const backendRows = analysis.value?.optimizationSuggestions || []
+  // 建议中心必须以后端 optimization_suggestions 为唯一来源。
+  // 没有建议时展示空状态，而不是前端编造“开场钩子/人物动机”等假建议。
+  return backendRows.map(mapBackendSuggestion)
+})
 
 const filteredSuggestions = computed(() => {
   if (suggestionFilter.value === 'all') return suggestions.value
@@ -592,10 +767,68 @@ const filteredSuggestions = computed(() => {
 })
 
 const selectedSuggestion = computed(() => {
-  return suggestions.value.find((item) => item.id === selectedSuggestionId.value) || suggestions.value[0]
+  return suggestions.value.find((item) => item.id === selectedSuggestionId.value) || suggestions.value[0] || null
 })
 
+const pendingSuggestions = computed<OptimizationSuggestion[]>(() => {
+  const backendRows = pendingOptimizationAnalysis.value?.optimizationSuggestions || []
+  // 优化结果页也必须以后端草稿版本为准：
+  // - 如果后端返回了草稿版本中的新建议，就展示新建议；
+  // - 如果后端只返回版本摘要，没有返回建议列表，则退回展示用户本次勾选的真实建议；
+  // - 不再写死“开场钩子/赵磊动机/场景合并”等假结果。
+  return backendRows.map(mapBackendSuggestion)
+})
+
+const pendingChangesForDisplay = computed<OptimizationSuggestion[]>(() => {
+  if (pendingSuggestions.value.length) return pendingSuggestions.value
+  return suggestions.value.filter((item) => selectedSuggestionIds.value.includes(item.id))
+})
+
+const pendingProductionEstimate = computed(() => pendingOptimizationAnalysis.value?.productionEstimate || null)
+
+const pendingCostDeltaText = computed(() => {
+  const before = productionEstimate.value.credits
+  const after = pendingProductionEstimate.value?.credits
+  if (!before || !after) return '以后端返回'
+  const percent = Math.round(((after - before) / before) * 100)
+  return `${percent > 0 ? '+' : ''}${percent}%`
+})
+
+const pendingAffectedEpisodeCount = computed(() => {
+  const affectedEpisodes = new Set<string>()
+  pendingChangesForDisplay.value.forEach((item) => {
+    const matches = item.affected.match(/\d+/g) || []
+    matches.forEach((value) => affectedEpisodes.add(value))
+  })
+  return affectedEpisodes.size ? `${affectedEpisodes.size}集` : '以后端返回'
+})
+
+const pendingChangeCount = computed(() => {
+  return pendingChangesForDisplay.value.length || selectedSuggestionIds.value.length || 0
+})
+
+const pendingOriginalVersion = computed(() => {
+  return analysis.value?.currentScriptVersion || analysis.value?.scriptVersions?.find((item) => item.current)?.version || 'v1.2'
+})
+
+function normalizeRelationTone(tone: string): RelationGraphNode['tone'] {
+  if (['danger', 'success', 'purple', 'orange', 'sky', 'hero'].includes(tone)) return tone as RelationGraphNode['tone']
+  return 'sky'
+}
+
 const relationGraphNodes = computed<RelationGraphNode[]>(() => {
+  const backendNodes = analysis.value?.characterRelationships?.nodes || []
+  if (backendNodes.length) {
+    return backendNodes.map((node, index) => ({
+      key: node.key || `node-${index + 1}`,
+      name: node.name,
+      role: node.role,
+      x: Number(node.x || 50),
+      y: Number(node.y || 50),
+      tone: normalizeRelationTone(node.tone)
+    }))
+  }
+
   const rows = displayCharacterBios.value
   // 剧本阶段不能提前出现人物头像，所以关系图只输出文字节点数据。
   // 真正的连线、节点布局和标签渲染交给 ECharts graph 组件，避免手写 SVG 在宽屏下文字变形。
@@ -609,30 +842,116 @@ const relationGraphNodes = computed<RelationGraphNode[]>(() => {
   ]
 })
 
-const relationGraphLinks = computed<RelationGraphLink[]>(() => [
-  { from: 'hero', to: 'rival', label: '敌对', color: '#ef4444' },
-  { from: 'hero', to: 'mentor', label: '师徒', color: '#10b981' },
-  { from: 'hero', to: 'ally', label: '合作', color: '#2563eb' },
-  { from: 'hero', to: 'authority', label: '权力压制', color: '#f97316' },
-  { from: 'hero', to: 'friend', label: '对手/后期盟友', color: '#7c3aed' }
-])
+const relationGraphLinks = computed<RelationGraphLink[]>(() => {
+  const backendLinks = analysis.value?.characterRelationships?.links || []
+  if (backendLinks.length) {
+    return backendLinks.map((link) => ({
+      from: link.source,
+      to: link.target,
+      label: link.label,
+      color: link.color || '#2563eb'
+    }))
+  }
 
-const characterArcSteps = computed<CharacterArcStep[]>(() => [
-  { title: '受辱', subtitle: '被轻视打压\n遭受屈辱', icon: Heart, tone: 'text-[#2563eb] bg-[#eff6ff] border-[#bfdbfe]' },
-  { title: '获得传承', subtitle: '机缘觉醒\n得长老传承', icon: Target, tone: 'text-[#059669] bg-[#ecfdf5] border-[#bbf7d0]' },
-  { title: '觉醒成长', subtitle: '修为精进\n实力蜕变', icon: Flame, tone: 'text-[#f97316] bg-[#fff7ed] border-[#fed7aa]' },
-  { title: '守护宗门', subtitle: '击败敌对势力\n守护宗门与所爱', icon: ShieldCheck, tone: 'text-[#2563eb] bg-[#eff6ff] border-[#bfdbfe]' }
-])
+  return [
+    { from: 'hero', to: 'rival', label: '敌对', color: '#ef4444' },
+    { from: 'hero', to: 'mentor', label: '师徒', color: '#10b981' },
+    { from: 'hero', to: 'ally', label: '合作', color: '#2563eb' },
+    { from: 'hero', to: 'authority', label: '权力压制', color: '#f97316' },
+    { from: 'hero', to: 'friend', label: '对手/后期盟友', color: '#7c3aed' }
+  ]
+})
 
-const productionEstimate = computed(() => ({
-  roles: Math.max(6, characterBios.value.length),
-  scenes: Math.max(12, analysis.value?.scenes?.length || 0),
-  props: Math.max(6, analysis.value?.props?.length || 0),
-  shots: localVersion.value?.optimized ? 132 : 146,
-  credits: localVersion.value?.optimized ? 32000 : 36000
-}))
+const arcIconList = [Heart, Target, Flame, ShieldCheck]
+const arcToneList = [
+  'text-[#2563eb] bg-[#eff6ff] border-[#bfdbfe]',
+  'text-[#059669] bg-[#ecfdf5] border-[#bbf7d0]',
+  'text-[#f97316] bg-[#fff7ed] border-[#fed7aa]',
+  'text-[#2563eb] bg-[#eff6ff] border-[#bfdbfe]'
+]
+
+const characterArcSteps = computed<CharacterArcStep[]>(() => {
+  const backendSteps = analysis.value?.characterRelationships?.arcSteps || []
+  if (backendSteps.length) {
+    return backendSteps.map((step, index) => ({
+      title: step.title || `阶段 ${index + 1}`,
+      subtitle: step.subtitle || step.detail || '',
+      icon: arcIconList[index % arcIconList.length],
+      tone: arcToneList[index % arcToneList.length]
+    }))
+  }
+
+  return [
+    { title: '受辱', subtitle: '被轻视打压\n遭受屈辱', icon: Heart, tone: arcToneList[0] },
+    { title: '获得传承', subtitle: '机缘觉醒\n得长老传承', icon: Target, tone: arcToneList[1] },
+    { title: '觉醒成长', subtitle: '修为精进\n实力蜕变', icon: Flame, tone: arcToneList[2] },
+    { title: '守护宗门', subtitle: '击败敌对势力\n守护宗门与所爱', icon: ShieldCheck, tone: arcToneList[3] }
+  ]
+})
+
+const productionEstimate = computed(() => {
+  const backendEstimate = analysis.value?.productionEstimate
+  if (backendEstimate && Object.values(backendEstimate).some(Boolean)) {
+    return {
+      roles: backendEstimate.roles || Math.max(6, characterBios.value.length),
+      scenes: backendEstimate.scenes || Math.max(12, analysis.value?.scenes?.length || 0),
+      props: backendEstimate.props || Math.max(6, analysis.value?.props?.length || 0),
+      shots: backendEstimate.shots || 146,
+      credits: backendEstimate.credits || 36000
+    }
+  }
+
+  return {
+    roles: Math.max(6, characterBios.value.length),
+    scenes: Math.max(12, analysis.value?.scenes?.length || 0),
+    props: Math.max(6, analysis.value?.props?.length || 0),
+    shots: 146,
+    credits: 36000
+  }
+})
+
+const currentEpisodeStructureModel = computed(() => {
+  return (analysis.value?.episodeStructures || []).find((item) => Number(item.episodeNo) === Number(props.selectedEpisodeNo || 1))
+})
+
+const seasonProgressBlocks = computed(() => {
+  const rows = episodeSummaries.value
+  if (!rows.length) return ['1-3集：觉醒开局', '4-6集：试炼成长', '7-9集：危机升级', '10-12集：决战收官']
+  const groupSize = Math.max(1, Math.ceil(rows.length / 4))
+  const blocks: string[] = []
+  for (let index = 0; index < rows.length; index += groupSize) {
+    const group = rows.slice(index, index + groupSize)
+    const start = group[0]?.episodeNo || index + 1
+    const end = group[group.length - 1]?.episodeNo || start
+    const title = group.map((item) => item.title.replace(/^第\d+集\s*/, '')).find(Boolean) || '剧情推进'
+    blocks.push(`${start}-${end}集：${title}`)
+  }
+  return blocks.slice(0, 4)
+})
+
+function getEpisodeStatus(episodeNo: number) {
+  const status = (analysis.value?.episodeStructures || []).find((item) => Number(item.episodeNo) === Number(episodeNo))?.status
+  return status || (episodeNo % 4 === 0 ? '待优化' : '正常')
+}
 
 const episodeStructure = computed(() => {
+  const backendStructure = currentEpisodeStructureModel.value
+  if (backendStructure?.beats?.length) {
+    const iconMap: Record<string, typeof Zap> = {
+      opening: Zap,
+      conflict: Flame,
+      turn: Route,
+      hook: Target
+    }
+    return backendStructure.beats.map((beat) => ({
+      label: beat.label,
+      time: beat.timeRange,
+      icon: iconMap[beat.key] || Zap,
+      text: beat.summary,
+      state: beat.status || '良好'
+    }))
+  }
+
   const ep = selectedEpisode.value
   return [
     { label: '开场', time: '0-20秒', icon: Zap, text: `${ep?.title || '本集'}以人物压迫或异常事件开场，快速建立冲突。`, state: activeTab.value === 'episodes' ? '待优化' : '正常' },
@@ -642,28 +961,40 @@ const episodeStructure = computed(() => {
   ]
 })
 
-const episodeJudgements = computed<EpisodeJudgement[]>(() => [
-  {
-    title: '开场钩子偏弱',
-    detail: '开场冲突虽有冲击力，但缺少强悬念钩子，建议强化羞辱或反转点。',
-    status: 'warning'
-  },
-  {
-    title: '中段冲突成立',
-    detail: '退婚与宗门试炼形成双重冲突，情绪递进合理。',
-    status: 'excellent'
-  },
-  {
-    title: '结尾悬念有效',
-    detail: '神秘强者出现形成悬念，能有效驱动下一集观看。',
-    status: 'excellent'
-  },
-  {
-    title: '人物目标表达清晰',
-    detail: '林辰的逆袭目标明确，动机与行动一致。',
-    status: 'good'
+const episodeJudgements = computed<EpisodeJudgement[]>(() => {
+  const backendStructure = (analysis.value?.episodeStructures || []).find((item) => Number(item.episodeNo) === Number(props.selectedEpisodeNo || 1))
+  const backendJudgements = backendStructure?.aiJudgements || []
+  if (backendJudgements.length) {
+    return backendJudgements.map((item) => ({
+      title: item.title,
+      detail: item.detail,
+      status: normalizeReviewStatus(item.status)
+    }))
   }
-])
+
+  return [
+    {
+      title: '开场钩子偏弱',
+      detail: '开场冲突虽有冲击力，但缺少强悬念钩子，建议强化羞辱或反转点。',
+      status: 'warning'
+    },
+    {
+      title: '中段冲突成立',
+      detail: '退婚与宗门试炼形成双重冲突，情绪递进合理。',
+      status: 'excellent'
+    },
+    {
+      title: '结尾悬念有效',
+      detail: '神秘强者出现形成悬念，能有效驱动下一集观看。',
+      status: 'excellent'
+    },
+    {
+      title: '人物目标表达清晰',
+      detail: '林辰的逆袭目标明确，动机与行动一致。',
+      status: 'good'
+    }
+  ]
+})
 
 const progressTitle = computed(() => {
   if (progressKind.value === 'character') return '正在生成人物关系优化版本...'
@@ -718,100 +1049,204 @@ function toggleSuggestionSelection(id: string) {
     : [...selectedSuggestionIds.value, id]
 }
 
-function startProgress(kind: OptimizationKind) {
+function getOptimizationErrorMessage(error: unknown) {
+  const responseData = (error as { response?: { data?: { detail?: string; message?: string } } })?.response?.data
+  return responseData?.detail || responseData?.message || '优化生成失败，可能是积分不足或后端生成失败，请检查积分后重试。'
+}
+
+type OptimizationDraftOptions = {
+  suggestionIds?: string[]
+  scope?: string
+  intensity?: 'conservative' | 'balanced' | 'deep'
+  episodeNo?: number | null
+  sceneIndex?: number | null
+  instruction?: string
+  adjustmentInstruction?: string
+  selectedActions?: string[]
+}
+
+async function createOptimizationDraft(kind: OptimizationKind, options: OptimizationDraftOptions = {}) {
+  if (!projectId.value || projectId.value === 'unknown') return false
   progressKind.value = kind
-  progressPercent.value = 0
+  optimizationRequestState.value = 'submitting'
+  optimizationErrorMessage.value = ''
+  optimizationFailed.value = false
   progressVisible.value = true
-  if (progressTimer.value) window.clearInterval(progressTimer.value)
-  progressTimer.value = window.setInterval(() => {
-    progressPercent.value = Math.min(100, progressPercent.value + 18)
-    if (progressPercent.value >= 100) {
-      if (progressTimer.value) window.clearInterval(progressTimer.value)
-      progressTimer.value = null
-      window.setTimeout(() => {
-        progressVisible.value = false
-        if (kind === 'character') characterResultVisible.value = true
-        else if (kind === 'episode') episodeResultVisible.value = true
-        else globalResultVisible.value = true
-      }, 360)
-    }
-  }, 260)
+  try {
+    // 剧本优化统一交给后端：
+    // 1. 后端先做积分预检，余额不足直接失败；
+    // 2. 后端调用模型生成草稿版本，并写入 drama_script_versions / analysis_json；
+    // 3. 后端扣积分并写 user_credit_ledgers + usage_ledgers；
+    // 4. 前端只展示后端返回的草稿，不再本地伪造版本。
+    pendingOptimizedDetail.value = await dramaService.createScriptOptimization(projectId.value, {
+      kind,
+      suggestionIds: options.suggestionIds || [],
+      scope: options.scope || '',
+      intensity: options.intensity || 'balanced',
+      episodeNo: options.episodeNo ?? null,
+      sceneIndex: options.sceneIndex ?? null,
+      instruction: options.instruction || '',
+      sourceVersion: analysis.value?.currentScriptVersion || '',
+      adjustmentInstruction: options.adjustmentInstruction || '',
+      selectedActions: options.selectedActions || []
+    })
+    optimizationRequestState.value = 'success'
+    await accountStore.refreshProfile()
+    progressVisible.value = false
+    return true
+  } catch (error) {
+    console.warn('[script-stage] 创建剧本优化草稿失败：', error)
+    optimizationRequestState.value = 'failed'
+    optimizationFailed.value = true
+    optimizationErrorMessage.value = getOptimizationErrorMessage(error)
+    pendingOptimizedDetail.value = null
+    void accountStore.refreshProfile()
+    return false
+  }
 }
 
-function beginGlobalOptimize() {
+async function beginGlobalOptimize() {
   globalOptimizeSettingsVisible.value = false
-  startProgress('global')
+  const ok = await createOptimizationDraft('global', {
+    suggestionIds: selectedSuggestionIds.value,
+    scope: 'all',
+    intensity: 'balanced'
+  })
+  if (ok) globalResultVisible.value = true
 }
 
-function beginSuggestionBatchOptimize() {
+async function beginSuggestionBatchOptimize() {
   suggestionBatchConfirmVisible.value = false
   suggestionDrawerVisible.value = false
-  startProgress('global')
+  const ok = await createOptimizationDraft('suggestion', {
+    suggestionIds: selectedSuggestionIds.value,
+    scope: suggestionFilter.value,
+    intensity: 'balanced'
+  })
+  if (ok) globalResultVisible.value = true
 }
 
-function beginCharacterOptimize() {
+async function beginCharacterOptimize() {
   characterOptimizeSettingsVisible.value = false
-  startProgress('character')
+  const ok = await createOptimizationDraft('character', {
+    scope: 'characters',
+    intensity: 'balanced',
+    selectedActions: ['补足人物动机', '增强人物冲突', '完善关系转变', '强化人物成长']
+  })
+  if (ok) characterResultVisible.value = true
 }
 
-function beginEpisodeOptimize() {
+async function beginEpisodeOptimize() {
   episodeOptimizeSettingsVisible.value = false
-  startProgress('episode')
+  const ok = await createOptimizationDraft('episode', {
+    scope: 'episode',
+    episodeNo: props.selectedEpisodeNo,
+    intensity: 'balanced',
+    selectedActions: ['开场钩子', '冲突密度', '转折节奏', '结尾悬念']
+  })
+  if (ok) episodeResultVisible.value = true
 }
 
-function applyOptimizedVersion() {
-  const state: LocalScriptVersionState = {
-    version: 'v1.3',
-    optimized: true,
-    appliedAt: new Date().toISOString(),
-    score: 88
+async function acceptSelectedSuggestion() {
+  if (!selectedSuggestion.value?.id) return
+  suggestionDetailVisible.value = false
+  const ok = await createOptimizationDraft('suggestion', {
+    suggestionIds: [selectedSuggestion.value.id],
+    scope: selectedSuggestion.value.scope,
+    intensity: 'balanced'
+  })
+  if (ok) globalResultVisible.value = true
+}
+
+async function regenerateSelectedSuggestion() {
+  const instruction = suggestionAdjustmentInstruction.value || resultAdjustmentInstruction.value
+  suggestionAdjustVisible.value = false
+  resultAdjustVisible.value = false
+  const suggestionIds = selectedSuggestion.value?.id ? [selectedSuggestion.value.id] : selectedSuggestionIds.value
+  const ok = await createOptimizationDraft('suggestion', {
+    suggestionIds,
+    scope: selectedSuggestion.value?.scope || suggestionFilter.value,
+    intensity: 'balanced',
+    adjustmentInstruction: instruction
+  })
+  if (ok) globalResultVisible.value = true
+}
+
+async function requestSceneOptimization(action = activeSceneAction.value, adjustmentInstruction = '') {
+  activeSceneAction.value = action
+  sceneOptimizeVisible.value = true
+  const ok = await createOptimizationDraft('scene', {
+    scope: 'scene',
+    episodeNo: props.selectedEpisodeNo,
+    sceneIndex: currentScene.value?.index ?? selectedSceneIndex.value,
+    instruction: action,
+    adjustmentInstruction,
+    selectedActions: [action]
+  })
+  if (!ok) {
+    // 失败时保留弹窗，让用户能看到后端返回的真实错误，例如余额不足。
+    sceneOptimizeVisible.value = true
   }
-  localVersion.value = state
-  persistLocalVersion(state)
-  applyConfirmVisible.value = false
-  globalResultVisible.value = false
 }
 
-function acceptCurrentSceneSuggestion() {
-  sceneOptimizeVisible.value = false
-  localVersion.value = {
-    version: localVersion.value?.version || 'v1.3',
-    optimized: true,
-    appliedAt: new Date().toISOString(),
-    score: Math.max(84, localVersion.value?.score || 84)
-  }
-  persistLocalVersion(localVersion.value)
-}
-
-function persistLocalVersion(state: LocalScriptVersionState) {
-  // 本轮不新增后端版本表；优化版本先存 localStorage，让刷新后 UI 可恢复。
-  // 后续接真实接口时，可把这里替换成 script-versions/apply 等后端请求。
-  if (!import.meta.client) return
-  window.localStorage.setItem(storageKey.value, JSON.stringify(state))
-}
-
-function loadLocalVersion() {
-  if (!import.meta.client) return
-  const raw = window.localStorage.getItem(storageKey.value)
-  if (!raw) {
-    localVersion.value = null
+async function applyOptimizedVersion() {
+  const targetVersion = pendingDraftVersionItem.value?.version
+  if (!targetVersion) {
+    optimizationErrorMessage.value = '当前没有可应用的后端优化版本，请先生成优化草稿。'
+    optimizationFailed.value = true
     return
   }
   try {
-    localVersion.value = JSON.parse(raw) as LocalScriptVersionState
-  } catch {
-    localVersion.value = null
+    // 应用版本必须以后端为准：后端会切换 current version，并返回最新 analysis。
+    serverOptimizedDetail.value = await dramaService.applyScriptVersion(projectId.value, targetVersion)
+    pendingOptimizedDetail.value = null
+    optimizationFailed.value = false
+    optimizationErrorMessage.value = ''
+    void accountStore.refreshProfile()
+    emit('refresh')
+  } catch (error) {
+    console.warn('[script-stage] 应用后端剧本版本失败：', error)
+    optimizationFailed.value = true
+    optimizationErrorMessage.value = getOptimizationErrorMessage(error)
+    return
   }
+  applyConfirmVisible.value = false
+  globalResultVisible.value = false
+  characterResultVisible.value = false
+  episodeResultVisible.value = false
+  sceneOptimizeVisible.value = false
+}
+
+async function acceptCurrentSceneSuggestion() {
+  if (!currentSceneSuggestionText.value.trim()) {
+    optimizationFailed.value = true
+    optimizationErrorMessage.value = '后端还没有返回当前场优化内容，请先生成优化方案。'
+    return
+  }
+  if (pendingDraftVersionItem.value) {
+    await applyOptimizedVersion()
+    return
+  }
+  // 如果后端只返回了 scene 文本但没有创建版本，则退化为“用户手动采纳并保存”，该动作不扣费。
+  editableCurrentSceneContent.value = currentSceneSuggestionText.value
+  sceneOptimizeVisible.value = false
+  await saveCurrentScene()
 }
 
 function formatNumber(value: number) {
   return new Intl.NumberFormat('zh-CN').format(value)
 }
 
-watch(projectId, loadLocalVersion, { immediate: true })
+watch(suggestions, (rows) => {
+  const validIds = new Set(rows.map((item) => item.id))
+  const stillValid = selectedSuggestionIds.value.filter((id) => validIds.has(id))
+  // 后端返回新版建议后，默认勾选前 3 条，保证“生成优化版本”弹窗不会空着。
+  selectedSuggestionIds.value = stillValid.length ? stillValid : rows.slice(0, 3).map((item) => item.id)
+}, { immediate: true })
 
-onBeforeUnmount(() => {
-  if (progressTimer.value) window.clearInterval(progressTimer.value)
+watch(() => props.projectDetail?.projectId, () => {
+  serverOptimizedDetail.value = null
+  pendingOptimizedDetail.value = null
 })
 </script>
 
@@ -890,9 +1325,11 @@ onBeforeUnmount(() => {
               </div>
             </div>
 
-            <div v-if="localVersion?.optimized" class="mt-5 flex items-center justify-between rounded-[16px] border border-[#bbf7d0] bg-[#f0fdf4] px-4 py-3 text-sm font-semibold text-[#15803d]">
-              <span class="flex items-center gap-2"><CheckCircle2 class="h-4 w-4" /> 已应用 AI 优化版本 {{ localVersion.version }}，已同步更新剧本体检结果</span>
-              <button class="text-[#0f766e]" @click="localVersion = null">隐藏</button>
+            <div v-if="currentOptimizedVersion" class="mt-5 flex items-center justify-between rounded-[16px] border border-[#bbf7d0] bg-[#f0fdf4] px-4 py-3 text-sm font-semibold text-[#15803d]">
+              <span class="flex items-center gap-2">
+                <CheckCircle2 class="h-4 w-4" />
+                已应用 AI 优化版本 {{ currentOptimizedVersion.version }}，已同步更新剧本体检结果
+              </span>
             </div>
 
             <section v-if="activeTab === 'overview'" class="mt-6 space-y-5">
@@ -1009,7 +1446,7 @@ onBeforeUnmount(() => {
                 <div class="space-y-2">
                   <button v-for="episode in episodeSummaries" :key="episode.episodeNo" type="button" class="w-full rounded-[14px] border px-3 py-3 text-left text-sm transition" :class="episode.episodeNo === selectedEpisodeNo ? 'border-[#0f67ff] bg-[#eef5ff]' : 'border-[#e2e8f0] bg-white'" @click="setSelectedEpisode(episode.episodeNo)">
                     <span class="font-semibold">第{{ episode.episodeNo }}集</span>
-                    <span class="ml-2 rounded-full bg-[#dcfce7] px-2 py-0.5 text-xs text-[#16a34a]">{{ episode.episodeNo % 4 === 0 ? '待优化' : '正常' }}</span>
+                    <span class="ml-2 rounded-full px-2 py-0.5 text-xs" :class="getEpisodeStatus(episode.episodeNo) === '待优化' ? 'bg-[#fff7ed] text-[#f97316]' : 'bg-[#dcfce7] text-[#16a34a]'">{{ getEpisodeStatus(episode.episodeNo) }}</span>
                     <p class="mt-1 truncate text-xs text-[#64748b]">{{ episode.title }}</p>
                   </button>
                 </div>
@@ -1018,7 +1455,10 @@ onBeforeUnmount(() => {
                 <article class="rounded-[20px] border border-[#dfe8f6] bg-white p-5">
                   <div class="flex flex-wrap items-center justify-between gap-3">
                     <h3 class="text-xl font-semibold">第{{ selectedEpisode?.episodeNo }}集结构分析</h3>
-                    <div class="flex gap-2 text-sm text-[#475569]"><span class="rounded-[12px] bg-[#f8fbff] px-3 py-2">预计时长 01:32</span><span class="rounded-[12px] bg-[#f8fbff] px-3 py-2">场次数 5</span></div>
+                    <div class="flex gap-2 text-sm text-[#475569]">
+                      <span class="rounded-[12px] bg-[#f8fbff] px-3 py-2">预计时长 {{ currentEpisodeStructureModel?.estimatedDuration || '01:32' }}</span>
+                      <span class="rounded-[12px] bg-[#f8fbff] px-3 py-2">场次数 {{ currentEpisodeStructureModel?.sceneCount || currentSceneList.length || 5 }}</span>
+                    </div>
                   </div>
                   <div class="mt-5 grid gap-3 md:grid-cols-4">
                     <div v-for="item in episodeStructure" :key="item.label" class="rounded-[18px] border border-[#e2e8f0] bg-[#fbfdff] p-4">
@@ -1052,7 +1492,7 @@ onBeforeUnmount(() => {
                 <article class="rounded-[20px] border border-[#dfe8f6] bg-white p-5">
                   <h3 class="font-semibold">全季剧情推进概览</h3>
                   <div class="mt-4 grid gap-3 md:grid-cols-4">
-                    <div v-for="item in ['1-3集：觉醒开局','4-6集：试炼成长','7-9集：危机升级','10-12集：决战收官']" :key="item" class="rounded-[16px] border border-[#e2e8f0] p-4 text-sm leading-6 text-[#475569]">{{ item }}</div>
+                    <div v-for="item in seasonProgressBlocks" :key="item" class="rounded-[16px] border border-[#e2e8f0] p-4 text-sm leading-6 text-[#475569]">{{ item }}</div>
                   </div>
                 </article>
               </div>
@@ -1072,12 +1512,28 @@ onBeforeUnmount(() => {
               <article class="rounded-[20px] border border-[#dfe8f6] bg-white p-5">
                 <div class="flex flex-wrap items-center justify-between gap-3 border-b border-[#e2e8f0] pb-4">
                   <div class="flex flex-wrap gap-2">
-                    <button v-for="action in ['增强冲突','缩短对白','检查逻辑','提炼钩子']" :key="action" type="button" class="rounded-[12px] border border-[#dbeafe] bg-white px-3 py-2 text-sm font-semibold text-[#0f67ff]" @click="activeSceneAction = action; sceneOptimizeVisible = true">{{ action }}</button>
+                    <button v-for="action in ['增强冲突','缩短对白','检查逻辑','提炼钩子']" :key="action" type="button" class="rounded-[12px] border border-[#dbeafe] bg-white px-3 py-2 text-sm font-semibold text-[#0f67ff]" @click="requestSceneOptimization(action)">{{ action }}</button>
                   </div>
                 </div>
                 <h3 class="mt-5 text-xl font-semibold">场景：{{ currentScene?.place }}</h3>
-                <div class="mt-4 whitespace-pre-line rounded-[16px] bg-[#fbfdff] p-5 leading-8 text-[#0f172a]">{{ currentScene?.content }}</div>
-                <div class="mt-4 flex justify-end gap-4 text-sm text-[#64748b]"><span>字数：268</span><span>预计时长：00:48</span></div>
+                <textarea
+                  v-model="editableCurrentSceneContent"
+                  class="mt-4 min-h-[420px] w-full resize-y rounded-[16px] border border-[#dbe7f7] bg-[#fbfdff] p-5 leading-8 text-[#0f172a] outline-none transition focus:border-[#0f67ff] focus:bg-white focus:shadow-[0_0_0_4px_rgba(15,103,255,0.08)]"
+                  placeholder="在这里编辑当前场次正文..."
+                />
+                <div class="mt-4 flex flex-wrap items-center justify-end gap-4 text-sm text-[#64748b]">
+                  <span v-if="sceneSaveMessage" :class="sceneSaveFailed ? 'text-[#ef4444]' : 'text-[#10b981]'">{{ sceneSaveMessage }}</span>
+                  <span>字数：{{ editableCurrentSceneContent.length }}</span>
+                  <span>预计时长：00:48</span>
+                  <button
+                    type="button"
+                    class="rounded-[12px] bg-[#0f67ff] px-4 py-2 font-semibold text-white shadow-[0_8px_22px_rgba(15,103,255,0.18)] disabled:cursor-not-allowed disabled:bg-[#94a3b8]"
+                    :disabled="sceneSaveBusy"
+                    @click="saveCurrentScene"
+                  >
+                    {{ sceneSaveBusy ? '保存中...' : '保存当前场次' }}
+                  </button>
+                </div>
               </article>
             </section>
           </div>
@@ -1192,7 +1648,14 @@ onBeforeUnmount(() => {
             {{ filter.label }}
           </button>
         </div>
-        <div class="mt-5 space-y-3">
+        <div v-if="!filteredSuggestions.length" class="mt-5 rounded-[18px] border border-dashed border-[#cbd5e1] bg-[#f8fbff] p-8 text-center">
+          <Sparkles class="mx-auto h-10 w-10 text-[#94a3b8]" />
+          <h4 class="mt-3 text-lg font-semibold text-[#0f172a]">暂无后端优化建议</h4>
+          <p class="mt-2 text-sm leading-6 text-[#64748b]">
+            当前建议中心只展示后端 `optimization_suggestions` 返回的数据。没有建议时不会再用前端假数据填充，避免误导计费和版本结果。
+          </p>
+        </div>
+        <div v-else class="mt-5 space-y-3">
           <article v-for="item in filteredSuggestions" :key="item.id" class="rounded-[18px] border border-[#e2e8f0] p-4">
             <div class="flex items-start justify-between gap-3">
               <div><span class="rounded-full px-2 py-1 text-xs font-semibold" :class="priorityClass(item.priority)">{{ item.priority === 'high' ? '高优先级' : '中优先级' }}</span><h4 class="mt-3 text-lg font-semibold">{{ item.title }}</h4></div>
@@ -1202,27 +1665,47 @@ onBeforeUnmount(() => {
             <div class="mt-4 flex justify-end gap-2"><button class="rounded-[12px] border px-4 py-2" @click="selectedSuggestionId = item.id">忽略</button><button class="rounded-[12px] border border-[#0f67ff] px-4 py-2 font-semibold text-[#0f67ff]" @click="openSuggestionDetail(item.id)">查看方案</button></div>
           </article>
         </div>
-        <div class="sticky bottom-0 mt-6 flex gap-3 bg-white py-4"><button class="flex-1 rounded-[14px] border px-5 py-3" @click="suggestionDrawerVisible = false">稍后处理</button><button class="flex-1 rounded-[14px] bg-[#0f67ff] px-5 py-3 font-semibold text-white" @click="suggestionBatchConfirmVisible = true">生成优化版本</button></div>
+        <div class="sticky bottom-0 mt-6 flex gap-3 bg-white py-4">
+          <button class="flex-1 rounded-[14px] border px-5 py-3" @click="suggestionDrawerVisible = false">稍后处理</button>
+          <button
+            class="flex-1 rounded-[14px] bg-[#0f67ff] px-5 py-3 font-semibold text-white disabled:cursor-not-allowed disabled:bg-[#94a3b8]"
+            :disabled="!selectedSuggestionIds.length"
+            @click="suggestionBatchConfirmVisible = true"
+          >
+            生成优化版本
+          </button>
+        </div>
       </aside>
 
-      <div v-if="suggestionDetailVisible" class="fixed inset-0 z-[85] overflow-y-auto bg-white p-8">
+      <div v-if="suggestionDetailVisible && selectedSuggestion" class="fixed inset-0 z-[85] overflow-y-auto bg-white p-8">
         <button class="mb-6 text-[#475569]" @click="suggestionDetailVisible = false">← 返回建议列表</button>
         <h2 class="text-3xl font-semibold">{{ selectedSuggestion.title }}</h2>
         <p class="mt-2 text-[#64748b]">{{ selectedSuggestion.advice }}</p>
         <div class="mt-6 grid gap-5 lg:grid-cols-2">
-          <div class="rounded-[20px] border border-[#fee2e2] bg-[#fff7f7] p-5"><h3 class="font-semibold">原文摘要</h3><p class="mt-4 leading-8 text-[#475569]">林辰在宗门外门被同门议论，剧情铺垫较多，冲突进入较慢，主角承诺出现偏后。</p></div>
-          <div class="rounded-[20px] border border-[#dbeafe] bg-[#f8fbff] p-5"><h3 class="font-semibold text-[#0f67ff]">AI 建议版</h3><p class="mt-4 leading-8 text-[#0f172a]">“废灵根也敢参加试炼？”赵磊的嘲讽从人群中刺来，林辰抬眼，第一次把反击承诺说出口。</p></div>
+          <div class="rounded-[20px] border border-[#fee2e2] bg-[#fff7f7] p-5"><h3 class="font-semibold">原文摘要</h3><p class="mt-4 leading-8 text-[#475569]">{{ selectedSuggestion.originalText || selectedSuggestion.problem }}</p></div>
+          <div class="rounded-[20px] border border-[#dbeafe] bg-[#f8fbff] p-5"><h3 class="font-semibold text-[#0f67ff]">AI 建议版</h3><p class="mt-4 leading-8 text-[#0f172a]">{{ selectedSuggestion.suggestedText || selectedSuggestion.advice }}</p></div>
         </div>
-        <div class="mt-5 rounded-[20px] border border-[#e2e8f0] p-5"><h3 class="font-semibold">为什么这样改</h3><ol class="mt-3 space-y-2 text-[#475569]"><li>1. 冲突前置，快速建立观看承诺。</li><li>2. 情绪强化，减少纯说明性铺垫。</li><li>3. 保留主线，不改变人物关系。</li></ol></div>
-        <div class="mt-6 flex justify-center gap-4"><button class="rounded-[14px] border px-8 py-3" @click="suggestionDetailVisible = false">忽略</button><button class="rounded-[14px] border border-[#0f67ff] px-8 py-3 text-[#0f67ff]" @click="suggestionAdjustVisible = true">继续调整</button><button class="rounded-[14px] bg-[#0f67ff] px-8 py-3 font-semibold text-white" @click="suggestionDetailVisible = false; localVersion = { version: 'v1.3', optimized: true, appliedAt: new Date().toISOString(), score: 84 }; persistLocalVersion(localVersion)">采用该建议</button></div>
+        <div class="mt-5 rounded-[20px] border border-[#e2e8f0] p-5"><h3 class="font-semibold">为什么这样改</h3><p class="mt-3 leading-7 text-[#475569]">{{ selectedSuggestion.detail || 'AI 会在不改变主线的前提下强化冲突、压缩铺垫，并提升观看承诺。' }}</p></div>
+        <div class="mt-6 flex justify-center gap-4">
+          <button class="rounded-[14px] border px-8 py-3" @click="suggestionDetailVisible = false">忽略</button>
+          <button class="rounded-[14px] border border-[#0f67ff] px-8 py-3 text-[#0f67ff]" @click="suggestionAdjustVisible = true">继续调整</button>
+          <button class="rounded-[14px] bg-[#0f67ff] px-8 py-3 font-semibold text-white" @click="acceptSelectedSuggestion">采用该建议</button>
+        </div>
       </div>
 
       <div v-if="suggestionAdjustVisible || resultAdjustVisible" class="fixed inset-0 z-[95] flex items-center justify-center bg-[#0f172a]/45 p-4">
         <div class="w-full max-w-[640px] rounded-[24px] bg-white p-6">
           <div class="flex items-center justify-between"><h3 class="text-xl font-semibold">继续调整优化方案</h3><button @click="suggestionAdjustVisible = false; resultAdjustVisible = false"><X class="h-5 w-5" /></button></div>
           <div class="mt-5 grid gap-3 md:grid-cols-2"><button v-for="item in ['更强烈','更自然','更简短','保留更多原文']" :key="item" class="rounded-[16px] border border-[#dbeafe] p-4 text-left font-semibold text-[#0f67ff]">{{ item }}</button></div>
-          <textarea class="mt-4 h-28 w-full rounded-[16px] border border-[#dbe7f7] p-4 outline-none" placeholder="补充要求：例如不要改变林辰人设，只调整事件顺序" />
-          <div class="mt-5 flex justify-end gap-3"><button class="rounded-[14px] border px-6 py-3" @click="suggestionAdjustVisible = false; resultAdjustVisible = false">取消</button><button class="rounded-[14px] bg-[#0f67ff] px-6 py-3 font-semibold text-white" @click="suggestionAdjustVisible = false; resultAdjustVisible = false; startProgress('global')">重新生成建议</button></div>
+          <textarea
+            v-model="suggestionAdjustmentInstruction"
+            class="mt-4 h-28 w-full rounded-[16px] border border-[#dbe7f7] p-4 outline-none"
+            placeholder="补充要求：例如不要改变林辰人设，只调整事件顺序"
+          />
+          <div class="mt-5 flex justify-end gap-3">
+            <button class="rounded-[14px] border px-6 py-3" @click="suggestionAdjustVisible = false; resultAdjustVisible = false">取消</button>
+            <button class="rounded-[14px] bg-[#0f67ff] px-6 py-3 font-semibold text-white" @click="regenerateSelectedSuggestion">重新生成建议</button>
+          </div>
         </div>
       </div>
 
@@ -1257,16 +1740,48 @@ onBeforeUnmount(() => {
 
       <div v-if="progressVisible" class="fixed inset-0 z-[90] flex items-center justify-center bg-[#0f172a]/45 p-4">
         <div class="w-full max-w-[760px] rounded-[24px] bg-white p-8 shadow-2xl">
-          <div class="flex items-center justify-between"><h3 class="text-2xl font-semibold"><Sparkles class="mr-2 inline h-6 w-6 text-[#0f67ff]" />{{ progressTitle }}</h3><button @click="progressVisible = false"><X class="h-5 w-5" /></button></div>
-          <div class="mt-6 h-2 rounded-full bg-[#e2e8f0]"><div class="h-full rounded-full bg-[#0f67ff]" :style="{ width: `${progressPercent}%` }" /></div>
-          <p class="mt-3 text-right font-semibold text-[#0f67ff]">{{ progressPercent }}%</p>
+          <div class="flex items-center justify-between">
+            <h3 class="text-2xl font-semibold">
+              <Sparkles class="mr-2 inline h-6 w-6 text-[#0f67ff]" />{{ progressTitle }}
+            </h3>
+            <button v-if="optimizationRequestState !== 'submitting'" @click="progressVisible = false"><X class="h-5 w-5" /></button>
+          </div>
+          <div class="mt-6 flex items-center gap-4 rounded-[18px] bg-[#f8fbff] p-5">
+            <RefreshCw v-if="optimizationRequestState === 'submitting'" class="h-9 w-9 animate-spin text-[#0f67ff]" />
+            <CheckCircle2 v-else-if="optimizationRequestState === 'success'" class="h-9 w-9 text-[#10b981]" />
+            <AlertTriangle v-else class="h-9 w-9 text-[#f97316]" />
+            <div>
+              <p class="font-semibold text-[#0f172a]">
+                {{ optimizationRequestState === 'submitting' ? '后端正在生成优化草稿...' : optimizationRequestState === 'success' ? '优化草稿已生成' : '优化生成失败' }}
+              </p>
+              <p class="mt-1 text-sm text-[#64748b]">
+                这里显示真实请求状态，不再使用前端假百分比；版本、计费和流水都以后端返回为准。
+              </p>
+            </div>
+          </div>
+          <p v-if="optimizationErrorMessage" class="mt-3 rounded-[14px] border border-[#fecaca] bg-[#fff7f7] px-4 py-3 text-sm font-semibold text-[#dc2626]">
+            {{ optimizationErrorMessage }}
+          </p>
           <div class="mt-5 space-y-3">
             <div v-for="(item, index) in ['分析当前结构','识别可优化问题','生成优化建议与改写版本','汇总优化结果']" :key="item" class="flex items-center gap-3 rounded-[16px] border border-[#e2e8f0] p-4">
-              <span class="flex h-9 w-9 items-center justify-center rounded-full" :class="progressPercent > index * 25 ? 'bg-[#dcfce7] text-[#16a34a]' : 'bg-[#eef5ff] text-[#0f67ff]'">{{ progressPercent > index * 25 ? '✓' : index + 1 }}</span>
+              <span
+                class="flex h-9 w-9 items-center justify-center rounded-full"
+                :class="optimizationRequestState === 'success' ? 'bg-[#dcfce7] text-[#16a34a]' : optimizationRequestState === 'failed' && index === 2 ? 'bg-[#fff7ed] text-[#f97316]' : 'bg-[#eef5ff] text-[#0f67ff]'"
+              >
+                {{ optimizationRequestState === 'success' ? '✓' : index + 1 }}
+              </span>
               <span class="font-semibold">{{ item }}</span>
             </div>
           </div>
-          <p class="mt-5 text-sm text-[#64748b]"><Clock class="mr-1 inline h-4 w-4" />预计还需约 1 分钟，优化过程不会修改当前正式版本。</p>
+          <div class="mt-5 flex justify-end gap-3">
+            <button
+              v-if="optimizationRequestState !== 'submitting'"
+              class="rounded-[14px] border px-6 py-3"
+              @click="progressVisible = false"
+            >
+              关闭
+            </button>
+          </div>
         </div>
       </div>
 
@@ -1275,14 +1790,26 @@ onBeforeUnmount(() => {
           <button class="mb-5 text-[#475569]" @click="globalResultVisible = false; characterResultVisible = false; episodeResultVisible = false">← 返回</button>
           <h2 class="text-3xl font-semibold">{{ characterResultVisible ? '人物关系优化结果' : episodeResultVisible ? '分集节奏优化结果' : 'AI 辅助优化结果' }}</h2>
           <div class="mt-5 grid gap-4 md:grid-cols-4">
-            <div class="rounded-[20px] border p-5"><Heart class="h-10 w-10 text-[#10b981]" /><p class="mt-2 text-[#64748b]">剧本健康度</p><b class="text-3xl">82 → 88</b></div>
-            <div class="rounded-[20px] border p-5"><Zap class="h-10 w-10 text-[#7c3aed]" /><p class="mt-2 text-[#64748b]">预计制作成本</p><b class="text-3xl text-[#10b981]">-12%</b></div>
-            <div class="rounded-[20px] border p-5"><Target class="h-10 w-10 text-[#0f67ff]" /><p class="mt-2 text-[#64748b]">已优化点位</p><b class="text-3xl">7处</b></div>
-            <div class="rounded-[20px] border p-5"><FileText class="h-10 w-10 text-[#f97316]" /><p class="mt-2 text-[#64748b]">影响集数</p><b class="text-3xl">3集</b></div>
+            <div class="rounded-[20px] border p-5"><Heart class="h-10 w-10 text-[#10b981]" /><p class="mt-2 text-[#64748b]">剧本健康度</p><b class="text-3xl">{{ healthScore }} → {{ pendingReviewScore }}</b></div>
+            <div class="rounded-[20px] border p-5"><Zap class="h-10 w-10 text-[#7c3aed]" /><p class="mt-2 text-[#64748b]">预计制作成本</p><b class="text-3xl text-[#10b981]">{{ pendingCostDeltaText }}</b></div>
+            <div class="rounded-[20px] border p-5"><Target class="h-10 w-10 text-[#0f67ff]" /><p class="mt-2 text-[#64748b]">已优化点位</p><b class="text-3xl">{{ pendingChangeCount }}处</b></div>
+            <div class="rounded-[20px] border p-5"><FileText class="h-10 w-10 text-[#f97316]" /><p class="mt-2 text-[#64748b]">影响集数</p><b class="text-3xl">{{ pendingAffectedEpisodeCount }}</b></div>
           </div>
           <div class="mt-5 grid gap-5 lg:grid-cols-[1fr_1fr_320px]">
-            <div class="rounded-[22px] border border-[#fee2e2] bg-[#fff7f7] p-5"><h3 class="text-xl font-semibold text-[#dc2626]">原剧本 v1.2</h3><div class="mt-4 space-y-3"><p class="rounded-[14px] bg-white p-4">开场钩子偏弱：前 30 秒信息量不足。</p><p class="rounded-[14px] bg-white p-4">赵磊动机表达较弱：反派行为链不足。</p><p class="rounded-[14px] bg-white p-4">场景数量偏多：制作成本偏高。</p></div></div>
-            <div class="rounded-[22px] border border-[#dbeafe] bg-[#f8fbff] p-5"><h3 class="text-xl font-semibold text-[#0f67ff]">优化版本 v1.3（AI生成）</h3><div class="mt-4 space-y-3"><p class="rounded-[14px] bg-white p-4">增强开场冲突与悬念。</p><p class="rounded-[14px] bg-white p-4">补强赵磊动机与逻辑链。</p><p class="rounded-[14px] bg-white p-4">合并冗余场景，降低成本。</p></div></div>
+            <div class="rounded-[22px] border border-[#fee2e2] bg-[#fff7f7] p-5">
+              <h3 class="text-xl font-semibold text-[#dc2626]">原剧本 {{ pendingOriginalVersion }}</h3>
+              <div class="mt-4 space-y-3">
+                <p v-for="item in pendingChangesForDisplay" :key="`old-${item.id}`" class="rounded-[14px] bg-white p-4">{{ item.problem }}</p>
+                <p v-if="!pendingChangesForDisplay.length" class="rounded-[14px] bg-white p-4 text-[#64748b]">后端暂未返回具体变更点。</p>
+              </div>
+            </div>
+            <div class="rounded-[22px] border border-[#dbeafe] bg-[#f8fbff] p-5">
+              <h3 class="text-xl font-semibold text-[#0f67ff]">优化版本 {{ pendingDraftVersion }}（AI生成）</h3>
+              <div class="mt-4 space-y-3">
+                <p v-for="item in pendingChangesForDisplay" :key="`new-${item.id}`" class="rounded-[14px] bg-white p-4">{{ item.advice }}</p>
+                <p v-if="!pendingChangesForDisplay.length" class="rounded-[14px] bg-white p-4 text-[#64748b]">优化草稿已生成，但后端未返回可展示的差异摘要。</p>
+              </div>
+            </div>
             <aside class="rounded-[22px] border p-5"><h3 class="font-semibold">版本操作</h3><button class="mt-4 w-full rounded-[14px] bg-[#0f67ff] px-5 py-4 font-semibold text-white" @click="applyConfirmVisible = true">应用优化版本</button><button class="mt-3 w-full rounded-[14px] border px-5 py-4 font-semibold text-[#0f67ff]" @click="detailChangesVisible = true">查看详细改动</button><button class="mt-3 w-full rounded-[14px] border px-5 py-4" @click="resultAdjustVisible = true">继续调整</button><button class="mt-5 w-full text-[#0f67ff]" @click="globalResultVisible = false; characterResultVisible = false; episodeResultVisible = false">保留原版本</button></aside>
           </div>
         </div>
@@ -1292,20 +1819,50 @@ onBeforeUnmount(() => {
         <button class="mb-5 text-[#475569]" @click="detailChangesVisible = false">← 返回优化结果</button>
         <h2 class="text-3xl font-semibold">优化详细改动</h2>
         <div class="mt-5 space-y-4">
-          <article v-for="item in suggestions" :key="item.id" class="rounded-[20px] border border-[#e2e8f0] p-5"><h3 class="font-semibold">{{ item.affected }} · {{ item.title }}</h3><div class="mt-3 grid gap-3 md:grid-cols-2"><p class="rounded-[14px] bg-[#fff7f7] p-4">{{ item.problem }}</p><p class="rounded-[14px] bg-[#f0fdf4] p-4">{{ item.advice }}</p></div></article>
+          <article v-for="item in pendingChangesForDisplay" :key="item.id" class="rounded-[20px] border border-[#e2e8f0] p-5"><h3 class="font-semibold">{{ item.affected }} · {{ item.title }}</h3><div class="mt-3 grid gap-3 md:grid-cols-2"><p class="rounded-[14px] bg-[#fff7f7] p-4">{{ item.problem }}</p><p class="rounded-[14px] bg-[#f0fdf4] p-4">{{ item.advice }}</p></div></article>
+          <div v-if="!pendingChangesForDisplay.length" class="rounded-[20px] border border-dashed border-[#cbd5e1] p-8 text-center text-[#64748b]">后端暂未返回详细改动列表。</div>
         </div>
       </div>
 
       <div v-if="applyConfirmVisible" class="fixed inset-0 z-[100] flex items-center justify-center bg-[#0f172a]/45 p-4">
-        <div class="w-full max-w-[520px] rounded-[24px] bg-white p-7 text-center"><CheckCircle2 class="mx-auto h-16 w-16 text-[#10b981]" /><h3 class="mt-4 text-2xl font-semibold">应用 AI 优化版本 v1.3？</h3><p class="mt-3 text-[#64748b]">应用后 v1.3 将成为当前工作版本，原版本 v1.2 会保留在版本历史中。</p><div class="mt-6 flex gap-3"><button class="flex-1 rounded-[14px] border px-5 py-3" @click="applyConfirmVisible = false">取消</button><button class="flex-1 rounded-[14px] bg-[#0f67ff] px-5 py-3 font-semibold text-white" @click="applyOptimizedVersion">确认应用</button></div></div>
+        <div class="w-full max-w-[520px] rounded-[24px] bg-white p-7 text-center"><CheckCircle2 class="mx-auto h-16 w-16 text-[#10b981]" /><h3 class="mt-4 text-2xl font-semibold">应用 AI 优化版本 {{ pendingDraftVersion }}？</h3><p class="mt-3 text-[#64748b]">应用后 {{ pendingDraftVersion }} 将成为当前工作版本，原版本 {{ pendingOriginalVersion }} 会保留在版本历史中。</p><div class="mt-6 flex gap-3"><button class="flex-1 rounded-[14px] border px-5 py-3" @click="applyConfirmVisible = false">取消</button><button class="flex-1 rounded-[14px] bg-[#0f67ff] px-5 py-3 font-semibold text-white" @click="applyOptimizedVersion">确认应用</button></div></div>
       </div>
 
       <div v-if="sceneOptimizeVisible" class="fixed inset-0 z-[86] overflow-y-auto bg-white p-8">
         <button class="mb-5 text-[#475569]" @click="sceneOptimizeVisible = false">← 返回完整剧本</button>
         <h2 class="text-3xl font-semibold">当前场优化方案 · {{ activeSceneAction }}</h2>
-        <div class="mt-5 grid gap-5 lg:grid-cols-2"><div class="rounded-[20px] border p-5"><h3 class="font-semibold">当前场原文</h3><p class="mt-4 whitespace-pre-line leading-8">{{ currentScene?.content }}</p></div><div class="rounded-[20px] border border-[#dbeafe] bg-[#f8fbff] p-5"><h3 class="font-semibold text-[#0f67ff]">AI 优化建议版</h3><p class="mt-4 leading-8">赵磊一声冷笑打断众人：“废灵根也敢站上试炼台？”林辰抬眼，第一次没有退让：“三日后，我会让所有人知道，废灵根也能改命。”</p></div></div>
+        <div class="mt-5 grid gap-5 lg:grid-cols-2">
+          <div class="rounded-[20px] border p-5"><h3 class="font-semibold">当前场原文</h3><p class="mt-4 whitespace-pre-line leading-8">{{ editableCurrentSceneContent }}</p></div>
+          <div class="rounded-[20px] border border-[#dbeafe] bg-[#f8fbff] p-5">
+            <h3 class="font-semibold text-[#0f67ff]">AI 优化建议版</h3>
+            <div v-if="optimizationRequestState === 'submitting' && progressKind === 'scene'" class="mt-8 flex items-center justify-center gap-3 rounded-[16px] bg-white p-8 text-[#0f67ff]">
+              <RefreshCw class="h-5 w-5 animate-spin" />
+              <span class="font-semibold">后端正在生成当前场优化方案...</span>
+            </div>
+            <p v-else-if="currentSceneSuggestionText" class="mt-4 whitespace-pre-line leading-8">{{ currentSceneSuggestionText }}</p>
+            <p v-else class="mt-4 rounded-[14px] border border-dashed border-[#cbd5e1] bg-white p-5 text-sm leading-7 text-[#64748b]">
+              后端暂未返回当前场优化内容。请点击下方“继续调整/重新生成”，或稍后重试。
+            </p>
+            <p v-if="optimizationErrorMessage" class="mt-4 rounded-[14px] border border-[#fecaca] bg-[#fff7f7] px-4 py-3 text-sm font-semibold text-[#dc2626]">{{ optimizationErrorMessage }}</p>
+          </div>
+        </div>
         <div class="mt-5 rounded-[20px] border p-5"><h3 class="font-semibold">修改理由</h3><p class="mt-3 text-[#475569]">冲突前置、压缩解释性对白、增强主角反击承诺。</p></div>
-        <div class="mt-6 flex justify-center gap-4"><button class="rounded-[14px] border px-8 py-3" @click="sceneOptimizeVisible = false">放弃本次建议</button><button class="rounded-[14px] border border-[#0f67ff] px-8 py-3 text-[#0f67ff]" @click="activeSceneAction = '继续调整'">继续调整</button><button class="rounded-[14px] bg-[#0f67ff] px-8 py-3 font-semibold text-white" @click="acceptCurrentSceneSuggestion">采纳修改</button></div>
+        <textarea
+          v-model="sceneAdjustmentInstruction"
+          class="mt-5 h-24 w-full rounded-[16px] border border-[#dbe7f7] p-4 outline-none"
+          placeholder="继续调整要求：例如保留原台词语气，只增强冲突感"
+        />
+        <div class="mt-6 flex justify-center gap-4">
+          <button class="rounded-[14px] border px-8 py-3" @click="sceneOptimizeVisible = false">放弃本次建议</button>
+          <button class="rounded-[14px] border border-[#0f67ff] px-8 py-3 text-[#0f67ff]" @click="requestSceneOptimization(activeSceneAction, sceneAdjustmentInstruction)">继续调整</button>
+          <button
+            class="rounded-[14px] bg-[#0f67ff] px-8 py-3 font-semibold text-white disabled:cursor-not-allowed disabled:bg-[#94a3b8]"
+            :disabled="!currentSceneSuggestionText"
+            @click="acceptCurrentSceneSuggestion"
+          >
+            采纳修改
+          </button>
+        </div>
       </div>
     </Teleport>
   </section>

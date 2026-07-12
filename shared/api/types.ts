@@ -139,7 +139,21 @@ export interface DramaStoryboardGeneratePayload {
 }
 
 export interface DramaCreditPreviewPayload {
-  action: 'analysis' | 'roles' | 'scenes' | 'props' | 'storyboards' | 'storyboard_video'
+  action:
+    | 'analysis'
+    | 'roles'
+    | 'scenes'
+    | 'props'
+    | 'storyboards'
+    | 'storyboard_video'
+    // 剧本阶段新增的 AI 体检/优化动作。它们仍然按文字模型计费，
+    // 但单独命名后，前后端流水能明确区分“解析剧本”和“生成优化版本”。
+    | 'script_optimization'
+    | 'script_global_optimization'
+    | 'script_character_optimization'
+    | 'script_episode_optimization'
+    | 'script_scene_optimization'
+    | 'script_text_optimization'
   model?: string
   provider?: string
   durationSec?: number
@@ -160,6 +174,29 @@ export interface DramaCreditPreviewPayload {
 
 export interface DramaIntentRouterUpdatePayload {
   mode: DramaIntentMode
+}
+
+export interface DramaScriptOptimizationPayload {
+  kind?: 'global' | 'suggestion' | 'character' | 'episode' | 'scene' | 'text'
+  suggestionIds?: string[]
+  scope?: string
+  intensity?: 'conservative' | 'balanced' | 'deep'
+  episodeNo?: number | null
+  sceneIndex?: number | null
+  instruction?: string
+  sourceVersion?: string
+  adjustmentInstruction?: string
+  selectedActions?: string[]
+}
+
+export interface DramaScriptSceneUpdatePayload {
+  episodeNo: number
+  sceneIndex: number
+  title?: string
+  place?: string
+  timeOfDay?: string
+  characters?: string[]
+  content: string
 }
 
 export interface StoryboardCreatePayload {
@@ -267,6 +304,9 @@ export interface ApiAdapter {
   ingestDramaScript(projectId: string, payload: DramaScriptIngestPayload): Promise<ApiResponse<DramaProjectDetail>>
   ingestDramaScriptFile(projectId: string, file: File): Promise<ApiResponse<DramaProjectDetail>>
   updateDramaIntentRouter(projectId: string, payload: DramaIntentRouterUpdatePayload): Promise<ApiResponse<DramaProjectDetail>>
+  createDramaScriptOptimization(projectId: string, payload: DramaScriptOptimizationPayload): Promise<ApiResponse<DramaProjectDetail>>
+  applyDramaScriptVersion(projectId: string, versionId: string): Promise<ApiResponse<DramaProjectDetail>>
+  updateDramaScriptScene(projectId: string, payload: DramaScriptSceneUpdatePayload): Promise<ApiResponse<DramaProjectDetail>>
   previewDramaCredits(projectId: string, payload: DramaCreditPreviewPayload): Promise<ApiResponse<DramaCreditPreview>>
   analyzeDrama(projectId: string, payload?: DramaAnalyzePayload): Promise<ApiResponse<DramaProjectDetail>>
   regenerateDramaCover(projectId: string, payload?: DramaCoverRegeneratePayload): Promise<ApiResponse<DramaProjectDetail>>

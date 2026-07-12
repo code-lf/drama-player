@@ -12,6 +12,8 @@ import type {
   DramaRoleVoiceUpdatePayload,
   DramaSceneUpdatePayload,
   DramaScriptIngestPayload,
+  DramaScriptSceneUpdatePayload,
+  DramaScriptOptimizationPayload,
   DramaStoryboardGeneratePayload,
   StoryboardCreatePayload,
   StoryboardUpdatePayload,
@@ -55,6 +57,18 @@ export const dramaService = {
 
   async updateIntentRouter(projectId: string, payload: { mode: 'drama' | 'ad' | 'general' }) {
     return callApi('drama/updateIntentRouter', (adapter) => adapter.updateDramaIntentRouter(projectId, payload))
+  },
+
+  async createScriptOptimization(projectId: string, payload: DramaScriptOptimizationPayload) {
+    return callApi('drama/createScriptOptimization', (adapter) => adapter.createDramaScriptOptimization(projectId, payload))
+  },
+
+  async applyScriptVersion(projectId: string, versionId: string) {
+    return callApi('drama/applyScriptVersion', (adapter) => adapter.applyDramaScriptVersion(projectId, versionId))
+  },
+
+  async updateScriptScene(projectId: string, payload: DramaScriptSceneUpdatePayload) {
+    return callApi('drama/updateScriptScene', (adapter) => adapter.updateDramaScriptScene(projectId, payload))
   },
 
   async previewCredits(projectId: string, payload: DramaCreditPreviewPayload) {

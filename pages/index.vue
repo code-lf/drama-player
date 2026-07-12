@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import LoginDialog from '~/features/auth/components/LoginDialog.vue'
 import { useAuthStore } from '~/features/auth/store/useAuthStore'
 import { useAccountStore } from '~/features/billing/store/useAccountStore'
 import {
@@ -21,7 +20,6 @@ const authStore = useAuthStore()
 const accountStore = useAccountStore()
 const router = useRouter()
 
-const loginVisible = ref(false)
 const isUserMenuOpen = ref(false)
 const userMenuRef = ref<HTMLElement | null>(null)
 
@@ -213,9 +211,9 @@ const footerGroups = [
   { title: '公司', links: ['关于我们', '加入我们', '合作伙伴', '新闻资讯'] }
 ]
 
-// 打开登录弹窗：用于顶部登录按钮和未登录状态下的轻量触达。
+// 首页登录入口统一跳转到独立登录页，避免旧弹窗和新版全屏登录页并存造成体验割裂。
 function openLoginDialog(): void {
-  loginVisible.value = true
+  router.push('/login')
 }
 
 // 开始创作：当前产品创作入口统一收敛到控制台。
@@ -637,8 +635,6 @@ watch(
         </div>
       </footer>
     </section>
-
-    <LoginDialog v-model="loginVisible" />
   </main>
 </template>
 

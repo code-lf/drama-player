@@ -19,6 +19,7 @@ import type {
   DramaRoleVoiceUpdatePayload,
   DramaSceneUpdatePayload,
   DramaScriptIngestPayload,
+  DramaScriptSceneUpdatePayload,
   DramaStoryboardGeneratePayload,
   StoryboardGeneratePayload,
   WechatLoginTicket,
@@ -731,6 +732,44 @@ export const mockAdapter: ApiAdapter = {
           userOverrideMode: payload.mode,
           effectiveMode: payload.mode
         }
+      }
+    }
+    mockDramaProjectMap.set(projectId, next)
+    return ok(next)
+  },
+
+  async updateDramaScriptScene(projectId: string, payload: DramaScriptSceneUpdatePayload) {
+    await sleep(80)
+    const current = mockDramaProjectMap.get(projectId)!
+    const scriptScenes = [...(current.analysis.scriptScenes || [])]
+    const sceneIndex = scriptScenes.findIndex(
+      item => item.episodeNo === payload.episodeNo && item.index === payload.sceneIndex
+    )
+    const nextScene = {
+      ...(sceneIndex >= 0 ? scriptScenes[sceneIndex] : {}),
+      episodeNo: payload.episodeNo,
+      index: payload.sceneIndex,
+      title: payload.title || `场 ${payload.sceneIndex + 1}`,
+      place: payload.place || '',
+      timeOfDay: payload.timeOfDay || '',
+      characters: payload.characters || [],
+      content: payload.content,
+      dialogues: [],
+      suggestions: []
+    }
+
+    // mock 模式也模拟后端写回，方便开发时验证“保存后刷新状态同步”的交互。
+    if (sceneIndex >= 0) {
+      scriptScenes.splice(sceneIndex, 1, nextScene)
+    } else {
+      scriptScenes.push(nextScene)
+    }
+
+    const next = {
+      ...current,
+      analysis: {
+        ...current.analysis,
+        scriptScenes
       }
     }
     mockDramaProjectMap.set(projectId, next)

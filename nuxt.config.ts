@@ -72,7 +72,11 @@ export default defineNuxtConfig({
   runtimeConfig: {
     public: {
       apiBase: defaultApiBase,
-      apiAdapter: process.env.NUXT_PUBLIC_API_ADAPTER || 'http'
+      apiAdapter: process.env.NUXT_PUBLIC_API_ADAPTER || 'http',
+      // 本地开发兜底用户：后端当前用 X-User-Id 识别账户。
+      // 如果用户尚未登录，先使用“管理员开发者”这条测试账户，保证积分余额、流水和项目数据都对齐同一个人。
+      // 正式登录体系完善后，只需要通过 NUXT_PUBLIC_DEV_USER_ID 或登录 session 覆盖这里。
+      devUserId: process.env.NUXT_PUBLIC_DEV_USER_ID || 'fe8d06dd-0edd-4307-803d-146e7f4e8711'
     }
   },
 
