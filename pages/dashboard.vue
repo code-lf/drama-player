@@ -245,9 +245,9 @@ const projectOverviewLabel = computed(() => {
 })
 const deleteDialogVisible = computed(() => pendingDeleteProjectIds.value.length > 0)
 const currentCreditBalance = computed(() => {
-  // 余额以账户接口为准：登录会话里的余额可能是旧缓存，后台调整到 200 后如果继续读 session，就会出现前台仍显示 0。
-  if (accountStore.profile) return accountStore.currentBalance
-  return authStore.session.user?.creditBalance ?? accountStore.currentBalance
+  // 余额只以 /api/account/me 的实时资料为准。
+  // 登录 session 里可能缓存着旧余额（例如后台刚调账到 200），这里不再回退读取 session，避免前台长期显示 0。
+  return accountStore.profile?.creditBalance ?? 0
 })
 const billingPackages = computed(() => accountStore.packages)
 const billingLedgers = computed(() => accountStore.ledgerPage.items)
@@ -924,6 +924,8 @@ function handleDashboardDocumentClick(): void {
 onMounted(async () => {
   // 控制台是主题最重的页面，进入时主动恢复一次本地主题，防止刷新后组件先使用默认浅色。
   themeStore.hydrate()
+  // 进入工作台时先恢复登录态，后续所有接口会通过 httpAdapter 自动带上当前 user_id。
+  authStore.hydrate()
   document.addEventListener('click', handleDashboardDocumentClick)
   await bootstrapDashboard()
 })

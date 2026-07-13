@@ -917,8 +917,10 @@ function mapDramaVoiceAsset(raw?: BackendDramaVoiceAssetItem | null) {
 function mapDramaScriptReview(raw?: BackendDramaDetailResponse['analysis']['script_reviews'][string]) {
   return {
     title: raw?.title || '',
-    score: Number(raw?.score || 82),
-    tone: raw?.tone || 'good',
+    // 剧本阶段已经收口为“真实模型结果优先”：
+    // 后端没有返回体检分数时，前端只能展示空态/待解析，不能再默认 82 分误导测试。
+    score: Number(raw?.score || 0),
+    tone: raw?.tone || '',
     dimensions: (raw?.dimensions || []).map((item) => ({
       label: item.label || '',
       value: Number(item.value || 0)
@@ -1023,7 +1025,9 @@ function mapDramaDetail(raw: BackendDramaDetailResponse): DramaProjectDetail {
       intentRouter: {
         entryIntent: raw.analysis?.intent_router?.entry_intent || 'drama',
         detectedMode: raw.analysis?.intent_router?.detected_mode || 'drama',
-        confidence: Number(raw.analysis?.intent_router?.confidence || 0.55),
+        // 置信度必须以后端真实识别结果为准；缺失时显示 0/空态，
+        // 不能再给 55% 这种看似真实的默认值。
+        confidence: Number(raw.analysis?.intent_router?.confidence || 0),
         signals: raw.analysis?.intent_router?.signals || [],
         userOverrideMode: raw.analysis?.intent_router?.user_override_mode || '',
         effectiveMode: raw.analysis?.intent_router?.effective_mode || 'drama'
@@ -1184,25 +1188,27 @@ async function request<T>(path: string, options?: Parameters<typeof $fetch<T>>[1
   const config = useRuntimeConfig()
   const baseUrl = config.public.apiBase as string
   // 后端当前通过 X-User-Id 判断“当前用户”。
-  // 登录态优先使用 session.user.id；本地开发/未登录时使用 nuxt.config.ts 里的 devUserId，
-  // 避免落到全 0 UUID，导致后台给“管理员开发者”加了 200 点但前台仍显示 0。
-  const fallbackUserId = String(config.public.devUserId || 'fe8d06dd-0edd-4307-803d-146e7f4e8711')
-  let resolvedUserId = fallbackUserId
+  // 注意：这里不能再使用 devUserId 兜底，否则用户未登录时也会读到测试账号，
+  // 会把“登录用户余额”和“开发兜底用户余额”混在一起，导致积分永远对不齐。
+  let resolvedUserId = ''
   if (import.meta.client) {
     try {
       const authStore = useAuthStore()
-      resolvedUserId = authStore.session.user?.id || fallbackUserId
+      resolvedUserId = authStore.session.user?.id || ''
     } catch {
-      resolvedUserId = fallbackUserId
+      resolvedUserId = ''
     }
   }
+  const baseHeaders = {
+    ...((options?.headers as Record<string, string>) || {})
+  }
+  const headers = resolvedUserId
+    ? { ...baseHeaders, 'X-User-Id': resolvedUserId }
+    : baseHeaders
 
   return $fetch<T>(`${baseUrl}${path}`, {
     ...options,
-    headers: {
-      ...((options?.headers as Record<string, string>) || {}),
-      'X-User-Id': resolvedUserId
-    }
+    headers
   })
 }
 

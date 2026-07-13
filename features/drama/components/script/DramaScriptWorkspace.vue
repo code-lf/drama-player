@@ -172,18 +172,23 @@ const accountStore = useAccountStore()
 
 const effectiveProjectDetail = computed(() => serverOptimizedDetail.value || props.projectDetail)
 const projectId = computed(() => effectiveProjectDetail.value?.projectId || effectiveProjectDetail.value?.id || 'unknown')
-const sourceScriptText = computed(() => effectiveProjectDetail.value?.sourceScriptText || '')
 const hasBackendAnalysis = computed(() => {
   const backendAnalysis = effectiveProjectDetail.value?.analysis
+  // 剧本阶段真实接口收口后，前端不能再根据原始文本“猜”出一份分析结果。
+  // 这里仅判断后端是否已经返回真实结构化数据；缺数据时交给待解析/失败/空状态展示。
   return Boolean(
-    backendAnalysis?.title
+    backendAnalysis?.schemaVersion === 'script_stage_v2'
+    || backendAnalysis?.title
     || backendAnalysis?.outline
+    || backendAnalysis?.scriptReviews
+    || backendAnalysis?.optimizationSuggestions?.length
+    || backendAnalysis?.scriptScenes?.length
     || backendAnalysis?.episodeDetails?.length
     || backendAnalysis?.episodeSummaries?.length
   )
 })
 const isScriptWorkbenchReady = computed(() => {
-  return props.isScriptAnalysisReady || hasBackendAnalysis.value || Boolean(sourceScriptText.value.trim())
+  return props.isScriptAnalysisReady || hasBackendAnalysis.value
 })
 const shouldShowScriptProgressPanel = computed(() => {
   const runStatus = props.currentAnalysisRun.status
@@ -196,19 +201,8 @@ const analysis = computed<DramaAnalysis | null>(() => {
   const detail = effectiveProjectDetail.value
   if (!detail) return null
   if (hasBackendAnalysis.value) return detail.analysis
-  if (!sourceScriptText.value.trim()) return detail.analysis || null
-  // 用户端第一版允许“已上传/粘贴剧本但余额不足未触发后端 analyze”的情况先进入工作台。
-  // 这里基于原始剧本文本派生一份轻量结构化结果，只用于前端展示和 AI 体检模拟，不写回后端、不生成资产。
-  return buildLocalAnalysisFromScript(detail)
+  return null
 })
-
-function normalizeScriptLines(script: string) {
-  return script
-    .replace(/\r\n/g, '\n')
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean)
-}
 
 function extractTraitPhrases(text: string) {
   // 从原始人物介绍里截取几个短特征，避免本地草稿只显示“文本识别/待补全”，看起来比老版信息还少。
@@ -217,137 +211,6 @@ function extractTraitPhrases(text: string) {
     .map((item) => item.trim())
     .filter((item) => item.length >= 2 && item.length <= 10)
     .slice(0, 4)
-}
-
-function extractTitleFromScript(project: DramaProjectDetail, script: string) {
-  const firstMeaningfulLine = normalizeScriptLines(script).find((line) => {
-    return !/^人物介绍|^正文|^第[一二三四五六七八九十\d]+[集话回]/.test(line)
-  })
-  const cleanedTitle = (firstMeaningfulLine || project.title || '未命名剧本')
-    .replace(/^《|》$/g, '')
-    .replace(/^\s*标题[:：]/, '')
-    .slice(0, 32)
-  return cleanedTitle || project.title || '未命名剧本'
-}
-
-function extractCharactersFromScript(script: string): DramaCharacterBio[] {
-  const nameMap = new Map<string, { identity: string; summary: string; traits: string[] }>()
-  const lines = normalizeScriptLines(script)
-
-  for (const line of lines) {
-    // 支持“林辰（男主）：xxx”“赵磊：xxx”两类常见剧本文本写法。
-    const roleMatch = line.match(/^([\u4e00-\u9fa5A-Za-z0-9·]{2,10})[（(]([^）)]{1,14})[）)][:：]\s*(.+)$/)
-    const speakerMatch = line.match(/^([\u4e00-\u9fa5A-Za-z0-9·]{2,8})[:：]\s*(.+)$/)
-    const matchedName = roleMatch?.[1] || speakerMatch?.[1] || ''
-    if (!matchedName || ['场景', '正文', '人物介绍'].includes(matchedName)) continue
-
-    const identity = roleMatch?.[2] || (nameMap.size === 0 ? '主角' : nameMap.size === 1 ? '对手' : '角色')
-    const summary = roleMatch?.[3] || speakerMatch?.[2] || '从原始剧本文本中识别出的角色，需要后续 AI 解析补全人物小传。'
-    if (!nameMap.has(matchedName)) {
-      nameMap.set(matchedName, {
-        identity,
-        summary,
-        traits: extractTraitPhrases(`${identity} ${summary}`)
-      })
-    }
-  }
-
-  const detected = Array.from(nameMap.entries()).slice(0, 6).map(([name, info], index) => ({
-    key: `local-character-${index + 1}`,
-    name,
-    identity: info.identity,
-    summary: info.summary.slice(0, 96),
-    traits: info.traits.length ? info.traits : (index === 0 ? ['核心人物', '待体检'] : ['文本识别', '待补全'])
-  }))
-
-  if (detected.length) return detected
-
-  return [
-    {
-      key: 'local-character-1',
-      name: '主角',
-      identity: '主角',
-      summary: '已从剧本文本中识别到主线人物，等待真实 AI 解析后补全详细人设。',
-      traits: ['待解析', '主线人物']
-    }
-  ]
-}
-
-function splitScriptIntoEpisodeDetails(script: string): DramaEpisodeDetail[] {
-  const trimmedScript = script.trim()
-  if (!trimmedScript) {
-    return [{ episodeNo: 1, title: '第1集', content: '当前暂无剧本文本。' }]
-  }
-
-  const episodeMarker = /(?=第[一二三四五六七八九十百\d]+[集话回][^\n]*)/g
-  const chunks = trimmedScript
-    .split(episodeMarker)
-    .map((chunk) => chunk.trim())
-    .filter(Boolean)
-
-  const usableChunks = chunks.length > 1 ? chunks : [trimmedScript]
-  return usableChunks.slice(0, 24).map((content, index) => {
-    const firstLine = normalizeScriptLines(content)[0] || `第${index + 1}集`
-    const title = firstLine.match(/^第[一二三四五六七八九十百\d]+[集话回][^\n]*/)?.[0] || `第${index + 1}集`
-    return {
-      episodeNo: index + 1,
-      title,
-      content
-    }
-  })
-}
-
-function summarizeEpisodeContent(content: string) {
-  const lines = normalizeScriptLines(content)
-    .filter((line) => !/^第[一二三四五六七八九十百\d]+[集话回]/.test(line))
-    .filter((line) => !/^人物介绍|^正文/.test(line))
-  return (lines.join(' ').slice(0, 120) || '该集内容已保存，等待 AI 解析生成更完整的剧情摘要。')
-}
-
-function buildLocalAnalysisFromScript(project: DramaProjectDetail): DramaAnalysis {
-  const script = project.sourceScriptText || ''
-  const episodeDetails = splitScriptIntoEpisodeDetails(script)
-  const characters = extractCharactersFromScript(script)
-  const title = extractTitleFromScript(project, script)
-  const synopsis = summarizeEpisodeContent(script)
-  const effectiveMode = project.analysis?.intentRouter?.effectiveMode || 'drama'
-
-  return {
-    title,
-    genre: project.analysis?.genre || '东方玄幻短剧',
-    logline: synopsis,
-    synopsis,
-    totalEpisodes: episodeDetails.length,
-    currentEpisodeNo: 1,
-    displayMeta: {
-      aspectRatio: project.analysis?.displayMeta?.aspectRatio || '16:9',
-      resolution: project.analysis?.displayMeta?.resolution || '720P',
-      style: project.analysis?.displayMeta?.style || '东方玄幻 · 电影写实'
-    },
-    tags: project.analysis?.tags?.length ? project.analysis.tags : ['文本已导入', '待深度体检', '本地草稿'],
-    coverPrompt: '',
-    coverImageUrl: project.analysis?.coverImageUrl || '',
-    outline: synopsis,
-    backgroundTraits: '当前为基于原始剧本文本派生的前端草稿，真实人物、场景、道具会在后端 AI 解析完成后进一步补全。',
-    characterBios: characters,
-    episodeSummaries: episodeDetails.map((episode) => ({
-      episodeNo: episode.episodeNo,
-      title: episode.title,
-      summary: summarizeEpisodeContent(episode.content)
-    })),
-    episodeDetails,
-    roles: [],
-    scenes: [],
-    props: [],
-    intentRouter: {
-      entryIntent: effectiveMode,
-      detectedMode: effectiveMode,
-      confidence: project.analysis?.intentRouter?.confidence || 0.86,
-      signals: project.analysis?.intentRouter?.signals?.length ? project.analysis.intentRouter.signals : ['已导入剧本文本', '前端本地草稿'],
-      userOverrideMode: project.analysis?.intentRouter?.userOverrideMode || '',
-      effectiveMode
-    }
-  }
 }
 
 const modeOptions: Array<{ value: DramaIntentMode; label: string; icon: string; desc: string }> = [
@@ -396,11 +259,11 @@ const pendingDraftVersionItem = computed(() => {
 const pendingDraftVersion = computed(() => pendingDraftVersionItem.value?.version || '优化草稿')
 const pendingOptimizationAnalysis = computed(() => pendingOptimizedDetail.value?.analysis || null)
 const pendingReviewScore = computed(() => pendingOptimizationAnalysis.value?.scriptReviews?.overview?.score || healthScore.value)
-const healthScore = computed(() => analysis.value?.scriptReviews?.overview?.score || 82)
-const projectTitle = computed(() => analysis.value?.title || effectiveProjectDetail.value?.title || '废灵根的少年')
-const projectGenre = computed(() => analysis.value?.genre || '东方玄幻短剧')
+const healthScore = computed(() => analysis.value?.scriptReviews?.overview?.score || 0)
+const projectTitle = computed(() => analysis.value?.title || effectiveProjectDetail.value?.title || '未命名项目')
+const projectGenre = computed(() => analysis.value?.genre || '待解析')
 const projectCover = computed(() => analysis.value?.coverImageUrl || '')
-const totalEpisodes = computed(() => Math.max(1, Number(analysis.value?.totalEpisodes || analysis.value?.episodeSummaries?.length || 12)))
+const totalEpisodes = computed(() => Math.max(1, Number(analysis.value?.totalEpisodes || analysis.value?.episodeSummaries?.length || 1)))
 const displayMeta = computed(() => analysis.value?.displayMeta || { aspectRatio: '16:9', resolution: '720P', style: '东方玄幻 · 电影写实' })
 const selectedEpisode = computed(() => {
   return episodeSummaries.value.find((item) => item.episodeNo === props.selectedEpisodeNo) || episodeSummaries.value[0]
@@ -412,31 +275,21 @@ const selectedEpisodeDetail = computed(() => {
 const episodeSummaries = computed<DramaEpisodeSummary[]>(() => {
   const rows = analysis.value?.episodeSummaries || []
   if (rows.length) return rows
-  return Array.from({ length: totalEpisodes.value }).map((_, index) => ({
-    episodeNo: index + 1,
-    title: `第${index + 1}集`,
-    summary: '林辰在宗门压迫中寻找破局机会，命运的伏笔逐步展开。'
-  }))
+  // 不再从前端编造分集摘要；后端没有解析结果时交给空状态提示用户重新解析。
+  return []
 })
 
 const episodeDetails = computed<DramaEpisodeDetail[]>(() => {
   const rows = analysis.value?.episodeDetails || []
   if (rows.length) return rows
-  return episodeSummaries.value.map((item) => ({
-    episodeNo: item.episodeNo,
-    title: item.title,
-    content: `${item.summary}\n\n场景：青云宗外门 · 日\n林辰被同门轻视，却在沉默中察觉残根异动。\n\n赵磊：废灵根也敢站出来？\n林辰：我会证明，真正的强者从不靠天赋定义。`
-  }))
+  // 完整剧本文本必须来自后端解析或用户手动保存，避免 UI 展示假剧本。
+  return []
 })
 
 const characterBios = computed<DramaCharacterBio[]>(() => {
   const rows = analysis.value?.characterBios || []
   if (rows.length) return rows
-  return [
-    { key: 'linchen', name: '林辰', identity: '主角', summary: '青云宗外门弟子，废灵根少年，因被轻视而更坚韧。', traits: ['坚韧', '天赋被废', '隐忍内敛'] },
-    { key: 'zhaolei', name: '赵磊', identity: '对手', summary: '外门天才弟子，心高气傲，与林辰形成强冲突。', traits: ['傲慢', '压迫感', '争强好胜'] },
-    { key: 'mentor', name: '青云宗长老', identity: '导师', summary: '宗门长者，暗中观察林辰成长，关键时刻给予指引。', traits: ['沉稳', '正道', '护道'] }
-  ]
+  return []
 })
 
 const displayCharacterBios = computed<DisplayCharacterBio[]>(() => {
@@ -452,7 +305,7 @@ const displayCharacterBios = computed<DisplayCharacterBio[]>(() => {
     return {
       ...bio,
       identity: bio.identity || roleLabel,
-      traits: traits.length ? traits : ['文本识别', '待补全'],
+      traits,
       // 新版后端会直接返回 ageLabel；旧项目没有时，再从人物描述里兜底提取。
       ageLabel: bio.ageLabel || inferCharacterAgeLabel(bio, index),
       roleLabel
@@ -464,10 +317,7 @@ function inferCharacterAgeLabel(bio: DramaCharacterBio, index: number) {
   const mergedText = `${bio.name || ''} ${bio.identity || ''} ${bio.summary || ''}`
   const ageMatch = mergedText.match(/(\d{1,3})\s*岁/)
   if (ageMatch) return `${ageMatch[1]}岁`
-  if (/长老|导师|师父|宗主|高层/.test(mergedText)) return index === 2 ? '55岁' : '45岁'
-  if (/赵磊|张浩|反派|对手|师兄|天才/.test(mergedText)) return '20岁'
-  if (/苏|女主|少女|同伴|配角/.test(mergedText)) return '18岁'
-  if (/林辰|主角|男主|少年/.test(mergedText)) return '18岁'
+  // 年龄只从后端文本里明确提取，不再根据“主角/对手”等关键词猜年龄。
   return ''
 }
 
@@ -487,26 +337,17 @@ const currentSceneList = computed(() => {
         place,
         timeOfDay: scene.timeOfDay || '',
         characters: scene.characters || [],
-        content: scene.content || scene.dialogues.join('\n') || '当前场次正文待补全。',
+        // 场次正文必须来自后端 script_scenes.content 或 dialogues。
+        // 如果后端没有返回正文，前端保持空白，避免把占位文案误当成真实剧本。
+        content: scene.content || scene.dialogues.join('\n') || '',
         suggestions: scene.suggestions || []
       }
     })
   }
 
-  const text = selectedEpisodeDetail.value?.content || ''
-  const chunks = text
-    .split(/\n{2,}|(?=场景[:：])/)
-    .map((item) => item.trim())
-    .filter(Boolean)
-  const fallback = chunks.length ? chunks : [text || '当前暂无完整剧本内容。']
-  return fallback.slice(0, 8).map((content, index) => ({
-    index,
-    title: content.match(/场景[:：]([^\n]+)/)?.[1]?.trim() || `场 ${index + 1}`,
-    place: content.match(/场景[:：]([^\n]+)/)?.[1]?.trim() || (index === 0 ? '青云宗外门 · 日' : '淬灵崖山路 · 黄昏'),
-    timeOfDay: '',
-    characters: [],
-    content
-  }))
+  // 真实接口收口后，完整剧本必须由后端返回 script_scenes。
+  // 这里不再把分集摘要切片伪造成“场次”，否则会掩盖后端缺字段的问题。
+  return []
 })
 
 const currentScene = computed(() => currentSceneList.value[selectedSceneIndex.value] || currentSceneList.value[0])
@@ -609,8 +450,9 @@ function getBackendReviewForActiveTab(): ReviewModel | null {
 
   return {
     title: review.title || 'AI 剧本体检',
-    score: Number(review.score || 82),
-    tone: normalizeReviewTone(review.tone, Number(review.score || 82)),
+    // 体检分数必须来自后端真实模型输出；缺失时走下方空态，不再用 82 分兜底。
+    score: Number(review.score || 0),
+    tone: normalizeReviewTone(review.tone, Number(review.score || 0)),
     dimensions: review.dimensions.map((item) => ({
       label: item.label,
       value: Number(item.value || 0)
@@ -632,94 +474,21 @@ const reviewModel = computed<ReviewModel>(() => {
   const backendReview = getBackendReviewForActiveTab()
   if (backendReview) return backendReview
 
-  const optimized = Boolean(currentOptimizedVersion.value)
-  if (activeTab.value === 'characters') {
-    return {
-      title: 'AI 人物体检',
-      score: optimized ? 89 : 84,
-      tone: optimized ? '优秀' : '良好',
-      dimensions: [
-        { label: '人物动机', value: optimized ? 90 : 78 },
-        { label: '关系清晰度', value: optimized ? 88 : 82 },
-        { label: '冲突强度', value: optimized ? 92 : 76 },
-        { label: '人物成长', value: optimized ? 86 : 80 },
-        { label: '角色辨识度', value: optimized ? 91 : 84 }
-      ],
-      strengths: [
-        { title: '主角目标清晰', status: 'excellent', detail: '林辰的逆袭目标明确。' },
-        { title: '主要对立关系成立', status: 'good', detail: '赵磊与林辰存在直接冲突。' }
-      ],
-      warnings: [
-        { title: '赵磊动机表达偏弱', status: 'warning', detail: '可补足对资源与身份焦虑的背景。' },
-        { title: '葛雪关系转变可加强', status: 'warning', detail: '建议增加关键事件推动关系变化。' }
-      ]
-    }
+  const titleMap: Record<ScriptTabKey, string> = {
+    overview: 'AI 剧本体检',
+    characters: 'AI 人物体检',
+    episodes: 'AI 分集体检',
+    full: 'AI 剧本文本体检'
   }
-  if (activeTab.value === 'episodes') {
-    return {
-      title: 'AI 分集体检',
-      score: optimized ? 86 : 81,
-      tone: optimized ? '优秀' : '良好',
-      dimensions: [
-        { label: '节奏把控', value: optimized ? 88 : 76 },
-        { label: '钩子强度', value: optimized ? 85 : 72 },
-        { label: '冲突强度', value: optimized ? 90 : 80 },
-        { label: '每集推进', value: optimized ? 86 : 78 },
-        { label: '主线连贯性', value: optimized ? 88 : 84 }
-      ],
-      strengths: [
-        { title: '中段冲突成立', status: 'good', detail: '第 4-6 集承接成长线。' },
-        { title: '结尾悬念有效', status: 'excellent', detail: '能够推动用户继续观看。' }
-      ],
-      warnings: [
-        { title: '第 4 集开场偏弱', status: 'warning', detail: '建议提前放置冲突事件。' },
-        { title: '部分集数转折略平', status: 'warning', detail: '可压缩过渡对白。' }
-      ]
-    }
-  }
-  if (activeTab.value === 'full') {
-    return {
-      title: 'AI 剧本文本体检',
-      score: optimized ? 84 : 80,
-      tone: '良好',
-      dimensions: [
-        { label: '剧情张力', value: 82 },
-        { label: '人物塑造', value: 78 },
-        { label: '对白节奏', value: 76 },
-        { label: '情绪承接', value: 80 },
-        { label: '场景调度', value: 84 }
-      ],
-      strengths: [
-        { title: '对白长度适中', status: 'excellent', detail: '多数台词便于转为镜头。' },
-        { title: '场景切换合理', status: 'good', detail: '叙事空间较明确。' }
-      ],
-      warnings: [
-        { title: '某处信息重复可精简', status: 'warning', detail: '建议压缩解释性对白。' },
-        { title: '开场对白可更直接', status: 'warning', detail: '可以更早建立冲突。' }
-      ]
-    }
-  }
+  // 真实接口收口后，缺少后端体检数据时不能再伪造分数、维度和问题。
+  // 图表组件会用空态展示“暂无体检结果”，便于联调时直接发现模型/接口缺口。
   return {
-    title: 'AI 剧本体检',
-    score: healthScore.value,
-    tone: healthScore.value >= 88 ? '优秀' : '良好',
-    dimensions: [
-      { label: '故事结构', value: optimized ? 90 : 82 },
-      { label: '人物动机', value: optimized ? 88 : 76 },
-      { label: '短剧节奏', value: optimized ? 86 : 78 },
-      { label: '制作难度', value: optimized ? 82 : 72 },
-      { label: '商业钩子', value: optimized ? 84 : 75 }
-    ],
-    strengths: [
-      { title: '主要人物关系完整', status: 'excellent', detail: '主角、对手与导师关系清晰。' },
-      { title: '核心冲突明确', status: 'excellent', detail: '废灵根与宗门压迫形成强冲突。' },
-      { title: '世界观设定完整', status: 'good', detail: '东方玄幻元素浓厚。' }
-    ],
-    warnings: [
-      { title: '第 1 集前 20 秒钩子偏弱', status: 'warning', detail: '建议更早展示羞辱与反击承诺。' },
-      { title: '赵磊动机表达较弱', status: 'warning', detail: '可以补强反派压迫主角的原因。' },
-      { title: '场景数量偏多', status: 'warning', detail: '预计制作成本较高。' }
-    ]
+    title: titleMap[activeTab.value],
+    score: 0,
+    tone: '待解析',
+    dimensions: [],
+    strengths: [],
+    warnings: []
   }
 })
 
@@ -830,16 +599,16 @@ const relationGraphNodes = computed<RelationGraphNode[]>(() => {
   }
 
   const rows = displayCharacterBios.value
-  // 剧本阶段不能提前出现人物头像，所以关系图只输出文字节点数据。
-  // 真正的连线、节点布局和标签渲染交给 ECharts graph 组件，避免手写 SVG 在宽屏下文字变形。
-  return [
-    { key: 'hero', name: rows[0]?.name || '林辰', role: rows[0]?.roleLabel || '主角', x: 50, y: 48, tone: 'hero' },
-    { key: 'rival', name: rows[1]?.name || '赵磊', role: rows[1]?.roleLabel || '对手', x: 24, y: 22, tone: 'danger' },
-    { key: 'mentor', name: rows[2]?.name || '青云宗长老', role: rows[2]?.roleLabel || '导师', x: 76, y: 22, tone: 'success' },
-    { key: 'ally', name: rows[3]?.name || '苏清禾', role: rows[3]?.roleLabel || '同伴', x: 18, y: 68, tone: 'sky' },
-    { key: 'authority', name: rows[4]?.name || '宗主', role: rows[4]?.roleLabel || '高层', x: 66, y: 76, tone: 'orange' },
-    { key: 'friend', name: rows[5]?.name || '葛穹雪', role: rows[5]?.roleLabel || '后期盟友', x: 84, y: 60, tone: 'purple' }
-  ]
+  // 如果新版后端还没返回 relationships.nodes，就只把真实人物小传转成孤立节点；
+  // 不再补“林辰/赵磊/宗主”等示例节点，方便测试时暴露后端缺失字段。
+  return rows.slice(0, 8).map((bio, index) => ({
+    key: bio.key || `bio-${index + 1}`,
+    name: bio.name,
+    role: bio.roleLabel || bio.identity || '角色',
+    x: 18 + (index % 4) * 22,
+    y: 28 + Math.floor(index / 4) * 34,
+    tone: index === 0 ? 'hero' : 'sky'
+  }))
 })
 
 const relationGraphLinks = computed<RelationGraphLink[]>(() => {
@@ -853,13 +622,7 @@ const relationGraphLinks = computed<RelationGraphLink[]>(() => {
     }))
   }
 
-  return [
-    { from: 'hero', to: 'rival', label: '敌对', color: '#ef4444' },
-    { from: 'hero', to: 'mentor', label: '师徒', color: '#10b981' },
-    { from: 'hero', to: 'ally', label: '合作', color: '#2563eb' },
-    { from: 'hero', to: 'authority', label: '权力压制', color: '#f97316' },
-    { from: 'hero', to: 'friend', label: '对手/后期盟友', color: '#7c3aed' }
-  ]
+  return []
 })
 
 const arcIconList = [Heart, Target, Flame, ShieldCheck]
@@ -881,32 +644,28 @@ const characterArcSteps = computed<CharacterArcStep[]>(() => {
     }))
   }
 
-  return [
-    { title: '受辱', subtitle: '被轻视打压\n遭受屈辱', icon: Heart, tone: arcToneList[0] },
-    { title: '获得传承', subtitle: '机缘觉醒\n得长老传承', icon: Target, tone: arcToneList[1] },
-    { title: '觉醒成长', subtitle: '修为精进\n实力蜕变', icon: Flame, tone: arcToneList[2] },
-    { title: '守护宗门', subtitle: '击败敌对势力\n守护宗门与所爱', icon: ShieldCheck, tone: arcToneList[3] }
-  ]
+  // 人物弧光是剧本体检的重要结论，必须由后端结构化返回；缺失时显示空态。
+  return []
 })
 
 const productionEstimate = computed(() => {
   const backendEstimate = analysis.value?.productionEstimate
   if (backendEstimate && Object.values(backendEstimate).some(Boolean)) {
     return {
-      roles: backendEstimate.roles || Math.max(6, characterBios.value.length),
-      scenes: backendEstimate.scenes || Math.max(12, analysis.value?.scenes?.length || 0),
-      props: backendEstimate.props || Math.max(6, analysis.value?.props?.length || 0),
-      shots: backendEstimate.shots || 146,
-      credits: backendEstimate.credits || 36000
+      roles: backendEstimate.roles || characterBios.value.length,
+      scenes: backendEstimate.scenes || analysis.value?.scenes?.length || 0,
+      props: backendEstimate.props || analysis.value?.props?.length || 0,
+      shots: backendEstimate.shots || 0,
+      credits: backendEstimate.credits || 0
     }
   }
 
   return {
-    roles: Math.max(6, characterBios.value.length),
-    scenes: Math.max(12, analysis.value?.scenes?.length || 0),
-    props: Math.max(6, analysis.value?.props?.length || 0),
-    shots: 146,
-    credits: 36000
+    roles: characterBios.value.length,
+    scenes: analysis.value?.scenes?.length || 0,
+    props: analysis.value?.props?.length || 0,
+    shots: 0,
+    credits: 0
   }
 })
 
@@ -916,7 +675,7 @@ const currentEpisodeStructureModel = computed(() => {
 
 const seasonProgressBlocks = computed(() => {
   const rows = episodeSummaries.value
-  if (!rows.length) return ['1-3集：觉醒开局', '4-6集：试炼成长', '7-9集：危机升级', '10-12集：决战收官']
+  if (!rows.length) return []
   const groupSize = Math.max(1, Math.ceil(rows.length / 4))
   const blocks: string[] = []
   for (let index = 0; index < rows.length; index += groupSize) {
@@ -931,7 +690,7 @@ const seasonProgressBlocks = computed(() => {
 
 function getEpisodeStatus(episodeNo: number) {
   const status = (analysis.value?.episodeStructures || []).find((item) => Number(item.episodeNo) === Number(episodeNo))?.status
-  return status || (episodeNo % 4 === 0 ? '待优化' : '正常')
+  return status || '待解析'
 }
 
 const episodeStructure = computed(() => {
@@ -952,13 +711,7 @@ const episodeStructure = computed(() => {
     }))
   }
 
-  const ep = selectedEpisode.value
-  return [
-    { label: '开场', time: '0-20秒', icon: Zap, text: `${ep?.title || '本集'}以人物压迫或异常事件开场，快速建立冲突。`, state: activeTab.value === 'episodes' ? '待优化' : '正常' },
-    { label: '冲突', time: '20-50秒', icon: Flame, text: '主角面对外部压迫与内部困境，行动目标被迫明确。', state: '优秀' },
-    { label: '转折', time: '50-75秒', icon: Route, text: '关键道具或人物态度变化，推动剧情进入下一阶段。', state: '良好' },
-    { label: '结尾钩子', time: '75-92秒', icon: Target, text: '悬念或反击承诺出现，驱动继续观看。', state: '优秀' }
-  ]
+  return []
 })
 
 const episodeJudgements = computed<EpisodeJudgement[]>(() => {
@@ -972,28 +725,7 @@ const episodeJudgements = computed<EpisodeJudgement[]>(() => {
     }))
   }
 
-  return [
-    {
-      title: '开场钩子偏弱',
-      detail: '开场冲突虽有冲击力，但缺少强悬念钩子，建议强化羞辱或反转点。',
-      status: 'warning'
-    },
-    {
-      title: '中段冲突成立',
-      detail: '退婚与宗门试炼形成双重冲突，情绪递进合理。',
-      status: 'excellent'
-    },
-    {
-      title: '结尾悬念有效',
-      detail: '神秘强者出现形成悬念，能有效驱动下一集观看。',
-      status: 'excellent'
-    },
-    {
-      title: '人物目标表达清晰',
-      detail: '林辰的逆袭目标明确，动机与行动一致。',
-      status: 'good'
-    }
-  ]
+  return []
 })
 
 const progressTitle = computed(() => {
@@ -1340,15 +1072,15 @@ watch(() => props.projectDetail?.projectId, () => {
                 </div>
                 <div class="min-w-0">
                   <h3 class="flex items-center gap-2 text-lg font-semibold"><FileText class="h-5 w-5 text-[#0f67ff]" /> 项目概览</h3>
-                  <p class="mt-4 text-[15px] leading-8 text-[#334155]">{{ analysis?.synopsis || analysis?.logline || '少年林辰虽是废灵根，却在冷眼与欺辱中踏上复仇与守护之路。' }}</p>
+                  <p class="mt-4 text-[15px] leading-8 text-[#334155]">{{ analysis?.synopsis || analysis?.logline || '暂无项目概览，请先重新解析剧本。' }}</p>
                   <div class="mt-5 grid gap-4 text-sm md:grid-cols-4">
-                    <div class="border-r border-[#e8eef7] last:border-r-0"><p class="text-[#94a3b8]">题材</p><p class="mt-1 font-semibold">{{ analysis?.genre || '东方玄幻' }}</p></div>
-                    <div class="border-r border-[#e8eef7] last:border-r-0"><p class="text-[#94a3b8]">核心主题</p><p class="mt-1 font-semibold">逆境崛起 · 守护所爱</p></div>
-                    <div class="border-r border-[#e8eef7] last:border-r-0"><p class="text-[#94a3b8]">目标受众</p><p class="mt-1 font-semibold">男频受众 · 16-30岁</p></div>
-                    <div><p class="text-[#94a3b8]">故事类型</p><p class="mt-1 font-semibold">成长逆袭</p></div>
+                    <div class="border-r border-[#e8eef7] last:border-r-0"><p class="text-[#94a3b8]">题材</p><p class="mt-1 font-semibold">{{ analysis?.genre || '待解析' }}</p></div>
+                    <div class="border-r border-[#e8eef7] last:border-r-0"><p class="text-[#94a3b8]">核心主题</p><p class="mt-1 font-semibold">{{ analysis?.coreTheme || '待解析' }}</p></div>
+                    <div class="border-r border-[#e8eef7] last:border-r-0"><p class="text-[#94a3b8]">目标受众</p><p class="mt-1 font-semibold">{{ analysis?.targetAudience || '待解析' }}</p></div>
+                    <div><p class="text-[#94a3b8]">故事类型</p><p class="mt-1 font-semibold">{{ analysis?.storyType || '待解析' }}</p></div>
                   </div>
-                  <div class="mt-4 flex flex-wrap gap-2">
-                    <span v-for="tag in (analysis?.tags?.length ? analysis?.tags : ['废柴逆袭','天才崛起','宗门争斗','热血成长'])" :key="tag" class="rounded-full bg-[#eef5ff] px-3 py-1 text-xs font-semibold text-[#0f67ff]">{{ tag }}</span>
+                  <div v-if="analysis?.tags?.length" class="mt-4 flex flex-wrap gap-2">
+                    <span v-for="tag in analysis.tags" :key="tag" class="rounded-full bg-[#eef5ff] px-3 py-1 text-xs font-semibold text-[#0f67ff]">{{ tag }}</span>
                   </div>
                 </div>
               </article>
@@ -1358,7 +1090,7 @@ watch(() => props.projectDetail?.projectId, () => {
                   <h3 class="flex items-center gap-2 text-lg font-semibold"><BookOpen class="h-5 w-5 text-[#0f67ff]" /> 大纲</h3>
                   <button class="text-sm font-semibold text-[#0f67ff]" @click="openSuggestionDrawer('all')">查看详情 <ChevronRight class="inline h-4 w-4" /></button>
                 </div>
-                <p class="mt-4 text-[15px] leading-8 text-[#334155]">{{ analysis?.outline || '林辰被认为是废灵根，受尽冷眼与欺辱。在宗门试炼中，他意外获得古传承，从此踏上逆天改命、守护挚爱与宗门的道路。' }}</p>
+                <p class="mt-4 text-[15px] leading-8 text-[#334155]">{{ analysis?.outline || '暂无大纲内容，请先重新解析剧本。' }}</p>
               </article>
 
               <article class="rounded-[22px] border border-[#dfe8f6] bg-white p-6">
@@ -1366,7 +1098,7 @@ watch(() => props.projectDetail?.projectId, () => {
                   <h3 class="flex items-center gap-2 text-lg font-semibold"><Users class="h-5 w-5 text-[#0f67ff]" /> 人物小传</h3>
                   <button class="text-sm font-semibold text-[#0f67ff]" @click="activeTab = 'characters'">查看全部 <ChevronRight class="inline h-4 w-4" /></button>
                 </div>
-                <div class="mt-4 grid gap-4 md:grid-cols-3">
+                <div v-if="displayCharacterBios.length" class="mt-4 grid gap-4 md:grid-cols-3">
                   <div v-for="bio in displayCharacterBios.slice(0, 3)" :key="bio.key" class="rounded-[18px] border border-[#e2e8f0] bg-[#fbfdff] p-5">
                     <div class="flex items-start justify-between gap-3">
                       <div>
@@ -1381,6 +1113,9 @@ watch(() => props.projectDetail?.projectId, () => {
                     <p class="mt-3 text-sm leading-7 text-[#64748b]">{{ bio.summary }}</p>
                   </div>
                 </div>
+                <div v-else class="mt-4 rounded-[16px] border border-dashed border-[#cfe0f6] bg-[#f8fbff] p-6 text-sm text-[#64748b]">
+                  后端暂未返回人物小传，请重新解析剧本或检查模型输出的 character_bios 字段。
+                </div>
               </article>
 
               <article class="rounded-[22px] border border-[#dfe8f6] bg-white p-6">
@@ -1388,11 +1123,14 @@ watch(() => props.projectDetail?.projectId, () => {
                   <h3 class="flex items-center gap-2 text-lg font-semibold"><GitBranch class="h-5 w-5 text-[#0f67ff]" /> 分集剧情摘要</h3>
                   <button class="text-sm font-semibold text-[#0f67ff]" @click="activeTab = 'episodes'">查看完整结构 <ChevronRight class="inline h-4 w-4" /></button>
                 </div>
-                <div class="mt-4 grid gap-3 md:grid-cols-4">
-                  <div v-for="block in ['1-3集：废材逐出，觉醒传承','4-6集：初露锋芒，打脸反击','7-9集：宗门风波，真相初现','10-12集：决战巅峰，守护所爱']" :key="block" class="rounded-[16px] border border-[#e2e8f0] p-4 text-sm leading-6 text-[#475569]">
+                <div v-if="seasonProgressBlocks.length" class="mt-4 grid gap-3 md:grid-cols-4">
+                  <div v-for="(block, index) in seasonProgressBlocks" :key="block" class="rounded-[16px] border border-[#e2e8f0] p-4 text-sm leading-6 text-[#475569]">
                     <p class="font-semibold text-[#0f172a]">{{ block }}</p>
-                    <p class="mt-2">{{ episodeSummaries[(Number(block.slice(0, 1)) || 1) - 1]?.summary || '剧情继续推进，人物目标和外部压力逐步升级。' }}</p>
+                    <p class="mt-2">{{ episodeSummaries[index]?.summary || '暂无摘要' }}</p>
                   </div>
+                </div>
+                <div v-else class="mt-4 rounded-[16px] border border-dashed border-[#cfe0f6] bg-[#f8fbff] p-6 text-sm text-[#64748b]">
+                  后端暂未返回分集摘要，请重新解析剧本或检查 episode_summaries 字段。
                 </div>
               </article>
             </section>
@@ -1411,22 +1149,24 @@ watch(() => props.projectDetail?.projectId, () => {
               <div class="grid gap-4 md:grid-cols-3">
                 <article class="rounded-[18px] border border-[#dfe8f6] bg-white p-4">
                   <h4 class="font-semibold">人物详情</h4>
-                  <p class="mt-3 text-sm leading-7 text-[#475569]">{{ displayCharacterBios[0]?.name || '林辰' }}：{{ displayCharacterBios[0]?.summary || '青云宗外门弟子，废灵根少年。目标是逆天改命，守护所爱之人。' }}</p>
-                  <div class="mt-3 flex flex-wrap gap-2">
-                    <span v-for="trait in (displayCharacterBios[0]?.traits || ['坚韧不屈', '重情重义']).slice(0, 4)" :key="trait" class="rounded-full bg-[#eef5ff] px-2 py-1 text-xs text-[#0f67ff]">{{ trait }}</span>
+                  <p class="mt-3 text-sm leading-7 text-[#475569]">
+                    <template v-if="displayCharacterBios[0]">{{ displayCharacterBios[0].name }}：{{ displayCharacterBios[0].summary || '暂无人物摘要' }}</template>
+                    <template v-else>暂无人物详情，请重新解析剧本。</template>
+                  </p>
+                  <div v-if="displayCharacterBios[0]?.traits?.length" class="mt-3 flex flex-wrap gap-2">
+                    <span v-for="trait in displayCharacterBios[0].traits.slice(0, 4)" :key="trait" class="rounded-full bg-[#eef5ff] px-2 py-1 text-xs text-[#0f67ff]">{{ trait }}</span>
                   </div>
                 </article>
                 <article class="rounded-[18px] border border-[#dfe8f6] bg-white p-4">
                   <h4 class="font-semibold">关系摘要</h4>
-                  <ul class="mt-3 space-y-2 text-sm text-[#475569]">
-                    <li>林辰与赵磊：资源争夺形成敌对关系。</li>
-                    <li>林辰与长老：隐藏师徒线。</li>
-                    <li>林辰与苏清禾：互相扶持的同伴线。</li>
+                  <ul v-if="analysis?.characterRelationships?.summary?.length" class="mt-3 space-y-2 text-sm text-[#475569]">
+                    <li v-for="item in analysis.characterRelationships.summary" :key="item">{{ item }}</li>
                   </ul>
+                  <p v-else class="mt-3 text-sm text-[#64748b]">暂无关系摘要，请检查后端 character_relationships.summary。</p>
                 </article>
                 <article class="rounded-[18px] border border-[#dfe8f6] bg-white p-4">
                   <h4 class="font-semibold">人物弧光</h4>
-                  <div class="relative mt-5 grid grid-cols-4 gap-2 text-center">
+                  <div v-if="characterArcSteps.length" class="relative mt-5 grid grid-cols-4 gap-2 text-center">
                     <div class="absolute left-[12%] right-[12%] top-[22px] border-t border-dashed border-[#b9c9e7]" />
                     <div v-for="step in characterArcSteps" :key="step.title" class="relative">
                       <div class="relative z-10 mx-auto flex h-11 w-11 items-center justify-center rounded-full border bg-white" :class="step.tone">
@@ -1436,6 +1176,7 @@ watch(() => props.projectDetail?.projectId, () => {
                       <p class="mt-1 whitespace-pre-line text-xs leading-5 text-[#64748b]">{{ step.subtitle }}</p>
                     </div>
                   </div>
+                  <p v-else class="mt-3 text-sm text-[#64748b]">暂无人物弧光数据，请检查后端 arc_steps 字段。</p>
                 </article>
               </div>
             </section>
@@ -1700,7 +1441,7 @@ watch(() => props.projectDetail?.projectId, () => {
           <textarea
             v-model="suggestionAdjustmentInstruction"
             class="mt-4 h-28 w-full rounded-[16px] border border-[#dbe7f7] p-4 outline-none"
-            placeholder="补充要求：例如不要改变林辰人设，只调整事件顺序"
+            placeholder="补充要求：例如不要改变主角人设，只调整事件顺序"
           />
           <div class="mt-5 flex justify-end gap-3">
             <button class="rounded-[14px] border px-6 py-3" @click="suggestionAdjustVisible = false; resultAdjustVisible = false">取消</button>

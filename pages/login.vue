@@ -191,8 +191,10 @@ function handleSocialLogin(action: string): void {
 }
 
 function handleGuestExperience(): void {
-  // 游客体验先进入工作台，后续如果需要严格权限控制，再在中间件里统一拦截未登录用户。
-  router.push('/dashboard')
+  // 剧本解析、AI 优化和积分流水都依赖真实 user_id。
+  // 游客体验暂不进入工作台，避免和正式登录态混用造成积分显示/扣费错账。
+  clearFeedback()
+  errorMessage.value = '游客体验暂未开放，请使用手机号和验证码 123456 登录后继续。'
 }
 
 onMounted(async () => {
