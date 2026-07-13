@@ -169,7 +169,7 @@ onBeforeUnmount(() => {
       @click="toggleDropdown"
     >
       <div class="min-w-0 flex-1">
-        <p v-if="label" class="text-[11px] uppercase tracking-[0.2em] text-textMuted">
+        <p v-if="label" class="text-[11px] font-bold tracking-normal text-textMuted">
           {{ label }}
         </p>
         <div class="mt-1 flex items-center gap-2">

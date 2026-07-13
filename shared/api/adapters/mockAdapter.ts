@@ -13,6 +13,7 @@ import type {
   ApiResponse,
   DramaAssetGeneratePayload,
   DramaCreditPreviewPayload,
+  DramaEntryCreditPreviewPayload,
   DramaPropUpdatePayload,
   DramaProjectCreatePayload,
   DramaRoleUpdatePayload,
@@ -231,6 +232,30 @@ function createMockCreditPreview(payload: DramaCreditPreviewPayload): DramaCredi
     promptLoad: payload.action === 'storyboard_video' ? 'medium' : 'low',
     modeHint: 'drama',
     repairPatchSummary: payload.retryReason ? 'Mock 环境仅模拟单变量修复说明。' : ''
+  }
+}
+
+function createMockEntryCreditPreview(payload: DramaEntryCreditPreviewPayload): DramaCreditPreview {
+  const tokens = Math.max(1, payload.content.trim().length)
+  const requiredCredits = Math.max(1, Math.ceil(tokens / 1000))
+  const currentBalance = createMockAccountProfile().creditBalance
+  return {
+    action: 'analysis',
+    taskType: 'text',
+    provider: 'alibaba',
+    model: payload.model || 'mock-text-model',
+    requiredCredits,
+    currentBalance,
+    balanceAfter: Math.max(currentBalance - requiredCredits, 0),
+    sufficient: currentBalance >= requiredCredits,
+    quantity: tokens,
+    quantityUnit: 'token',
+    pricingSnapshot: { mocked: true, source: 'entry' },
+    message: `预计消耗 ${requiredCredits} 点（Mock 数据）。`,
+    warnings: [],
+    promptLoad: 'low',
+    modeHint: 'drama',
+    repairPatchSummary: ''
   }
 }
 
@@ -497,21 +522,49 @@ export const mockAdapter: ApiAdapter = {
     })
   },
 
-  async phoneLogin(phone: string, _code: string) {
+  async accountLogin(account: string, _password: string) {
     return ok({
       loggedIn: true,
       token: 'mock-token-123',
       expiresAt: '',
       user: {
         id: 'user-1',
-        nickname: `Mock 用户 ${phone.slice(-4)}`,
+        nickname: `Mock 用户 ${account.slice(0, 12)}`,
+        avatar: 'https://placehold.co/120x120/png'
+      }
+    } as AuthSession)
+  },
+
+  async accountRegister(payload: { account: string; password: string; code: string; nickname?: string }) {
+    // Mock 环境不校验真实短信服务，只保持和后端相同的登录态返回结构。
+    return ok({
+      loggedIn: true,
+      token: 'mock-token-123',
+      expiresAt: '',
+      user: {
+        id: 'user-1',
+        nickname: payload.nickname || `Mock 用户 ${payload.account.slice(0, 12)}`,
         avatar: 'https://placehold.co/120x120/png'
       }
     } as AuthSession)
   },
 
   async sendSmsCode(_phone: string) {
-    return ok({ status: 'ok', message: 'Mock 验证码已发送' })
+    return ok({ status: 'ok', message: 'Mock 固定验证码已生成', code: '123456' })
+  },
+
+  async phoneLogin(phone: string, code: string) {
+    // 兼容旧方法签名，Mock 环境同样按账号密码登录态返回。
+    return ok({
+      loggedIn: true,
+      token: 'mock-token-123',
+      expiresAt: '',
+      user: {
+        id: 'user-1',
+        nickname: `Mock 用户 ${phone.slice(0, 12)}`,
+        avatar: 'https://placehold.co/120x120/png'
+      }
+    } as AuthSession)
   },
 
   async getRuntimeConfig() {
@@ -774,6 +827,19 @@ export const mockAdapter: ApiAdapter = {
     }
     mockDramaProjectMap.set(projectId, next)
     return ok(next)
+  },
+
+  async previewDramaEntryCredits(payload: DramaEntryCreditPreviewPayload) {
+    await sleep(80)
+    return ok(createMockEntryCreditPreview(payload))
+  },
+
+  async previewDramaEntryFileCredits(file: File, payload?: { model?: string }) {
+    await sleep(80)
+    return ok(createMockEntryCreditPreview({
+      content: await file.text(),
+      model: payload?.model || ''
+    }))
   },
 
   async previewDramaCredits(_projectId: string, payload: DramaCreditPreviewPayload) {

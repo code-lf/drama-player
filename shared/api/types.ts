@@ -172,6 +172,11 @@ export interface DramaCreditPreviewPayload {
   retryReason?: StoryboardRetryReason
 }
 
+export interface DramaEntryCreditPreviewPayload {
+  content: string
+  model?: string
+}
+
 export interface DramaIntentRouterUpdatePayload {
   mode: DramaIntentMode
 }
@@ -283,8 +288,10 @@ export interface ApiAdapter {
   createProject(payload: { title?: string; category?: string }): Promise<ApiResponse<Project>>
   getWechatLoginTicket(): Promise<ApiResponse<WechatLoginTicket>>
   checkWechatLogin(ticketId: string): Promise<ApiResponse<AuthSession>>
+  accountLogin?(account: string, password: string): Promise<ApiResponse<AuthSession>>
+  accountRegister?(payload: { account: string; password: string; code: string; nickname?: string }): Promise<ApiResponse<AuthSession>>
+  sendSmsCode?(phone: string): Promise<ApiResponse<{ status: string; message: string; code?: string }>>
   phoneLogin?(phone: string, code: string): Promise<ApiResponse<AuthSession>>
-  sendSmsCode?(phone: string): Promise<ApiResponse<Record<string, unknown>>>
   getAccountProfile(): Promise<ApiResponse<AccountProfile>>
   getAccountCreditPackages(): Promise<ApiResponse<CreditPackage[]>>
   getAccountCreditLedgers(page?: number, pageSize?: number): Promise<ApiResponse<CreditLedgerPage>>
@@ -303,6 +310,8 @@ export interface ApiAdapter {
   getDramaProject(projectId: string): Promise<ApiResponse<DramaProjectDetail>>
   ingestDramaScript(projectId: string, payload: DramaScriptIngestPayload): Promise<ApiResponse<DramaProjectDetail>>
   ingestDramaScriptFile(projectId: string, file: File): Promise<ApiResponse<DramaProjectDetail>>
+  previewDramaEntryCredits(payload: DramaEntryCreditPreviewPayload): Promise<ApiResponse<DramaCreditPreview>>
+  previewDramaEntryFileCredits(file: File, payload?: { model?: string }): Promise<ApiResponse<DramaCreditPreview>>
   updateDramaIntentRouter(projectId: string, payload: DramaIntentRouterUpdatePayload): Promise<ApiResponse<DramaProjectDetail>>
   createDramaScriptOptimization(projectId: string, payload: DramaScriptOptimizationPayload): Promise<ApiResponse<DramaProjectDetail>>
   applyDramaScriptVersion(projectId: string, versionId: string): Promise<ApiResponse<DramaProjectDetail>>

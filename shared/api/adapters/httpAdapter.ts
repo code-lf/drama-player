@@ -33,6 +33,7 @@ import type {
   ApiResponse,
   DramaAssetGeneratePayload,
   DramaCreditPreviewPayload,
+  DramaEntryCreditPreviewPayload,
   DramaDeleteResult,
   DramaProjectCreatePayload,
   DramaPropUpdatePayload,
@@ -1187,28 +1188,32 @@ function createEmptyGraph(): CanvasGraph {
 async function request<T>(path: string, options?: Parameters<typeof $fetch<T>>[1]): Promise<T> {
   const config = useRuntimeConfig()
   const baseUrl = config.public.apiBase as string
-  // 后端当前通过 X-User-Id 判断“当前用户”。
-  // 注意：这里不能再使用 devUserId 兜底，否则用户未登录时也会读到测试账号，
-  // 会把“登录用户余额”和“开发兜底用户余额”混在一起，导致积分永远对不齐。
-  let resolvedUserId = ''
+  // 用户端接口统一通过后端签名 token 鉴权，不再把 user_id 明文交给浏览器透传。
   if (import.meta.client) {
     try {
       const authStore = useAuthStore()
-      resolvedUserId = authStore.session.user?.id || ''
+      const token = authStore.session.token || ''
+      if (token) {
+        const headers = {
+          ...((options?.headers as Record<string, string>) || {}),
+          Authorization: `Bearer ${token}`
+        }
+        return $fetch<T>(`${baseUrl}${path}`, {
+          ...options,
+          headers
+        })
+      }
     } catch {
-      resolvedUserId = ''
+      // 未初始化 Pinia 时继续按无登录态请求，由后端返回 401。
     }
   }
   const baseHeaders = {
     ...((options?.headers as Record<string, string>) || {})
   }
-  const headers = resolvedUserId
-    ? { ...baseHeaders, 'X-User-Id': resolvedUserId }
-    : baseHeaders
 
   return $fetch<T>(`${baseUrl}${path}`, {
     ...options,
-    headers
+    headers: baseHeaders
   })
 }
 
@@ -1339,19 +1344,36 @@ export const httpAdapter: ApiAdapter = {
     return ok(mapProductImageGenerateResult(response))
   },
 
-  async phoneLogin(phone: string, code: string) {
-    const res = await request<any>('/auth/phone/login', {
+  async accountLogin(account: string, password: string) {
+    const res = await request<any>('/auth/account/login', {
       method: 'POST',
-      body: { phone, code }
+      body: { account, password }
     })
     return ok({
       loggedIn: true,
       token: res.token,
-      expiresAt: '',
+      expiresAt: res.expires_at || '',
       user: {
         id: res.user_id,
-        nickname: `用户_${phone.slice(-4)}`,
-        avatar: 'https://placehold.co/120x120/png'
+        nickname: res.nickname || '测试创作者',
+        avatar: res.avatar_url || ''
+      }
+    } as AuthSession)
+  },
+
+  async accountRegister(payload: { account: string; password: string; code: string; nickname?: string }) {
+    const res = await request<any>('/auth/account/register', {
+      method: 'POST',
+      body: payload
+    })
+    return ok({
+      loggedIn: true,
+      token: res.token,
+      expiresAt: res.expires_at || '',
+      user: {
+        id: res.user_id,
+        nickname: res.nickname || '创作者',
+        avatar: res.avatar_url || ''
       }
     } as AuthSession)
   },
@@ -1361,7 +1383,29 @@ export const httpAdapter: ApiAdapter = {
       method: 'POST',
       body: { phone }
     })
-    return ok(res)
+    return ok({
+      status: res.status || 'ok',
+      message: res.message || '验证码已生成',
+      code: res.code
+    })
+  },
+
+  async phoneLogin(phone: string, code: string) {
+    // 兼容旧组件调用：后端已关闭验证码登录，这里把第二参数按密码透传到兼容接口。
+    const res = await request<any>('/auth/phone/login', {
+      method: 'POST',
+      body: { phone, password: code }
+    })
+    return ok({
+      loggedIn: true,
+      token: res.token,
+      expiresAt: res.expires_at || '',
+      user: {
+        id: res.user_id,
+        nickname: res.nickname || '测试创作者',
+        avatar: res.avatar_url || ''
+      }
+    } as AuthSession)
   },
 
   async getRuntimeConfig() {
@@ -1512,6 +1556,28 @@ export const httpAdapter: ApiAdapter = {
       body
     })
     return ok(mapDramaDetail(response))
+  },
+
+  async previewDramaEntryCredits(payload: DramaEntryCreditPreviewPayload) {
+    const response = await request<BackendDramaCreditPreviewResponse>('/drama/entry-credit-preview', {
+      method: 'POST',
+      body: {
+        content: payload.content,
+        model: payload.model || ''
+      }
+    })
+    return ok(mapDramaCreditPreview(response))
+  },
+
+  async previewDramaEntryFileCredits(file: File, payload?: { model?: string }) {
+    const body = new FormData()
+    body.append('file', file)
+    if (payload?.model) body.append('model', payload.model)
+    const response = await request<BackendDramaCreditPreviewResponse>('/drama/entry-credit-preview/file', {
+      method: 'POST',
+      body
+    })
+    return ok(mapDramaCreditPreview(response))
   },
 
   async updateDramaIntentRouter(projectId: string, payload: { mode: DramaIntentMode }) {

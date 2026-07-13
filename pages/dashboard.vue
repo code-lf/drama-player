@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { DramaProjectCard, DramaProjectDetail, DramaRuntimeConfig } from '~/entities/drama/types'
+import type { DramaCreditPreview, DramaProjectCard, DramaProjectDetail, DramaRuntimeConfig } from '~/entities/drama/types'
 import AnnouncementWorkspacePanel from '~/features/dashboard/components/AnnouncementWorkspacePanel.vue'
 import BillingWorkspacePanel from '~/features/billing/components/BillingWorkspacePanel.vue'
 import CreditAccountPopover from '~/features/billing/components/CreditAccountPopover.vue'
@@ -62,6 +62,9 @@ const scriptFileName = ref('')
 const scriptInputMode = ref<ScriptInputMode>('file')
 const selectedScriptFile = ref<File | null>(null)
 const scriptFileInputRef = ref<HTMLInputElement | null>(null)
+const entryCreditPreview = ref<DramaCreditPreview | null>(null)
+const entryCreditPreviewLoading = ref(false)
+const entryCreditPreviewError = ref('')
 const loadingText = ref('正在准备控制台...')
 const busyKey = ref('')
 const errorMessage = ref('')
@@ -98,6 +101,8 @@ const activeProjectMenuId = ref('')
 const maxScriptCharacterCount = 20_000
 const maxScriptFileSize = 20 * 1024 * 1024
 const allowedScriptExtensions = ['txt', 'docx', 'pdf']
+let entryCreditPreviewTimer: ReturnType<typeof setTimeout> | null = null
+let entryCreditPreviewSequence = 0
 
 // 内容类型决定后续 AI 用哪套分析标准；作品风格只决定视觉表达，两者不要混成一个字段。
 const creativeIntentOptions: Array<{
@@ -300,6 +305,24 @@ const canSubmitCreativeInput = computed(() => {
   if (scriptInputMode.value === 'file') return Boolean(selectedScriptFile.value)
   return Boolean(scriptDraft.value.trim()) && !scriptCharacterExceeded.value
 })
+const hasEntryCreditPreviewSource = computed(() => {
+  if (scriptInputMode.value === 'file') return Boolean(selectedScriptFile.value)
+  return Boolean(scriptDraft.value.trim()) && !scriptCharacterExceeded.value
+})
+const entryCreditPreviewVisible = computed(() => hasEntryCreditPreviewSource.value || entryCreditPreviewLoading.value)
+const entryCreditPreviewLabel = computed(() => {
+  if (!hasEntryCreditPreviewSource.value) return ''
+  if (entryCreditPreviewLoading.value) return '正在预估积分...'
+  if (entryCreditPreviewError.value) return entryCreditPreviewError.value
+  if (!entryCreditPreview.value) return '等待预估积分'
+  const prefix = `预计消耗 ${entryCreditPreview.value.requiredCredits} 积分`
+  return entryCreditPreview.value.sufficient ? prefix : `${prefix}，余额不足`
+})
+const entryCreditPreviewToneClass = computed(() => {
+  if (entryCreditPreviewError.value) return 'bg-rose-50 text-rose-500'
+  if (entryCreditPreview.value && !entryCreditPreview.value.sufficient) return 'bg-amber-50 text-amber-600'
+  return 'bg-[#edf5ff] text-[#72a0dd]'
+})
 const recentProjectCards = computed(() => projectItems.value.slice(0, 4))
 const userAvatarUrl = computed(() => authStore.session.user?.avatar || 'https://api.dicebear.com/7.x/avataaars/svg?seed=livliv-admin')
 const userNickname = computed(() => authStore.session.user?.nickname || '管理员开发者')
@@ -386,6 +409,54 @@ function selectVisualStyle(value: string): void {
   selectedVisualStyle.value = value
   isVisualStyleMenuOpen.value = false
   isCreativeIntentMenuOpen.value = false
+}
+
+function resetEntryCreditPreview(): void {
+  entryCreditPreview.value = null
+  entryCreditPreviewLoading.value = false
+  entryCreditPreviewError.value = ''
+  entryCreditPreviewSequence += 1
+}
+
+function scheduleEntryCreditPreview(): void {
+  if (entryCreditPreviewTimer) clearTimeout(entryCreditPreviewTimer)
+  if (!hasEntryCreditPreviewSource.value) {
+    resetEntryCreditPreview()
+    return
+  }
+
+  entryCreditPreviewError.value = ''
+  entryCreditPreviewLoading.value = true
+  const requestSequence = ++entryCreditPreviewSequence
+  // 文本输入会频繁变化，稍微延迟请求，避免每敲一个字都打到后端。
+  entryCreditPreviewTimer = setTimeout(() => {
+    void refreshEntryCreditPreview(requestSequence)
+  }, scriptInputMode.value === 'text' ? 520 : 80)
+}
+
+async function refreshEntryCreditPreview(requestSequence: number): Promise<void> {
+  try {
+    const preview = scriptInputMode.value === 'file' && selectedScriptFile.value
+      ? await dramaService.previewEntryFileCredits(selectedScriptFile.value, { model: selectedTextModel.value })
+      : await dramaService.previewEntryCredits({
+          content: scriptDraft.value.trim(),
+          model: selectedTextModel.value
+        })
+
+    if (requestSequence !== entryCreditPreviewSequence) return
+    entryCreditPreview.value = preview
+    entryCreditPreviewError.value = ''
+  } catch (error) {
+    if (requestSequence !== entryCreditPreviewSequence) return
+    // 入口预估失败只影响提示，不阻断用户创建；真正扣点仍以后端执行时校验为准。
+    console.warn('[livliv] 首页入口积分预估失败', error)
+    entryCreditPreview.value = null
+    entryCreditPreviewError.value = '暂未完成积分预估'
+  } finally {
+    if (requestSequence === entryCreditPreviewSequence) {
+      entryCreditPreviewLoading.value = false
+    }
+  }
 }
 
 function toggleCreativeIntentMenu(): void {
@@ -658,7 +729,20 @@ async function ingestAndAnalyze(): Promise<void> {
   )
   if (!ingested) return
 
-  currentDramaProject.value = ingested
+  const analyzing = await runAction(
+    'analyze',
+    () =>
+      dramaService.analyze(created.projectId, {
+        model: selectedTextModel.value,
+        aspectRatio: selectedAspectRatio.value,
+        resolution: selectedResolution.value,
+        style: effectiveVisualStyle.value
+      }),
+    '剧本解析已启动，正在进入流程页。'
+  )
+  if (!analyzing) return
+
+  currentDramaProject.value = analyzing
   await router.push({
     path: `/drama/${created.projectId}`,
     query: {
@@ -864,6 +948,14 @@ watch(videoModelOptions, (options) => {
 }, { immediate: true })
 
 watch(
+  [scriptInputMode, scriptDraft, selectedScriptFile, selectedTextModel],
+  () => {
+    scheduleEntryCreditPreview()
+  },
+  { immediate: true }
+)
+
+watch(
   () => route.path,
   (path) => {
     syncWorkspaceRouteState(path)
@@ -931,6 +1023,7 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  if (entryCreditPreviewTimer) clearTimeout(entryCreditPreviewTimer)
   document.removeEventListener('click', handleDashboardDocumentClick)
 })
 </script>
@@ -1302,8 +1395,8 @@ onBeforeUnmount(() => {
                     </div>
                   </div>
 
-                  <UiBaseSelect v-model="selectedAspectRatio" :options="aspectRatioOptions" placeholder="画面比例" size="sm" class="min-w-0" />
-                  <UiBaseSelect v-model="selectedResolution" :options="resolutionOptions" placeholder="清晰度" size="sm" class="min-w-0" />
+                  <UiBaseSelect v-model="selectedAspectRatio" :options="aspectRatioOptions" label="画面比例" placeholder="画面比例" size="sm" class="min-w-0" />
+                  <UiBaseSelect v-model="selectedResolution" :options="resolutionOptions" label="清晰度" placeholder="清晰度" size="sm" class="min-w-0" />
                 </div>
               </div>
 
@@ -1323,7 +1416,13 @@ onBeforeUnmount(() => {
                   </svg>
                   <span>{{ busyKey === 'ingest' || busyKey === 'analyze' || busyKey === 'create-drama' ? '解析中...' : heroCopy.cta }}</span>
                 </button>
-                <span class="mt-2 rounded-full bg-[#edf5ff] px-5 py-1.5 text-[12px] font-black text-[#72a0dd]">预计消耗 20 积分</span>
+                <span
+                  v-if="entryCreditPreviewVisible"
+                  class="mt-2 rounded-full px-5 py-1.5 text-[12px] font-black"
+                  :class="entryCreditPreviewToneClass"
+                >
+                  {{ entryCreditPreviewLabel }}
+                </span>
                 <button class="mt-5 text-[17px] font-black text-[#005FFE]" type="button">
                   没有剧本？AI 帮我创作
                   <span class="ml-2">→</span>

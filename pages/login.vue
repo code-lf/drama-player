@@ -1,52 +1,43 @@
 <script setup lang="ts">
 import {
   Check,
-  ChevronRight,
   Eye,
   EyeOff,
   Lock,
-  Mail,
-  ShieldCheck,
   UserRound
 } from '@lucide/vue'
 import { authService } from '~/shared/api/services/authService'
 import { useAuthStore } from '~/features/auth/store/useAuthStore'
 import { useAccountStore } from '~/features/billing/store/useAccountStore'
 
-type LoginTab = 'account' | 'scan'
-
 const router = useRouter()
 const route = useRoute()
 const authStore = useAuthStore()
 const accountStore = useAccountStore()
 
-const loginTab = ref<LoginTab>('account')
+type AuthMode = 'login' | 'register'
+
+const authMode = ref<AuthMode>('login')
 const account = ref('')
+const nickname = ref('')
 const password = ref('')
 const verifyCode = ref('')
 const rememberMe = ref(true)
 const showPassword = ref(false)
-const sendingCode = ref(false)
 const loggingIn = ref(false)
-const countdown = ref(0)
+const sendingCode = ref(false)
 const errorMessage = ref('')
 const successMessage = ref('')
-
-let countdownTimer: ReturnType<typeof setInterval> | null = null
 
 const redirectPath = computed(() => {
   const redirect = route.query.redirect
   return typeof redirect === 'string' && redirect.startsWith('/') ? redirect : '/dashboard'
 })
 
-const codeButtonText = computed(() => {
-  if (sendingCode.value) return '发送中...'
-  if (countdown.value > 0) return `${countdown.value}s 后重试`
-  return '获取验证码'
-})
-
 const canSubmit = computed(() => {
-  return account.value.trim().length > 0 && verifyCode.value.trim().length > 0 && !loggingIn.value
+  const baseReady = account.value.trim().length > 0 && password.value.trim().length > 0 && !loggingIn.value
+  if (authMode.value === 'login') return baseReady
+  return baseReady && verifyCode.value.trim().length > 0
 })
 
 const featureItems = [
@@ -82,85 +73,65 @@ const footerHighlights = [
   }
 ]
 
-const socialLogins = [
-  {
-    label: '微信登录',
-    image: '/login/wechat.png',
-    action: 'wechat'
-  },
-  {
-    label: 'QQ 登录',
-    image: '/login/qq.png',
-    action: 'qq'
-  },
-  {
-    label: '抖音登录',
-    image: '/login/douyin.png',
-    action: 'douyin'
-  }
-]
-
 function clearFeedback(): void {
   errorMessage.value = ''
   successMessage.value = ''
 }
 
-function isPhoneAccount(value: string): boolean {
-  return /^1[3-9]\d{9}$/.test(value.trim())
-}
-
-function startCountdown(): void {
-  countdown.value = 60
-  if (countdownTimer) clearInterval(countdownTimer)
-
-  countdownTimer = setInterval(() => {
-    countdown.value -= 1
-    if (countdown.value <= 0 && countdownTimer) {
-      clearInterval(countdownTimer)
-      countdownTimer = null
-    }
-  }, 1000)
+function switchAuthMode(mode: AuthMode): void {
+  authMode.value = mode
+  clearFeedback()
 }
 
 async function sendVerifyCode(): Promise<void> {
   clearFeedback()
 
-  if (!isPhoneAccount(account.value)) {
-    errorMessage.value = '请输入 11 位手机号后再获取验证码。'
+  if (!account.value.trim()) {
+    errorMessage.value = '请输入账号后再获取验证码。'
     return
   }
 
-  if (countdown.value > 0) return
-
   sendingCode.value = true
   try {
-    await authService.sendSmsCode(account.value.trim())
-    successMessage.value = '验证码已发送，请查看短信。'
-    startCountdown()
+    // 当前后端是本地固定验证码，正式短信接入后这里仍复用同一个发送入口。
+    const result = await authService.sendSmsCode(account.value.trim())
+    successMessage.value = result.code ? `${result.message}：${result.code}` : result.message
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '验证码发送失败，请稍后重试。'
+    errorMessage.value = error instanceof Error ? error.message : '验证码获取失败，请稍后重试。'
   } finally {
     sendingCode.value = false
   }
 }
 
-async function submitLogin(): Promise<void> {
+async function submitAuth(): Promise<void> {
   clearFeedback()
 
-  if (!isPhoneAccount(account.value)) {
-    errorMessage.value = '当前账号登录先支持手机号登录，请输入正确手机号。'
+  if (!account.value.trim()) {
+    errorMessage.value = '请输入账号。'
     return
   }
 
-  if (!verifyCode.value.trim()) {
+  if (!password.value.trim()) {
+    errorMessage.value = '请输入密码。'
+    return
+  }
+
+  if (authMode.value === 'register' && !verifyCode.value.trim()) {
     errorMessage.value = '请输入验证码。'
     return
   }
 
   loggingIn.value = true
   try {
-    // 当前后端真实可用的是“手机号 + 验证码”登录；密码字段先保留用于贴合设计稿和后续扩展。
-    const session = await authService.phoneLogin(account.value.trim(), verifyCode.value.trim())
+    // 登录和注册都会返回统一 session，页面层只负责应用登录态与跳转。
+    const session = authMode.value === 'register'
+      ? await authService.accountRegister({
+          account: account.value.trim(),
+          password: password.value.trim(),
+          code: verifyCode.value.trim(),
+          nickname: nickname.value.trim()
+        })
+      : await authService.accountLogin(account.value.trim(), password.value.trim())
     authStore.applySession(session)
 
     try {
@@ -173,28 +144,12 @@ async function submitLogin(): Promise<void> {
 
     await router.push(redirectPath.value)
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '登录失败，请检查验证码后重试。'
+    errorMessage.value = error instanceof Error ? error.message : authMode.value === 'register'
+      ? '注册失败，请检查账号、密码和验证码后重试。'
+      : '登录失败，请检查账号和密码后重试。'
   } finally {
     loggingIn.value = false
   }
-}
-
-function handleSocialLogin(action: string): void {
-  clearFeedback()
-
-  if (action === 'wechat') {
-    loginTab.value = 'scan'
-    return
-  }
-
-  successMessage.value = `${action === 'qq' ? 'QQ' : '抖音'} 登录即将接入，当前可先使用手机号验证码登录。`
-}
-
-function handleGuestExperience(): void {
-  // 剧本解析、AI 优化和积分流水都依赖真实 user_id。
-  // 游客体验暂不进入工作台，避免和正式登录态混用造成积分显示/扣费错账。
-  clearFeedback()
-  errorMessage.value = '游客体验暂未开放，请使用手机号和验证码 123456 登录后继续。'
 }
 
 onMounted(async () => {
@@ -209,9 +164,6 @@ onMounted(async () => {
   }
 })
 
-onBeforeUnmount(() => {
-  if (countdownTimer) clearInterval(countdownTimer)
-})
 </script>
 
 <template>
@@ -232,7 +184,7 @@ onBeforeUnmount(() => {
         <div class="hero-copy">
           <h1>
             登录 Livliv，开启你的
-            <span>AI 短剧创作</span>
+            <span class="hero-title-line"><em>AI</em> 短剧创作</span>
           </h1>
           <p>从灵感到成片，AI 助你高效创作</p>
         </div>
@@ -274,26 +226,36 @@ onBeforeUnmount(() => {
         <div class="panel-tabs">
           <button
             class="panel-tab"
-            :class="{ active: loginTab === 'account' }"
+            :class="{ active: authMode === 'login' }"
             type="button"
-            @click="loginTab = 'account'"
+            @click="switchAuthMode('login')"
           >
-            账号登录
+            登录
           </button>
           <button
             class="panel-tab"
-            :class="{ active: loginTab === 'scan' }"
+            :class="{ active: authMode === 'register' }"
             type="button"
-            @click="loginTab = 'scan'"
+            @click="switchAuthMode('register')"
           >
-            扫码登录
+            注册
           </button>
         </div>
 
-        <form v-if="loginTab === 'account'" class="login-form" @submit.prevent="submitLogin">
+        <div class="panel-heading">
+          <h2>{{ authMode === 'login' ? '账号登录' : '账号注册' }}</h2>
+          <p>{{ authMode === 'login' ? '使用账号密码进入 Livliv 创作工作台' : '注册后即可开始短剧创作' }}</p>
+        </div>
+
+        <form class="login-form" @submit.prevent="submitAuth">
           <label class="input-shell">
             <UserRound class="field-icon" />
-            <input v-model.trim="account" type="text" placeholder="手机号 / 邮箱" autocomplete="username" />
+            <input v-model.trim="account" type="text" placeholder="账号" autocomplete="username" />
+          </label>
+
+          <label v-if="authMode === 'register'" class="input-shell">
+            <UserRound class="field-icon" />
+            <input v-model.trim="nickname" type="text" placeholder="昵称（可选）" autocomplete="nickname" />
           </label>
 
           <label class="input-shell">
@@ -310,11 +272,11 @@ onBeforeUnmount(() => {
             </button>
           </label>
 
-          <label class="input-shell code-shell">
-            <ShieldCheck class="field-icon" />
+          <label v-if="authMode === 'register'" class="input-shell code-shell">
+            <Lock class="field-icon" />
             <input v-model.trim="verifyCode" type="text" placeholder="验证码" autocomplete="one-time-code" />
-            <button class="code-button" type="button" :disabled="sendingCode || countdown > 0" @click="sendVerifyCode">
-              {{ codeButtonText }}
+            <button class="code-button" type="button" :disabled="sendingCode" @click="sendVerifyCode">
+              {{ sendingCode ? '生成中...' : '获取验证码' }}
             </button>
           </label>
 
@@ -330,54 +292,17 @@ onBeforeUnmount(() => {
               <input v-model="rememberMe" type="checkbox" />
               <span>记住我</span>
             </label>
-            <button type="button">忘记密码？</button>
           </div>
 
           <button class="submit-button" type="submit" :disabled="!canSubmit">
-            {{ loggingIn ? '登录中...' : '登录' }}
+            {{ loggingIn ? (authMode === 'register' ? '注册中...' : '登录中...') : (authMode === 'register' ? '注册并登录' : '登录') }}
           </button>
-
-          <div class="divider">
-            <span />
-            <em>其他登录方式</em>
-            <span />
-          </div>
-
-          <div class="social-row">
-            <button
-              v-for="item in socialLogins"
-              :key="item.action"
-              class="social-button"
-              type="button"
-              @click="handleSocialLogin(item.action)"
-            >
-              <img :src="item.image" :alt="item.label" />
-              <span>{{ item.label }}</span>
-            </button>
-          </div>
         </form>
 
-        <div v-else class="scan-login">
-          <div class="scan-card">
-            <div class="scan-grid">
-              <Mail class="h-12 w-12 text-[#0b6bff]" />
-            </div>
-          </div>
-          <h2>使用微信扫码登录</h2>
-          <p>扫码成功后，请在手机端确认登录 Livliv。</p>
-          <button class="submit-button" type="button" @click="loginTab = 'account'">
-            返回账号登录
-          </button>
-        </div>
-
         <div class="panel-footer">
-          <span>还没有账号？</span>
-          <button type="button" @click="successMessage = '注册能力即将开放，当前可直接使用验证码登录。'">
-            立即注册
-          </button>
-          <button class="guest-link" type="button" @click="handleGuestExperience">
-            游客体验
-            <ChevronRight class="h-4 w-4" />
+          <span>{{ authMode === 'login' ? '还没有账号？' : '已有账号？' }}</span>
+          <button type="button" @click="switchAuthMode(authMode === 'login' ? 'register' : 'login')">
+            {{ authMode === 'login' ? '立即注册' : '返回登录' }}
           </button>
         </div>
       </aside>
@@ -397,10 +322,10 @@ onBeforeUnmount(() => {
   position: relative;
   display: grid;
   min-height: 100vh;
-  grid-template-columns: minmax(0, 1fr) minmax(420px, 640px);
-  gap: clamp(40px, 5vw, 96px);
+  grid-template-columns: minmax(560px, 1fr) 520px;
+  gap: clamp(52px, 6vw, 96px);
   align-items: center;
-  padding: clamp(32px, 5vw, 72px) clamp(28px, 6vw, 96px);
+  padding: 42px clamp(48px, 5.8vw, 96px) 24px;
 }
 
 .hero-bg,
@@ -411,15 +336,16 @@ onBeforeUnmount(() => {
 }
 
 .hero-bg {
+  /* 背景图本身保持清晰，只加极轻的左侧压暗，避免遮罩让图片发灰发糊。 */
   background:
-    linear-gradient(90deg, rgba(2, 12, 35, 0.92) 0%, rgba(4, 24, 64, 0.72) 42%, rgba(7, 57, 130, 0.3) 100%),
+    linear-gradient(90deg, rgba(2, 12, 35, 0.38) 0%, rgba(5, 35, 87, 0.16) 36%, rgba(35, 112, 207, 0) 68%),
     url('/login/login-bg.png') center / cover no-repeat;
 }
 
 .hero-vignette {
+  /* 去掉大面积雾化层，仅在底部保留很淡的暗角托住版权文字。 */
   background:
-    radial-gradient(circle at 31% 24%, rgba(39, 145, 255, 0.24), transparent 36%),
-    linear-gradient(180deg, rgba(0, 0, 0, 0) 70%, rgba(1, 8, 24, 0.56) 100%);
+    linear-gradient(180deg, rgba(0, 0, 0, 0) 78%, rgba(1, 8, 24, 0.16) 100%);
 }
 
 .hero-content,
@@ -430,7 +356,7 @@ onBeforeUnmount(() => {
 
 .hero-content {
   display: flex;
-  min-height: calc(100vh - 120px);
+  min-height: calc(100vh - 66px);
   flex-direction: column;
   justify-content: space-between;
 }
@@ -439,108 +365,116 @@ onBeforeUnmount(() => {
   display: inline-flex;
   width: max-content;
   align-items: center;
-  gap: 16px;
+  gap: 14px;
   color: #ffffff;
   text-decoration: none;
 }
 
 .brand-logo {
-  height: 56px;
-  width: 56px;
-  border-radius: 16px;
+  height: 54px;
+  width: 54px;
+  border-radius: 14px;
   object-fit: cover;
-  box-shadow: 0 18px 44px rgba(0, 111, 255, 0.38);
+  box-shadow: 0 14px 36px rgba(0, 111, 255, 0.3);
 }
 
 .brand-name {
-  font-size: 34px;
+  font-size: 36px;
   font-weight: 900;
-  letter-spacing: -0.04em;
+  letter-spacing: 0;
   line-height: 1;
 }
 
 .brand-subtitle {
-  margin-top: 8px;
+  margin-top: 7px;
   color: rgba(228, 239, 255, 0.92);
   font-size: 18px;
   font-weight: 700;
 }
 
 .hero-copy {
-  margin-top: 78px;
+  margin-top: 66px;
 }
 
 .hero-copy h1 {
-  max-width: 660px;
-  font-size: clamp(48px, 5vw, 76px);
+  max-width: 690px;
+  font-size: clamp(42px, 3.9vw, 58px);
   font-weight: 950;
-  letter-spacing: -0.045em;
-  line-height: 1.28;
+  letter-spacing: 0;
+  line-height: 1.32;
   text-shadow: 0 18px 54px rgba(0, 20, 62, 0.48);
 }
 
-.hero-copy h1 span {
+.hero-copy h1 .hero-title-line {
   display: block;
-  background: linear-gradient(90deg, #75d5ff 0%, #ffffff 58%);
+  color: #ffffff;
+}
+
+.hero-copy h1 em {
+  display: inline-block;
+  padding-right: 0.08em;
+  background: linear-gradient(180deg, #78dcff 0%, #49bbff 46%, #b7ecff 100%);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
+  font-style: normal;
+  text-shadow: 0 0 30px rgba(73, 187, 255, 0.42);
 }
 
 .hero-copy p {
-  margin-top: 28px;
+  margin-top: 24px;
   color: rgba(235, 245, 255, 0.9);
-  font-size: 24px;
+  font-size: 22px;
   font-weight: 700;
-  letter-spacing: 0.04em;
+  letter-spacing: 0;
 }
 
 .feature-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 28px;
-  margin-top: 56px;
+  gap: 46px;
+  margin-top: 38px;
 }
 
 .feature-card {
   display: inline-flex;
   align-items: center;
-  gap: 14px;
-  min-width: 176px;
+  gap: 12px;
+  min-width: 142px;
   padding: 8px 4px;
 }
 
 .feature-card img {
-  height: 58px;
-  width: 58px;
-  border-radius: 18px;
+  height: 52px;
+  width: 52px;
+  border-radius: 14px;
   object-fit: cover;
-  box-shadow: 0 18px 40px rgba(0, 112, 255, 0.32);
+  box-shadow: 0 14px 34px rgba(0, 112, 255, 0.26);
 }
 
 .feature-card strong,
 .footer-pill strong {
   display: block;
   color: #ffffff;
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 900;
 }
 
 .feature-card span,
 .footer-pill span {
   display: block;
-  margin-top: 5px;
+  margin-top: 4px;
   color: rgba(220, 235, 255, 0.72);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
 }
 
 .hero-footer {
   display: flex;
   flex-wrap: wrap;
-  gap: 42px;
+  gap: clamp(48px, 6.8vw, 92px);
   margin-top: auto;
-  padding-top: 86px;
+  padding-top: 74px;
 }
 
 .footer-pill {
@@ -551,8 +485,8 @@ onBeforeUnmount(() => {
 
 .footer-icon {
   display: grid;
-  height: 46px;
-  width: 46px;
+  height: 44px;
+  width: 44px;
   place-items: center;
   border: 1px solid rgba(208, 230, 255, 0.28);
   border-radius: 999px;
@@ -565,9 +499,9 @@ onBeforeUnmount(() => {
   flex-wrap: wrap;
   gap: 14px;
   align-items: center;
-  margin-top: 26px;
+  margin-top: 24px;
   color: rgba(212, 226, 250, 0.62);
-  font-size: 14px;
+  font-size: 13px;
 }
 
 .copyright span {
@@ -578,23 +512,23 @@ onBeforeUnmount(() => {
 
 .login-panel {
   justify-self: end;
-  width: min(100%, 620px);
-  min-height: 700px;
+  width: min(100%, 520px);
+  min-height: 560px;
   overflow: hidden;
   border: 1px solid rgba(223, 232, 249, 0.86);
-  border-radius: 30px;
+  border-radius: 24px;
   background: linear-gradient(145deg, rgba(255, 255, 255, 0.98), rgba(247, 251, 255, 0.94));
   box-shadow: 0 34px 90px rgba(3, 20, 55, 0.28);
   color: #10203f;
-  padding: 58px 62px 36px;
+  padding: 40px 42px 30px;
 }
 
 .qr-corner {
   position: absolute;
   right: 0;
   top: 0;
-  height: 106px;
-  width: 106px;
+  height: 84px;
+  width: 84px;
   object-fit: cover;
   pointer-events: none;
 }
@@ -602,17 +536,39 @@ onBeforeUnmount(() => {
 .panel-tabs {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 26px;
-  margin: 0 auto 40px;
-  width: 360px;
+  gap: 48px;
+  margin: 2px auto 32px;
+  width: 320px;
+}
+
+.panel-heading {
+  margin: 0 auto 32px;
+  max-width: 390px;
+  text-align: center;
+}
+
+.panel-heading h2 {
+  color: #10203f;
+  font-size: 28px;
+  font-weight: 950;
+  line-height: 1.15;
+  letter-spacing: 0;
+}
+
+.panel-heading p {
+  margin-top: 10px;
+  color: #6f7f98;
+  font-size: 14px;
+  font-weight: 700;
 }
 
 .panel-tab {
   position: relative;
-  height: 54px;
+  height: 44px;
   color: #7f8ba3;
-  font-size: 24px;
+  font-size: 21px;
   font-weight: 900;
+  letter-spacing: 0;
   transition: color 0.18s ease;
 }
 
@@ -625,7 +581,7 @@ onBeforeUnmount(() => {
   bottom: 2px;
   left: 50%;
   height: 3px;
-  width: 92px;
+  width: 82px;
   border-radius: 999px;
   background: #0b6bff;
   content: '';
@@ -635,14 +591,14 @@ onBeforeUnmount(() => {
 .login-form {
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: 18px;
 }
 
 .input-shell {
   display: flex;
   align-items: center;
-  height: 76px;
-  gap: 16px;
+  height: 58px;
+  gap: 12px;
   border: 1px solid #dce5f2;
   border-radius: 15px;
   background: #ffffff;
@@ -651,8 +607,8 @@ onBeforeUnmount(() => {
 }
 
 .field-icon {
-  height: 25px;
-  width: 25px;
+  height: 20px;
+  width: 20px;
   flex: 0 0 auto;
   color: #9aa9bf;
 }
@@ -663,7 +619,7 @@ onBeforeUnmount(() => {
   border: 0;
   outline: none;
   color: #10203f;
-  font-size: 19px;
+  font-size: 16px;
   font-weight: 700;
 }
 
@@ -676,12 +632,12 @@ onBeforeUnmount(() => {
 }
 
 .code-button {
-  min-width: 130px;
-  height: 44px;
+  min-width: 108px;
+  height: 36px;
   border-radius: 12px;
   background: #f3f7ff;
   color: #0b6bff;
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 800;
 }
 
@@ -713,7 +669,7 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: space-between;
   color: #6f7f98;
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 700;
 }
 
@@ -737,12 +693,12 @@ onBeforeUnmount(() => {
 
 .submit-button {
   display: grid;
-  height: 74px;
+  height: 58px;
   place-items: center;
   border-radius: 14px;
   background: linear-gradient(180deg, #247cff 0%, #0b5fff 100%);
   color: #ffffff;
-  font-size: 24px;
+  font-size: 20px;
   font-weight: 900;
   box-shadow: 0 18px 34px rgba(7, 91, 255, 0.28);
   transition: transform 0.16s ease, opacity 0.16s ease;
@@ -852,9 +808,9 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-top: 38px;
+  margin-top: 26px;
   color: #596982;
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 700;
 }
 

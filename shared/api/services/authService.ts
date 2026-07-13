@@ -10,11 +10,19 @@ export const authService = {
     return callApi('auth/pollWechatLogin', (adapter) => adapter.checkWechatLogin(ticketId))
   },
 
-  async phoneLogin(phone: string, code: string) {
-    return callApi('auth/phoneLogin', (adapter: any) => adapter.phoneLogin(phone, code))
+  async accountLogin(account: string, password: string) {
+    return callApi('auth/accountLogin', (adapter: any) => adapter.accountLogin(account, password))
+  },
+
+  async accountRegister(payload: { account: string; password: string; code: string; nickname?: string }) {
+    return callApi('auth/accountRegister', (adapter: any) => adapter.accountRegister(payload))
   },
 
   async sendSmsCode(phone: string) {
     return callApi('auth/sendSmsCode', (adapter: any) => adapter.sendSmsCode(phone))
+  },
+
+  async phoneLogin(phone: string, code: string) {
+    return callApi('auth/phoneLogin', (adapter: any) => adapter.phoneLogin(phone, code))
   }
 }

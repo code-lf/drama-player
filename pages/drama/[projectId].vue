@@ -35,6 +35,7 @@ import type {
 import CreditAmount from '~/components/ui/CreditAmount.vue'
 import DramaScriptWorkspace from '~/features/drama/components/script/DramaScriptWorkspace.vue'
 import { Copy, Ellipsis, Plus, Trash2 } from '@lucide/vue'
+import { useAuthStore } from '~/features/auth/store/useAuthStore'
 import { dramaService } from '~/shared/api/services/dramaService'
 import { workflowService } from '~/shared/api/services/workflowService'
 
@@ -421,6 +422,7 @@ let analysisEventSource: EventSource | null = null
 let storyboardEventSource: EventSource | null = null
 let storyboardAutosaveTimer: ReturnType<typeof setTimeout> | null = null
 
+const authStore = useAuthStore()
 const isBooting = computed(() => busyKey.value === 'boot')
 const isBusy = computed(() => busyKey.value !== '')
 const currentProjectId = computed(() => String(route.params.projectId || ''))
@@ -1015,7 +1017,11 @@ function syncSelectionsFromAnalysis(project: DramaProjectDetail): void {
 
 function normalizeStreamUrl(path: string): string {
   if (!import.meta.client) return path
-  return new URL(path, window.location.origin).toString()
+  const url = new URL(path, window.location.origin)
+  const token = authStore.session.token || ''
+  // EventSource 不能设置 Authorization header，所以事件流用短期 token 查询参数完成同一套鉴权。
+  if (token) url.searchParams.set('access_token', token)
+  return url.toString()
 }
 
  function shouldTrackAnalysisStream(project: DramaProjectDetail | null): boolean {
@@ -1673,7 +1679,9 @@ async function connectAnalysisEventStream(): Promise<void> {
       }
       patchAnalysisRunFromEvent(payload)
 
-      if (payload.event === 'analysis_completed' && !payload.analysis) {
+      if (payload.event === 'analysis_completed') {
+        // 完成事件只作为“后端已落库”的通知，页面展示统一以 GET 详情为准。
+        // 这样即使 SSE 事件里的 analysis 字段缺少新字段或格式仍是后端蛇形结构，也不会出现进度满了但页面数据为空。
         await refreshProjectDetailUntilReady()
       }
 

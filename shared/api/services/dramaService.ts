@@ -3,6 +3,7 @@ import type {
   DramaAnalyzePayload,
   DramaAssetGeneratePayload,
   DramaCreditPreviewPayload,
+  DramaEntryCreditPreviewPayload,
   DramaCoverRegeneratePayload,
   DramaDeleteResult,
   DramaProjectCreatePayload,
@@ -53,6 +54,14 @@ export const dramaService = {
 
   async ingestScriptFile(projectId: string, file: File) {
     return callApi('drama/ingestScriptFile', (adapter) => adapter.ingestDramaScriptFile(projectId, file))
+  },
+
+  async previewEntryCredits(payload: DramaEntryCreditPreviewPayload) {
+    return callApi('drama/previewEntryCredits', (adapter) => adapter.previewDramaEntryCredits(payload))
+  },
+
+  async previewEntryFileCredits(file: File, payload?: { model?: string }) {
+    return callApi('drama/previewEntryFileCredits', (adapter) => adapter.previewDramaEntryFileCredits(file, payload))
   },
 
   async updateIntentRouter(projectId: string, payload: { mode: 'drama' | 'ad' | 'general' }) {
