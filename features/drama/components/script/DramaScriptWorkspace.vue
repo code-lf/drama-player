@@ -267,6 +267,10 @@ const globalOptimizeSettingsVisible = ref(false)
 const progressVisible = ref(false)
 const progressKind = ref<OptimizationKind>('global')
 const optimizationRequestState = ref<OptimizationRequestState>('idle')
+// 优化弹窗使用真实请求生命周期推进：提交、模型生成、结果落库、完成。
+// 不显示虚构百分比，但会在后端成功返回后保留短暂完成态，避免直接从第 1 步跳走。
+const optimizationProgressStep = ref(0)
+let optimizationStepTimer: ReturnType<typeof setTimeout> | null = null
 const activeOptimizationTaskType = ref<OptimizationTaskType>('CREATE_OPTIMIZATION_DRAFT')
 const optimizationErrorCode = ref('')
 const globalResultVisible = ref(false)
@@ -1494,6 +1498,11 @@ const suggestionDiff = computed(() => buildSuggestionDiffLines(
 // 左侧只负责忠实展示原文，不参与差异筛选，也不显示任何改动样式或 Tag。
 const originalTextLines = computed(() => splitDiffText(selectedSuggestionOriginalText.value))
 const suggestedDiffLines = computed(() => suggestionDiff.value.suggested.filter(line => suggestionDiffFilter.value === 'all' || line.kind === suggestionDiffFilter.value))
+const suggestedDiffRows = computed(() => suggestedDiffLines.value.map((line, index, rows) => ({
+  ...line,
+  // 连续相同类型只在第一行显示一次类型，正文仍逐行保留颜色提示。
+  showType: line.kind !== 'unchanged' && rows[index - 1]?.kind !== line.kind
+})))
 const suggestionDiffStats = computed(() => ({
   added: suggestionDiff.value.suggested.filter(line => line.kind === 'added').length,
   modified: suggestionDiff.value.suggested.filter(line => line.kind === 'modified').length,
@@ -1510,11 +1519,11 @@ const suggestionDiffFilters: Array<{ key: SuggestionDiffFilter; label: string }>
 ]
 
 function diffLineClass(kind: SuggestionDiffKind, side: 'original' | 'suggested') {
-  if (kind === 'deleted') return 'bg-[#fff1f2] text-[#9f1239] line-through decoration-[#fb7185]'
-  if (kind === 'added') return 'bg-[#ecfdf5] text-[#047857]'
-  if (kind === 'modified') return 'bg-[#eaf2ff] text-[#1d4ed8]'
-  if (kind === 'moved') return 'bg-[#f5f3ff] text-[#6d28d9]'
-  return side === 'original' ? 'text-[#334155]' : 'text-[#0f172a]'
+  if (kind === 'deleted') return 'border-[#fb7185] bg-[#fff5f6] text-[#9f1239]'
+  if (kind === 'added') return 'border-[#34d399] bg-[#f2fbf7] text-[#065f46]'
+  if (kind === 'modified') return 'border-[#60a5fa] bg-[#f3f7ff] text-[#1e40af]'
+  if (kind === 'moved') return 'border-[#a78bfa] bg-[#f8f6ff] text-[#5b21b6]'
+  return side === 'original' ? 'border-transparent text-[#334155]' : 'border-transparent text-[#0f172a]'
 }
 
 function diffTagLabel(kind: SuggestionDiffKind) {
@@ -1522,10 +1531,11 @@ function diffTagLabel(kind: SuggestionDiffKind) {
 }
 
 function diffTagClass(kind: SuggestionDiffKind) {
-  if (kind === 'added') return 'border-[#86efac] bg-[#f0fdf4] text-[#047857]'
-  if (kind === 'modified') return 'border-[#93c5fd] bg-[#eff6ff] text-[#1d4ed8]'
-  if (kind === 'deleted') return 'border-[#fda4af] bg-[#fff1f2] text-[#be123c]'
-  if (kind === 'moved') return 'border-[#c4b5fd] bg-[#f5f3ff] text-[#6d28d9]'
+  // 使用接近 Element UI 的浅色 Tag，避免类型标记看起来像正文操作按钮。
+  if (kind === 'added') return 'border-[#b3e19d] bg-[#f0f9eb] text-[#529b2e]'
+  if (kind === 'modified') return 'border-[#a0cfff] bg-[#ecf5ff] text-[#337ecc]'
+  if (kind === 'deleted') return 'border-[#fab6b6] bg-[#fef0f0] text-[#c45656]'
+  if (kind === 'moved') return 'border-[#f3d19e] bg-[#fdf6ec] text-[#b88230]'
   return 'hidden'
 }
 
@@ -2314,8 +2324,8 @@ const progressTitle = computed(() => {
     return '正在生成该建议的优化稿'
   }
   if (activeOptimizationTaskType.value === 'REFRESH_STALE_SUGGESTION') return '正在基于最新剧本更新优化稿'
-  if (progressKind.value === 'character') return '正在生成人物关系优化版本...'
-  if (progressKind.value === 'episode') return '正在生成分集节奏优化版本...'
+  if (progressKind.value === 'character') return '正在生成人物关系优化版本'
+  if (progressKind.value === 'episode') return '正在生成分集节奏优化版本'
   return 'AI 正在优化剧本'
 })
 
@@ -2326,20 +2336,64 @@ const isSingleSuggestionDraftTask = computed(() => (
 
 const optimizationProgressSteps = computed(() => {
   if (isSingleSuggestionDraftTask.value) {
-    return ['校验当前剧本版本', '读取建议与影响范围', '生成具体优化稿', '保存为工作草稿']
+    return ['确认影响范围', '生成优化内容', '校验改写结果', '保存工作草稿']
   }
-  return ['分析当前结构', '识别可优化问题', '生成优化建议与改写版本', '汇总优化结果']
+  return ['确认优化范围', '生成优化内容', '校验改写结果', '完成优化草稿']
 })
 
 const progressStatusText = computed(() => {
-  if (isSingleSuggestionDraftTask.value) {
-    if (optimizationRequestState.value === 'submitting') return '正在生成具体优化稿...'
-    if (optimizationRequestState.value === 'success') return '优化稿已生成'
-    return '优化稿生成失败'
+  if (optimizationRequestState.value === 'success') return isSingleSuggestionDraftTask.value ? '优化稿已生成' : '优化草稿已生成'
+  if (optimizationRequestState.value === 'failed') return isSingleSuggestionDraftTask.value ? '优化稿生成失败' : '优化生成失败'
+  return [
+    '正在确认本次优化范围',
+    isSingleSuggestionDraftTask.value ? '正在生成具体优化稿' : '正在生成优化内容',
+    '正在校验改写结果',
+    '正在保存工作草稿'
+  ][optimizationProgressStep.value] || '正在处理'
+})
+
+const progressStatusDescription = computed(() => {
+  if (optimizationRequestState.value === 'success') return '处理完成，正在打开结果。'
+  if (optimizationRequestState.value === 'failed') return '本次未完成，现有剧本和建议不会被覆盖。'
+  return [
+    '正在读取当前剧本与已选优化项。',
+    isSingleSuggestionDraftTask.value ? '正在根据当前建议生成完整改写。' : '正在根据体检问题生成优化内容。',
+    '正在检查改写范围和内容完整性。',
+    '正在保存草稿，当前正式版本不会被覆盖。'
+  ][optimizationProgressStep.value] || '正在处理本次优化任务。'
+})
+
+type OptimizationStepVisualState = 'done' | 'active' | 'pending' | 'failed'
+
+function optimizationStepVisualState(index: number): OptimizationStepVisualState {
+  if (optimizationRequestState.value === 'success') return 'done'
+  if (optimizationRequestState.value === 'failed') {
+    if (index < optimizationProgressStep.value) return 'done'
+    return index === optimizationProgressStep.value ? 'failed' : 'pending'
   }
-  if (optimizationRequestState.value === 'submitting') return '后端正在生成优化草稿...'
-  if (optimizationRequestState.value === 'success') return '优化草稿已生成'
-  return '优化生成失败'
+  if (index < optimizationProgressStep.value) return 'done'
+  return index === optimizationProgressStep.value ? 'active' : 'pending'
+}
+
+function optimizationStepCircleClass(index: number) {
+  const state = optimizationStepVisualState(index)
+  if (state === 'done') return 'border-[#22c55e] bg-[#22c55e] text-white'
+  if (state === 'active') return 'border-[#2563eb] bg-white text-[#2563eb] shadow-[0_0_0_5px_rgba(37,99,235,0.10)]'
+  if (state === 'failed') return 'border-[#ef4444] bg-[#fff1f2] text-[#dc2626]'
+  return 'border-[#dbe4f0] bg-white text-[#94a3b8]'
+}
+
+function optimizationStepLabelClass(index: number) {
+  const state = optimizationStepVisualState(index)
+  if (state === 'active') return 'text-[#0f172a]'
+  if (state === 'done') return 'text-[#334155]'
+  if (state === 'failed') return 'text-[#dc2626]'
+  return 'text-[#94a3b8]'
+}
+
+const optimizationProgressLineWidth = computed(() => {
+  if (optimizationRequestState.value === 'success') return '100%'
+  return `${Math.max(0, Math.min(100, (optimizationProgressStep.value / 3) * 100))}%`
 })
 
 function setSelectedEpisode(episodeNo: number) {
@@ -2706,6 +2760,42 @@ function getOptimizationErrorMessage(error: unknown) {
   return '优化稿生成失败，原诊断建议仍然保留，请稍后重试。'
 }
 
+function clearOptimizationStepTimer() {
+  if (!optimizationStepTimer) return
+  window.clearTimeout(optimizationStepTimer)
+  optimizationStepTimer = null
+}
+
+function startOptimizationProgressTimeline() {
+  clearOptimizationStepTimer()
+  optimizationProgressStep.value = 0
+  // 第一步先让用户确认系统已接收任务，随后进入耗时最长的模型生成阶段。
+  optimizationStepTimer = window.setTimeout(() => {
+    if (optimizationRequestState.value === 'submitting') optimizationProgressStep.value = 1
+  }, 700)
+}
+
+async function finishOptimizationProgressTimeline() {
+  clearOptimizationStepTimer()
+  // 即使后端响应很快，也依次展示四个阶段，避免弹窗打开后直接跳成成功。
+  if (optimizationProgressStep.value < 1) {
+    optimizationProgressStep.value = 1
+    await new Promise(resolve => window.setTimeout(resolve, 480))
+  }
+  optimizationProgressStep.value = 2
+  await new Promise(resolve => window.setTimeout(resolve, 620))
+  optimizationProgressStep.value = 3
+  await new Promise(resolve => window.setTimeout(resolve, 620))
+  optimizationRequestState.value = 'success'
+  await new Promise(resolve => window.setTimeout(resolve, 820))
+  progressVisible.value = false
+}
+
+function failOptimizationProgressTimeline() {
+  clearOptimizationStepTimer()
+  optimizationRequestState.value = 'failed'
+}
+
 type OptimizationDraftOptions = {
   taskType?: OptimizationTaskType
   suggestionIds?: string[]
@@ -2728,6 +2818,7 @@ async function createOptimizationDraft(kind: OptimizationKind, options: Optimiza
   optimizationErrorMessage.value = ''
   optimizationFailed.value = false
   progressVisible.value = true
+  startOptimizationProgressTimeline()
   try {
     // 剧本优化统一交给后端：
     // 1. 后端先做积分预检，余额不足直接失败；
@@ -2748,13 +2839,13 @@ async function createOptimizationDraft(kind: OptimizationKind, options: Optimiza
       adjustedText: options.adjustedText || '',
       selectedActions: options.selectedActions || []
     })
-    optimizationRequestState.value = 'success'
+    optimizationProgressStep.value = 2
     await accountStore.refreshProfile()
-    progressVisible.value = false
+    await finishOptimizationProgressTimeline()
     return true
   } catch (error) {
     console.warn('[script-stage] 创建剧本优化草稿失败：', error)
-    optimizationRequestState.value = 'failed'
+    failOptimizationProgressTimeline()
     optimizationFailed.value = true
     optimizationErrorMessage.value = getOptimizationErrorMessage(error)
     pendingOptimizedDetail.value = null
@@ -2821,17 +2912,24 @@ async function confirmSuggestionDraftGeneration() {
   progressVisible.value = true
   optimizationRequestState.value = 'submitting'
   optimizationFailed.value = false
+  startOptimizationProgressTimeline()
   try {
     const run = await dramaService.generateSuggestionDrafts(projectId.value, pendingDraftGenerationIds.value)
+    optimizationProgressStep.value = 1
     let result = run
     for (let attempt = 0; attempt < 90 && ['queued', 'running'].includes(result.status); attempt += 1) {
       await new Promise(resolve => window.setTimeout(resolve, 2000))
       result = await dramaService.getSuggestionDraftRun(projectId.value, run.runId)
     }
+    optimizationProgressStep.value = 2
     serverOptimizedDetail.value = await dramaService.getProject(projectId.value)
     await accountStore.refreshProfile()
-    progressVisible.value = false
-    optimizationRequestState.value = result.failed > 0 && result.succeeded === 0 ? 'failed' : 'success'
+    if (result.failed > 0 && result.succeeded === 0) {
+      failOptimizationProgressTimeline()
+      optimizationErrorMessage.value = '优化稿未能生成，已有建议和剧本内容不会被覆盖。'
+      return
+    }
+    await finishOptimizationProgressTimeline()
     suggestionBatchResultMessage.value = `成功 ${result.succeeded} 条，失败 ${result.failed} 条，实际扣除 ${result.chargedCredits} 点；失败项未扣点。`
     if (pendingSingleSuggestionId.value && result.succeeded > 0) {
       selectedSuggestionId.value = pendingSingleSuggestionId.value
@@ -2841,8 +2939,7 @@ async function confirmSuggestionDraftGeneration() {
     }
   } catch (error) {
     console.error('[script-stage] 优化稿批量生成失败：', error)
-    progressVisible.value = false
-    optimizationRequestState.value = 'failed'
+    failOptimizationProgressTimeline()
     optimizationFailed.value = true
     optimizationErrorMessage.value = getOptimizationErrorMessage(error)
     suggestionDrawerVisible.value = true
@@ -2857,6 +2954,7 @@ async function regenerateSuggestionDraft(
   item: OptimizationSuggestion,
   taskType: Extract<OptimizationTaskType, 'REGENERATE_SUGGESTION_DRAFT' | 'REFRESH_STALE_SUGGESTION'> = 'REGENERATE_SUGGESTION_DRAFT'
 ) {
+  activeOptimizationTaskType.value = taskType
   let currentItem = item
   if (currentItem.sourceLocator?.status !== 'resolved') {
     const resolvedItem = await resolveSuggestionSource(currentItem)
@@ -3111,6 +3209,7 @@ watch(
 
 onBeforeUnmount(() => {
   if (sceneAutoSaveTimer.value) window.clearTimeout(sceneAutoSaveTimer.value)
+  clearOptimizationStepTimer()
   if (progressClock) window.clearInterval(progressClock)
 })
 
@@ -3938,8 +4037,30 @@ defineExpose({ openAllSuggestions })
                   <p v-if="getSuggestionDraftStatus(selectedSuggestion) === 'failed'" class="mt-2 max-w-[440px] text-xs leading-5 text-[#be123c]">{{ suggestionDraftErrorMessage(selectedSuggestion) }}</p>
                 </div>
                 <textarea v-else-if="suggestionDraftEditing" v-model="suggestionDraftText" class="mt-5 min-h-[270px] w-full resize-y rounded-[12px] border border-[#93c5fd] bg-white p-4 text-[15px] leading-8 text-[#0f172a] outline-none focus:ring-2 focus:ring-[#bfdbfe]" aria-label="编辑AI优化稿" />
-                <div v-else class="mt-5 space-y-1 text-[15px] leading-8">
-                  <p v-for="(line, index) in suggestedDiffLines" :key="`${index}-${line.text}`" class="rounded-[8px] px-2" :class="diffLineClass(line.kind, 'suggested')"><span>{{ line.text }}</span><small v-if="diffMoveDescription(line)" class="ml-2 text-[11px] font-normal opacity-75">{{ diffMoveDescription(line) }}</small><small v-if="line.kind !== 'unchanged'" class="ml-2 inline-flex align-middle rounded-[6px] border px-1.5 py-0.5 text-[10px] font-semibold" :class="diffTagClass(line.kind)">{{ diffTagLabel(line.kind) }}</small></p>
+                <div v-else class="mt-5 space-y-1.5 text-[15px] leading-8">
+                  <div
+                    v-for="(line, index) in suggestedDiffRows"
+                    :key="`${index}-${line.text}`"
+                    class="grid grid-cols-[minmax(0,1fr)_72px] items-start gap-3 rounded-[7px] border-l-2 px-3 py-1.5"
+                    :class="diffLineClass(line.kind, 'suggested')"
+                  >
+                    <div class="min-w-0">
+                      <p :class="line.kind === 'deleted' ? 'line-through decoration-[#fb7185]' : ''">{{ line.text }}</p>
+                      <span
+                        v-if="diffMoveDescription(line)"
+                        class="mt-1.5 inline-flex rounded-[4px] border border-[#ffd591] bg-[#fff7e6] px-2 py-0.5 text-[11px] font-medium leading-5 text-[#ad6800]"
+                      >
+                        {{ diffMoveDescription(line) }}
+                      </span>
+                    </div>
+                    <span
+                      v-if="line.showType"
+                      class="mt-1 inline-flex min-w-[56px] items-center justify-center rounded-[4px] border px-2 py-0.5 text-[11px] font-medium leading-5"
+                      :class="diffTagClass(line.kind)"
+                    >
+                      {{ diffTagLabel(line.kind) }}
+                    </span>
+                  </div>
                 </div>
                 <div v-if="suggestionDraftEditing" class="mt-4 flex justify-end gap-2"><button type="button" class="rounded-[9px] border px-4 py-2 text-sm" @click="cancelSuggestionDraftEditing">取消编辑</button><button type="button" class="rounded-[9px] bg-[#0f67ff] px-4 py-2 text-sm font-semibold text-white" @click="saveSuggestionDraftEditing">保存调整</button></div>
               </section>
@@ -4029,48 +4150,80 @@ defineExpose({ openAllSuggestions })
       </div>
 
       <div v-if="progressVisible" class="fixed inset-0 z-[90] flex items-center justify-center bg-[#0f172a]/45 p-4">
-        <div class="w-full max-w-[760px] rounded-[24px] bg-white p-8 shadow-2xl">
-          <div class="flex items-center justify-between">
-            <h3 class="flex items-center text-2xl font-semibold">
-              <BrandSparkIcon size="md" /><span class="ml-2">{{ progressTitle }}</span>
-            </h3>
-            <button v-if="optimizationRequestState !== 'submitting'" @click="progressVisible = false"><X class="h-5 w-5" /></button>
-          </div>
-          <div class="mt-6 flex items-center gap-4 rounded-[18px] bg-[#f8fbff] p-5">
-            <RefreshCw v-if="optimizationRequestState === 'submitting'" class="h-9 w-9 animate-spin text-[#0f67ff]" />
-            <CheckCircle2 v-else-if="optimizationRequestState === 'success'" class="h-9 w-9 text-[#10b981]" />
-            <AlertTriangle v-else class="h-9 w-9 text-[#f97316]" />
-            <div>
-              <p class="font-semibold text-[#0f172a]">
-                {{ progressStatusText }}
-              </p>
-              <p class="mt-1 text-sm text-[#64748b]">
-                这里显示真实请求状态，不再使用前端假百分比；版本、计费和流水都以后端返回为准。
-              </p>
-            </div>
-          </div>
-          <p v-if="optimizationErrorMessage" class="mt-3 rounded-[14px] border border-[#fecaca] bg-[#fff7f7] px-4 py-3 text-sm font-semibold text-[#dc2626]">
-            {{ optimizationErrorMessage }}
-          </p>
-          <div class="mt-5 space-y-3">
-            <div v-for="(item, index) in optimizationProgressSteps" :key="item" class="flex items-center gap-3 rounded-[16px] border border-[#e2e8f0] p-4">
-              <span
-                class="flex h-9 w-9 items-center justify-center rounded-full"
-                :class="optimizationRequestState === 'success' || (isSingleSuggestionDraftTask && index < 2) ? 'bg-[#dcfce7] text-[#16a34a]' : optimizationRequestState === 'failed' && index === 2 ? 'bg-[#fff1f2] text-[#dc2626]' : 'bg-[#eef5ff] text-[#0f67ff]'"
-              >
-                {{ optimizationRequestState === 'success' || (isSingleSuggestionDraftTask && index < 2) ? '✓' : optimizationRequestState === 'failed' && index === 2 ? '×' : index + 1 }}
+        <div class="w-full max-w-[640px] overflow-hidden rounded-[20px] bg-white shadow-[0_24px_70px_rgba(15,23,42,0.24)]">
+          <div class="flex items-center justify-between border-b border-[#edf1f7] px-7 py-5">
+            <div class="flex min-w-0 items-center gap-3">
+              <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] bg-[#eef5ff] text-[#0f67ff]">
+                <BrandSparkIcon size="sm" />
               </span>
-              <span class="font-semibold">{{ item }}</span>
+              <div class="min-w-0">
+                <h3 class="truncate text-xl font-semibold text-[#0f172a]">{{ progressTitle }}</h3>
+                <p class="mt-0.5 text-xs text-[#64748b]">优化内容将保存为工作草稿</p>
+              </div>
             </div>
+            <button
+              v-if="optimizationRequestState !== 'submitting'"
+              type="button"
+              title="关闭"
+              class="flex h-9 w-9 items-center justify-center rounded-[9px] text-[#64748b] transition-colors hover:bg-[#f1f5f9] hover:text-[#0f172a]"
+              @click="progressVisible = false"
+            >
+              <X class="h-5 w-5" />
+            </button>
           </div>
-          <div class="mt-5 flex justify-end gap-3">
+
+          <div class="px-7 py-6">
+            <div class="flex items-center gap-3 rounded-[12px] border border-[#dbeafe] bg-[#f7faff] px-4 py-3.5">
+              <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-[9px] bg-white shadow-sm">
+                <RefreshCw v-if="optimizationRequestState === 'submitting'" class="h-5 w-5 animate-spin text-[#0f67ff]" />
+                <CheckCircle2 v-else-if="optimizationRequestState === 'success'" class="h-5 w-5 text-[#16a34a]" />
+                <AlertTriangle v-else class="h-5 w-5 text-[#dc2626]" />
+              </span>
+              <div class="min-w-0">
+                <p class="font-semibold text-[#0f172a]">{{ progressStatusText }}</p>
+                <p class="mt-0.5 text-sm text-[#64748b]">{{ progressStatusDescription }}</p>
+              </div>
+            </div>
+
+            <div class="relative mt-7 px-2">
+              <div class="absolute left-[12.5%] right-[12.5%] top-[18px] h-px overflow-hidden bg-[#dbe4f0]">
+                <div
+                  class="h-full transition-[width] duration-500"
+                  :class="optimizationRequestState === 'success' ? 'bg-[#22c55e]' : 'bg-[#2563eb]'"
+                  :style="{ width: optimizationProgressLineWidth }"
+                />
+              </div>
+              <div class="relative grid grid-cols-4 gap-2">
+                <div v-for="(item, index) in optimizationProgressSteps" :key="item" class="flex min-w-0 flex-col items-center text-center">
+                  <span
+                    class="relative z-[1] flex h-9 w-9 items-center justify-center rounded-full border-2 text-xs font-bold transition-all duration-300"
+                    :class="optimizationStepCircleClass(index)"
+                  >
+                    <Check v-if="optimizationStepVisualState(index) === 'done'" class="h-4 w-4" />
+                    <RefreshCw v-else-if="optimizationStepVisualState(index) === 'active'" class="h-4 w-4 animate-spin" />
+                    <X v-else-if="optimizationStepVisualState(index) === 'failed'" class="h-4 w-4" />
+                    <template v-else>{{ index + 1 }}</template>
+                  </span>
+                  <span class="mt-3 max-w-[112px] text-xs font-semibold leading-5 transition-colors" :class="optimizationStepLabelClass(index)">
+                    {{ item }}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <p v-if="optimizationErrorMessage" class="mt-6 rounded-[10px] border border-[#fecaca] bg-[#fff7f7] px-4 py-3 text-sm font-medium text-[#dc2626]">
+              {{ optimizationErrorMessage }}
+            </p>
+
+            <div class="mt-6 flex justify-end gap-3">
             <template v-if="optimizationRequestState === 'failed' && isSingleSuggestionDraftTask">
-              <button class="rounded-[14px] border px-6 py-3" @click="returnToFailedSuggestionDetail">返回建议详情</button>
-              <button v-if="optimizationErrorCode === 'INSUFFICIENT_CREDITS'" class="rounded-[14px] bg-[#0f67ff] px-6 py-3 font-semibold text-white" @click="progressVisible = false; navigateTo('/dashboard/billing')">前往充值</button>
-              <button v-else-if="optimizationErrorCode === 'SCRIPT_OPTIMIZATION_VERSION_CONFLICT'" class="rounded-[14px] bg-[#0f67ff] px-6 py-3 font-semibold text-white" @click="retryCurrentSuggestionDraft">重新分析影响范围</button>
-              <button v-else class="rounded-[14px] bg-[#0f67ff] px-6 py-3 font-semibold text-white" @click="retryCurrentSuggestionDraft">重新生成优化稿</button>
+              <button class="rounded-[10px] border border-[#dbe4f0] px-5 py-2.5 text-sm font-semibold text-[#475569]" @click="returnToFailedSuggestionDetail">返回建议详情</button>
+              <button v-if="optimizationErrorCode === 'INSUFFICIENT_CREDITS'" class="rounded-[10px] bg-[#0f67ff] px-5 py-2.5 text-sm font-semibold text-white" @click="progressVisible = false; navigateTo('/dashboard/billing')">前往充值</button>
+              <button v-else-if="optimizationErrorCode === 'SCRIPT_OPTIMIZATION_VERSION_CONFLICT'" class="rounded-[10px] bg-[#0f67ff] px-5 py-2.5 text-sm font-semibold text-white" @click="retryCurrentSuggestionDraft">重新分析影响范围</button>
+              <button v-else class="rounded-[10px] bg-[#0f67ff] px-5 py-2.5 text-sm font-semibold text-white" @click="retryCurrentSuggestionDraft">重新生成优化稿</button>
             </template>
-            <button v-else-if="optimizationRequestState !== 'submitting'" class="rounded-[14px] border px-6 py-3" @click="progressVisible = false">关闭</button>
+            <button v-else-if="optimizationRequestState !== 'submitting'" class="rounded-[10px] border border-[#dbe4f0] px-5 py-2.5 text-sm font-semibold text-[#475569]" @click="progressVisible = false">关闭</button>
+            </div>
           </div>
         </div>
       </div>
