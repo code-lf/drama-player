@@ -1423,32 +1423,28 @@ function createEmptyGraph(): CanvasGraph {
 async function request<T>(path: string, options?: Parameters<typeof $fetch<T>>[1]): Promise<T> {
   const config = useRuntimeConfig()
   const baseUrl = config.public.apiBase as string
+  let accessToken = ''
+
   // 用户端接口统一通过后端签名 token 鉴权，不再把 user_id 明文交给浏览器透传。
   if (import.meta.client) {
     try {
       const authStore = useAuthStore()
-      const token = authStore.session.token || ''
-      if (token) {
-        const headers = {
-          ...((options?.headers as Record<string, string>) || {}),
-          Authorization: `Bearer ${token}`
-        }
-        return $fetch<T>(`${baseUrl}${path}`, {
-          ...options,
-          headers
-        })
-      }
+      accessToken = authStore.session.token || ''
     } catch {
       // 未初始化 Pinia 时继续按无登录态请求，由后端返回 401。
     }
   }
-  const baseHeaders = {
-    ...((options?.headers as Record<string, string>) || {})
+
+  const headers = {
+    ...((options?.headers as Record<string, string>) || {}),
+    ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {})
   }
 
+  // 网络请求必须只执行一次。此前请求也位于上面的 try/catch 中，业务错误会被误判为
+  // Pinia 初始化失败并再次发送无鉴权请求，最终把明确的后端错误覆盖成“网络异常”。
   return $fetch<T>(`${baseUrl}${path}`, {
     ...options,
-    headers: baseHeaders
+    headers
   })
 }
 

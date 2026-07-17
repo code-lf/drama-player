@@ -6,17 +6,17 @@ type Decorate<T extends Record<string, any>> = { [K in keyof T as K extends stri
 type InjectionType<A extends Plugin> = A extends {default: Plugin<infer T>} ? Decorate<T> : unknown
 
 type NuxtAppInjections = 
-  InjectionType<typeof import("../../node_modules/.pnpm/@pinia+nuxt@0.11.3_magicast@0.5.3_pinia@3.0.4_typescript@5.9.3_vue@3.5.39_typescript@5.9.3__/node_modules/@pinia/nuxt/dist/runtime/payload-plugin.js")> &
-  InjectionType<typeof import("../../node_modules/.pnpm/nuxt@3.21.8_@parcel+watcher@2.5.6_@vue+compiler-sfc@3.5.39_cac@6.7.14_db0@0.3.4_esbuild_229e04369882b4443267e6415632be82/node_modules/nuxt/dist/app/plugins/revive-payload.client.js")> &
-  InjectionType<typeof import("../../node_modules/.pnpm/nuxt@3.21.8_@parcel+watcher@2.5.6_@vue+compiler-sfc@3.5.39_cac@6.7.14_db0@0.3.4_esbuild_229e04369882b4443267e6415632be82/node_modules/nuxt/dist/head/runtime/plugins/unhead.js")> &
-  InjectionType<typeof import("../../node_modules/.pnpm/nuxt@3.21.8_@parcel+watcher@2.5.6_@vue+compiler-sfc@3.5.39_cac@6.7.14_db0@0.3.4_esbuild_229e04369882b4443267e6415632be82/node_modules/nuxt/dist/pages/runtime/plugins/router.js")> &
-  InjectionType<typeof import("../../node_modules/.pnpm/nuxt@3.21.8_@parcel+watcher@2.5.6_@vue+compiler-sfc@3.5.39_cac@6.7.14_db0@0.3.4_esbuild_229e04369882b4443267e6415632be82/node_modules/nuxt/dist/app/plugins/payload.client.js")> &
-  InjectionType<typeof import("../../node_modules/.pnpm/nuxt@3.21.8_@parcel+watcher@2.5.6_@vue+compiler-sfc@3.5.39_cac@6.7.14_db0@0.3.4_esbuild_229e04369882b4443267e6415632be82/node_modules/nuxt/dist/app/plugins/navigation-repaint.client.js")> &
-  InjectionType<typeof import("../../node_modules/.pnpm/nuxt@3.21.8_@parcel+watcher@2.5.6_@vue+compiler-sfc@3.5.39_cac@6.7.14_db0@0.3.4_esbuild_229e04369882b4443267e6415632be82/node_modules/nuxt/dist/app/plugins/check-outdated-build.client.js")> &
-  InjectionType<typeof import("../../node_modules/.pnpm/nuxt@3.21.8_@parcel+watcher@2.5.6_@vue+compiler-sfc@3.5.39_cac@6.7.14_db0@0.3.4_esbuild_229e04369882b4443267e6415632be82/node_modules/nuxt/dist/app/plugins/revive-payload.server.js")> &
-  InjectionType<typeof import("../../node_modules/.pnpm/nuxt@3.21.8_@parcel+watcher@2.5.6_@vue+compiler-sfc@3.5.39_cac@6.7.14_db0@0.3.4_esbuild_229e04369882b4443267e6415632be82/node_modules/nuxt/dist/app/plugins/chunk-reload.client.js")> &
-  InjectionType<typeof import("../../node_modules/.pnpm/@pinia+nuxt@0.11.3_magicast@0.5.3_pinia@3.0.4_typescript@5.9.3_vue@3.5.39_typescript@5.9.3__/node_modules/@pinia/nuxt/dist/runtime/plugin.vue3.js")> &
-  InjectionType<typeof import("../../node_modules/.pnpm/nuxt@3.21.8_@parcel+watcher@2.5.6_@vue+compiler-sfc@3.5.39_cac@6.7.14_db0@0.3.4_esbuild_229e04369882b4443267e6415632be82/node_modules/nuxt/dist/pages/runtime/plugins/prefetch.client.js")> &
+  InjectionType<typeof import("../../node_modules/.pnpm/@pinia+nuxt@0.11.3_magicast_ba91c531f103bc860226ef0bc269dccd/node_modules/@pinia/nuxt/dist/runtime/payload-plugin.js")> &
+  InjectionType<typeof import("../../node_modules/.pnpm/nuxt@3.21.8_@parcel+watcher_229e04369882b4443267e6415632be82/node_modules/nuxt/dist/app/plugins/revive-payload.client.js")> &
+  InjectionType<typeof import("../../node_modules/.pnpm/nuxt@3.21.8_@parcel+watcher_229e04369882b4443267e6415632be82/node_modules/nuxt/dist/head/runtime/plugins/unhead.js")> &
+  InjectionType<typeof import("../../node_modules/.pnpm/nuxt@3.21.8_@parcel+watcher_229e04369882b4443267e6415632be82/node_modules/nuxt/dist/pages/runtime/plugins/router.js")> &
+  InjectionType<typeof import("../../node_modules/.pnpm/nuxt@3.21.8_@parcel+watcher_229e04369882b4443267e6415632be82/node_modules/nuxt/dist/app/plugins/payload.client.js")> &
+  InjectionType<typeof import("../../node_modules/.pnpm/nuxt@3.21.8_@parcel+watcher_229e04369882b4443267e6415632be82/node_modules/nuxt/dist/app/plugins/navigation-repaint.client.js")> &
+  InjectionType<typeof import("../../node_modules/.pnpm/nuxt@3.21.8_@parcel+watcher_229e04369882b4443267e6415632be82/node_modules/nuxt/dist/app/plugins/check-outdated-build.client.js")> &
+  InjectionType<typeof import("../../node_modules/.pnpm/nuxt@3.21.8_@parcel+watcher_229e04369882b4443267e6415632be82/node_modules/nuxt/dist/app/plugins/revive-payload.server.js")> &
+  InjectionType<typeof import("../../node_modules/.pnpm/nuxt@3.21.8_@parcel+watcher_229e04369882b4443267e6415632be82/node_modules/nuxt/dist/app/plugins/chunk-reload.client.js")> &
+  InjectionType<typeof import("../../node_modules/.pnpm/@pinia+nuxt@0.11.3_magicast_ba91c531f103bc860226ef0bc269dccd/node_modules/@pinia/nuxt/dist/runtime/plugin.vue3.js")> &
+  InjectionType<typeof import("../../node_modules/.pnpm/nuxt@3.21.8_@parcel+watcher_229e04369882b4443267e6415632be82/node_modules/nuxt/dist/pages/runtime/plugins/prefetch.client.js")> &
   InjectionType<typeof import("../../plugins/auth.client")> &
   InjectionType<typeof import("../../plugins/theme.client")> &
   InjectionType<typeof import("../../plugins/vue-query")>

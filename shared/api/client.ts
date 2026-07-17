@@ -56,6 +56,17 @@ function normalizeApiErrorCode(detail: unknown): string {
   return 'BIZ_ERROR'
 }
 
+function extractApiErrorDetail(error: unknown): unknown {
+  if (!error || typeof error !== 'object') return undefined
+  const fetchError = error as {
+    data?: { detail?: unknown }
+    response?: { _data?: { detail?: unknown } }
+  }
+  // Nuxt/ofetch 在不同运行环境下可能把响应体放在 error.data 或 response._data，
+  // 两种格式都保留，避免业务错误被错误降级为“网络异常”。
+  return fetchError.data?.detail ?? fetchError.response?._data?.detail
+}
+
 export async function callApi<T>(endpoint: string, task: (adapter: ApiAdapter) => Promise<ApiResponse<T>>): Promise<T> {
   const adapter = pickAdapter()
 
@@ -75,15 +86,13 @@ export async function callApi<T>(endpoint: string, task: (adapter: ApiAdapter) =
       throw error
     }
 
-    // 尝试提取后端的 AppException 错误信息
-    if (error && typeof error === 'object' && 'response' in error) {
-      const response = (error as any).response
-      if (response && response._data && response._data.detail) {
-        throw new ApiClientError(
-          normalizeApiErrorMessage(response._data.detail),
-          normalizeApiErrorCode(response._data.detail)
-        )
-      }
+    // 尝试提取后端的 AppException 错误信息。
+    const detail = extractApiErrorDetail(error)
+    if (detail !== undefined) {
+      throw new ApiClientError(
+        normalizeApiErrorMessage(detail),
+        normalizeApiErrorCode(detail)
+      )
     }
 
     throw new ApiClientError('网络异常，请稍后重试', 'NETWORK_ERROR')

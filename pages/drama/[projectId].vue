@@ -2125,14 +2125,30 @@ async function retryAnalysisNode(nodeKey: string): Promise<void> {
   if (!projectDetail.value) return
   busyKey.value = `analysis-node:${nodeKey}`
   errorMessage.value = ''
+  infoMessage.value = ''
   try {
     projectDetail.value = await dramaService.retryAnalysisNode(projectDetail.value.projectId, nodeKey)
     analysisStatusMessage.value = '失败节点已重新加入队列，其它解析结果保持不变。'
     infoMessage.value = '已重试当前体检节点。'
+    // 重试接口返回的是入队快照；立即再读取一次数据库状态，避免快速完成的节点
+    // 仍被前端旧失败结果覆盖。后续长任务继续由 SSE 与轮询更新。
+    await refreshProjectDetail()
     await connectAnalysisEventStream()
   } catch (error) {
     console.error('[livliv] 重试剧本解析节点失败', { nodeKey, error })
-    errorMessage.value = formatDisplayErrorMessage(extractActionErrorMessage(error))
+    const errorCode = extractActionErrorCode(error)
+    if (['ANALYSIS_NODE_ALREADY_SUCCEEDED', 'ANALYSIS_NODE_ALREADY_RUNNING'].includes(errorCode)) {
+      // 重复点击发生在节点刚刚完成或已经入队时属于幂等结果，不应展示成操作失败。
+      await refreshProjectDetail()
+      errorMessage.value = ''
+      infoMessage.value = errorCode === 'ANALYSIS_NODE_ALREADY_SUCCEEDED'
+        ? '该体检已完成，已刷新最新结果。'
+        : '该体检正在处理中，请勿重复提交。'
+      await connectAnalysisEventStream()
+    } else {
+      infoMessage.value = ''
+      errorMessage.value = formatDisplayErrorMessage(extractActionErrorMessage(error))
+    }
   } finally {
     busyKey.value = ''
   }
@@ -2716,6 +2732,18 @@ function extractActionErrorMessage(error: unknown): string {
   if (detail && typeof detail === 'object' && 'message' in detail && typeof detail.message === 'string') return detail.message
   if (typeof fetchError?.data?.message === 'string' && fetchError.data.message.trim()) return fetchError.data.message
   return fetchError?.message || '请求失败，请稍后重试'
+}
+
+function extractActionErrorCode(error: unknown): string {
+  if (!error || typeof error !== 'object') return ''
+  const codedError = error as {
+    code?: unknown
+    data?: { detail?: { error_code?: unknown } }
+    response?: { _data?: { detail?: { error_code?: unknown } } }
+  }
+  const detailCode = codedError.data?.detail?.error_code
+    ?? codedError.response?._data?.detail?.error_code
+  return String(codedError.code || detailCode || '')
 }
 
 function dedupeRepeatedErrorMessage(message: string): string {
