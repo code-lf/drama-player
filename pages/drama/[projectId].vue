@@ -1077,7 +1077,17 @@ function syncSelectionsFromAnalysis(project: DramaProjectDetail): void {
       customVisualStyle.value = displayMeta.style
     }
   }
-  selectedEpisodeNo.value = project.analysis.currentEpisodeNo || project.analysis.episodeDetails[0]?.episodeNo || 1
+  const availableEpisodeNos = project.analysis.episodeDetails
+    .map((item) => Number(item.episodeNo || 0))
+    .filter((episodeNo) => episodeNo > 0)
+  // 项目详情在体检期间会被 SSE 和轮询频繁刷新。只有当前选集已经不存在时才回退，
+  // 避免用户查看第 6 集时被每次刷新都强制跳回分析快照中的第 1 集。
+  if (!availableEpisodeNos.includes(selectedEpisodeNo.value)) {
+    const preferredEpisodeNo = Number(project.analysis.currentEpisodeNo || 0)
+    selectedEpisodeNo.value = availableEpisodeNos.includes(preferredEpisodeNo)
+      ? preferredEpisodeNo
+      : availableEpisodeNos[0] || 1
+  }
   roleVoiceSelections.value = Object.fromEntries(
     (project.analysis.roles || []).map((role) => {
       const isPresetVoice = voiceToneCatalog.some((option) => option.value === role.voiceRef)

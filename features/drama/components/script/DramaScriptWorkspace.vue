@@ -1935,8 +1935,28 @@ async function retryCurrentReviewNode() {
 
 // 旧项目可能没有保存人物弧光，允许仅重试人物维度，避免重新解析整部剧本。
 async function retryCharacterArcReview() {
+  // 节点运行中禁止重复入队；页面应等待当前节点结果，而不是制造“已在运行”的业务错误。
+  if (isCharacterArcReviewRunning.value) return
   await props.retryAnalysisNodeAction('CHARACTER_REVIEW')
 }
+
+const characterArcReviewNode = computed(() => props.currentAnalysisRun.nodes?.CHARACTER_REVIEW)
+const isCharacterArcReviewRunning = computed(() =>
+  ['queued', 'running'].includes(characterArcReviewNode.value?.status || '')
+)
+const characterArcRetryLabel = computed(() => {
+  if (isCharacterArcReviewRunning.value) return '人物弧光生成中'
+  if (['failed', 'retryable_failed'].includes(characterArcReviewNode.value?.status || '')) return '重试人物体检'
+  return '补全人物体检'
+})
+const characterArcEmptyText = computed(() => {
+  const status = characterArcReviewNode.value?.status || ''
+  if (status === 'running') return '人物弧光正在随人物体检生成，完成后会自动显示。'
+  if (status === 'queued') return '人物体检已进入队列，人物弧光将在任务开始后生成。'
+  if (['failed', 'retryable_failed'].includes(status)) return '人物体检未完成，因此人物弧光暂不可用；可单独重试当前节点。'
+  if (status === 'succeeded') return '人物体检已完成，但本次结果缺少可用人物弧光；可单独补全，不会重新解析整部剧本。'
+  return '人物弧光等待人物体检生成，不会阻塞基础剧本内容查看。'
+})
 
 const reviewScopeLabel = computed(() => {
   if (activeTab.value === 'overview') return '检测范围：全剧'
@@ -2161,12 +2181,19 @@ const episodeStructure = computed(() => {
   const firstScene = scenes[0]
   const lastScene = scenes[scenes.length - 1]
   const middleScene = scenes[Math.floor(Math.max(0, scenes.length - 1) / 2)]
+  const compactFallback = (value: unknown, fallback: string) => {
+    const text = sanitizeSuggestionDisplayText(value || fallback).trim()
+    if (text.length <= 72) return text
+    // 体检完成前只展示同一颗粒度的基础摘要，禁止把整段场次原文塞进“开场”卡片。
+    const sentenceEnd = Math.max(text.lastIndexOf('。', 71), text.lastIndexOf('！', 71), text.lastIndexOf('？', 71))
+    return `${text.slice(0, sentenceEnd >= 24 ? sentenceEnd + 1 : 68).trim()}…`
+  }
   return [
     {
       label: '开场',
       time: firstScene ? '场1' : '',
       icon: Zap,
-      text: sanitizeSuggestionDisplayText(firstScene?.content || episode.summary || episode.coreEvent),
+      text: compactFallback(episode.summary || episode.coreEvent, '开场基础信息待分集体检补全'),
       state: '结构已识别',
       sceneRefs: firstScene ? [`场${firstScene.index + 1}`] : []
     },
@@ -2174,7 +2201,7 @@ const episodeStructure = computed(() => {
       label: '冲突',
       time: middleScene ? `场${middleScene.index + 1}` : '',
       icon: Flame,
-      text: sanitizeSuggestionDisplayText(episode.coreEvent || middleScene?.content || episode.summary),
+      text: compactFallback(episode.coreEvent || episode.summary, '核心冲突待分集体检补全'),
       state: '结构已识别',
       sceneRefs: middleScene ? [`场${middleScene.index + 1}`] : []
     },
@@ -2182,7 +2209,7 @@ const episodeStructure = computed(() => {
       label: '转折',
       time: scenes.length > 1 ? `场${Math.max(1, scenes.length - 1)}` : '',
       icon: Route,
-      text: sanitizeSuggestionDisplayText(episode.characterChange || lastScene?.content || episode.summary),
+      text: compactFallback(episode.characterChange || episode.summary, '关键转折待分集体检补全'),
       state: '结构已识别',
       sceneRefs: lastScene ? [`场${lastScene.index + 1}`] : []
     },
@@ -2190,13 +2217,13 @@ const episodeStructure = computed(() => {
       label: '结尾钩子',
       time: lastScene ? `场${lastScene.index + 1}` : '',
       icon: Target,
-      text: sanitizeSuggestionDisplayText(episode.endingHook || lastScene?.content || episode.summary),
+      text: compactFallback(episode.endingHook || episode.summary, '结尾功能待分集体检补全'),
       state: '结构已识别',
       sceneRefs: lastScene ? [`场${lastScene.index + 1}`] : []
     }
   ].map(item => ({
     ...item,
-    text: String(item.text || '该段结构内容待基础解析补全').slice(0, 180)
+    text: String(item.text || '该段结构内容待基础解析补全')
   }))
 })
 
@@ -3356,9 +3383,9 @@ defineExpose({ openAllSuggestions })
                     </div>
                   </div>
                   <div v-else class="mt-4 rounded-[12px] border border-dashed border-[#cbd8ea] bg-[#f8fbff] px-4 py-5 text-center">
-                    <p class="text-sm text-[#64748b]">本次人物体检尚未生成人物弧光，可单独补全，不会重新解析整部剧本。</p>
-                    <button type="button" class="mt-3 inline-flex items-center rounded-[9px] border border-[#bfd3f3] bg-white px-3 py-2 text-sm font-semibold text-[#0f67ff] hover:bg-[#eff6ff]" @click="retryCharacterArcReview">
-                      <RefreshCw class="mr-1.5 h-4 w-4" />补全人物体检
+                    <p class="text-sm text-[#64748b]">{{ characterArcEmptyText }}</p>
+                    <button type="button" class="mt-3 inline-flex items-center rounded-[9px] border border-[#bfd3f3] bg-white px-3 py-2 text-sm font-semibold text-[#0f67ff] hover:bg-[#eff6ff] disabled:cursor-not-allowed disabled:opacity-60" :disabled="isCharacterArcReviewRunning" @click="retryCharacterArcReview">
+                      <RefreshCw class="mr-1.5 h-4 w-4" :class="isCharacterArcReviewRunning ? 'animate-spin' : ''" />{{ characterArcRetryLabel }}
                     </button>
                   </div>
                 </article>
