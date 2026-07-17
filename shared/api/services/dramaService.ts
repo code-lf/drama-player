@@ -15,6 +15,7 @@ import type {
   DramaScriptIngestPayload,
   DramaScriptSceneUpdatePayload,
   DramaScriptOptimizationPayload,
+  DramaSuggestionSourceRangePayload,
   DramaStoryboardGeneratePayload,
   StoryboardCreatePayload,
   StoryboardUpdatePayload,
@@ -76,6 +77,22 @@ export const dramaService = {
     return callApi('drama/applyScriptVersion', (adapter) => adapter.applyDramaScriptVersion(projectId, versionId))
   },
 
+  async updateScriptSuggestionStatus(projectId: string, suggestionId: string, payload: { status: 'open' | 'pending' | 'ignored'; scriptVersionId?: string }) {
+    return callApi('drama/updateScriptSuggestionStatus', (adapter) => adapter.updateDramaScriptSuggestionStatus(projectId, suggestionId, payload))
+  },
+
+  async resolveScriptSuggestionSource(projectId: string, suggestionId: string) {
+    return callApi('drama/resolveScriptSuggestionSource', (adapter) => adapter.resolveDramaScriptSuggestionSource(projectId, suggestionId))
+  },
+
+  async updateScriptSuggestionSourceRange(projectId: string, suggestionId: string, payload: DramaSuggestionSourceRangePayload) {
+    return callApi('drama/updateScriptSuggestionSourceRange', (adapter) => adapter.updateDramaScriptSuggestionSourceRange(projectId, suggestionId, payload))
+  },
+
+  async confirmScriptVersion(projectId: string) {
+    return callApi('drama/confirmScriptVersion', (adapter) => adapter.confirmDramaScriptVersion(projectId))
+  },
+
   async updateScriptScene(projectId: string, payload: DramaScriptSceneUpdatePayload) {
     return callApi('drama/updateScriptScene', (adapter) => adapter.updateDramaScriptScene(projectId, payload))
   },
@@ -86,6 +103,26 @@ export const dramaService = {
 
   async analyze(projectId: string, payload?: DramaAnalyzePayload) {
     return callApi('drama/analyze', (adapter) => adapter.analyzeDrama(projectId, payload))
+  },
+
+  async retryAnalysisNode(projectId: string, nodeKey: string) {
+    return callApi('drama/retryAnalysisNode', (adapter) => adapter.retryDramaAnalysisNode(projectId, nodeKey))
+  },
+
+  async retrySuggestionDraft(projectId: string, suggestionId: string) {
+    return callApi('drama/retrySuggestionDraft', (adapter) => adapter.retryDramaSuggestionDraft(projectId, suggestionId))
+  },
+
+  async quoteSuggestionDrafts(projectId: string, suggestionIds: string[]) {
+    return callApi('drama/quoteSuggestionDrafts', (adapter) => adapter.quoteDramaSuggestionDrafts(projectId, suggestionIds))
+  },
+
+  async generateSuggestionDrafts(projectId: string, suggestionIds: string[]) {
+    return callApi('drama/generateSuggestionDrafts', (adapter) => adapter.generateDramaSuggestionDrafts(projectId, suggestionIds))
+  },
+
+  async getSuggestionDraftRun(projectId: string, runId: string) {
+    return callApi('drama/getSuggestionDraftRun', (adapter) => adapter.getDramaSuggestionDraftRun(projectId, runId))
   },
 
   async regenerateCover(projectId: string, payload?: DramaCoverRegeneratePayload) {

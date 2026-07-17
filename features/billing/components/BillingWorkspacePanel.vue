@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import type { CreditLedgerItem, CreditPackage } from '~/entities/account/types'
 import CreditAmount from '~/components/ui/CreditAmount.vue'
+import CreditIcon from '~/components/ui/CreditIcon.vue'
 
 interface Props {
   currentCreditBalance: number
@@ -201,7 +202,7 @@ function closeSuccessPage(): void {
         type="button"
         @click="openBillingView('recharge')"
       >
-        <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 8h16v11H4zM7 8V5h10v3M8 12h8M8 15h5" stroke-linecap="round" stroke-linejoin="round" /></svg>
+        <CreditIcon size="xs" />
         积分充值
       </button>
       <button
@@ -219,8 +220,8 @@ function closeSuccessPage(): void {
       <section class="rounded-[18px] border border-[#e1eaf5] bg-white px-7 py-5 shadow-[0_14px_42px_rgba(15,23,42,0.06)]">
         <div class="flex flex-wrap items-center gap-6">
           <div class="flex min-w-[250px] flex-1 items-center gap-3">
-            <span class="flex h-11 w-11 items-center justify-center rounded-full bg-[#eef4ff] text-[#075fff]">
-              <svg viewBox="0 0 24 24" class="h-6 w-6" fill="currentColor"><path d="M12 2.8 14.1 8 19.2 10.1 14.1 12.2 12 17.2 9.9 12.2 4.8 10.1 9.9 8 12 2.8Z" /></svg>
+            <span class="flex h-11 w-11 items-center justify-center rounded-full bg-[#eef4ff]">
+              <CreditIcon size="lg" />
             </span>
             <div>
               <div class="flex items-baseline gap-2">
@@ -262,8 +263,8 @@ function closeSuccessPage(): void {
           @click="selectBillingPackage(pkg.id)"
         >
           <span v-if="getPackageTag(pkg)" class="absolute right-0 top-0 rounded-bl-[9px] rounded-tr-[15px] bg-[#0d63ff] px-3 py-1 text-[10px] font-black text-white">{{ getPackageTag(pkg) }}</span>
-          <div class="flex items-baseline gap-2">
-            <span class="text-[24px] font-black tracking-[-0.04em]">{{ formatNumber(pkg.creditsAmount) }}</span>
+          <div class="flex items-center gap-2">
+            <CreditAmount :value="pkg.creditsAmount" size="lg" tone="inherit" />
             <span class="text-[12px] font-bold text-[#73839d]">积分</span>
           </div>
           <div class="mt-3 flex items-baseline gap-1 text-[#075fff]">
@@ -353,7 +354,7 @@ function closeSuccessPage(): void {
         <div class="w-full max-w-[440px] rounded-[17px] bg-white p-5 shadow-[0_30px_90px_rgba(15,23,42,0.25)]">
           <div class="flex items-center justify-between"><h3 class="text-[18px] font-black">确认购买</h3><button class="text-[#7d8ba0]" type="button" @click="closePurchaseDialog"><svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6L6 18" stroke-linecap="round" /></svg></button></div>
           <p class="mt-5 text-[11px] font-black text-[#7d8ba0]">充值套餐</p>
-          <div class="mt-2 flex items-center justify-between rounded-[10px] bg-[#f4f7fc] px-4 py-3"><div class="flex items-baseline gap-2"><span class="text-[20px] font-black">{{ formatNumber(purchaseDialogPackage.creditsAmount) }}</span><span class="text-[11px] font-bold text-[#77869c]">积分 + 赠送 {{ formatNumber(getPackageBonus(purchaseDialogPackage)) }} 积分</span></div><span class="text-[15px] font-black">¥ {{ formatMoney(purchaseDialogPackage.priceAmount) }}</span></div>
+          <div class="mt-2 flex items-center justify-between rounded-[10px] bg-[#f4f7fc] px-4 py-3"><div class="flex items-center gap-2"><CreditAmount :value="purchaseDialogPackage.creditsAmount" size="md" tone="inherit" /><span class="text-[11px] font-bold text-[#77869c]">积分 + 赠送 {{ formatNumber(getPackageBonus(purchaseDialogPackage)) }} 积分</span></div><span class="text-[15px] font-black">¥ {{ formatMoney(purchaseDialogPackage.priceAmount) }}</span></div>
           <p class="mt-5 text-[11px] font-black text-[#7d8ba0]">应付金额</p><p class="mt-1 text-[22px] font-black">¥ {{ formatMoney(purchaseDialogPackage.priceAmount) }}</p>
           <p class="mt-5 text-[11px] font-black text-[#7d8ba0]">支付方式</p>
           <div class="mt-2 space-y-2">

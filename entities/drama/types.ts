@@ -77,6 +77,9 @@ export interface DramaEpisodeSummary {
   episodeNo: number
   title: string
   summary: string
+  coreEvent: string
+  characterChange: string
+  endingHook: string
 }
 
 export interface DramaEpisodeDetail {
@@ -86,6 +89,7 @@ export interface DramaEpisodeDetail {
 }
 
 export interface DramaAnalysisRunState {
+  runId: string
   status: string
   currentStage: string
   stageStatuses: Record<string, string>
@@ -96,6 +100,32 @@ export interface DramaAnalysisRunState {
   updatedAt: string
   finishedAt: string
   errorMessage: string
+  structureReady: boolean
+  reviewsReady: boolean
+  productionReady: boolean
+  pipelineVersion: string
+  globalReviewStatus: string
+  fulltextBatches: Array<{
+    batchId: string
+    status: string
+    charCount: number
+    startBlockId: string
+    endBlockId: string
+    errorCode: string
+    errorMessage: string
+  }>
+  nodes: Record<string, DramaAnalysisNodeState>
+}
+
+export interface DramaAnalysisNodeState {
+  key: string
+  status: 'queued' | 'running' | 'succeeded' | 'retryable_failed' | 'failed' | 'stale' | 'canceled' | string
+  attempt: number
+  progress: number
+  errorCode: string
+  errorMessage: string
+  startedAt: string
+  finishedAt: string
 }
 
 export type DramaIntentMode = 'drama' | 'ad' | 'general'
@@ -125,6 +155,7 @@ export interface DramaRelationshipLink {
   color: string
   strength: number
   summary: string
+  direction: 'forward' | 'both' | 'none'
 }
 
 export interface DramaCharacterRelationships {
@@ -147,6 +178,12 @@ export interface DramaEpisodeJudgement {
   title: string
   detail: string
   status: string
+  /** 对应建议中心的唯一 ID，禁止再通过数组顺序猜测建议。 */
+  suggestionId?: string
+  /** 判断所属维度，用于在本集问题列表中标识故事、人物、节奏或文本。 */
+  dimension?: string
+  /** 该判断明确影响的集数，新数据由后端直接返回。 */
+  affectedEpisodeNos?: number[]
 }
 
 export interface DramaEpisodeStructure {
@@ -161,26 +198,38 @@ export interface DramaEpisodeStructure {
 }
 
 export interface DramaScriptScene {
+  episodeId: string
+  sceneId: string
   episodeNo: number
   index: number
   title: string
   place: string
   timeOfDay: string
   characters: string[]
+  props: string[]
+  emotion: string
+  startOffset: number
+  endOffset: number
   content: string
   dialogues: string[]
   suggestions: string[]
 }
 
 export interface DramaReviewDimension {
+  key: string
   label: string
   value: number
+  weight: number
+  grade: string
+  evidence: string[]
+  suggestions: string[]
 }
 
 export interface DramaReviewIssue {
   title: string
   status: string
   detail: string
+  suggestionId: string
 }
 
 export interface DramaScriptReview {
@@ -190,6 +239,7 @@ export interface DramaScriptReview {
   dimensions: DramaReviewDimension[]
   strengths: DramaReviewIssue[]
   warnings: DramaReviewIssue[]
+  confidence: number
   updatedAt: string
 }
 
@@ -203,10 +253,13 @@ export interface DramaScriptReviews {
 export interface DramaProductionEstimate {
   roles: number
   scenes: number
+  sceneAssets: number
+  sceneOccurrences: number
   props: number
   shots: number
   credits: number
   episodeDuration: string
+  totalDuration: string
   keyEpisodeCount: number
 }
 
@@ -220,9 +273,80 @@ export interface DramaOptimizationSuggestion {
   affected: string
   boost: string
   detail: string
+  evidence: string[]
+  impact: string
+  affectedEpisodeNos: number[]
+  affectedLocations: string[]
+  confidence: number
+  sourceVersion: string
   originalText: string
   suggestedText: string
+  problemIdentification: string
+  modificationStrategy: string
+  expectedEffect: string
+  riskControl: string
+  characterImpact: string
+  episodeImpact: string
+  assetImpact: string
+  storyboardImpact: string
   status: string
+  /** AI 诊断建议自身状态，与具体优化稿生成状态分开维护。 */
+  suggestionStatus?: string
+  /** 具体优化稿状态：未生成、生成中、已生成、生成失败或已过期。 */
+  draftStatus?: string
+  /** 是否由用户确认费用后实际投递过优化稿任务。 */
+  draftRequested?: boolean
+  draftErrorCode?: string
+  draftErrorMessage?: string
+  draftRetryCount?: number
+  draftSourceVersion?: string
+  /** 后端用于稳定定位原文的块 ID，界面不直接展示。 */
+  sourceBlockIds?: string[]
+  evidenceBlockIds?: string[]
+  draftScopeBlockIds?: string[]
+  sourceScopeType?: string
+  sourceSegments?: Array<{
+    episodeNo: number | null
+    sceneId: string
+    sceneNo: number | null
+    blockIds: string[]
+    startOffset: number
+    endOffset: number
+    text: string
+  }>
+  sceneNo?: number | null
+  draftRevision?: number
+  chargedCredits?: number
+  /** 已通过后端校验的文本补丁，用于生成完整 Diff 和写入工作草稿。 */
+  patches?: Array<Record<string, unknown>>
+  /** 建议绑定的正式剧本原文范围；候选不唯一时由用户在详情页确认。 */
+  sourceLocator: DramaSuggestionSourceLocator
+  actionable: boolean
+  storyboardReference: string
+}
+
+export interface DramaSuggestionSourceCandidate {
+  episodeNo: number | null
+  sceneId: string
+  sceneIndex: number | null
+  startOffset: number
+  endOffset: number
+  excerpt: string
+  confidence: number
+}
+
+export interface DramaSuggestionSourceLocator {
+  scopeType: string
+  episodeNo: number | null
+  sceneId: string
+  sceneIndex: number | null
+  startOffset: number
+  endOffset: number
+  sourceTextSnapshot: string
+  sourceVersion: string
+  status: 'resolved' | 'ambiguous' | 'missing' | 'stale'
+  confidence: number
+  candidates: DramaSuggestionSourceCandidate[]
 }
 
 export interface DramaScriptVersion {
@@ -254,6 +378,9 @@ export interface DramaAnalysis {
   schemaVersion: string
   title: string
   genre: string
+  coreTheme: string
+  targetAudience: string
+  storyType: string
   logline: string
   synopsis: string
   totalEpisodes: number
@@ -279,6 +406,8 @@ export interface DramaAnalysis {
   optimizationSuggestions: DramaOptimizationSuggestion[]
   scriptVersions: DramaScriptVersion[]
   currentScriptVersion: string
+  confirmedScriptVersionId: string
+  analysisSnapshotId: string
 }
 
 export interface DramaProjectDetail {
@@ -305,6 +434,14 @@ export interface DramaProjectCard {
   coverImageUrl: string
   genre: string
   tags: string[]
+  entryIntent: DramaIntentMode
+  effectiveMode: DramaIntentMode
+  style: string
+  aspectRatio: string
+  resolution: string
+  totalEpisodes: number
+  completedStoryboards: number
+  totalStoryboards: number
   updatedAt: string
   createdAt: string
 }

@@ -97,8 +97,12 @@ function buildMockProductImage(payload: ProductImageGeneratePayload, index: numb
 
 function createEmptyDramaAnalysis() {
   return {
+    schemaVersion: 'script_stage_v2',
     title: '',
     genre: '',
+    coreTheme: '',
+    targetAudience: '',
+    storyType: '',
     logline: '',
     synopsis: '',
     totalEpisodes: 1,
@@ -119,6 +123,21 @@ function createEmptyDramaAnalysis() {
     roles: [],
     scenes: [],
     props: [],
+    characterRelationships: { nodes: [], links: [], summaries: [], arcSteps: [] },
+    episodeStructures: [],
+    scriptScenes: [],
+    scriptReviews: {
+      overview: { title: '', score: 0, tone: '', dimensions: [], strengths: [], warnings: [], confidence: 0, updatedAt: '' },
+      characters: { title: '', score: 0, tone: '', dimensions: [], strengths: [], warnings: [], confidence: 0, updatedAt: '' },
+      episodes: { title: '', score: 0, tone: '', dimensions: [], strengths: [], warnings: [], confidence: 0, updatedAt: '' },
+      fullText: { title: '', score: 0, tone: '', dimensions: [], strengths: [], warnings: [], confidence: 0, updatedAt: '' }
+    },
+    productionEstimate: { roles: 0, scenes: 0, sceneAssets: 0, sceneOccurrences: 0, props: 0, shots: 0, credits: 0, episodeDuration: '', totalDuration: '', keyEpisodeCount: 0 },
+    optimizationSuggestions: [],
+    scriptVersions: [],
+    currentScriptVersion: 'v1.2',
+    confirmedScriptVersionId: '',
+    analysisSnapshotId: '',
     intentRouter: {
       entryIntent: 'drama',
       detectedMode: 'drama',
@@ -132,6 +151,7 @@ function createEmptyDramaAnalysis() {
 
 function createIdleAnalysisRun() {
   return {
+    runId: '',
     status: 'idle',
     currentStage: '',
     stageStatuses: {
@@ -150,7 +170,14 @@ function createIdleAnalysisRun() {
     startedAt: '',
     updatedAt: '',
     finishedAt: '',
-    errorMessage: ''
+    errorMessage: '',
+    structureReady: false,
+    reviewsReady: false,
+    productionReady: false,
+    pipelineVersion: 'v3',
+    globalReviewStatus: 'queued',
+    fulltextBatches: [],
+    nodes: {}
   }
 }
 
@@ -711,6 +738,15 @@ export const mockAdapter: ApiAdapter = {
       coverImageUrl: item.analysis.coverImageUrl || '',
       genre: item.analysis.genre || '',
       tags: item.analysis.tags || [],
+      entryIntent: item.analysis.intentRouter.entryIntent || 'drama',
+      effectiveMode: item.analysis.intentRouter.effectiveMode || 'drama',
+      style: item.analysis.displayMeta.style || '东方玄幻 · 电影写实',
+      aspectRatio: item.analysis.displayMeta.aspectRatio || '16:9',
+      resolution: item.analysis.displayMeta.resolution || '720p',
+      totalEpisodes: item.analysis.totalEpisodes || 1,
+      // Mock 模式暂未拆分真实分镜状态，按现有分镜行数量展示总量，完成量保守记为 0。
+      completedStoryboards: 0,
+      totalStoryboards: item.storyboards.length,
       updatedAt: item.analysisRun.updatedAt || '',
       createdAt: item.analysisRun.startedAt || ''
     }))
@@ -785,6 +821,82 @@ export const mockAdapter: ApiAdapter = {
           userOverrideMode: payload.mode,
           effectiveMode: payload.mode
         }
+      }
+    }
+    mockDramaProjectMap.set(projectId, next)
+    return ok(next)
+  },
+
+  async updateDramaScriptSuggestionStatus(projectId: string, suggestionId: string, payload: { status: 'open' | 'pending' | 'ignored'; scriptVersionId?: string }) {
+    await sleep(80)
+    const current = mockDramaProjectMap.get(projectId)!
+    const next = {
+      ...current,
+      analysis: {
+        ...current.analysis,
+        optimizationSuggestions: (current.analysis.optimizationSuggestions || []).map(item => (
+          item.id === suggestionId ? { ...item, status: payload.status } : item
+        ))
+      }
+    }
+    mockDramaProjectMap.set(projectId, next)
+    return ok(next)
+  },
+
+  async resolveDramaScriptSuggestionSource(projectId: string) {
+    await sleep(80)
+    return ok(mockDramaProjectMap.get(projectId)!)
+  },
+
+  async updateDramaScriptSuggestionSourceRange(projectId: string, suggestionId: string, payload: import('~/shared/api/types').DramaSuggestionSourceRangePayload) {
+    await sleep(80)
+    const current = mockDramaProjectMap.get(projectId)!
+    const source = current.sourceScriptText || ''
+    const next = {
+      ...current,
+      analysis: {
+        ...current.analysis,
+        optimizationSuggestions: (current.analysis.optimizationSuggestions || []).map(item => (
+          item.id === suggestionId
+            ? {
+                ...item,
+                originalText: source.slice(payload.startOffset, payload.endOffset),
+                suggestedText: '',
+                draftStatus: 'not_generated',
+                draftSourceVersion: '',
+                sourceLocator: {
+                  scopeType: item.sourceLocator?.scopeType || 'scene',
+                  episodeNo: payload.episodeNo ?? null,
+                  sceneId: payload.sceneId || '',
+                  sceneIndex: payload.sceneIndex ?? null,
+                  startOffset: payload.startOffset,
+                  endOffset: payload.endOffset,
+                  sourceTextSnapshot: source.slice(payload.startOffset, payload.endOffset),
+                  sourceVersion: current.analysis.currentScriptVersion || '',
+                  status: 'resolved' as const,
+                  confidence: 1,
+                  candidates: []
+                }
+              }
+            : item
+        ))
+      }
+    }
+    mockDramaProjectMap.set(projectId, next)
+    return ok(next)
+  },
+
+  async confirmDramaScriptVersion(projectId: string) {
+    await sleep(80)
+    const current = mockDramaProjectMap.get(projectId)!
+    const snapshotId = `mock-snapshot-${Date.now()}`
+    const next = {
+      ...current,
+      currentStage: 'roles',
+      analysis: {
+        ...current.analysis,
+        confirmedScriptVersionId: current.analysis.currentScriptVersion || 'v1.2',
+        analysisSnapshotId: snapshotId
       }
     }
     mockDramaProjectMap.set(projectId, next)
@@ -905,7 +1017,14 @@ export const mockAdapter: ApiAdapter = {
       },
       analysisRun: {
         ...createIdleAnalysisRun(),
+        runId: `mock-${projectId}`,
         status: 'completed',
+        structureReady: true,
+        reviewsReady: true,
+        productionReady: false,
+        pipelineVersion: 'v3',
+        globalReviewStatus: 'queued',
+        fulltextBatches: [],
         stageStatuses: {
           global_understanding: 'done',
           episode_split: 'done',
@@ -924,6 +1043,69 @@ export const mockAdapter: ApiAdapter = {
     }
     mockDramaProjectMap.set(projectId, next)
     return ok(next)
+  },
+
+  async retryDramaAnalysisNode(projectId: string, nodeKey: string) {
+    await sleep(120)
+    const current = mockDramaProjectMap.get(projectId)!
+    return ok({
+      ...current,
+      analysisRun: {
+        ...current.analysisRun,
+        status: 'running',
+        currentStage: nodeKey,
+        nodes: {
+          ...current.analysisRun.nodes,
+          [nodeKey]: {
+            key: nodeKey,
+            status: 'running',
+            attempt: Number(current.analysisRun.nodes[nodeKey]?.attempt || 0) + 1,
+            progress: 35,
+            errorCode: '',
+            errorMessage: '',
+            startedAt: new Date().toISOString(),
+            finishedAt: ''
+          }
+        }
+      }
+    })
+  },
+
+  async retryDramaSuggestionDraft(projectId: string, suggestionId: string) {
+    await sleep(120)
+    const current = mockDramaProjectMap.get(projectId)!
+    const next = {
+      ...current,
+      analysis: {
+        ...current.analysis,
+        optimizationSuggestions: current.analysis.optimizationSuggestions.map((item) => item.id === suggestionId
+          ? { ...item, draftStatus: 'generating', draftErrorCode: '', draftErrorMessage: '' }
+          : item)
+      }
+    }
+    mockDramaProjectMap.set(projectId, next)
+    return ok(next)
+  },
+
+  async quoteDramaSuggestionDrafts(_projectId: string, suggestionIds: string[]) {
+    await sleep(80)
+    return ok({
+      items: suggestionIds.map(suggestionId => ({ suggestionId, sourceScopeType: 'scene', sourceChars: 700, estimatedTokens: 640, estimatedCredits: 2 })),
+      totalCredits: suggestionIds.length * 2,
+      currentBalance: 200,
+      sufficient: true,
+      expiresAt: new Date().toISOString()
+    })
+  },
+
+  async generateDramaSuggestionDrafts(_projectId: string, suggestionIds: string[]) {
+    await sleep(100)
+    return ok({ runId: `draft-${Date.now()}`, status: 'queued', total: suggestionIds.length, succeeded: 0, failed: 0, running: suggestionIds.length, chargedCredits: 0, suggestionIds })
+  },
+
+  async getDramaSuggestionDraftRun(_projectId: string, runId: string) {
+    await sleep(80)
+    return ok({ runId, status: 'succeeded', total: 1, succeeded: 1, failed: 0, running: 0, chargedCredits: 2, suggestionIds: [] })
   },
 
   async regenerateDramaCover(projectId: string) {

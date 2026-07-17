@@ -101,6 +101,7 @@ type DramaAnalysisEventPayload = {
   stage_key: AnalysisStageKey | ''
   stage_label: string
   analysis_run: {
+    run_id?: string
     status: string
     current_stage: string
     stage_statuses: Record<string, string>
@@ -110,6 +111,30 @@ type DramaAnalysisEventPayload = {
     updated_at: string
     finished_at: string
     error_message: string
+    structure_ready?: boolean
+    reviews_ready?: boolean
+    production_ready?: boolean
+    pipeline_version?: string
+    global_review_status?: string
+    fulltext_batches?: Array<{
+      batch_id?: string
+      status?: string
+      char_count?: number
+      start_block_id?: string
+      end_block_id?: string
+      error_code?: string
+      error_message?: string
+    }>
+    nodes?: Record<string, {
+      key?: string
+      status?: string
+      attempt?: number
+      progress?: number
+      error_code?: string
+      error_message?: string
+      started_at?: string
+      finished_at?: string
+    }>
   }
   analysis?: {
     title?: string
@@ -191,7 +216,7 @@ type DramaStoryboardEventPayload = {
 }
 
 const fallbackTextModelCatalog: PageOption[] = [
-  { label: 'qwen-plus', value: 'qwen-plus' },
+  { label: 'Qwen3.7 Plus', value: 'qwen3.7-plus' },
   { label: 'qwen-max', value: 'qwen-max' }
 ]
 const fallbackResolutionCatalog = ['360p', '540p', '720p', '1080p']
@@ -277,9 +302,9 @@ const workflowSteps: Array<{ key: WorkflowStepKey; label: string; hint: string }
 
 const scriptProgressStages: Array<{ key: AnalysisStageKey; label: string }> = [
   { key: 'global_understanding', label: '剧情全局理解' },
-  { key: 'episode_split', label: '剧集智能拆分' },
-  { key: 'outline_refine', label: '剧集概要提炼' },
-  { key: 'role_scene_identify', label: '角色场景识别' }
+  { key: 'episode_split', label: '分集结构整理' },
+  { key: 'outline_refine', label: '人物场景识别' },
+  { key: 'role_scene_identify', label: '体检建议生成' }
 ]
 const tagToneCatalog = [
   'border-[#ddd6fe] bg-[#f5f3ff] text-[#7c3aed]',
@@ -296,6 +321,7 @@ const runtime = useRuntimeConfig()
 
 const runtimeConfig = ref<DramaRuntimeConfig | null>(null)
 const projectDetail = ref<DramaProjectDetail | null>(null)
+const scriptWorkspaceRef = ref<{ openAllSuggestions: () => void } | null>(null)
 const workflowRunInfo = ref<WorkflowRunInfo | null>(null)
 const activeStep = ref<WorkflowStepKey>('script')
 const activeSettingTab = ref<SettingTabKey>('roles')
@@ -321,6 +347,8 @@ function closeImagePreview() {
   previewImageUrl.value = ''
 }
 const sourceScriptPreviewVisible = ref(false)
+// 封面预览独立控制，避免模板访问未定义状态导致项目页初始化告警。
+const coverPreviewVisible = ref(false)
 // 分镜步骤需要单独查看“当前集完整剧本”，这里用独立弹框避免和原始剧本预览混用。
 const storyboardEpisodePreviewVisible = ref(false)
 const roleDialogVisible = ref(false)
@@ -419,6 +447,8 @@ const submittingStoryboardVideoRowId = ref('')
 const storyboardVideoAudioModeMap = ref<Record<string, 'sound' | 'silent'>>({})
 let workflowPollTimer: ReturnType<typeof setTimeout> | null = null
 let analysisEventSource: EventSource | null = null
+let analysisStatusPollTimer: ReturnType<typeof setInterval> | null = null
+let analysisStatusRefreshInFlight = false
 let storyboardEventSource: EventSource | null = null
 let storyboardAutosaveTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -429,6 +459,7 @@ const currentProjectId = computed(() => String(route.params.projectId || ''))
 const currentTitle = computed(() => projectDetail.value?.title || '新剧本策划')
 const currentAnalysisRun = computed<DramaAnalysisRunState>(() => {
   return projectDetail.value?.analysisRun || {
+    runId: '',
     status: 'idle',
     currentStage: '',
     stageStatuses: {
@@ -447,7 +478,14 @@ const currentAnalysisRun = computed<DramaAnalysisRunState>(() => {
     startedAt: '',
     updatedAt: '',
     finishedAt: '',
-    errorMessage: ''
+    errorMessage: '',
+    structureReady: false,
+    reviewsReady: false,
+    productionReady: false,
+    pipelineVersion: 'v3',
+    globalReviewStatus: 'queued',
+    fulltextBatches: [],
+    nodes: {}
   }
 })
 const currentStoryboardRun = computed(() => {
@@ -465,10 +503,16 @@ const currentStoryboardRun = computed(() => {
     updatedAt: ''
   }
 })
-const isAnalysisActive = computed(() => ['queued', 'running'].includes(currentAnalysisRun.value.status))
-const isScriptAnalysisReady = computed(() => {
-  return currentAnalysisRun.value.status === 'completed' && Boolean(projectDetail.value?.analysis.title || projectDetail.value?.analysis.outline)
+const isAnalysisActive = computed(() => {
+  return ['queued', 'running'].includes(currentAnalysisRun.value.status)
+    || Object.values(currentAnalysisRun.value.nodes || {}).some((node) => ['queued', 'running'].includes(node.status))
 })
+const isScriptAnalysisReady = computed(() => {
+  // 工作台只等待基础结构；专业体检在右侧按节点渐进展示。
+  return currentAnalysisRun.value.structureReady
+    || (currentAnalysisRun.value.status === 'completed' && Boolean(projectDetail.value?.analysis.title || projectDetail.value?.analysis.outline))
+})
+const areScriptReviewsReady = computed(() => currentAnalysisRun.value.reviewsReady)
 const hasAnalysis = computed(() => isScriptAnalysisReady.value)
 const hasRoleAssets = computed(() => {
   const roles = projectDetail.value?.analysis.roles || []
@@ -618,9 +662,9 @@ const scriptProgressItems = computed(() => {
 const headerInfoItems = computed(() => [
   `${projectDetail.value?.analysis.totalEpisodes || 1}集`,
   projectDetail.value?.analysis.displayMeta.aspectRatio || selectedAspectRatio.value,
-  projectDetail.value?.analysis.displayMeta.resolution || selectedResolution.value,
-  projectDetail.value?.analysis.displayMeta.style || resolvedVisualStyle.value
+  projectDetail.value?.analysis.displayMeta.resolution || selectedResolution.value
 ])
+const headerStyleTag = computed(() => projectDetail.value?.analysis.displayMeta.style || resolvedVisualStyle.value)
 const confirmedStepIndex = ref(0)
 const scriptCoverUrl = computed(() => projectDetail.value?.analysis.coverImageUrl || '')
 const scriptTagList = computed(() => projectDetail.value?.analysis.tags || [])
@@ -691,13 +735,40 @@ const shouldPreferAnalysisResultView = computed(() => {
 const scriptProgressTitle = computed(() => {
   if (currentAnalysisRun.value.status === 'failed') return '剧本解析失败'
   if (isAnalysisResultOrganizing.value) return '解析结果整理中'
-  return '当前剧集解析中'
+  return '剧本解析中'
 })
+
+function getAnalysisStageActivity(stageKey: AnalysisStageKey, progress: number): string {
+  // 展示模型当前正在输出的业务内容，避免百分比短暂停留时被误认为任务已经卡死。
+  if (stageKey === 'global_understanding') {
+    if (progress < 52) return '正在理解题材、主线与核心冲突'
+    if (progress < 88) return '正在提炼故事梗概与完整大纲'
+    return '正在确认全剧整体结构'
+  }
+  if (stageKey === 'episode_split') {
+    if (progress < 48) return '正在识别集数与分集边界'
+    if (progress < 78) return '正在整理逐集剧情内容'
+    return '正在补充题材、标签与视觉信息'
+  }
+  if (stageKey === 'outline_refine') {
+    if (progress < 38) return '正在生成人物小传'
+    if (progress < 58) return '正在整理角色资产'
+    if (progress < 82) return '正在识别场景资产'
+    return '正在识别关键道具'
+  }
+  if (progress < 42) return '正在生成剧本体检'
+  if (progress < 58) return '正在整理制作规模'
+  if (progress < 86) return '正在生成可执行优化建议'
+  return '正在完成版本与分析数据整理'
+}
+
 const scriptProgressSubtitle = computed(() => {
   if (currentAnalysisRun.value.status === 'failed') return '请查看后端日志后重新发起解析。'
   if (isAnalysisResultOrganizing.value) return '正在整理结构化结果，即将进入剧本页'
   const runningItem = scriptProgressItems.value.find((item) => item.status === 'running')
-  return runningItem ? `${runningItem.label}进行中` : '正在准备解析任务'
+  return runningItem
+    ? `${getAnalysisStageActivity(runningItem.key, runningItem.progress)}，模型内容持续返回中`
+    : '正在准备解析任务'
 })
 const storyboardProgressTitle = computed(() => {
   if (currentStoryboardRun.value.status === 'failed') return '分镜策划失败'
@@ -1031,10 +1102,12 @@ function normalizeStreamUrl(path: string): string {
    const coverStatus = project.analysisRun.coverStatus
    const hasCoverImage = Boolean(project.analysis.coverImageUrl)
    const hasRunningRoleGeneration = (project.analysis.roles || []).some((role) => ['queued', 'running'].includes(role.generationStatus))
+   const hasRunningSuggestionDraft = (project.analysis.optimizationSuggestions || []).some((item) => ['queued', 'generating'].includes(item.draftStatus || ''))
 
    // 解析阶段运行中时必须持续订阅。
    if (['queued', 'running'].includes(analysisStatus)) return true
    if (hasRunningRoleGeneration) return true
+   if (hasRunningSuggestionDraft) return true
 
    // 解析完成后，封面图生成仍然可能在 analysis_completed 事件之后才入队。
    // 这里如果已经完成文本解析、但还没有封面地址，也继续保持 SSE，不然会错过 cover_queued。
@@ -1049,6 +1122,32 @@ function closeAnalysisEventStream(): void {
   if (!analysisEventSource) return
   analysisEventSource.close()
   analysisEventSource = null
+}
+
+function stopAnalysisStatusPolling(): void {
+  if (!analysisStatusPollTimer) return
+  window.clearInterval(analysisStatusPollTimer)
+  analysisStatusPollTimer = null
+}
+
+function startAnalysisStatusPolling(): void {
+  if (!import.meta.client || analysisStatusPollTimer) return
+  // SSE 负责实时体验，轮询负责最终一致性。浏览器重连可能从 Redis 流尾部继续，
+  // 因而刚好错过 Worker 已发布的成功/失败事件；这里定期读取数据库快照防止页面永久停在 35%。
+  analysisStatusPollTimer = window.setInterval(async () => {
+    if (analysisStatusRefreshInFlight || !shouldTrackAnalysisStream(projectDetail.value)) {
+      if (!shouldTrackAnalysisStream(projectDetail.value)) stopAnalysisStatusPolling()
+      return
+    }
+    analysisStatusRefreshInFlight = true
+    try {
+      await refreshProjectDetail()
+    } catch (error) {
+      console.warn('[livliv] 剧本解析状态轮询失败，稍后自动重试。', error)
+    } finally {
+      analysisStatusRefreshInFlight = false
+    }
+  }, 2000)
 }
 
 function shouldTrackStoryboardStream(project: DramaProjectDetail | null): boolean {
@@ -1255,7 +1354,8 @@ function patchAnalysisRunFromEvent(payload: DramaAnalysisEventPayload): void {
     analysisRun: {
       // 如果事件已经带着完整 analysis 回来了，同时四个节点也都到 100，
       // 前端直接视为 completed，避免页面还短暂停在“整理中”。
-      status: payload.analysis && allStagesDone ? 'completed' : payload.analysis_run?.status || 'idle',
+      runId: payload.analysis_run?.run_id || currentAnalysisRun.value.runId,
+      status: payload.analysis_run?.status || (payload.analysis && allStagesDone ? 'completed' : 'idle'),
       currentStage: payload.analysis_run?.current_stage || '',
       stageStatuses,
       stageProgresses,
@@ -1263,7 +1363,31 @@ function patchAnalysisRunFromEvent(payload: DramaAnalysisEventPayload): void {
       startedAt: payload.analysis_run?.started_at || '',
       updatedAt: payload.analysis_run?.updated_at || '',
       finishedAt: payload.analysis_run?.finished_at || '',
-      errorMessage: payload.analysis_run?.error_message || ''
+      errorMessage: payload.analysis_run?.error_message || '',
+      structureReady: Boolean(payload.analysis_run?.structure_ready),
+      reviewsReady: Boolean(payload.analysis_run?.reviews_ready),
+      productionReady: Boolean(payload.analysis_run?.production_ready),
+      pipelineVersion: payload.analysis_run?.pipeline_version || currentAnalysisRun.value.pipelineVersion || 'v2',
+      globalReviewStatus: payload.analysis_run?.global_review_status || currentAnalysisRun.value.globalReviewStatus || 'queued',
+      fulltextBatches: (payload.analysis_run?.fulltext_batches || []).map((batch) => ({
+        batchId: batch.batch_id || '',
+        status: batch.status || 'queued',
+        charCount: Number(batch.char_count || 0),
+        startBlockId: batch.start_block_id || '',
+        endBlockId: batch.end_block_id || '',
+        errorCode: batch.error_code || '',
+        errorMessage: batch.error_message || ''
+      })),
+      nodes: Object.fromEntries(Object.entries(payload.analysis_run?.nodes || {}).map(([key, node]) => [key, {
+        key: node.key || key,
+        status: node.status || 'queued',
+        attempt: Number(node.attempt || 0),
+        progress: Number(node.progress || 0),
+        errorCode: node.error_code || '',
+        errorMessage: node.error_message || '',
+        startedAt: node.started_at || '',
+        finishedAt: node.finished_at || ''
+      }]))
     }
   }
 
@@ -1665,6 +1789,8 @@ async function connectAnalysisEventStream(): Promise<void> {
   if (!import.meta.client || !currentProjectId.value) return
   if (!shouldTrackAnalysisStream(projectDetail.value)) return
 
+  startAnalysisStatusPolling()
+
   if (analysisEventSource) return
 
   const basePath = `${runtime.public.apiBase}/drama/projects/${currentProjectId.value}/analysis/events`
@@ -1678,6 +1804,14 @@ async function connectAnalysisEventStream(): Promise<void> {
         analysisStatusMessage.value = payload.message || analysisStatusMessage.value
       }
       patchAnalysisRunFromEvent(payload)
+
+      if (
+        ['analysis_node_succeeded', 'analysis_node_failed', 'analysis_node_queued'].includes(payload.event)
+        || payload.event.startsWith('analysis_suggestion_draft_')
+      ) {
+        // 节点事件只携带轻量运行态，结构和体检正文统一从详情接口读取。
+        await refreshProjectDetail()
+      }
 
       if (payload.event === 'analysis_completed') {
         // 完成事件只作为“后端已落库”的通知，页面展示统一以 GET 详情为准。
@@ -1696,6 +1830,7 @@ async function connectAnalysisEventStream(): Promise<void> {
 
       if (!shouldTrackAnalysisStream(projectDetail.value)) {
         closeAnalysisEventStream()
+        stopAnalysisStatusPolling()
       }
     } catch (error) {
       console.error('[livliv] 解析事件流处理失败', error)
@@ -1760,6 +1895,12 @@ async function loadWorkflowPage(): Promise<void> {
     syncConfirmedStepIndex()
     restoreActiveStep(project)
 
+    // V3 上线前已完成结构解析的旧项目可能没有封面节点。
+    // 进入页面时仅对 idle 状态免费补投一次，失败状态仍保留显式重试入口。
+    if (project.analysisRun.structureReady && project.analysisRun.coverStatus === 'idle') {
+      void regenerateCoverOnly()
+    }
+
     if (project.storyboards.length > 0) {
       selectedStoryboardId.value = project.storyboards[0].id
     }
@@ -1793,6 +1934,12 @@ async function refreshProjectDetail(): Promise<void> {
   syncSelectionsFromAnalysis(latestProject)
   syncConfirmedStepIndex()
   ensureActiveStepAccessible()
+  if (shouldTrackAnalysisStream(latestProject)) {
+    startAnalysisStatusPolling()
+  } else {
+    stopAnalysisStatusPolling()
+    closeAnalysisEventStream()
+  }
   if (shouldTrackStoryboardStream(latestProject)) {
     await connectStoryboardEventStream()
   } else {
@@ -1888,12 +2035,15 @@ async function confirmCreditPreview(
     }
     if (import.meta.client) {
       const sections: AppConfirmDialogSection[] = []
+      if (preview.message) sections.push({ title: '扣点说明', lines: [preview.message] })
       if (preview.repairPatchSummary) sections.push({ title: '修复策略', lines: [preview.repairPatchSummary] })
       if (preview.warnings?.length) sections.push({ title: '生成前确认', lines: preview.warnings })
       if (options?.detailLines?.length) sections.push({ title: '镜头任务', lines: options.detailLines })
       const shouldContinue = await openAppConfirmDialog({
         title: `${actionLabel}确认`,
-        description: '系统已完成扣点预估，请确认本次操作范围与点数消耗。',
+        description: preview.requiredCredits > 0
+          ? '系统已完成扣点预估。生成失败不扣点，失败节点重试不会重复扣点。'
+          : '系统将复用已有结果或恢复原任务，本次不扣点。',
         confirmText: '确认执行',
         cancelText: '暂不执行',
         preview,
@@ -1935,24 +2085,53 @@ async function analyzeScript(): Promise<void> {
   const confirmed = await confirmCreditPreview('剧本解析', {
     action: 'analysis',
     model: selectedTextModel.value,
-    resolution: selectedResolution.value
+    aspectRatio: selectedAspectRatio.value,
+    resolution: selectedResolution.value,
+    style: resolvedVisualStyle.value
   })
   if (!confirmed) return
 
   busyKey.value = 'analyze'
 
   try {
+    const previousRunId = project.analysisRun.runId
     const queuedProject = await dramaService.analyze(project.projectId, payload)
     projectDetail.value = queuedProject
     activeStep.value = 'script'
     persistActiveStep()
-    analysisStatusMessage.value = '剧本解析任务已启动，正在依次完成四个节点。'
-    infoMessage.value = '剧本解析任务已启动。'
+    const reusedRun = Boolean(previousRunId && previousRunId === queuedProject.analysisRun.runId)
+    if (reusedRun && queuedProject.analysisRun.status === 'completed') {
+      analysisStatusMessage.value = '已复用相同剧本与参数的解析结果。'
+      infoMessage.value = '已有解析结果已恢复，本次未创建新任务、未扣点。'
+    } else if (reusedRun) {
+      analysisStatusMessage.value = '已恢复原解析任务，失败节点将免费重试。'
+      infoMessage.value = '原解析任务已恢复，本次未重复扣点。'
+    } else {
+      analysisStatusMessage.value = '剧本解析任务已启动，正在按真实节点逐项完成。'
+      infoMessage.value = '剧本解析任务已启动；仅在基础结构成功后扣点，失败不扣点。'
+    }
     syncSelectionsFromAnalysis(queuedProject)
     syncConfirmedStepIndex()
     await connectAnalysisEventStream()
   } catch (error) {
     console.error('[livliv] 剧本解析启动失败', error)
+    errorMessage.value = formatDisplayErrorMessage(extractActionErrorMessage(error))
+  } finally {
+    busyKey.value = ''
+  }
+}
+
+async function retryAnalysisNode(nodeKey: string): Promise<void> {
+  if (!projectDetail.value) return
+  busyKey.value = `analysis-node:${nodeKey}`
+  errorMessage.value = ''
+  try {
+    projectDetail.value = await dramaService.retryAnalysisNode(projectDetail.value.projectId, nodeKey)
+    analysisStatusMessage.value = '失败节点已重新加入队列，其它解析结果保持不变。'
+    infoMessage.value = '已重试当前体检节点。'
+    await connectAnalysisEventStream()
+  } catch (error) {
+    console.error('[livliv] 重试剧本解析节点失败', { nodeKey, error })
     errorMessage.value = formatDisplayErrorMessage(extractActionErrorMessage(error))
   } finally {
     busyKey.value = ''
@@ -3198,6 +3377,11 @@ async function goNextStep(): Promise<void> {
     return
   }
 
+  if (currentStep === 'script' && !areScriptReviewsReady.value) {
+    infoMessage.value = '四项核心剧本体检尚未全部完成，请等待完成或重试失败节点。'
+    return
+  }
+
   if (currentStep === 'setting' && !areSettingsReady.value) {
     infoMessage.value = '请先完成角色、场景和道具设定，再进入分镜步骤。'
     return
@@ -3726,6 +3910,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   clearWorkflowPoll()
+  stopAnalysisStatusPolling()
   closeAnalysisEventStream()
   closeStoryboardEventStream()
 })
@@ -3749,7 +3934,10 @@ onBeforeUnmount(() => {
           <div class="min-w-0">
             <div class="flex items-start gap-3">
               <div class="min-w-0">
-                <h1 class="truncate text-[20px] font-semibold tracking-[-0.04em] xl:text-[22px]">{{ currentTitle }}</h1>
+                <div class="flex min-w-0 items-center gap-2">
+                  <h1 class="truncate text-[20px] font-semibold tracking-[-0.04em] xl:text-[22px]">{{ currentTitle }}</h1>
+                  <span class="shrink-0 rounded-full bg-[#e8f1ff] px-2.5 py-1 text-[11px] font-semibold text-[#0f67ff]">{{ headerStyleTag }}</span>
+                </div>
                 <div class="mt-2 flex flex-wrap items-center gap-2 text-xs text-textMuted">
                   <span v-for="item in headerInfoItems" :key="item" class="rounded-full border border-borderSoft bg-panelSoft px-3 py-1">
                     {{ item }}
@@ -3788,8 +3976,8 @@ onBeforeUnmount(() => {
          </nav>
 
         <div class="flex min-w-0 items-center justify-end gap-3 justify-self-end">
-          <button class="rounded-full border border-borderSoft bg-panel px-4 py-2 text-sm font-medium text-textMuted transition hover:border-[#94a3b8]">
-            优化建议
+          <button class="rounded-full border border-borderSoft bg-panel px-4 py-2 text-sm font-medium text-textMuted transition hover:border-[#94a3b8]" @click="scriptWorkspaceRef?.openAllSuggestions()">
+            全部建议
           </button>
           <div class="rounded-full bg-neonSoft/20 px-4 py-2 text-sm font-semibold text-neon">
             {{ workflowRunInfo?.status === 'success' ? '视频已生成' : '流程进行中' }}
@@ -3822,6 +4010,7 @@ onBeforeUnmount(() => {
 
       <template v-else>
         <DramaScriptWorkspace
+          ref="scriptWorkspaceRef"
           v-if="activeStep === 'script'"
           v-model:selected-episode-no="selectedEpisodeNo"
           :project-detail="projectDetail"
@@ -3835,8 +4024,11 @@ onBeforeUnmount(() => {
           :script-progress-subtitle="scriptProgressSubtitle"
           :script-progress-items="scriptProgressItems"
           :analyze-action="analyzeScript"
+          :retry-analysis-node-action="retryAnalysisNode"
+          :regenerate-cover-action="regenerateCoverOnly"
           :change-intent-mode-action="updateProjectIntentMode"
           :confirm-script-action="goNextStep"
+          @preview-image="openImagePreview"
         />
 
         <section
@@ -3893,7 +4085,7 @@ onBeforeUnmount(() => {
           <div v-else class="space-y-8">
             <div v-if="!isScriptAnalysisReady" class="flex min-h-[420px] flex-col items-center justify-center rounded-[28px] border border-dashed border-borderSoft bg-panelSoft px-8 py-10 text-center">
               <h2 class="text-[30px] font-semibold tracking-[-0.04em]">当前还没有剧本解析结果</h2>
-              <p class="mt-3 max-w-[620px] text-base leading-8 text-textMuted">点击下方按钮后，系统会自动完成剧情全局理解、剧集智能拆分、剧集概要提炼与角色场景识别，并生成剧本结果页。</p>
+              <p class="mt-3 max-w-[620px] text-base leading-8 text-textMuted">点击下方按钮后，系统会自动完成剧情全局理解、分集结构整理、人物场景识别与体检建议生成，并生成剧本结果页。</p>
               <button
                 type="button"
                 class="mt-8 rounded-full bg-gradient-to-r from-[#2463ff] to-[#7c3aed] px-8 py-4 text-base font-semibold text-white shadow-[0_18px_42px_rgba(79,70,229,0.2)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useAuthStore } from '~/features/auth/store/useAuthStore'
 import { useAccountStore } from '~/features/billing/store/useAccountStore'
+import BrandSparkIcon from '~/components/ui/BrandSparkIcon.vue'
 import {
   ArrowRight,
   CheckCircle2,
@@ -11,9 +12,7 @@ import {
   Lightbulb,
   LogOut,
   Play,
-  Sparkles,
   UsersRound,
-  WandSparkles,
 } from '@lucide/vue'
 
 const authStore = useAuthStore()
@@ -368,7 +367,7 @@ watch(
       <div class="mx-auto grid min-h-[700px] w-full max-w-[1400px] items-start px-5 pt-16 lg:grid-cols-[0.47fr_0.53fr] lg:px-0 lg:pt-[78px]">
         <div class="relative z-10 max-w-[560px]">
           <div class="mb-7 inline-flex items-center gap-2 rounded-full border border-[#b9d3ff] bg-white/70 px-6 py-2.5 text-[16px] font-bold text-[#005ffe] shadow-[0_12px_28px_rgba(39,111,255,0.08)] backdrop-blur">
-            <Sparkles class="h-4 w-4" />
+            <BrandSparkIcon size="xs" />
             <span>AI 短剧创作平台</span>
           </div>
 
@@ -424,7 +423,7 @@ watch(
       <div id="features" class="scroll-mt-28">
         <div class="mb-7 flex items-center gap-2">
           <h2 class="text-[29px] font-black tracking-normal text-[#081333]">核心能力，全面赋能短剧创作</h2>
-          <Sparkles class="h-5 w-5 text-[#0068ff]" />
+          <BrandSparkIcon size="sm" />
         </div>
 
         <div class="grid gap-5 sm:grid-cols-2 lg:grid-cols-6">
@@ -443,7 +442,7 @@ watch(
       <div id="workflow" class="mt-10 scroll-mt-28">
         <div class="mb-8 flex items-center gap-2">
           <h2 class="text-[28px] font-black tracking-normal text-[#081333]">智能创作流程，5 步打造高质量短剧</h2>
-          <Sparkles class="h-5 w-5 text-[#0068ff]" />
+          <BrandSparkIcon size="sm" />
         </div>
 
         <div class="workflow-grid grid gap-7 lg:grid-cols-5">
@@ -471,7 +470,7 @@ watch(
         <div class="mb-6 flex items-center justify-between gap-4">
           <div class="flex items-center gap-2">
             <h2 class="text-[28px] font-black tracking-normal text-[#081333]">不止短剧，更是你的 AI 创作工具箱</h2>
-            <Sparkles class="h-5 w-5 text-[#0068ff]" />
+            <BrandSparkIcon size="sm" />
           </div>
           <a href="#features" class="hidden items-center gap-1 text-[14px] font-black text-[#0068ff] sm:flex">
             探索全部工具
@@ -504,7 +503,7 @@ watch(
         <div class="mb-6 flex items-center justify-between gap-4">
           <div class="flex items-center gap-2">
             <h2 class="text-[28px] font-black tracking-normal text-[#081333]">创作案例，灵感看得见</h2>
-            <Sparkles class="h-5 w-5 text-[#0068ff]" />
+            <BrandSparkIcon size="sm" />
           </div>
           <a href="#cases" class="hidden items-center gap-1 text-[14px] font-black text-[#0068ff] sm:flex">
             查看更多案例
@@ -537,7 +536,7 @@ watch(
       <div id="pricing" class="mt-12 scroll-mt-28">
         <div class="mb-6 flex items-center gap-2">
           <h2 class="text-[28px] font-black tracking-normal text-[#081333]">为什么选择 Livliv AI</h2>
-          <Sparkles class="h-5 w-5 text-[#0068ff]" />
+          <BrandSparkIcon size="sm" />
         </div>
 
         <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
@@ -594,7 +593,7 @@ watch(
           <div>
             <div class="flex items-center gap-3">
               <span class="flex h-8 w-8 items-center justify-center rounded-[9px] bg-[#0866ff] text-white">
-                <WandSparkles class="h-4 w-4" />
+                <BrandSparkIcon size="xs" />
               </span>
               <span class="text-[18px] font-black text-[#07142e]">Livliv AI</span>
             </div>
@@ -602,7 +601,7 @@ watch(
               AI 驱动的创作平台，让创意制作更高效、更自由。
             </p>
             <div class="mt-5 flex gap-3 text-[#4d5e7d]">
-              <span class="footer-social"><Sparkles class="h-4 w-4" /></span>
+              <span class="footer-social"><BrandSparkIcon size="xs" /></span>
               <span class="footer-social"><Play class="h-4 w-4" /></span>
               <span class="footer-social"><Lightbulb class="h-4 w-4" /></span>
               <span class="footer-social"><UsersRound class="h-4 w-4" /></span>

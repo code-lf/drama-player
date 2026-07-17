@@ -1,4 +1,15 @@
 <script setup lang="ts">
+import { computed, ref } from 'vue'
+import {
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  Grid2X2,
+  List,
+  Plus,
+  Search,
+  Trash2
+} from '@lucide/vue'
 import type { DramaProjectCard } from '~/entities/drama/types'
 import UiFluidImage from '~/components/ui/FluidImage.vue'
 
@@ -29,15 +40,82 @@ const emit = defineEmits<{
   (event: 'toggle-select-all'): void
 }>()
 
+type ProjectViewMode = 'grid' | 'list'
+type ProjectStatusFilter = 'all' | 'active' | 'completed' | 'archived'
+type ProjectSortMode = 'updated-desc' | 'created-desc' | 'title-asc'
+
+const searchKeyword = ref('')
+const statusFilter = ref<ProjectStatusFilter>('all')
+const sortMode = ref<ProjectSortMode>('updated-desc')
+const viewMode = ref<ProjectViewMode>('grid')
+
+const visibleProjects = computed(() => {
+  const keyword = searchKeyword.value.trim().toLocaleLowerCase('zh-CN')
+  const items = props.workspaceProjectCards.filter((project) => {
+    const matchesKeyword = !keyword || [project.title, project.genre, project.style, ...project.tags]
+      .some((value) => String(value || '').toLocaleLowerCase('zh-CN').includes(keyword))
+    const group = projectStatusGroup(project)
+    return matchesKeyword && (statusFilter.value === 'all' || group === statusFilter.value)
+  })
+
+  // 当前后端已按更新时间分页；这里的排序只作用于当前页，避免前端伪装成全量跨页排序。
+  return [...items].sort((left, right) => {
+    if (sortMode.value === 'title-asc') return left.title.localeCompare(right.title, 'zh-CN')
+    const leftTime = new Date(sortMode.value === 'created-desc' ? left.createdAt : left.updatedAt).getTime() || 0
+    const rightTime = new Date(sortMode.value === 'created-desc' ? right.createdAt : right.updatedAt).getTime() || 0
+    return rightTime - leftTime
+  })
+})
+
 function isProjectSelected(projectId: string): boolean {
   return props.selectedProjectIds.includes(projectId)
 }
 
-function projectStatusLabel(status: string): string {
-  if (status === 'published') return '已发布'
-  if (status === 'generating') return '生成中'
-  if (status === 'analyzing') return '解析中'
+function projectProgress(project: DramaProjectCard): number {
+  if (project.totalStoryboards > 0) {
+    return Math.min(100, Math.round((project.completedStoryboards / project.totalStoryboards) * 100))
+  }
+  if (project.status === 'published') return 100
+  if (project.status === 'analyzing') return 12
+  if (project.status === 'generating') return 68
+  if (project.currentStage === 'video') return 88
+  if (project.currentStage === 'storyboard') return 58
+  if (project.currentStage === 'assets') return 38
+  if (project.currentStage === 'analysis') return 22
+  return 0
+}
+
+function projectStatusGroup(project: DramaProjectCard): ProjectStatusFilter {
+  if (project.status === 'archived') return 'archived'
+  if (project.status === 'published' || projectProgress(project) === 100) return 'completed'
+  return 'active'
+}
+
+function projectStatusLabel(project: DramaProjectCard): string {
+  if (project.status === 'archived') return '已归档'
+  if (project.status === 'published' || projectProgress(project) === 100) return '已完成'
+  if (project.status === 'analyzing') return '解析中'
+  if (project.status === 'generating') return '创作中'
   return '草稿'
+}
+
+function projectStatusClass(project: DramaProjectCard): string {
+  const group = projectStatusGroup(project)
+  if (group === 'completed') return 'project-status--completed'
+  if (group === 'archived') return 'project-status--archived'
+  return 'project-status--active'
+}
+
+function projectProgressLabel(project: DramaProjectCard): string {
+  if (project.totalStoryboards > 0) {
+    return `${project.completedStoryboards}/${project.totalStoryboards} 分镜完成`
+  }
+  if (project.status === 'analyzing') return '剧本解析中'
+  if (project.currentStage === 'analysis') return '剧本解析完成'
+  if (project.currentStage === 'assets') return '角色与场景制作中'
+  if (project.currentStage === 'storyboard') return '分镜制作中'
+  if (project.currentStage === 'video') return '视频合成中'
+  return '等待开始创作'
 }
 
 function formatProjectDate(value?: string): string {
@@ -46,6 +124,7 @@ function formatProjectDate(value?: string): string {
   if (Number.isNaN(parsed.getTime())) return value.slice(0, 16).replace('T', ' ')
 
   return new Intl.DateTimeFormat('zh-CN', {
+    year: 'numeric',
     month: '2-digit',
     day: '2-digit',
     hour: '2-digit',
@@ -53,184 +132,729 @@ function formatProjectDate(value?: string): string {
     hour12: false
   }).format(parsed)
 }
+
+function openProject(project: DramaProjectCard): void {
+  if (props.isBatchSelectingProjects) {
+    emit('toggle-project-selection', project.id)
+    return
+  }
+  emit('open-project', project.id)
+}
 </script>
 
 <template>
-  <div class="space-y-6">
-    <section class="w-full">
-      <div class="mb-8 flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <h2 class="text-[28px] font-bold tracking-tight text-textMain">项目列表</h2>
-          <p class="mt-2 text-[15px] text-textMuted">{{ projectOverviewLabel }}</p>
-        </div>
+  <section class="project-directory">
+    <header class="project-directory__header">
+      <div>
+        <h2 class="text-[28px] font-black text-textMain">项目列表</h2>
+        <p class="mt-1 text-[14px] text-textMuted">{{ projectOverviewLabel }}</p>
+      </div>
+      <button
+        class="project-create-button"
+        type="button"
+        :disabled="isCreatingWorkspaceProject"
+        @click="emit('create-project')"
+      >
+        <Plus class="h-4 w-4" />
+        {{ isCreatingWorkspaceProject ? '创建中...' : '新建项目' }}
+      </button>
+    </header>
 
-        <div class="flex flex-wrap items-center gap-3">
+    <div class="project-toolbar">
+      <label class="project-search">
+        <Search class="h-[18px] w-[18px]" />
+        <input v-model="searchKeyword" type="search" placeholder="搜索项目名称" />
+      </label>
+
+      <select v-model="statusFilter" class="project-select" aria-label="项目状态筛选">
+        <option value="all">全部状态</option>
+        <option value="active">创作中</option>
+        <option value="completed">已完成</option>
+        <option value="archived">已归档</option>
+      </select>
+
+      <select v-model="sortMode" class="project-select project-select--sort" aria-label="项目排序">
+        <option value="updated-desc">排序：最近更新时间</option>
+        <option value="created-desc">排序：最近创建时间</option>
+        <option value="title-asc">排序：项目名称</option>
+      </select>
+
+      <div v-if="workspaceProjectCards.length > 0" class="project-toolbar__actions">
+        <button class="project-secondary-button" type="button" @click="emit('toggle-batch-mode')">
+          {{ isBatchSelectingProjects ? '取消批量' : '批量操作' }}
+        </button>
+        <button
+          v-if="isBatchSelectingProjects"
+          class="project-secondary-button"
+          type="button"
+          @click="emit('toggle-select-all')"
+        >
+          {{ isAllCurrentPageSelected ? '取消全选' : '全选' }}
+        </button>
+        <button
+          v-if="isBatchSelectingProjects"
+          class="project-delete-button"
+          type="button"
+          :disabled="selectedProjectCount === 0 || isDeletingProjects"
+          @click="emit('request-delete-batch')"
+        >
+          <Trash2 class="h-4 w-4" />
+          删除<span v-if="selectedProjectCount"> {{ selectedProjectCount }}</span>
+        </button>
+        <div class="project-view-toggle" aria-label="项目视图切换">
           <button
-            class="rounded-full bg-panel px-5 py-2.5 text-[14px] font-semibold text-textMain shadow-sm ring-1 ring-borderSoft transition hover:bg-panelSoft hover:text-neon"
-            @click="emit('toggle-batch-mode')"
+            type="button"
+            title="网格视图"
+            :class="{ active: viewMode === 'grid' }"
+            @click="viewMode = 'grid'"
           >
-            {{ isBatchSelectingProjects ? '取消批量操作' : '批量操作' }}
+            <Grid2X2 class="h-[18px] w-[18px]" />
           </button>
           <button
-            v-if="isBatchSelectingProjects"
-            class="rounded-full bg-panel px-5 py-2.5 text-[14px] font-semibold text-textMain shadow-sm ring-1 ring-borderSoft transition hover:bg-panelSoft hover:text-neon"
-            @click="emit('toggle-select-all')"
+            type="button"
+            title="列表视图"
+            :class="{ active: viewMode === 'list' }"
+            @click="viewMode = 'list'"
           >
-            {{ isAllCurrentPageSelected ? '取消全选' : '全选当前页' }}
-          </button>
-          <button
-            v-if="isBatchSelectingProjects"
-            class="rounded-full bg-red-500/90 px-5 py-2.5 text-[14px] font-semibold text-white shadow-sm transition hover:bg-red-500 disabled:cursor-not-allowed disabled:bg-red-500/50 disabled:text-white/70 disabled:shadow-none"
-            :disabled="selectedProjectCount === 0 || isDeletingProjects"
-            @click="emit('request-delete-batch')"
-          >
-            批量删除<span v-if="selectedProjectCount > 0">（{{ selectedProjectCount }}）</span>
-          </button>
-          <button
-            class="flex items-center gap-2 rounded-full bg-neon px-5 py-2.5 text-[14px] font-semibold text-white shadow-sm transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
-            :disabled="isCreatingWorkspaceProject"
-            @click="emit('create-project')"
-          >
-            <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14m-7-7h14" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            {{ isCreatingWorkspaceProject ? '创建中...' : '新建项目' }}
+            <List class="h-[19px] w-[19px]" />
           </button>
         </div>
       </div>
+    </div>
 
-      <div class="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-5">
+    <div v-if="workspaceProjectCards.length === 0" class="project-empty-state">
+      <img src="/dashboard/project-empty.png" alt="暂无项目" />
+      <h3>还没有项目</h3>
+      <p>你还没有创建任何项目，点击右上角“新建项目”开始你的创作之旅吧</p>
+    </div>
+
+    <div v-else-if="visibleProjects.length === 0" class="project-filter-empty">
+      <Search class="h-8 w-8" />
+      <h3>没有找到匹配项目</h3>
+      <p>换一个关键词或筛选条件试试</p>
+    </div>
+
+    <div v-else-if="viewMode === 'grid'" class="project-card-grid">
+      <article
+        v-for="project in visibleProjects"
+        :key="project.id"
+        class="project-card"
+        role="button"
+        tabindex="0"
+        @click="openProject(project)"
+        @keydown.enter.prevent="openProject(project)"
+        @keydown.space.prevent="openProject(project)"
+      >
         <button
-          class="group flex h-[280px] flex-col items-center justify-center overflow-hidden rounded-[24px] bg-panelSoft ring-1 ring-borderSoft transition-all hover:bg-neonSoft/10 hover:ring-neon/30 hover:shadow-neon"
+          v-if="isBatchSelectingProjects"
+          class="project-select-check"
+          :class="{ active: isProjectSelected(project.id) }"
           type="button"
-          :disabled="isCreatingWorkspaceProject"
-          @click="emit('create-project')"
+          title="选择项目"
+          @click.stop="emit('toggle-project-selection', project.id)"
         >
-          <div class="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-panel shadow-sm ring-1 ring-borderSoft transition-transform group-hover:scale-110 group-hover:text-neon">
-            <svg viewBox="0 0 24 24" class="h-8 w-8 text-textMuted group-hover:text-neon" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14m-7-7h14" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          </div>
-          <h4 class="text-[16px] font-bold text-textMain">创建新项目</h4>
-          <p class="mt-2 text-[13px] text-textMuted">进入创作工作流界面</p>
+          <Check class="h-4 w-4" />
+        </button>
+        <button
+          v-else
+          class="project-card-delete"
+          type="button"
+          title="删除项目"
+          @click.stop="emit('request-delete-project', project)"
+        >
+          <Trash2 class="h-4 w-4" />
         </button>
 
-        <div
-          v-for="project in workspaceProjectCards"
-          :key="project.id"
-          class="group relative h-[280px] overflow-hidden rounded-[24px] bg-panel ring-1 ring-borderSoft transition-all hover:-translate-y-1 hover:shadow-panel hover:ring-neon/30"
-          role="button"
-          tabindex="0"
-          @click="emit('open-project', project.id)"
-          @keydown.enter.prevent="emit('open-project', project.id)"
-          @keydown.space.prevent="emit('open-project', project.id)"
-        >
-          <button
-            v-if="isBatchSelectingProjects"
-            class="absolute left-4 top-4 z-20 flex h-7 w-7 items-center justify-center rounded-full border border-borderSoft bg-panel shadow-sm transition"
-            :class="isProjectSelected(project.id)
-              ? 'border-neon bg-neon text-slate-900 shadow-[0_10px_24px_rgba(69,215,255,0.28)]'
-              : 'text-transparent hover:border-neon'"
-            type="button"
-            @click.stop="emit('toggle-project-selection', project.id)"
-          >
-            <svg viewBox="0 0 20 20" class="h-4 w-4" fill="currentColor">
-              <path fill-rule="evenodd" d="M16.704 5.29a1 1 0 0 1 .006 1.414l-7.2 7.26a1 1 0 0 1-1.42 0l-3.8-3.83a1 1 0 1 1 1.42-1.408l3.09 3.116 6.49-6.544a1 1 0 0 1 1.414-.008Z" clip-rule="evenodd" />
-            </svg>
-          </button>
-          <button
-            v-else
-            class="absolute right-4 top-4 z-20 flex h-8 w-8 items-center justify-center rounded-full bg-panelSoft/90 text-textMuted opacity-0 shadow-sm ring-1 ring-borderSoft backdrop-blur transition hover:bg-rose-500/20 hover:text-rose-400 hover:ring-rose-500/40 group-hover:opacity-100"
-            type="button"
-            @click.stop="emit('request-delete-project', project)"
-          >
-            <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M4 7h16M10 11v6M14 11v6M7 7l1 11a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2l1-11M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" stroke-linecap="round" stroke-linejoin="round" />
-            </svg>
-          </button>
-
-          <div class="relative h-[160px] w-full overflow-hidden bg-panelSoft">
-            <UiFluidImage
-              :src="project.coverImageUrl"
-              :alt="project.title"
-              wrapper-class="h-full w-full"
-              img-class="object-cover transition-transform duration-500 group-hover:scale-105"
-              fallback-text=""
-              loading-label=""
-            />
-            <div class="absolute inset-0 bg-gradient-to-t from-bg/60 to-transparent opacity-0 transition-opacity duration-300 group-hover:opacity-100"></div>
+        <div class="project-card__cover">
+          <UiFluidImage
+            v-if="project.coverImageUrl"
+            :src="project.coverImageUrl"
+            :alt="project.title"
+            wrapper-class="h-full w-full"
+            img-class="object-cover transition-transform duration-500 group-hover:scale-105"
+            fallback-text=""
+            loading-label=""
+          />
+          <div v-else class="project-cover-fallback">
+            <span>{{ project.title.slice(0, 1) || '剧' }}</span>
           </div>
+          <span class="project-status" :class="projectStatusClass(project)">
+            {{ projectStatusLabel(project) }}
+          </span>
+        </div>
 
-          <div class="flex h-[120px] flex-col justify-between p-5">
-            <div>
-              <div class="flex items-center justify-between gap-3">
-                <h4 class="min-w-0 flex-1 truncate text-[16px] font-bold text-textMain">{{ project.title }}</h4>
-                <span class="flex h-5 items-center rounded-md bg-neonSoft/20 px-2 text-[11px] font-semibold text-neon ring-1 ring-neon/20">
-                  {{ projectStatusLabel(project.status) }}
-                </span>
-              </div>
-              <div class="mt-2 flex flex-wrap items-center gap-1.5">
-                <span class="rounded-md bg-panelSoft px-2 py-0.5 text-[11px] font-medium text-textMuted">
-                  {{ project.genre || '短剧' }}
-                </span>
-                <span
-                  v-for="tag in project.tags.slice(0, 2)"
-                  :key="`${project.id}-${tag}`"
-                  class="rounded-md bg-panelSoft/50 px-2 py-0.5 text-[11px] font-medium text-textMuted ring-1 ring-borderSoft"
-                >
-                  {{ tag }}
-                </span>
-              </div>
-            </div>
-            <p class="text-[12px] font-medium text-textMuted/70">{{ formatProjectDate(project.createdAt) }}</p>
+        <div class="project-card__body">
+          <h3>{{ project.title }}</h3>
+          <p>更新于 {{ formatProjectDate(project.updatedAt || project.createdAt) }}</p>
+          <div class="project-progress-meta">
+            <span>{{ projectProgressLabel(project) }}</span>
+            <strong>{{ projectProgress(project) }}%</strong>
+          </div>
+          <div class="project-progress-track">
+            <span :style="{ width: `${projectProgress(project)}%` }" />
           </div>
         </div>
-      </div>
+      </article>
+    </div>
 
-      <div v-if="workspaceProjectCards.length === 0" class="mt-8 flex flex-col items-center justify-center rounded-[32px] border-2 border-dashed border-borderSoft bg-panelSoft/50 py-20 text-center">
-        <div class="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-panel shadow-sm ring-1 ring-borderSoft">
-          <svg viewBox="0 0 24 24" class="h-8 w-8 text-textMuted/50" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        </div>
-        <h3 class="text-[18px] font-bold text-textMain">还没有项目</h3>
-        <p class="mt-2 text-[14px] text-textMuted">点击上方按钮创建你的第一个短剧项目吧</p>
-      </div>
-
-      <div
-        v-if="totalProjectPages > 1"
-        class="mt-10 flex items-center justify-between border-t border-borderSoft pt-6"
+    <div v-else class="project-list-view">
+      <article
+        v-for="project in visibleProjects"
+        :key="project.id"
+        class="project-list-row"
+        role="button"
+        tabindex="0"
+        @click="openProject(project)"
+        @keydown.enter.prevent="openProject(project)"
       >
-        <p class="text-[14px] font-medium text-textMuted">
-          第 {{ currentProjectPage }} / {{ totalProjectPages }} 页
-        </p>
-
-        <div class="flex items-center gap-2">
-          <button
-            class="flex h-10 w-10 items-center justify-center rounded-full bg-panel text-textMuted shadow-sm ring-1 ring-borderSoft transition hover:bg-panelSoft hover:text-textMain disabled:cursor-not-allowed disabled:opacity-50"
-            :disabled="currentProjectPage === 1"
-            @click="emit('go-to-page', currentProjectPage - 1)"
-          >
-            <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          </button>
-
-          <div class="flex items-center gap-1 px-2">
-            <button
-              v-for="pageNo in pageNumberList"
-              :key="`project-page-${pageNo}`"
-              class="flex h-9 min-w-9 items-center justify-center rounded-lg text-[14px] font-semibold transition"
-              :class="pageNo === currentProjectPage
-                ? 'bg-textMain text-bg'
-                : 'text-textMuted hover:bg-panelSoft hover:text-textMain'"
-              @click="emit('go-to-page', pageNo)"
-            >
-              {{ pageNo }}
-            </button>
-          </div>
-
-          <button
-            class="flex h-10 w-10 items-center justify-center rounded-full bg-panel text-textMuted shadow-sm ring-1 ring-borderSoft transition hover:bg-panelSoft hover:text-textMain disabled:cursor-not-allowed disabled:opacity-50"
-            :disabled="currentProjectPage === totalProjectPages"
-            @click="emit('go-to-page', currentProjectPage + 1)"
-          >
-            <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          </button>
+        <div class="project-list-row__cover">
+          <UiFluidImage
+            v-if="project.coverImageUrl"
+            :src="project.coverImageUrl"
+            :alt="project.title"
+            wrapper-class="h-full w-full"
+            img-class="object-cover"
+            fallback-text=""
+            loading-label=""
+          />
+          <div v-else class="project-cover-fallback"><span>{{ project.title.slice(0, 1) || '剧' }}</span></div>
         </div>
+        <div class="project-list-row__main">
+          <h3>{{ project.title }}</h3>
+          <p>{{ project.genre || project.style || '短剧项目' }}</p>
+        </div>
+        <span class="project-status project-list-row__status" :class="projectStatusClass(project)">
+          {{ projectStatusLabel(project) }}
+        </span>
+        <div class="project-list-row__progress">
+          <span>{{ projectProgressLabel(project) }}</span>
+          <div class="project-progress-track"><span :style="{ width: `${projectProgress(project)}%` }" /></div>
+        </div>
+        <time>{{ formatProjectDate(project.updatedAt || project.createdAt) }}</time>
+        <button type="button" title="删除项目" @click.stop="emit('request-delete-project', project)">
+          <Trash2 class="h-[18px] w-[18px]" />
+        </button>
+      </article>
+    </div>
+
+    <footer v-if="totalProjectPages > 1" class="project-pagination">
+      <p>第 {{ currentProjectPage }} / {{ totalProjectPages }} 页</p>
+      <div>
+        <button
+          type="button"
+          title="上一页"
+          :disabled="currentProjectPage === 1"
+          @click="emit('go-to-page', currentProjectPage - 1)"
+        >
+          <ChevronLeft class="h-5 w-5" />
+        </button>
+        <button
+          v-for="pageNo in pageNumberList"
+          :key="`project-page-${pageNo}`"
+          type="button"
+          :class="{ active: pageNo === currentProjectPage }"
+          @click="emit('go-to-page', pageNo)"
+        >
+          {{ pageNo }}
+        </button>
+        <button
+          type="button"
+          title="下一页"
+          :disabled="currentProjectPage === totalProjectPages"
+          @click="emit('go-to-page', currentProjectPage + 1)"
+        >
+          <ChevronRight class="h-5 w-5" />
+        </button>
       </div>
-    </section>
-  </div>
+    </footer>
+  </section>
 </template>
+
+<style scoped>
+.project-directory {
+  width: 100%;
+}
+
+.project-directory__header,
+.project-toolbar,
+.project-toolbar__actions,
+.project-progress-meta,
+.project-pagination,
+.project-pagination > div {
+  display: flex;
+  align-items: center;
+}
+
+.project-directory__header {
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.project-create-button {
+  display: inline-flex;
+  height: 42px;
+  align-items: center;
+  gap: 8px;
+  border-radius: 8px;
+  background: #0868f7;
+  padding: 0 20px;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 800;
+  box-shadow: 0 10px 24px rgba(8, 104, 247, 0.2);
+}
+
+.project-create-button:disabled,
+.project-delete-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.project-toolbar {
+  gap: 12px;
+  margin-top: 28px;
+}
+
+.project-search {
+  display: flex;
+  width: 216px;
+  height: 42px;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid #dbe5f2;
+  border-radius: 8px;
+  background: var(--panel, #fff);
+  padding: 0 14px;
+  color: #8493aa;
+}
+
+.project-search input {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: inherit;
+  font-size: 13px;
+}
+
+.project-select {
+  height: 42px;
+  min-width: 130px;
+  border: 1px solid #dbe5f2;
+  border-radius: 8px;
+  outline: none;
+  background: var(--panel, #fff);
+  padding: 0 34px 0 14px;
+  color: #273650;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.project-select--sort {
+  min-width: 170px;
+}
+
+.project-toolbar__actions {
+  gap: 8px;
+  margin-left: auto;
+}
+
+.project-secondary-button,
+.project-delete-button {
+  display: inline-flex;
+  height: 38px;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #dbe5f2;
+  border-radius: 8px;
+  background: var(--panel, #fff);
+  padding: 0 13px;
+  color: #53627a;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.project-delete-button {
+  border-color: rgba(239, 68, 68, 0.25);
+  color: #dc2626;
+}
+
+.project-view-toggle {
+  display: grid;
+  grid-template-columns: repeat(2, 38px);
+  overflow: hidden;
+  border: 1px solid #dbe5f2;
+  border-radius: 8px;
+  background: var(--panel, #fff);
+}
+
+.project-view-toggle button {
+  display: grid;
+  height: 38px;
+  place-items: center;
+  color: #74839a;
+}
+
+.project-view-toggle button.active {
+  background: #edf5ff;
+  color: #0868f7;
+}
+
+.project-empty-state,
+.project-filter-empty {
+  display: flex;
+  min-height: 268px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  margin-top: 24px;
+  border: 1px solid #e1e8f2;
+  border-radius: 8px;
+  background: var(--panel, #fff);
+  text-align: center;
+  box-shadow: 0 14px 40px rgba(41, 72, 117, 0.05);
+}
+
+.project-empty-state img {
+  width: min(330px, 72vw);
+  height: 132px;
+  object-fit: contain;
+  object-position: center;
+  /* 原素材底部带有较多透明空白，裁切后才能和设计稿保持紧凑。 */
+  clip-path: inset(2% 3% 8%);
+}
+
+.project-empty-state h3,
+.project-filter-empty h3 {
+  margin-top: 2px;
+  color: #0f172a;
+  font-size: 18px;
+  font-weight: 900;
+}
+
+.project-empty-state p,
+.project-filter-empty p {
+  margin-top: 8px;
+  color: #71809a;
+  font-size: 14px;
+}
+
+.project-filter-empty {
+  color: #9aa8bc;
+}
+
+.project-card-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 18px;
+  margin-top: 24px;
+}
+
+.project-card {
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid #dfe7f2;
+  border-radius: 8px;
+  background: var(--panel, #fff);
+  box-shadow: 0 12px 28px rgba(38, 69, 110, 0.06);
+  cursor: pointer;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
+.project-card:hover {
+  border-color: rgba(8, 104, 247, 0.35);
+  box-shadow: 0 18px 36px rgba(30, 85, 158, 0.12);
+  transform: translateY(-2px);
+}
+
+.project-card__cover {
+  position: relative;
+  height: 128px;
+  overflow: hidden;
+  background: #edf4ff;
+}
+
+.project-cover-fallback {
+  display: grid;
+  height: 100%;
+  width: 100%;
+  place-items: center;
+  background: linear-gradient(135deg, #dcecff, #edf4ff 52%, #dce8fb);
+}
+
+.project-cover-fallback span {
+  color: rgba(8, 104, 247, 0.48);
+  font-size: 44px;
+  font-weight: 900;
+}
+
+.project-status {
+  display: inline-flex;
+  height: 24px;
+  align-items: center;
+  border-radius: 6px;
+  padding: 0 9px;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.project-card__cover > .project-status {
+  position: absolute;
+  right: 10px;
+  top: 10px;
+}
+
+.project-status--active {
+  background: #0868f7;
+  color: #fff;
+}
+
+.project-status--completed {
+  background: #10b981;
+  color: #fff;
+}
+
+.project-status--archived {
+  background: rgba(71, 85, 105, 0.82);
+  color: #fff;
+}
+
+.project-card__body {
+  padding: 14px 14px 15px;
+}
+
+.project-card__body h3 {
+  overflow: hidden;
+  color: #0f172a;
+  font-size: 15px;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-card__body > p {
+  margin-top: 6px;
+  color: #8492a7;
+  font-size: 11px;
+}
+
+.project-progress-meta {
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 14px;
+  color: #65748b;
+  font-size: 11px;
+}
+
+.project-progress-meta strong {
+  color: #0868f7;
+  font-weight: 900;
+}
+
+.project-progress-track {
+  height: 5px;
+  overflow: hidden;
+  margin-top: 7px;
+  border-radius: 999px;
+  background: #e7eef7;
+}
+
+.project-progress-track > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #0868f7;
+  transition: width 0.25s ease;
+}
+
+.project-card-delete,
+.project-select-check {
+  position: absolute;
+  z-index: 4;
+  display: grid;
+  height: 30px;
+  width: 30px;
+  place-items: center;
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.92);
+  color: #64748b;
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.12);
+}
+
+.project-card-delete {
+  right: 10px;
+  bottom: 10px;
+  opacity: 0;
+}
+
+.project-card:hover .project-card-delete {
+  opacity: 1;
+}
+
+.project-select-check {
+  left: 10px;
+  top: 10px;
+  color: transparent;
+}
+
+.project-select-check.active {
+  background: #0868f7;
+  color: #fff;
+}
+
+.project-list-view {
+  display: grid;
+  gap: 10px;
+  margin-top: 24px;
+}
+
+.project-list-row {
+  display: grid;
+  min-height: 82px;
+  grid-template-columns: 112px minmax(180px, 1fr) 86px 220px 150px 36px;
+  gap: 16px;
+  align-items: center;
+  border: 1px solid #dfe7f2;
+  border-radius: 8px;
+  background: var(--panel, #fff);
+  padding: 10px;
+  cursor: pointer;
+}
+
+.project-list-row__cover {
+  height: 62px;
+  overflow: hidden;
+  border-radius: 6px;
+  background: #edf4ff;
+}
+
+.project-list-row__main h3 {
+  color: #0f172a;
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.project-list-row__main p,
+.project-list-row time,
+.project-list-row__progress > span {
+  margin-top: 5px;
+  color: #7b899e;
+  font-size: 11px;
+}
+
+.project-list-row__status {
+  justify-self: start;
+}
+
+.project-list-row > button {
+  display: grid;
+  height: 34px;
+  width: 34px;
+  place-items: center;
+  color: #7b899e;
+}
+
+.project-pagination {
+  justify-content: space-between;
+  margin-top: 28px;
+  border-top: 1px solid #dfe7f2;
+  padding-top: 20px;
+  color: #71809a;
+  font-size: 13px;
+}
+
+.project-pagination > div {
+  gap: 6px;
+}
+
+.project-pagination button {
+  display: grid;
+  height: 34px;
+  min-width: 34px;
+  place-items: center;
+  border-radius: 7px;
+  color: #65748b;
+  font-weight: 800;
+}
+
+.project-pagination button.active {
+  background: #0868f7;
+  color: #fff;
+}
+
+.project-pagination button:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+@media (max-width: 1520px) {
+  .project-card-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 1240px) {
+  .project-toolbar {
+    flex-wrap: wrap;
+  }
+
+  .project-toolbar__actions {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .project-card-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .project-list-row {
+    grid-template-columns: 96px minmax(180px, 1fr) 86px 180px 36px;
+  }
+
+  .project-list-row time {
+    display: none;
+  }
+}
+
+@media (max-width: 860px) {
+  .project-directory__header {
+    align-items: flex-start;
+  }
+
+  .project-search,
+  .project-select,
+  .project-select--sort {
+    width: 100%;
+  }
+
+  .project-card-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .project-list-row {
+    grid-template-columns: 86px minmax(0, 1fr) 36px;
+  }
+
+  .project-list-row__status,
+  .project-list-row__progress {
+    display: none;
+  }
+}
+
+@media (max-width: 560px) {
+  .project-directory__header {
+    flex-direction: column;
+  }
+
+  .project-create-button {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .project-card-grid {
+    grid-template-columns: 1fr;
+  }
+}
+</style>

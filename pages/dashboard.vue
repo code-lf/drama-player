@@ -2,6 +2,7 @@
 import type { DramaCreditPreview, DramaProjectCard, DramaProjectDetail, DramaRuntimeConfig } from '~/entities/drama/types'
 import AnnouncementWorkspacePanel from '~/features/dashboard/components/AnnouncementWorkspacePanel.vue'
 import BillingWorkspacePanel from '~/features/billing/components/BillingWorkspacePanel.vue'
+import CreditAmount from '~/components/ui/CreditAmount.vue'
 import CreditAccountPopover from '~/features/billing/components/CreditAccountPopover.vue'
 import DashboardAnnouncementCenter from '~/features/dashboard/components/DashboardAnnouncementCenter.vue'
 import DashboardSidebar from '~/features/dashboard/components/DashboardSidebar.vue'
@@ -245,8 +246,7 @@ const isAllCurrentPageSelected = computed(() => {
   return currentPageIds.every((projectId) => selectedProjectIds.value.includes(projectId))
 })
 const projectOverviewLabel = computed(() => {
-  if (projectTotalCount.value === 0) return '还没有项目，先创建一个试试'
-  return `共 ${projectTotalCount.value} 个项目，第 ${currentProjectPage.value} / ${totalProjectPages.value} 页`
+  return '在这里管理你的短剧创作项目，查看进度，继续创作'
 })
 const deleteDialogVisible = computed(() => pendingDeleteProjectIds.value.length > 0)
 const currentCreditBalance = computed(() => {
@@ -333,6 +333,17 @@ function formatProjectUpdatedAt(value: string): string {
   if (Number.isNaN(date.getTime())) return '更新于 --'
   const pad = (input: number) => String(input).padStart(2, '0')
   return `更新于 ${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
+
+function recentProjectProgress(project: DramaProjectCard): number {
+  // 首页项目卡必须展示真实分镜进度，尚未进入分镜阶段时保持 0%，不能用卡片序号伪造进度。
+  if (project.totalStoryboards <= 0) return 0
+  return Math.min(100, Math.round((project.completedStoryboards / project.totalStoryboards) * 100))
+}
+
+function recentProjectProgressLabel(project: DramaProjectCard): string {
+  if (project.totalStoryboards <= 0) return '尚未生成分镜'
+  return `${project.completedStoryboards} / ${project.totalStoryboards} 镜头完成`
 }
 
 function projectCoverStyle(project: DramaProjectCard, index: number): Record<string, string> {
@@ -1058,12 +1069,8 @@ onBeforeUnmount(() => {
                 :aria-expanded="isCreditPopoverOpen"
                 @click="toggleCreditPopover"
               >
-                <span class="flex h-5 w-5 items-center justify-center text-[#005FFE]">
-                  <svg viewBox="0 0 24 24" class="h-5 w-5" fill="currentColor">
-                    <path d="M12 2.8 14.1 8 19.2 10.1 14.1 12.2 12 17.2 9.9 12.2 4.8 10.1 9.9 8 12 2.8Z" />
-                  </svg>
-                </span>
-                <span>{{ currentCreditBalance }} 积分</span>
+                <CreditAmount :value="currentCreditBalance" size="sm" tone="inherit" />
+                <span>积分</span>
               </button>
 
               <div v-if="isCreditPopoverOpen" class="absolute right-0 top-[52px] z-[80]">
@@ -1441,7 +1448,7 @@ onBeforeUnmount(() => {
                 </div>
                 <div class="grid grid-cols-1 gap-6 md:grid-cols-3">
                   <article
-                    v-for="(project, index) in recentProjectCards"
+                    v-for="project in recentProjectCards"
                     :key="project.id"
                     class="dashboard-project-card group relative flex min-h-[128px] cursor-pointer gap-5 rounded-[12px] border border-[#dfe7f2] bg-white p-4 shadow-[0_18px_48px_rgba(15,23,42,0.06)] transition hover:-translate-y-1 hover:shadow-[0_22px_58px_rgba(15,23,42,0.12)]"
                     @click="openRecentProject(project)"
@@ -1458,8 +1465,8 @@ onBeforeUnmount(() => {
                           <p class="truncate text-[16px] font-black text-[#111827]">{{ project.title }}</p>
                           <div class="mt-2 flex flex-wrap gap-2 text-[12px] font-bold text-[#64748b]">
                             <span class="rounded bg-[#f0f5ff] px-2 py-1">{{ project.genre || '东方玄幻' }}</span>
-                            <span class="rounded bg-[#f0f5ff] px-2 py-1">16:9</span>
-                            <span class="rounded bg-[#f0f5ff] px-2 py-1">1 集</span>
+                            <span class="rounded bg-[#f0f5ff] px-2 py-1">{{ project.aspectRatio || '16:9' }}</span>
+                            <span class="rounded bg-[#f0f5ff] px-2 py-1">{{ project.totalEpisodes }} 集</span>
                           </div>
                         </div>
                         <button
@@ -1478,9 +1485,9 @@ onBeforeUnmount(() => {
                       </div>
                       <div class="mt-4 flex items-center gap-3">
                         <div class="h-1.5 flex-1 overflow-hidden rounded-full bg-[#edf2f7]">
-                          <div class="h-full rounded-full bg-[#005FFE]" :style="{ width: `${Math.min(80, 28 + index * 18)}%` }"></div>
+                          <div class="h-full rounded-full bg-[#005FFE]" :style="{ width: `${recentProjectProgress(project)}%` }"></div>
                         </div>
-                        <span class="text-[12px] font-bold text-[#64748b]">{{ index + 3 }} / {{ index + 10 }} 镜头完成</span>
+                        <span class="text-[12px] font-bold text-[#64748b]">{{ recentProjectProgressLabel(project) }}</span>
                       </div>
                       <p class="mt-4 text-[12px] font-semibold text-[#7b8aa3]">{{ formatProjectUpdatedAt(project.updatedAt) }}</p>
                     </div>

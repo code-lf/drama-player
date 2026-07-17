@@ -48,6 +48,14 @@ function normalizeApiErrorMessage(detail: unknown): string {
   return '接口返回失败'
 }
 
+function normalizeApiErrorCode(detail: unknown): string {
+  // 保留后端业务错误码，页面才能区分积分不足、模型超时、版本冲突等处理动作。
+  if (detail && typeof detail === 'object' && 'error_code' in detail) {
+    return String((detail as { error_code?: unknown }).error_code || 'BIZ_ERROR')
+  }
+  return 'BIZ_ERROR'
+}
+
 export async function callApi<T>(endpoint: string, task: (adapter: ApiAdapter) => Promise<ApiResponse<T>>): Promise<T> {
   const adapter = pickAdapter()
 
@@ -71,7 +79,10 @@ export async function callApi<T>(endpoint: string, task: (adapter: ApiAdapter) =
     if (error && typeof error === 'object' && 'response' in error) {
       const response = (error as any).response
       if (response && response._data && response._data.detail) {
-        throw new ApiClientError(normalizeApiErrorMessage(response._data.detail), 'BIZ_ERROR')
+        throw new ApiClientError(
+          normalizeApiErrorMessage(response._data.detail),
+          normalizeApiErrorCode(response._data.detail)
+        )
       }
     }
 

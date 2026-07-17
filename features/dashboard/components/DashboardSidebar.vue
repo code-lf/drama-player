@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import CreditIcon from '~/components/ui/CreditIcon.vue'
+
 interface Props {
   activeMenu: 'drama' | 'product' | 'canvas' | 'none'
   activeWorkspaceView: 'console' | 'projects' | 'billing' | 'announcements'
@@ -95,7 +97,7 @@ const createMenuItems = [
         返回工作台
       </NuxtLink>
       <NuxtLink to="/dashboard-billing" class="group flex h-[44px] items-center gap-3 rounded-[11px] px-4 text-[13px] font-bold transition" :class="billingView === 'recharge' ? 'bg-[#eff4ff] text-[#005FFE]' : 'text-[#53627c] hover:bg-[#f6f8fc] hover:text-[#005FFE]'">
-        <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5v9M8.5 12h7" stroke-linecap="round" /></svg>
+        <CreditIcon size="xs" />
         积分充值
       </NuxtLink>
       <NuxtLink to="/dashboard-billing?view=orders" class="group flex h-[44px] items-center gap-3 rounded-[11px] px-4 text-[13px] font-bold transition" :class="billingView === 'orders' ? 'bg-[#eff4ff] text-[#005FFE]' : 'text-[#53627c] hover:bg-[#f6f8fc] hover:text-[#005FFE]'">

@@ -306,6 +306,9 @@ interface BackendDramaDetailResponse {
   analysis: {
     title: string
     genre: string
+    core_theme?: string
+    target_audience?: string
+    story_type?: string
     logline: string
     synopsis: string
     total_episodes: number
@@ -340,6 +343,9 @@ interface BackendDramaDetailResponse {
       episode_no: number
       title: string
       summary: string
+      core_event?: string
+      character_change?: string
+      ending_hook?: string
     }>
     episode_details: Array<{
       episode_no: number
@@ -360,7 +366,7 @@ interface BackendDramaDetailResponse {
     schema_version?: string
     character_relationships?: {
       nodes?: Array<{ key?: string; name?: string; role?: string; tone?: string; x?: number; y?: number }>
-      links?: Array<{ source?: string; target?: string; label?: string; color?: string; strength?: number; summary?: string }>
+      links?: Array<{ source?: string; target?: string; label?: string; color?: string; strength?: number; summary?: string; direction?: 'forward' | 'both' | 'none' }>
       summaries?: string[]
       arc_steps?: Array<Record<string, string>>
     }
@@ -375,12 +381,18 @@ interface BackendDramaDetailResponse {
       ai_judgements?: Array<{ title?: string; detail?: string; status?: string }>
     }>
     script_scenes?: Array<{
+      episode_id?: string
+      scene_id?: string
       episode_no?: number
       index?: number
       title?: string
       place?: string
       time_of_day?: string
       characters?: string[]
+      props?: string[]
+      emotion?: string
+      start_offset?: number
+      end_offset?: number
       content?: string
       dialogues?: string[]
       suggestions?: string[]
@@ -389,18 +401,22 @@ interface BackendDramaDetailResponse {
       title?: string
       score?: number
       tone?: string
-      dimensions?: Array<{ label?: string; value?: number }>
-      strengths?: Array<{ title?: string; status?: string; detail?: string }>
-      warnings?: Array<{ title?: string; status?: string; detail?: string }>
+      dimensions?: Array<{ key?: string; label?: string; value?: number; weight?: number; grade?: string; evidence?: string[]; suggestions?: string[] }>
+      strengths?: Array<{ title?: string; status?: string; detail?: string; suggestion_id?: string }>
+      warnings?: Array<{ title?: string; status?: string; detail?: string; suggestion_id?: string }>
+      confidence?: number
       updated_at?: string
     }>
     production_estimate?: {
       roles?: number
       scenes?: number
+      scene_assets?: number
+      scene_occurrences?: number
       props?: number
       shots?: number
       credits?: number
       episode_duration?: string
+      total_duration?: string
       key_episode_count?: number
     }
     optimization_suggestions?: Array<{
@@ -413,9 +429,70 @@ interface BackendDramaDetailResponse {
       affected?: string
       boost?: string
       detail?: string
+      evidence?: string[]
+      impact?: string
+      affected_episode_nos?: number[]
+      affected_locations?: string[]
+      confidence?: number
+      source_version?: string
       original_text?: string
       suggested_text?: string
+      problem_identification?: string
+      modification_strategy?: string
+      expected_effect?: string
+      risk_control?: string
+      character_impact?: string
+      episode_impact?: string
+      asset_impact?: string
+      storyboard_impact?: string
       status?: string
+      suggestion_status?: string
+      draft_status?: string
+      draft_requested?: boolean
+      draft_error_code?: string
+      draft_error_message?: string
+      draft_retry_count?: number
+      draft_source_version?: string
+      source_block_ids?: string[]
+      evidence_block_ids?: string[]
+      draft_scope_block_ids?: string[]
+      source_scope_type?: string
+      source_segments?: Array<{
+        episode_no?: number | null
+        scene_id?: string
+        scene_no?: number | null
+        block_ids?: string[]
+        start_offset?: number
+        end_offset?: number
+        text?: string
+      }>
+      scene_no?: number | null
+      draft_revision?: number
+      charged_credits?: number
+      patches?: Array<Record<string, unknown>>
+      source_locator?: {
+        scope_type?: string
+        episode_no?: number | null
+        scene_id?: string
+        scene_index?: number | null
+        start_offset?: number
+        end_offset?: number
+        source_text_snapshot?: string
+        source_version?: string
+        status?: 'resolved' | 'ambiguous' | 'missing' | 'stale'
+        confidence?: number
+        candidates?: Array<{
+          episode_no?: number | null
+          scene_id?: string
+          scene_index?: number | null
+          start_offset?: number
+          end_offset?: number
+          excerpt?: string
+          confidence?: number
+        }>
+      }
+      actionable?: boolean
+      storyboard_reference?: string
     }>
     script_versions?: Array<{
       version?: string
@@ -428,8 +505,11 @@ interface BackendDramaDetailResponse {
       score?: number
     }>
     current_script_version?: string
+    confirmed_script_version_id?: string
+    analysis_snapshot_id?: string
   }
   analysis_run: {
+    run_id?: string
     status: string
     current_stage: string
     stage_statuses: Record<string, string>
@@ -440,6 +520,30 @@ interface BackendDramaDetailResponse {
     updated_at: string
     finished_at: string
     error_message: string
+    structure_ready?: boolean
+    reviews_ready?: boolean
+    production_ready?: boolean
+    pipeline_version?: string
+    global_review_status?: string
+    fulltext_batches?: Array<{
+      batch_id?: string
+      status?: string
+      char_count?: number
+      start_block_id?: string
+      end_block_id?: string
+      error_code?: string
+      error_message?: string
+    }>
+    nodes?: Record<string, {
+      key?: string
+      status?: string
+      attempt?: number
+      progress?: number
+      error_code?: string
+      error_message?: string
+      started_at?: string
+      finished_at?: string
+    }>
   }
   storyboard_run?: BackendStoryboardRowsResponse['run']
   storyboards: BackendStoryboardRow[]
@@ -613,6 +717,14 @@ interface BackendDramaProjectCardResponse {
   cover_image_url: string
   genre: string
   tags: string[]
+  entry_intent: DramaIntentMode
+  effective_mode: DramaIntentMode
+  style: string
+  aspect_ratio: string
+  resolution: string
+  total_episodes: number
+  completed_storyboards: number
+  total_storyboards: number
   updated_at: string
   created_at: string
 }
@@ -647,6 +759,14 @@ function mapDramaProjectCard(raw: BackendDramaProjectCardResponse): DramaProject
     coverImageUrl: raw.cover_image_url || '',
     genre: raw.genre || '',
     tags: raw.tags || [],
+    entryIntent: raw.entry_intent || 'drama',
+    effectiveMode: raw.effective_mode || raw.entry_intent || 'drama',
+    style: raw.style || '',
+    aspectRatio: raw.aspect_ratio || '',
+    resolution: raw.resolution || '',
+    totalEpisodes: Number(raw.total_episodes || 1),
+    completedStoryboards: Number(raw.completed_storyboards || 0),
+    totalStoryboards: Number(raw.total_storyboards || 0),
     updatedAt: raw.updated_at || '',
     createdAt: raw.created_at || ''
   }
@@ -923,19 +1043,27 @@ function mapDramaScriptReview(raw?: BackendDramaDetailResponse['analysis']['scri
     score: Number(raw?.score || 0),
     tone: raw?.tone || '',
     dimensions: (raw?.dimensions || []).map((item) => ({
+      key: item.key || '',
       label: item.label || '',
-      value: Number(item.value || 0)
+      value: Number(item.value || 0),
+      weight: Number(item.weight || 0),
+      grade: item.grade || '',
+      evidence: item.evidence || [],
+      suggestions: item.suggestions || []
     })),
     strengths: (raw?.strengths || []).map((item) => ({
       title: item.title || '',
       status: item.status || 'good',
-      detail: item.detail || ''
+      detail: item.detail || '',
+      suggestionId: item.suggestion_id || ''
     })),
     warnings: (raw?.warnings || []).map((item) => ({
       title: item.title || '',
       status: item.status || 'warning',
-      detail: item.detail || ''
+      detail: item.detail || '',
+      suggestionId: item.suggestion_id || ''
     })),
+    confidence: Number(raw?.confidence || 0),
     updatedAt: raw?.updated_at || ''
   }
 }
@@ -954,6 +1082,9 @@ function mapDramaDetail(raw: BackendDramaDetailResponse): DramaProjectDetail {
     analysis: {
       title: raw.analysis?.title || '',
       genre: raw.analysis?.genre || '',
+      coreTheme: raw.analysis?.core_theme || '',
+      targetAudience: raw.analysis?.target_audience || '',
+      storyType: raw.analysis?.story_type || '',
       logline: raw.analysis?.logline || '',
       synopsis: raw.analysis?.synopsis || '',
       totalEpisodes: raw.analysis?.total_episodes || 1,
@@ -988,7 +1119,10 @@ function mapDramaDetail(raw: BackendDramaDetailResponse): DramaProjectDetail {
       episodeSummaries: (raw.analysis?.episode_summaries || []).map((item) => ({
         episodeNo: item.episode_no,
         title: item.title,
-        summary: item.summary
+        summary: item.summary,
+        coreEvent: item.core_event || '',
+        characterChange: item.character_change || '',
+        endingHook: item.ending_hook || ''
       })),
       episodeDetails: (raw.analysis?.episode_details || []).map((item) => ({
         episodeNo: item.episode_no,
@@ -1048,7 +1182,8 @@ function mapDramaDetail(raw: BackendDramaDetailResponse): DramaProjectDetail {
           label: item.label || '',
           color: item.color || '#2563eb',
           strength: Number(item.strength || 1),
-          summary: item.summary || ''
+          summary: item.summary || '',
+          direction: item.direction || 'both'
         })),
         summaries: raw.analysis?.character_relationships?.summaries || [],
         arcSteps: raw.analysis?.character_relationships?.arc_steps || []
@@ -1071,16 +1206,25 @@ function mapDramaDetail(raw: BackendDramaDetailResponse): DramaProjectDetail {
         aiJudgements: (item.ai_judgements || []).map((judgement) => ({
           title: judgement.title || '',
           detail: judgement.detail || '',
-          status: judgement.status || 'good'
+          status: judgement.status || 'good',
+          suggestionId: judgement.suggestion_id || '',
+          dimension: judgement.dimension || '',
+          affectedEpisodeNos: (judgement.affected_episode_nos || []).map((value) => Number(value)).filter(Number.isFinite)
         }))
       })),
       scriptScenes: (raw.analysis?.script_scenes || []).map((item) => ({
+        episodeId: item.episode_id || '',
+        sceneId: item.scene_id || '',
         episodeNo: Number(item.episode_no || 1),
         index: Number(item.index || 1),
         title: item.title || '',
         place: item.place || '',
         timeOfDay: item.time_of_day || '',
         characters: item.characters || [],
+        props: item.props || [],
+        emotion: item.emotion || '',
+        startOffset: Number(item.start_offset || 0),
+        endOffset: Number(item.end_offset || 0),
         content: item.content || '',
         dialogues: item.dialogues || [],
         suggestions: item.suggestions || []
@@ -1094,10 +1238,13 @@ function mapDramaDetail(raw: BackendDramaDetailResponse): DramaProjectDetail {
       productionEstimate: {
         roles: Number(raw.analysis?.production_estimate?.roles || 0),
         scenes: Number(raw.analysis?.production_estimate?.scenes || 0),
+        sceneAssets: Number(raw.analysis?.production_estimate?.scene_assets || raw.analysis?.scenes?.length || 0),
+        sceneOccurrences: Number(raw.analysis?.production_estimate?.scene_occurrences || raw.analysis?.script_scenes?.length || 0),
         props: Number(raw.analysis?.production_estimate?.props || 0),
         shots: Number(raw.analysis?.production_estimate?.shots || 0),
         credits: Number(raw.analysis?.production_estimate?.credits || 0),
         episodeDuration: raw.analysis?.production_estimate?.episode_duration || '',
+        totalDuration: raw.analysis?.production_estimate?.total_duration || '',
         keyEpisodeCount: Number(raw.analysis?.production_estimate?.key_episode_count || 0)
       },
       optimizationSuggestions: (raw.analysis?.optimization_suggestions || []).map((item) => ({
@@ -1110,9 +1257,70 @@ function mapDramaDetail(raw: BackendDramaDetailResponse): DramaProjectDetail {
         affected: item.affected || '',
         boost: item.boost || '',
         detail: item.detail || '',
+        evidence: item.evidence || [],
+        impact: item.impact || item.boost || '',
+        affectedEpisodeNos: item.affected_episode_nos || [],
+        affectedLocations: item.affected_locations || [],
+        confidence: Number(item.confidence || 0),
+        sourceVersion: item.source_version || '',
         originalText: item.original_text || '',
         suggestedText: item.suggested_text || '',
-        status: item.status || 'pending'
+        problemIdentification: item.problem_identification || '',
+        modificationStrategy: item.modification_strategy || '',
+        expectedEffect: item.expected_effect || '',
+        riskControl: item.risk_control || '',
+        characterImpact: item.character_impact || '',
+        episodeImpact: item.episode_impact || '',
+        assetImpact: item.asset_impact || '',
+        storyboardImpact: item.storyboard_impact || '',
+        status: item.status || 'pending',
+        suggestionStatus: item.suggestion_status || '',
+        draftStatus: item.draft_status || '',
+        draftRequested: Boolean(item.draft_requested),
+        draftErrorCode: item.draft_error_code || '',
+        draftErrorMessage: item.draft_error_message || '',
+        draftRetryCount: Number(item.draft_retry_count || 0),
+        draftSourceVersion: item.draft_source_version || '',
+        sourceBlockIds: item.source_block_ids || [],
+        evidenceBlockIds: item.evidence_block_ids || [],
+        draftScopeBlockIds: item.draft_scope_block_ids || [],
+        sourceScopeType: item.source_scope_type || 'scene',
+        sourceSegments: (item.source_segments || []).map(segment => ({
+          episodeNo: segment.episode_no ?? null,
+          sceneId: segment.scene_id || '',
+          sceneNo: segment.scene_no ?? null,
+          blockIds: segment.block_ids || [],
+          startOffset: Number(segment.start_offset || 0),
+          endOffset: Number(segment.end_offset || 0),
+          text: segment.text || ''
+        })),
+        sceneNo: item.scene_no ?? null,
+        draftRevision: Number(item.draft_revision || 0),
+        chargedCredits: Number(item.charged_credits || 0),
+        patches: item.patches || [],
+        sourceLocator: {
+          scopeType: item.source_locator?.scope_type || 'scene',
+          episodeNo: item.source_locator?.episode_no ?? null,
+          sceneId: item.source_locator?.scene_id || '',
+          sceneIndex: item.source_locator?.scene_index ?? null,
+          startOffset: Number(item.source_locator?.start_offset || 0),
+          endOffset: Number(item.source_locator?.end_offset || 0),
+          sourceTextSnapshot: item.source_locator?.source_text_snapshot || '',
+          sourceVersion: item.source_locator?.source_version || '',
+          status: item.source_locator?.status || 'missing',
+          confidence: Number(item.source_locator?.confidence || 0),
+          candidates: (item.source_locator?.candidates || []).map(candidate => ({
+            episodeNo: candidate.episode_no ?? null,
+            sceneId: candidate.scene_id || '',
+            sceneIndex: candidate.scene_index ?? null,
+            startOffset: Number(candidate.start_offset || 0),
+            endOffset: Number(candidate.end_offset || 0),
+            excerpt: candidate.excerpt || '',
+            confidence: Number(candidate.confidence || 0)
+          }))
+        },
+        actionable: item.actionable !== false,
+        storyboardReference: item.storyboard_reference || ''
       })),
       scriptVersions: (raw.analysis?.script_versions || []).map((item) => ({
         version: item.version || '',
@@ -1124,9 +1332,12 @@ function mapDramaDetail(raw: BackendDramaDetailResponse): DramaProjectDetail {
         summary: item.summary || '',
         score: Number(item.score || 0)
       })),
-      currentScriptVersion: raw.analysis?.current_script_version || 'v1.2'
+      currentScriptVersion: raw.analysis?.current_script_version || 'v1.2',
+      confirmedScriptVersionId: raw.analysis?.confirmed_script_version_id || '',
+      analysisSnapshotId: raw.analysis?.analysis_snapshot_id || ''
     },
     analysisRun: {
+      runId: raw.analysis_run?.run_id || '',
       status: raw.analysis_run?.status || 'idle',
       currentStage: raw.analysis_run?.current_stage || '',
       stageStatuses: raw.analysis_run?.stage_statuses || {},
@@ -1136,7 +1347,31 @@ function mapDramaDetail(raw: BackendDramaDetailResponse): DramaProjectDetail {
       startedAt: raw.analysis_run?.started_at || '',
       updatedAt: raw.analysis_run?.updated_at || '',
       finishedAt: raw.analysis_run?.finished_at || '',
-      errorMessage: raw.analysis_run?.error_message || ''
+      errorMessage: raw.analysis_run?.error_message || '',
+      structureReady: Boolean(raw.analysis_run?.structure_ready),
+      reviewsReady: Boolean(raw.analysis_run?.reviews_ready),
+      productionReady: Boolean(raw.analysis_run?.production_ready),
+      pipelineVersion: raw.analysis_run?.pipeline_version || 'v2',
+      globalReviewStatus: raw.analysis_run?.global_review_status || 'queued',
+      fulltextBatches: (raw.analysis_run?.fulltext_batches || []).map((batch) => ({
+        batchId: batch.batch_id || '',
+        status: batch.status || 'queued',
+        charCount: Number(batch.char_count || 0),
+        startBlockId: batch.start_block_id || '',
+        endBlockId: batch.end_block_id || '',
+        errorCode: batch.error_code || '',
+        errorMessage: batch.error_message || ''
+      })),
+      nodes: Object.fromEntries(Object.entries(raw.analysis_run?.nodes || {}).map(([key, node]) => [key, {
+        key: node.key || key,
+        status: node.status || 'queued',
+        attempt: Number(node.attempt || 0),
+        progress: Number(node.progress || 0),
+        errorCode: node.error_code || '',
+        errorMessage: node.error_message || '',
+        startedAt: node.started_at || '',
+        finishedAt: node.finished_at || ''
+      }]))
     },
     storyboardRun: {
       status: raw.storyboard_run?.status || 'idle',
@@ -1523,9 +1758,10 @@ export const httpAdapter: ApiAdapter = {
         title: payload.title || '未命名短剧项目',
         theme_mode: payload.themeMode || 'dark',
         entry_intent: payload.entryIntent || 'drama',
-        style: payload.style || '',
-        aspect_ratio: payload.aspectRatio || '',
-        resolution: payload.resolution || '',
+        // 项目列表快捷创建不会先经过入口配置面板，因此这里必须提供后端认可的有效默认值。
+        style: payload.style || '东方玄幻 · 电影写实',
+        aspect_ratio: payload.aspectRatio || '16:9',
+        resolution: payload.resolution || '720p',
         episode_count: payload.episodeCount || 1
       }
     })
@@ -1595,6 +1831,7 @@ export const httpAdapter: ApiAdapter = {
       method: 'POST',
       body: {
         kind: payload.kind || 'global',
+        task_type: payload.taskType || 'CREATE_OPTIMIZATION_DRAFT',
         suggestion_ids: payload.suggestionIds || [],
         scope: payload.scope || '',
         intensity: payload.intensity || 'balanced',
@@ -1603,6 +1840,7 @@ export const httpAdapter: ApiAdapter = {
         instruction: payload.instruction || '',
         source_version: payload.sourceVersion || '',
         adjustment_instruction: payload.adjustmentInstruction || '',
+        adjusted_text: payload.adjustedText || '',
         selected_actions: payload.selectedActions || []
       }
     })
@@ -1617,6 +1855,53 @@ export const httpAdapter: ApiAdapter = {
     return ok(mapDramaDetail(response))
   },
 
+  async updateDramaScriptSuggestionStatus(projectId: string, suggestionId: string, payload: { status: 'open' | 'pending' | 'ignored'; scriptVersionId?: string }) {
+    const response = await request<BackendDramaDetailResponse>(
+      `/drama/projects/${projectId}/script-suggestions/${encodeURIComponent(suggestionId)}`,
+      {
+        method: 'PATCH',
+        body: {
+          status: payload.status,
+          script_version_id: payload.scriptVersionId || ''
+        }
+      }
+    )
+    return ok(mapDramaDetail(response))
+  },
+
+  async resolveDramaScriptSuggestionSource(projectId: string, suggestionId: string) {
+    const response = await request<BackendDramaDetailResponse>(
+      `/drama/projects/${projectId}/script-suggestions/${encodeURIComponent(suggestionId)}/resolve-source`,
+      { method: 'POST' }
+    )
+    return ok(mapDramaDetail(response))
+  },
+
+  async updateDramaScriptSuggestionSourceRange(projectId: string, suggestionId: string, payload: import('~/shared/api/types').DramaSuggestionSourceRangePayload) {
+    const response = await request<BackendDramaDetailResponse>(
+      `/drama/projects/${projectId}/script-suggestions/${encodeURIComponent(suggestionId)}/source-range`,
+      {
+        method: 'PATCH',
+        body: {
+          episode_no: payload.episodeNo ?? null,
+          scene_id: payload.sceneId || '',
+          scene_index: payload.sceneIndex ?? null,
+          start_offset: payload.startOffset,
+          end_offset: payload.endOffset
+        }
+      }
+    )
+    return ok(mapDramaDetail(response))
+  },
+
+  async confirmDramaScriptVersion(projectId: string) {
+    const response = await request<BackendDramaDetailResponse>(
+      `/drama/projects/${projectId}/script-versions/current/confirm`,
+      { method: 'POST' }
+    )
+    return ok(mapDramaDetail(response))
+  },
+
   async updateDramaScriptScene(projectId: string, payload: DramaScriptSceneUpdatePayload) {
     // 完整剧本页的“场次正文编辑”是用户手动修文，不属于 AI 生成动作：
     // 这里只把当前场次内容保存进项目 analysis_json，不走点数扣费。
@@ -1625,6 +1910,7 @@ export const httpAdapter: ApiAdapter = {
       body: {
         episode_no: payload.episodeNo,
         scene_index: payload.sceneIndex,
+        scene_id: payload.sceneId || '',
         title: payload.title || '',
         place: payload.place || '',
         time_of_day: payload.timeOfDay || '',
@@ -1642,6 +1928,9 @@ export const httpAdapter: ApiAdapter = {
         action: payload.action,
         model: payload.model || '',
         provider: payload.provider || '',
+        aspect_ratio: payload.aspectRatio || '16:9',
+        style: payload.style || '',
+        force_reanalyze: payload.forceReanalyze ?? false,
         duration_sec: payload.durationSec || 5,
         resolution: payload.resolution || '',
         audio: payload.audio ?? true,
@@ -1661,7 +1950,7 @@ export const httpAdapter: ApiAdapter = {
     return ok(mapDramaCreditPreview(response))
   },
 
-  async analyzeDrama(projectId: string, payload?: { model?: string; aspectRatio?: string; resolution?: string; style?: string }) {
+  async analyzeDrama(projectId: string, payload?: { model?: string; aspectRatio?: string; resolution?: string; style?: string; forceReanalyze?: boolean }) {
     const response = await request<BackendDramaDetailResponse>(`/drama/projects/${projectId}/analyze`, {
       method: 'POST',
       body: {
@@ -1672,6 +1961,73 @@ export const httpAdapter: ApiAdapter = {
       }
     })
     return ok(mapDramaDetail(response))
+  },
+
+  async retryDramaAnalysisNode(projectId: string, nodeKey: string) {
+    const response = await request<BackendDramaDetailResponse>(
+      `/drama/projects/${projectId}/analysis/nodes/${encodeURIComponent(nodeKey)}/retry`,
+      { method: 'POST' }
+    )
+    return ok(mapDramaDetail(response))
+  },
+
+  async retryDramaSuggestionDraft(projectId: string, suggestionId: string) {
+    const response = await request<BackendDramaDetailResponse>(
+      `/drama/projects/${projectId}/script-suggestions/${encodeURIComponent(suggestionId)}/draft/retry`,
+      { method: 'POST' }
+    )
+    return ok(mapDramaDetail(response))
+  },
+
+  async quoteDramaSuggestionDrafts(projectId: string, suggestionIds: string[]) {
+    const response = await request<any>(`/drama/projects/${projectId}/script-suggestions/drafts/quote`, {
+      method: 'POST',
+      body: { suggestion_ids: suggestionIds }
+    })
+    return ok({
+      items: (response.items || []).map((item: any) => ({
+        suggestionId: item.suggestion_id || '',
+        sourceScopeType: item.source_scope_type || 'scene',
+        sourceChars: Number(item.source_chars || 0),
+        estimatedTokens: Number(item.estimated_tokens || 0),
+        estimatedCredits: Number(item.estimated_credits || 0)
+      })),
+      totalCredits: Number(response.total_credits || 0),
+      currentBalance: Number(response.current_balance || 0),
+      sufficient: Boolean(response.sufficient),
+      expiresAt: response.expires_at || ''
+    })
+  },
+
+  async generateDramaSuggestionDrafts(projectId: string, suggestionIds: string[]) {
+    const response = await request<any>(`/drama/projects/${projectId}/script-suggestions/drafts/generate`, {
+      method: 'POST',
+      body: { suggestion_ids: suggestionIds }
+    })
+    return ok({
+      runId: response.run_id || '',
+      status: response.status || 'queued',
+      total: Number(response.total || 0),
+      succeeded: Number(response.succeeded || 0),
+      failed: Number(response.failed || 0),
+      running: Number(response.running || 0),
+      chargedCredits: Number(response.charged_credits || 0),
+      suggestionIds: response.suggestion_ids || []
+    })
+  },
+
+  async getDramaSuggestionDraftRun(projectId: string, runId: string) {
+    const response = await request<any>(`/drama/projects/${projectId}/script-suggestions/draft-runs/${encodeURIComponent(runId)}`)
+    return ok({
+      runId: response.run_id || '',
+      status: response.status || 'running',
+      total: Number(response.total || 0),
+      succeeded: Number(response.succeeded || 0),
+      failed: Number(response.failed || 0),
+      running: Number(response.running || 0),
+      chargedCredits: Number(response.charged_credits || 0),
+      suggestionIds: response.suggestion_ids || []
+    })
   },
 
   async regenerateDramaCover(projectId: string, payload?: { style?: string }) {

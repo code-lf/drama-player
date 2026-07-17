@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { CreditLedgerItem } from '~/entities/account/types'
+import CreditAmount from '~/components/ui/CreditAmount.vue'
 
 interface Props {
   /** 顶部胶囊里展示的当前可用积分。 */
@@ -63,15 +64,8 @@ const totalEarned = computed(() => props.billingLedgers
   <div class="w-[330px] rounded-[18px] border border-[#e2eaf5] bg-white p-4 shadow-[0_24px_70px_rgba(15,23,42,0.16)]">
     <div class="flex items-start justify-between gap-4">
       <div>
-        <div class="flex items-center gap-2 text-[#0d63ff]">
-          <span class="flex h-7 w-7 items-center justify-center rounded-full bg-[#eaf2ff]">
-            <svg viewBox="0 0 24 24" class="h-4 w-4" fill="currentColor">
-              <path d="M12 2.8 14.1 8 19.2 10.1 14.1 12.2 12 17.2 9.9 12.2 4.8 10.1 9.9 8 12 2.8Z" />
-            </svg>
-          </span>
-          <span class="text-[24px] font-black tracking-[-0.04em] text-[#18243a]">{{ formatNumber(currentCreditBalance) }}</span>
-        </div>
-        <p class="mt-1 pl-9 text-[12px] font-semibold text-[#8492a8]">当前可用积分</p>
+        <CreditAmount :value="currentCreditBalance" size="lg" tone="inherit" class="text-[#18243a]" />
+        <p class="mt-1 pl-11 text-[12px] font-semibold text-[#8492a8]">当前可用积分</p>
       </div>
     </div>
 

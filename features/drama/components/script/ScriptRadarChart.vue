@@ -2,6 +2,7 @@
 type RadarDimension = {
   label: string
   value: number
+  weight?: number
 }
 
 const props = defineProps<{
@@ -9,10 +10,17 @@ const props = defineProps<{
 }>()
 
 const chartEl = ref<HTMLDivElement | null>(null)
+const hasRadarData = computed(() => props.dimensions.length >= 3)
 let chartInstance: import('echarts').ECharts | null = null
 let resizeObserver: ResizeObserver | null = null
 
 async function renderChart() {
+  // 单维或双维数据无法形成雷达面，继续绘制只会产生误导性的直线。
+  if (!hasRadarData.value) {
+    chartInstance?.dispose()
+    chartInstance = null
+    return
+  }
   if (!chartEl.value) return
 
   // ECharts 依赖浏览器 DOM 和 canvas，Nuxt SSR 阶段不能直接 import 初始化。
@@ -20,24 +28,45 @@ async function renderChart() {
   const echarts = await import('echarts')
   chartInstance ||= echarts.init(chartEl.value)
 
-  const safeDimensions = props.dimensions.length
-    ? props.dimensions
-    : [
-        { label: '故事结构', value: 82 },
-        { label: '人物动机', value: 76 },
-        { label: '短剧节奏', value: 78 },
-        { label: '制作难度', value: 72 },
-        { label: '商业钩子', value: 75 }
-      ]
+  const safeDimensions = props.dimensions
+
+  function escapeHtml(value: string) {
+    return value
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;')
+      .replaceAll("'", '&#039;')
+  }
+
+  function formatWeight(weight?: number) {
+    if (!weight) return ''
+    return `${Math.round(weight * 100)}%`
+  }
 
   chartInstance.setOption(
     {
       animation: true,
       animationDuration: 420,
       grid: { left: 0, right: 0, top: 0, bottom: 0 },
+      tooltip: {
+        trigger: 'item',
+        confine: true,
+        backgroundColor: 'rgba(15,23,42,0.94)',
+        borderWidth: 0,
+        padding: [10, 12],
+        textStyle: { color: '#ffffff', fontSize: 12 },
+        formatter: () => {
+          const rows = safeDimensions.map((item) => {
+            const weight = formatWeight(item.weight)
+            return `<div style="display:flex;justify-content:space-between;gap:24px;line-height:24px"><span>${escapeHtml(item.label)}</span><b>${Math.round(item.value)}分${weight ? ` · ${weight}` : ''}</b></div>`
+          }).join('')
+          return `<div style="min-width:190px"><div style="margin-bottom:4px;font-weight:700">维度评分</div>${rows}</div>`
+        }
+      },
       radar: {
-        center: ['50%', '54%'],
-        radius: '58%',
+        center: ['50%', '52%'],
+        radius: '53%',
         splitNumber: 4,
         indicator: safeDimensions.map((item) => ({
           name: item.label,
@@ -47,8 +76,13 @@ async function renderChart() {
           color: '#475569',
           fontSize: 12,
           fontWeight: 700,
-          lineHeight: 18,
-          padding: [2, 4]
+          lineHeight: 17,
+          padding: [2, 4],
+          // 常态只显示维度名称，分数与权重仅在悬停雷达图形时通过 Tooltip 展示。
+          formatter: (name: string) => name,
+          rich: {
+            label: { color: '#334155', fontSize: 12, fontWeight: 700, lineHeight: 17 }
+          }
         },
         axisLine: {
           lineStyle: {
@@ -105,7 +139,8 @@ onMounted(async () => {
 
 watch(
   () => props.dimensions,
-  () => {
+  async () => {
+    await nextTick()
     void renderChart()
   },
   { deep: true }
@@ -119,5 +154,9 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div ref="chartEl" class="h-52 w-full" />
+  <div v-if="hasRadarData" ref="chartEl" class="h-52 w-full" />
+  <div v-else class="flex h-52 w-full flex-col items-center justify-center rounded-[14px] border border-dashed border-[#cfe0f6] bg-[#f8fbff] px-5 text-center">
+    <p class="text-sm font-semibold text-[#475569]">体检维度数据不足</p>
+    <p class="mt-2 text-xs leading-5 text-[#94a3b8]">请免费重试当前体检节点，系统不会用单一维度绘制误导性的雷达图。</p>
+  </div>
 </template>

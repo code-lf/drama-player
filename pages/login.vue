@@ -18,9 +18,10 @@ const accountStore = useAccountStore()
 type AuthMode = 'login' | 'register'
 
 const authMode = ref<AuthMode>('login')
-const account = ref('')
+// 当前联调阶段默认填入测试账号，用户仍可直接修改输入内容。
+const account = ref('test@livliv.local')
 const nickname = ref('')
-const password = ref('')
+const password = ref('Livliv@2026')
 const verifyCode = ref('')
 const rememberMe = ref(true)
 const showPassword = ref(false)
@@ -175,10 +176,8 @@ onMounted(async () => {
       <div class="hero-content">
         <NuxtLink class="brand" to="/">
           <img class="brand-logo" src="/login/login-logo.png" alt="Livliv" />
-          <div>
-            <div class="brand-name">Livliv</div>
-            <div class="brand-subtitle">短剧创作平台</div>
-          </div>
+          <span class="brand-name">Livliv</span>
+          <span class="brand-subtitle">短剧创作平台</span>
         </NuxtLink>
 
         <div class="hero-copy">
@@ -240,11 +239,6 @@ onMounted(async () => {
           >
             注册
           </button>
-        </div>
-
-        <div class="panel-heading">
-          <h2>{{ authMode === 'login' ? '账号登录' : '账号注册' }}</h2>
-          <p>{{ authMode === 'login' ? '使用账号密码进入 Livliv 创作工作台' : '注册后即可开始短剧创作' }}</p>
         </div>
 
         <form class="login-form" @submit.prevent="submitAuth">
@@ -322,10 +316,11 @@ onMounted(async () => {
   position: relative;
   display: grid;
   min-height: 100vh;
-  grid-template-columns: minmax(560px, 1fr) 520px;
-  gap: clamp(52px, 6vw, 96px);
+  grid-template-columns: minmax(620px, 1fr) 500px;
+  gap: clamp(48px, 5vw, 82px);
   align-items: center;
-  padding: 42px clamp(48px, 5.8vw, 96px) 24px;
+  /* 设计稿左侧留白较窄，统一收紧页面横向边距。 */
+  padding: 36px clamp(40px, 3vw, 60px) 24px;
 }
 
 .hero-bg,
@@ -356,52 +351,56 @@ onMounted(async () => {
 
 .hero-content {
   display: flex;
-  min-height: calc(100vh - 66px);
+  min-height: calc(100vh - 60px);
   flex-direction: column;
-  justify-content: space-between;
+  /* 品牌、标题和功能卖点按固定节奏排列，底部信息单独贴近页面底部。 */
+  justify-content: flex-start;
 }
 
 .brand {
   display: inline-flex;
   width: max-content;
   align-items: center;
-  gap: 14px;
+  gap: 10px;
   color: #ffffff;
   text-decoration: none;
+  white-space: nowrap;
 }
 
 .brand-logo {
-  height: 54px;
-  width: 54px;
-  border-radius: 14px;
-  object-fit: cover;
-  box-shadow: 0 14px 36px rgba(0, 111, 255, 0.3);
+  height: 72px;
+  width: 72px;
+  flex: 0 0 auto;
+  /* 透明素材四周带有无效留白，裁掉外圈后不再露出深色边角。 */
+  clip-path: inset(10% round 22%);
+  object-fit: contain;
 }
 
 .brand-name {
-  font-size: 36px;
+  font-size: 38px;
   font-weight: 900;
   letter-spacing: 0;
   line-height: 1;
 }
 
 .brand-subtitle {
-  margin-top: 7px;
+  margin-left: 8px;
   color: rgba(228, 239, 255, 0.92);
   font-size: 18px;
   font-weight: 700;
+  line-height: 1;
 }
 
 .hero-copy {
-  margin-top: 66px;
+  margin-top: 54px;
 }
 
 .hero-copy h1 {
   max-width: 690px;
-  font-size: clamp(42px, 3.9vw, 58px);
+  font-size: clamp(42px, 3.3vw, 52px);
   font-weight: 950;
   letter-spacing: 0;
-  line-height: 1.32;
+  line-height: 1.28;
   text-shadow: 0 18px 54px rgba(0, 20, 62, 0.48);
 }
 
@@ -422,41 +421,42 @@ onMounted(async () => {
 }
 
 .hero-copy p {
-  margin-top: 24px;
+  margin-top: 22px;
   color: rgba(235, 245, 255, 0.9);
-  font-size: 22px;
+  font-size: 20px;
   font-weight: 700;
   letter-spacing: 0;
 }
 
 .feature-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 46px;
-  margin-top: 38px;
+  display: grid;
+  width: min(100%, 710px);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 34px;
+  margin-top: 30px;
 }
 
 .feature-card {
   display: inline-flex;
   align-items: center;
-  gap: 12px;
-  min-width: 142px;
-  padding: 8px 4px;
+  gap: 10px;
+  min-width: 0;
 }
 
 .feature-card img {
-  height: 52px;
-  width: 52px;
-  border-radius: 14px;
-  object-fit: cover;
-  box-shadow: 0 14px 34px rgba(0, 112, 255, 0.26);
+  height: 88px;
+  width: 88px;
+  flex: 0 0 auto;
+  /* 功能图主体只占透明画布中部，裁边并放大后与设计稿的视觉尺寸一致。 */
+  clip-path: inset(16% round 24%);
+  object-fit: contain;
 }
 
 .feature-card strong,
 .footer-pill strong {
   display: block;
   color: #ffffff;
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 900;
 }
 
@@ -474,7 +474,7 @@ onMounted(async () => {
   flex-wrap: wrap;
   gap: clamp(48px, 6.8vw, 92px);
   margin-top: auto;
-  padding-top: 74px;
+  padding-top: 28px;
 }
 
 .footer-pill {
@@ -512,15 +512,15 @@ onMounted(async () => {
 
 .login-panel {
   justify-self: end;
-  width: min(100%, 520px);
-  min-height: 560px;
+  width: min(100%, 500px);
+  min-height: 0;
   overflow: hidden;
   border: 1px solid rgba(223, 232, 249, 0.86);
   border-radius: 24px;
   background: linear-gradient(145deg, rgba(255, 255, 255, 0.98), rgba(247, 251, 255, 0.94));
   box-shadow: 0 34px 90px rgba(3, 20, 55, 0.28);
   color: #10203f;
-  padding: 40px 42px 30px;
+  padding: 38px 42px 30px;
 }
 
 .qr-corner {
@@ -537,29 +537,8 @@ onMounted(async () => {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 48px;
-  margin: 2px auto 32px;
+  margin: 2px auto 34px;
   width: 320px;
-}
-
-.panel-heading {
-  margin: 0 auto 32px;
-  max-width: 390px;
-  text-align: center;
-}
-
-.panel-heading h2 {
-  color: #10203f;
-  font-size: 28px;
-  font-weight: 950;
-  line-height: 1.15;
-  letter-spacing: 0;
-}
-
-.panel-heading p {
-  margin-top: 10px;
-  color: #6f7f98;
-  font-size: 14px;
-  font-weight: 700;
 }
 
 .panel-tab {
@@ -840,6 +819,27 @@ onMounted(async () => {
   }
 }
 
+@media (max-width: 1440px) and (min-width: 1181px) {
+  .login-hero {
+    grid-template-columns: minmax(540px, 1fr) 470px;
+    gap: 40px;
+    padding-inline: 40px;
+  }
+
+  .brand-logo {
+    height: 66px;
+    width: 66px;
+  }
+
+  .brand-name {
+    font-size: 34px;
+  }
+
+  .brand-subtitle {
+    font-size: 16px;
+  }
+}
+
 @media (max-width: 720px) {
   .login-hero {
     padding: 24px 16px;
@@ -848,6 +848,29 @@ onMounted(async () => {
   .login-panel {
     min-height: auto;
     padding: 38px 22px 28px;
+  }
+
+  .brand {
+    gap: 7px;
+  }
+
+  .brand-logo {
+    height: 54px;
+    width: 54px;
+  }
+
+  .brand-name {
+    font-size: 28px;
+  }
+
+  .brand-subtitle {
+    margin-left: 2px;
+    font-size: 14px;
+  }
+
+  .feature-row {
+    grid-template-columns: 1fr;
+    gap: 14px;
   }
 
   .panel-tabs {

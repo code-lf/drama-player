@@ -86,6 +86,8 @@ export interface DramaAnalyzePayload {
   aspectRatio?: string
   resolution?: string
   style?: string
+  /** 默认复用相同输入的已有解析；仅明确付费重做时设为 true。 */
+  forceReanalyze?: boolean
 }
 
 export interface DramaAssetGeneratePayload {
@@ -156,6 +158,10 @@ export interface DramaCreditPreviewPayload {
     | 'script_text_optimization'
   model?: string
   provider?: string
+  /** 剧本解析的作品参数用于识别相同运行，避免重复创建任务和扣点。 */
+  aspectRatio?: string
+  style?: string
+  forceReanalyze?: boolean
   durationSec?: number
   resolution?: string
   audio?: boolean
@@ -183,6 +189,11 @@ export interface DramaIntentRouterUpdatePayload {
 
 export interface DramaScriptOptimizationPayload {
   kind?: 'global' | 'suggestion' | 'character' | 'episode' | 'scene' | 'text'
+  /**
+   * 剧本优化任务类型，用于严格区分整剧解析和单条建议操作。
+   * 注意：该接口只处理优化任务，不允许传入 FULL_SCRIPT_PARSE。
+   */
+  taskType?: 'CREATE_OPTIMIZATION_DRAFT' | 'LOCAL_SUGGESTION_RECHECK' | 'REGENERATE_SUGGESTION_DRAFT' | 'REFRESH_STALE_SUGGESTION' | 'APPLY_SUGGESTION_TO_DRAFT'
   suggestionIds?: string[]
   scope?: string
   intensity?: 'conservative' | 'balanced' | 'deep'
@@ -191,12 +202,47 @@ export interface DramaScriptOptimizationPayload {
   instruction?: string
   sourceVersion?: string
   adjustmentInstruction?: string
+  adjustedText?: string
   selectedActions?: string[]
+}
+
+export interface DramaSuggestionSourceRangePayload {
+  episodeNo?: number | null
+  sceneId?: string
+  sceneIndex?: number | null
+  startOffset: number
+  endOffset: number
+}
+
+export interface DramaSuggestionDraftQuote {
+  items: Array<{
+    suggestionId: string
+    sourceScopeType: string
+    sourceChars: number
+    estimatedTokens: number
+    estimatedCredits: number
+  }>
+  totalCredits: number
+  currentBalance: number
+  sufficient: boolean
+  expiresAt: string
+}
+
+export interface DramaSuggestionDraftRun {
+  runId: string
+  status: string
+  total: number
+  succeeded: number
+  failed: number
+  running: number
+  chargedCredits: number
+  suggestionIds: string[]
 }
 
 export interface DramaScriptSceneUpdatePayload {
   episodeNo: number
   sceneIndex: number
+  sceneId?: string
   title?: string
   place?: string
   timeOfDay?: string
@@ -315,9 +361,18 @@ export interface ApiAdapter {
   updateDramaIntentRouter(projectId: string, payload: DramaIntentRouterUpdatePayload): Promise<ApiResponse<DramaProjectDetail>>
   createDramaScriptOptimization(projectId: string, payload: DramaScriptOptimizationPayload): Promise<ApiResponse<DramaProjectDetail>>
   applyDramaScriptVersion(projectId: string, versionId: string): Promise<ApiResponse<DramaProjectDetail>>
+  updateDramaScriptSuggestionStatus(projectId: string, suggestionId: string, payload: { status: 'open' | 'pending' | 'ignored'; scriptVersionId?: string }): Promise<ApiResponse<DramaProjectDetail>>
+  resolveDramaScriptSuggestionSource(projectId: string, suggestionId: string): Promise<ApiResponse<DramaProjectDetail>>
+  updateDramaScriptSuggestionSourceRange(projectId: string, suggestionId: string, payload: DramaSuggestionSourceRangePayload): Promise<ApiResponse<DramaProjectDetail>>
+  confirmDramaScriptVersion(projectId: string): Promise<ApiResponse<DramaProjectDetail>>
   updateDramaScriptScene(projectId: string, payload: DramaScriptSceneUpdatePayload): Promise<ApiResponse<DramaProjectDetail>>
   previewDramaCredits(projectId: string, payload: DramaCreditPreviewPayload): Promise<ApiResponse<DramaCreditPreview>>
   analyzeDrama(projectId: string, payload?: DramaAnalyzePayload): Promise<ApiResponse<DramaProjectDetail>>
+  retryDramaAnalysisNode(projectId: string, nodeKey: string): Promise<ApiResponse<DramaProjectDetail>>
+  retryDramaSuggestionDraft(projectId: string, suggestionId: string): Promise<ApiResponse<DramaProjectDetail>>
+  quoteDramaSuggestionDrafts(projectId: string, suggestionIds: string[]): Promise<ApiResponse<DramaSuggestionDraftQuote>>
+  generateDramaSuggestionDrafts(projectId: string, suggestionIds: string[]): Promise<ApiResponse<DramaSuggestionDraftRun>>
+  getDramaSuggestionDraftRun(projectId: string, runId: string): Promise<ApiResponse<DramaSuggestionDraftRun>>
   regenerateDramaCover(projectId: string, payload?: DramaCoverRegeneratePayload): Promise<ApiResponse<DramaProjectDetail>>
   createDramaRole(projectId: string, payload: DramaRoleCreatePayload): Promise<ApiResponse<DramaProjectDetail>>
   updateDramaRole(projectId: string, roleKey: string, payload: DramaRoleUpdatePayload): Promise<ApiResponse<DramaProjectDetail>>
