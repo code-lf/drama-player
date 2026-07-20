@@ -2,6 +2,11 @@ import { callApi } from '~/shared/api/client'
 import type {
   DramaAnalyzePayload,
   DramaAssetGeneratePayload,
+  DramaAssetProfile,
+  DramaAssetRepairRequest,
+  DramaVisualBible,
+  DramaWorkspaceAssetStatus,
+  DramaWorkspaceAssetType,
   DramaCreditPreviewPayload,
   DramaEntryCreditPreviewPayload,
   DramaCoverRegeneratePayload,
@@ -47,6 +52,54 @@ export const dramaService = {
 
   async getProject(projectId: string) {
     return callApi('drama/getProject', (adapter) => adapter.getDramaProject(projectId))
+  },
+
+  async getAssetWorkspace(projectId: string) {
+    return callApi('drama/getAssetWorkspace', (adapter) => adapter.getDramaAssetWorkspace!(projectId))
+  },
+
+  async updateVisualBible(projectId: string, payload: Omit<DramaVisualBible, 'id' | 'version_no' | 'source_script_version' | 'status'>) {
+    return callApi('drama/updateVisualBible', (adapter) => adapter.updateDramaVisualBible!(projectId, payload))
+  },
+
+  async updateAssetProfile(projectId: string, profile: Pick<DramaAssetProfile, 'asset_type' | 'asset_key'>, payload: { name?: string; is_required?: boolean; production_status?: DramaWorkspaceAssetStatus; selected_asset_id?: string; data?: Record<string, unknown> }) {
+    return callApi('drama/updateAssetProfile', (adapter) => adapter.updateDramaAssetProfile!(projectId, profile.asset_type, profile.asset_key, payload))
+  },
+
+  async deleteAssetProfile(projectId: string, assetType: DramaWorkspaceAssetType, assetKey: string) {
+    return callApi('drama/deleteAssetProfile', (adapter) => adapter.deleteDramaAssetProfile!(projectId, assetType, assetKey))
+  },
+
+  async uploadAssetReference(projectId: string, assetType: DramaWorkspaceAssetType, assetKey: string, file: File) {
+    return callApi('drama/uploadAssetReference', (adapter) => adapter.uploadDramaAssetReference!(projectId, assetType, assetKey, file))
+  },
+
+  async estimateAssetGeneration(projectId: string, targets: string[]) {
+    return callApi('drama/estimateAssetGeneration', (adapter) => adapter.estimateDramaAssetGeneration!(projectId, targets))
+  },
+
+  async generateWorkspaceAssets(projectId: string, targets: string[], overwrite = false, compileHashes: Record<string, string> = {}) {
+    return callApi('drama/generateWorkspaceAssets', (adapter) => adapter.generateDramaWorkspaceAssets!(projectId, targets, overwrite, compileHashes))
+  },
+
+  async lockWorkspaceAsset(projectId: string, assetType: DramaWorkspaceAssetType, assetKey: string, locked: boolean) {
+    return callApi('drama/lockWorkspaceAsset', (adapter) => adapter.lockDramaWorkspaceAsset!(projectId, assetType, assetKey, locked))
+  },
+
+  async estimateAssetConsistency(projectId: string, assetType: DramaWorkspaceAssetType, assetKey: string) {
+    return callApi('drama/estimateAssetConsistency', (adapter) => adapter.estimateDramaAssetConsistency!(projectId, assetType, assetKey))
+  },
+
+  async checkAssetConsistency(projectId: string, assetType: DramaWorkspaceAssetType, assetKey: string, manual = true, force = false) {
+    return callApi('drama/checkAssetConsistency', (adapter) => adapter.checkDramaAssetConsistency!(projectId, assetType, assetKey, manual, force))
+  },
+
+  async estimateAssetConsistencyRepair(projectId: string, assetType: DramaWorkspaceAssetType, assetKey: string, payload: DramaAssetRepairRequest) {
+    return callApi('drama/estimateAssetConsistencyRepair', (adapter) => adapter.estimateDramaAssetConsistencyRepair!(projectId, assetType, assetKey, payload))
+  },
+
+  async repairAssetConsistency(projectId: string, assetType: DramaWorkspaceAssetType, assetKey: string, payload: DramaAssetRepairRequest) {
+    return callApi('drama/repairAssetConsistency', (adapter) => adapter.repairDramaAssetConsistency!(projectId, assetType, assetKey, payload))
   },
 
   async ingestScript(projectId: string, payload: DramaScriptIngestPayload) {

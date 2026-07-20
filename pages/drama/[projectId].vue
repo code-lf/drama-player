@@ -33,6 +33,7 @@ import type {
   WorkflowRunInfo
 } from '~/shared/api/types'
 import CreditAmount from '~/components/ui/CreditAmount.vue'
+import DramaAssetWorkspace from '~/components/drama/assets/DramaAssetWorkspace.vue'
 import DramaScriptWorkspace from '~/features/drama/components/script/DramaScriptWorkspace.vue'
 import { Copy, Ellipsis, Plus, Trash2 } from '@lucide/vue'
 import { useAuthStore } from '~/features/auth/store/useAuthStore'
@@ -3403,6 +3404,13 @@ function selectStep(step: WorkflowStepKey): void {
   persistActiveStep()
 }
 
+function enterStoryboardFromAssetWorkspace(): void {
+  // 新资产工作台在后端 readiness 门禁通过后才会触发该事件，
+  // 因此这里不再复用旧页面基于图片数量推算的 areSettingsReady 判断。
+  activeStep.value = 'storyboard'
+  persistActiveStep()
+}
+
 async function goNextStep(): Promise<void> {
   const stepOrder: WorkflowStepKey[] = ['script', 'setting', 'storyboard', 'video']
   const currentStep = activeStep.value
@@ -3434,26 +3442,9 @@ async function goNextStep(): Promise<void> {
   persistConfirmedStepIndex()
   selectStep(nextStep)
 
-  // 从“剧本 -> 设定”确认后，直接触发角色四视图生成，让用户进入设定页就能看到生成过程。
-  if (currentStep === 'script' && nextStep === 'setting' && !hasRoleAssets.value) {
-    await generateRoleAssets({
-      overwrite: false,
-      successMessage: '已进入设定，角色四视图已开始排队生成。'
-    })
-  }
-  // 进入设定时，如果场景/道具还没有生成，也一并自动补齐，减少用户手动逐个触发。
-  if (currentStep === 'script' && nextStep === 'setting' && !hasSceneAssets.value) {
-    await generateSceneAssets({
-      overwrite: false,
-      successMessage: '已进入设定，场景图已开始生成。'
-    })
-  }
-  if (currentStep === 'script' && nextStep === 'setting' && !hasPropAssets.value) {
-    await generatePropAssets({
-      overwrite: false,
-      successMessage: '已进入设定，道具图已开始生成。'
-    })
-  }
+  // 新资产工作台会先展示剧本编译出的候选，并由用户确认生成范围和点数。
+  // 这里不再调用旧版“进入页面就自动批量生图”的角色/场景/道具接口：
+  // 一方面避免按钮点击后被三次高成本请求拖住，另一方面确保用户拥有生成前确认权。
 
   // 从“设定 -> 分镜”时，允许通过配置自动创建分镜表。
   // 这样用户点一次确认就能直接看到分镜结果，不需要再额外手点“生成分镜”。
@@ -3896,6 +3887,9 @@ watch(
 watch(
   [() => activeStep.value, hasAnalysis, hasRoleAssets, roleCountSummary, () => busyKey.value],
   async ([step, ready, roleReady, summary, busy]) => {
+    // 资产 V2 工作台改为“用户选择范围 → 点数确认 → Celery 批量生成”，
+    // 禁止旧逻辑在进入页面时自动弹出生成确认并抢占新工作台交互。
+    if (step === 'setting') return
     // 回访或刷新后如果已经停在“设定”步骤，但角色四视图还没进入生成队列，就自动补一次排队。
     // 主入口仍然是 goNextStep，这里只是兜底，避免用户看到“待生成/idle”却还得手点刷新。
     if (step !== 'setting' || !ready || roleReady || busy) return
@@ -3913,6 +3907,7 @@ watch(
 watch(
   [() => activeStep.value, hasAnalysis, hasSceneAssets, sceneCountSummary, () => busyKey.value],
   async ([step, ready, sceneReady, summary, busy]) => {
+    if (step === 'setting') return
     // 回访设定页时，如果场景图还没进入生成队列，就自动补一次，避免用户再手动点刷新。
     if (step !== 'setting' || !ready || sceneReady || busy) return
     if (!projectDetail.value || summary.total === 0 || summary.generating > 0) return
@@ -3929,6 +3924,7 @@ watch(
 watch(
   [() => activeStep.value, hasAnalysis, hasPropAssets, propCountSummary, () => busyKey.value],
   async ([step, ready, propReady, summary, busy]) => {
+    if (step === 'setting') return
     // 回访设定页时，如果道具图还没进入生成队列，就自动补一次，避免用户再手动点刷新。
     if (step !== 'setting' || !ready || propReady || busy) return
     if (!projectDetail.value || summary.total === 0 || summary.generating > 0) return
@@ -4066,6 +4062,7 @@ onBeforeUnmount(() => {
           :regenerate-cover-action="regenerateCoverOnly"
           :change-intent-mode-action="updateProjectIntentMode"
           :confirm-script-action="goNextStep"
+          @refresh="refreshProjectDetail"
           @preview-image="openImagePreview"
         />
 
@@ -4343,8 +4340,15 @@ onBeforeUnmount(() => {
           </div>
         </section>
 
-        <section
+        <DramaAssetWorkspace
           v-else-if="activeStep === 'setting'"
+          :project-id="currentProjectId"
+          :cover-image-url="scriptCoverUrl"
+          @continue="enterStoryboardFromAssetWorkspace"
+        />
+
+        <section
+          v-else-if="false && activeStep === 'setting'"
           class="rounded-[32px] border border-[#e8edf5] bg-panel p-6 shadow-[0_18px_60px_rgba(15,23,42,0.06)] xl:p-7"
         >
           <div class="rounded-[24px] border border-borderSoft bg-panelSoft px-5 py-4 text-sm leading-7 text-neon">
@@ -4549,7 +4553,7 @@ onBeforeUnmount(() => {
                     <div class="flex items-start justify-between gap-3">
                       <div class="min-w-0">
                         <p class="text-xs font-semibold text-textMain">{{ roleVoiceStatusText(role) }}</p>
-                        <p class="mt-1 text-[11px] leading-5 text-textMuted">当前仅作为角色音色参考样本，真实配音/克隆会在后续供应商接入后启用。</p>
+                        <p class="mt-1 text-[11px] leading-5 text-textMuted">当前音色类型用于记录角色声音方向；上传自定义音频后，Wan 2.7 和 Seedance 可将其作为角色参考音频。Wan 2.6 当前不使用角色参考音频。</p>
                       </div>
                       <button
                         v-if="role.voiceRef || role.voiceAsset"
@@ -5563,7 +5567,7 @@ onBeforeUnmount(() => {
     </section>
 
     <div
-      v-if="showFloatingConfirmButton"
+      v-if="showFloatingConfirmButton && activeStep !== 'setting'"
       class="pointer-events-none fixed inset-x-0 bottom-0 z-[100] flex justify-center px-4 pb-6"
     >
       <div class="pointer-events-auto rounded-full bg-[#0f172a] p-1.5 shadow-[0_24px_50px_rgba(15,23,42,0.28)]">

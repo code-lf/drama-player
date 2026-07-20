@@ -72,16 +72,21 @@ function isProjectSelected(projectId: string): boolean {
 }
 
 function projectProgress(project: DramaProjectCard): number {
-  if (project.totalStoryboards > 0) {
-    return Math.min(100, Math.round((project.completedStoryboards / project.totalStoryboards) * 100))
-  }
+  // 项目列表展示四阶段总进度：剧本 25%、资产 50%、分镜 75%、成片 100%。
+  // 后端资产阶段沿用 roles/scenes/props 三个历史枚举，必须统一折叠成“资产”，
+  // 否则已经进入第二阶段的项目会因为没有分镜数据而错误显示为 0%。
+  const stage = String(project.currentStage || '').toLowerCase()
   if (project.status === 'published') return 100
   if (project.status === 'analyzing') return 12
-  if (project.status === 'generating') return 68
-  if (project.currentStage === 'video') return 88
-  if (project.currentStage === 'storyboard') return 58
-  if (project.currentStage === 'assets') return 38
-  if (project.currentStage === 'analysis') return 22
+  if (['video', 'videos', 'completed'].includes(stage)) return 100
+  if (['storyboard', 'storyboards'].includes(stage)) {
+    const shotProgress = project.totalStoryboards > 0
+      ? project.completedStoryboards / project.totalStoryboards
+      : 0
+    return Math.min(75, Math.round(50 + shotProgress * 25))
+  }
+  if (['assets', 'setting', 'roles', 'scenes', 'props'].includes(stage)) return 50
+  if (['analysis', 'script'].includes(stage)) return 25
   return 0
 }
 
@@ -107,14 +112,16 @@ function projectStatusClass(project: DramaProjectCard): string {
 }
 
 function projectProgressLabel(project: DramaProjectCard): string {
-  if (project.totalStoryboards > 0) {
-    return `${project.completedStoryboards}/${project.totalStoryboards} 分镜完成`
-  }
+  const stage = String(project.currentStage || '').toLowerCase()
   if (project.status === 'analyzing') return '剧本解析中'
-  if (project.currentStage === 'analysis') return '剧本解析完成'
-  if (project.currentStage === 'assets') return '角色与场景制作中'
-  if (project.currentStage === 'storyboard') return '分镜制作中'
-  if (project.currentStage === 'video') return '视频合成中'
+  if (['analysis', 'script'].includes(stage)) return '剧本解析与确认中'
+  if (['assets', 'setting', 'roles', 'scenes', 'props'].includes(stage)) return '资产制作中'
+  if (['storyboard', 'storyboards'].includes(stage)) {
+    return project.totalStoryboards > 0
+      ? `${project.completedStoryboards}/${project.totalStoryboards} 分镜完成`
+      : '分镜制作中'
+  }
+  if (['video', 'videos', 'completed'].includes(stage)) return '成片制作完成'
   return '等待开始创作'
 }
 

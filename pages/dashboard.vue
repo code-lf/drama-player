@@ -336,14 +336,33 @@ function formatProjectUpdatedAt(value: string): string {
 }
 
 function recentProjectProgress(project: DramaProjectCard): number {
-  // 首页项目卡必须展示真实分镜进度，尚未进入分镜阶段时保持 0%，不能用卡片序号伪造进度。
-  if (project.totalStoryboards <= 0) return 0
-  return Math.min(100, Math.round((project.completedStoryboards / project.totalStoryboards) * 100))
+  // 项目卡展示的是“四阶段总进度”，不能只拿分镜完成率代替总进度。
+  // 每完成一个主阶段记 25%；进入分镜后，再把真实镜头完成率映射到 50%～75%。
+  // 这样已经确认剧本、正在制作资产的项目不会再错误显示为 0%。
+  const stage = String(project.currentStage || '').toLowerCase()
+  if (['video', 'videos', 'completed', 'success'].includes(stage) || project.status === 'completed') return 100
+  if (stage === 'storyboards') {
+    const storyboardProgress = project.totalStoryboards > 0
+      ? project.completedStoryboards / project.totalStoryboards
+      : 0
+    return Math.min(75, Math.round(50 + storyboardProgress * 25))
+  }
+  if (['roles', 'scenes', 'props', 'assets', 'setting'].includes(stage)) return 50
+  if (['analysis', 'script'].includes(stage)) return 25
+  return 0
 }
 
 function recentProjectProgressLabel(project: DramaProjectCard): string {
-  if (project.totalStoryboards <= 0) return '尚未生成分镜'
-  return `${project.completedStoryboards} / ${project.totalStoryboards} 镜头完成`
+  const stage = String(project.currentStage || '').toLowerCase()
+  if (['video', 'videos', 'completed', 'success'].includes(stage) || project.status === 'completed') return '成片制作完成'
+  if (stage === 'storyboards') {
+    return project.totalStoryboards > 0
+      ? `${project.completedStoryboards} / ${project.totalStoryboards} 镜头完成`
+      : '分镜制作中'
+  }
+  if (['roles', 'scenes', 'props', 'assets', 'setting'].includes(stage)) return '资产制作中'
+  if (['analysis', 'script'].includes(stage)) return '剧本解析与确认中'
+  return '等待开始创作'
 }
 
 function projectCoverStyle(project: DramaProjectCard, index: number): Record<string, string> {

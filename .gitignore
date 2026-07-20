@@ -42,6 +42,11 @@ pnpm-debug.log*
 coverage
 *.lcov
 
+# 本地 UI 视觉验收截图与 Edge 调试配置体积较大，只用于开发机复核，
+# 不属于产品运行代码，避免把浏览器缓存和批量截图提交到仓库。
+/artifacts/design-audit/
+/artifacts/edge-profile-assets/
+
 # 其他打包文件
 dist
 *.local

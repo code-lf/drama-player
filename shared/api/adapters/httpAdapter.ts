@@ -32,6 +32,16 @@ import type {
   ApiAdapter,
   ApiResponse,
   DramaAssetGeneratePayload,
+  DramaAssetGenerationEstimate,
+  DramaAssetGenerationRun,
+  DramaAssetConsistencyEstimate,
+  DramaAssetConsistencyRun,
+  DramaAssetRepairEstimate,
+  DramaAssetRepairRequest,
+  DramaAssetWorkspace,
+  DramaVisualBible,
+  DramaWorkspaceAssetStatus,
+  DramaWorkspaceAssetType,
   DramaCreditPreviewPayload,
   DramaEntryCreditPreviewPayload,
   DramaDeleteResult,
@@ -1767,6 +1777,99 @@ export const httpAdapter: ApiAdapter = {
   async getDramaProject(projectId: string) {
     const response = await request<BackendDramaDetailResponse>(`/drama/projects/${projectId}`)
     return ok(mapDramaDetail(response))
+  },
+
+  // 资产工作台接口保留后端 snake_case 字段，和数据库/任务日志中的命名保持一致，
+  // 这样在排查生成、锁定及视觉版本问题时无需再经过一层容易遗漏字段的转换。
+  async getDramaAssetWorkspace(projectId: string) {
+    const response = await request<DramaAssetWorkspace>(`/drama/projects/${projectId}/asset-workspace`)
+    return ok(response)
+  },
+
+  async updateDramaVisualBible(
+    projectId: string,
+    payload: Omit<DramaVisualBible, 'id' | 'version_no' | 'source_script_version' | 'status'>,
+  ) {
+    const response = await request<DramaAssetWorkspace>(`/drama/projects/${projectId}/visual-bible`, {
+      method: 'PATCH',
+      body: payload,
+    })
+    return ok(response)
+  },
+
+  async createDramaAssetProfile(projectId: string, payload: { asset_type: DramaWorkspaceAssetType; name: string; is_required?: boolean; data?: Record<string, unknown> }) {
+    const response = await request<DramaAssetWorkspace>(`/drama/projects/${projectId}/assets`, { method: 'POST', body: payload })
+    return ok(response)
+  },
+
+  async updateDramaAssetProfile(
+    projectId: string,
+    assetType: DramaWorkspaceAssetType,
+    assetKey: string,
+    payload: { name?: string; is_required?: boolean; production_status?: DramaWorkspaceAssetStatus; selected_asset_id?: string; data?: Record<string, unknown> },
+  ) {
+    const response = await request<DramaAssetWorkspace>(`/drama/projects/${projectId}/assets/${assetType}/${assetKey}`, { method: 'PATCH', body: payload })
+    return ok(response)
+  },
+
+  async deleteDramaAssetProfile(projectId: string, assetType: DramaWorkspaceAssetType, assetKey: string) {
+    const response = await request<DramaAssetWorkspace>(`/drama/projects/${projectId}/assets/${assetType}/${assetKey}`, { method: 'DELETE' })
+    return ok(response)
+  },
+
+  async uploadDramaAssetReference(projectId: string, assetType: DramaWorkspaceAssetType, assetKey: string, file: File) {
+    const body = new FormData()
+    body.append('file', file)
+    const response = await request<DramaAssetWorkspace>(`/drama/projects/${projectId}/assets/${assetType}/${assetKey}/upload`, { method: 'POST', body })
+    return ok(response)
+  },
+
+  async estimateDramaAssetGeneration(projectId: string, targets: string[]) {
+    const response = await request<DramaAssetGenerationEstimate>(`/drama/projects/${projectId}/assets/generation/estimate`, {
+      method: 'POST', body: { targets },
+    })
+    return ok(response)
+  },
+
+  async generateDramaWorkspaceAssets(projectId: string, targets: string[], overwrite = false, compileHashes: Record<string, string> = {}) {
+    const response = await request<DramaAssetGenerationRun>(`/drama/projects/${projectId}/assets/generate`, {
+      method: 'POST', body: { targets, overwrite, compile_hashes: compileHashes },
+    })
+    return ok(response)
+  },
+
+  async lockDramaWorkspaceAsset(projectId: string, assetType: DramaWorkspaceAssetType, assetKey: string, locked: boolean) {
+    const action = locked ? 'lock' : 'unlock'
+    const response = await request<DramaAssetWorkspace>(`/drama/projects/${projectId}/assets/${assetType}/${assetKey}/${action}`, { method: 'POST' })
+    return ok(response)
+  },
+
+  async estimateDramaAssetConsistency(projectId: string, assetType: DramaWorkspaceAssetType, assetKey: string) {
+    const response = await request<DramaAssetConsistencyEstimate>(`/drama/projects/${projectId}/assets/${assetType}/${assetKey}/consistency/estimate`, {
+      method: 'POST',
+    })
+    return ok(response)
+  },
+
+  async checkDramaAssetConsistency(projectId: string, assetType: DramaWorkspaceAssetType, assetKey: string, manual = true, force = false) {
+    const response = await request<DramaAssetConsistencyRun>(`/drama/projects/${projectId}/assets/${assetType}/${assetKey}/consistency/check`, {
+      method: 'POST', body: { manual, force },
+    })
+    return ok(response)
+  },
+
+  async estimateDramaAssetConsistencyRepair(projectId: string, assetType: DramaWorkspaceAssetType, assetKey: string, payload: DramaAssetRepairRequest) {
+    const response = await request<DramaAssetRepairEstimate>(`/drama/projects/${projectId}/assets/${assetType}/${assetKey}/consistency/repair/estimate`, {
+      method: 'POST', body: payload,
+    })
+    return ok(response)
+  },
+
+  async repairDramaAssetConsistency(projectId: string, assetType: DramaWorkspaceAssetType, assetKey: string, payload: DramaAssetRepairRequest) {
+    const response = await request<DramaAssetGenerationRun>(`/drama/projects/${projectId}/assets/${assetType}/${assetKey}/consistency/repair`, {
+      method: 'POST', body: payload,
+    })
+    return ok(response)
   },
 
   async ingestDramaScript(projectId: string, payload: DramaScriptIngestPayload) {

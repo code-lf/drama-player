@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, onMounted, ref, watch, computed } from 'vue'
+import { Check, ChevronDown } from '@lucide/vue'
+import { onBeforeUnmount, onMounted, ref, watch, computed } from 'vue'
+import { useFloatingLayer } from './useFloatingLayer'
 
 export interface BaseSelectOption {
   label: string
@@ -17,7 +19,7 @@ interface Props {
   placeholder?: string
   full?: boolean
   disabled?: boolean
-  tone?: 'pill' | 'panel'
+  tone?: 'pill' | 'panel' | 'light'
   align?: 'left' | 'right'
   size?: 'sm' | 'md'
   emptyText?: string
@@ -39,38 +41,25 @@ const emit = defineEmits<{
   'update:modelValue': [value: string]
 }>()
 
-const rootRef = ref<HTMLElement | null>(null)
-const menuRef = ref<HTMLElement | null>(null)
-const menuPlacement = ref<'bottom' | 'top'>('bottom')
 const isOpen = ref(false)
+const { anchorRef: rootRef, layerRef: menuRef, layerStyle, updatePosition, containsTarget } = useFloatingLayer(
+  isOpen,
+  { align: props.align, maxHeight: 320 },
+)
 
 watch(isOpen, async (newVal) => {
   if (!newVal) return
-  await nextTick()
-  calculatePlacement()
+  await updatePosition()
 })
 
-function calculatePlacement() {
-  if (!rootRef.value) return
-
-  const triggerRect = rootRef.value.getBoundingClientRect()
-  const menuHeight = Math.min(menuRef.value?.getBoundingClientRect().height || 320, 320)
-  const gap = 10
-  const spaceBelow = window.innerHeight - triggerRect.bottom
-  const spaceAbove = triggerRect.top
-
-  if (spaceBelow < menuHeight + gap && spaceAbove > spaceBelow) {
-    menuPlacement.value = 'top'
-    return
-  }
-
-  menuPlacement.value = 'bottom'
-}
-
-function handleViewportChange(): void {
-  if (!isOpen.value) return
-  calculatePlacement()
-}
+/**
+ * BaseSelect 的菜单包在 Transition + Teleport 中：打开状态先变化，真实菜单 DOM 会晚一个渲染节拍挂载。
+ * 只监听 isOpen 时，极少数浏览器帧里可能拿不到 menuRef，浮层就会暂时落在 body 左上角。
+ * 因此再监听一次菜单元素本身；它真正出现后重新测量，可以稳定贴合触发按钮。
+ */
+watch(menuRef, (element) => {
+  if (element && isOpen.value) void updatePosition()
+}, { flush: 'post' })
 
 const selectedOption = computed(() => {
   return props.options.find((option) => option.value === props.modelValue)
@@ -97,6 +86,14 @@ const triggerClassName = computed(() => {
       'min-h-[68px] rounded-2xl px-4 py-3',
       'border border-borderSoft bg-panelSoft transition-all duration-200',
       isOpen.value ? 'border-neon/55 shadow-[0_0_0_1px_rgba(69,215,255,0.18)]' : 'hover:border-neon/35'
+    ]
+  }
+
+  if (props.tone === 'light') {
+    return [
+      'min-h-[38px] rounded-[10px] px-3 py-2',
+      'border border-[#e2e8f2] bg-white text-[#172033] transition-all duration-150',
+      isOpen.value ? 'border-[#9bbcff] shadow-[0_0_0_2px_rgba(23,104,255,0.08)]' : 'hover:border-[#b7c8e5]'
     ]
   }
 
@@ -131,8 +128,7 @@ function selectOption(optionValue: string): void {
 }
 
 function handlePointerDown(event: PointerEvent): void {
-  if (!rootRef.value) return
-  if (rootRef.value.contains(event.target as Node)) return
+  if (containsTarget(event.target)) return
   closeDropdown()
 }
 
@@ -146,15 +142,11 @@ onMounted(() => {
   // 使用全局事件关闭浮层，解决点击外部区域后下拉无法收起的问题。
   window.addEventListener('pointerdown', handlePointerDown)
   window.addEventListener('keydown', handleKeyboard)
-  window.addEventListener('resize', handleViewportChange)
-  window.addEventListener('scroll', handleViewportChange, true)
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('pointerdown', handlePointerDown)
   window.removeEventListener('keydown', handleKeyboard)
-  window.removeEventListener('resize', handleViewportChange)
-  window.removeEventListener('scroll', handleViewportChange, true)
 })
 </script>
 
@@ -178,7 +170,7 @@ onBeforeUnmount(() => {
             class="shrink-0 rounded-[3px] border border-[#0f172a]/70 bg-transparent"
             :class="resolvePreviewClass(selectedOption?.preview)"
           />
-          <span class="truncate text-sm font-semibold text-textMain">
+          <span class="truncate text-sm font-semibold" :class="tone === 'light' ? 'text-[#172033]' : 'text-textMain'">
             {{ selectedOption?.label || placeholder }}
           </span>
           <span
@@ -193,36 +185,29 @@ onBeforeUnmount(() => {
         </p>
       </div>
 
-      <svg
-        viewBox="0 0 24 24"
+      <ChevronDown
         class="h-4 w-4 shrink-0 text-textMuted transition duration-200"
         :class="isOpen ? 'rotate-180 text-neon' : ''"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="1.8"
-      >
-        <path d="m6 9 6 6 6-6" stroke-linecap="round" stroke-linejoin="round" />
-      </svg>
+      />
     </button>
 
-    <transition
-      enter-active-class="transition duration-150 ease-out"
-      enter-from-class="translate-y-1 opacity-0"
-      enter-to-class="translate-y-0 opacity-100"
-      leave-active-class="transition duration-120 ease-in"
-      leave-from-class="translate-y-0 opacity-100"
-      leave-to-class="translate-y-1 opacity-0"
-    >
-      <div
-        v-if="isOpen"
-        ref="menuRef"
-        class="absolute z-[160] min-w-full overflow-hidden rounded-3xl border border-borderSoft bg-panel/95 p-2 shadow-[0_28px_64px_rgba(0,0,0,0.32)] backdrop-blur-xl"
-        :class="[
-          align === 'right' ? 'right-0' : 'left-0',
-          menuPlacement === 'top' ? 'bottom-[calc(100%+10px)]' : 'top-[calc(100%+10px)]'
-        ]"
+    <Teleport to="body">
+      <transition
+        enter-active-class="transition duration-150 ease-out"
+        enter-from-class="translate-y-1 opacity-0"
+        enter-to-class="translate-y-0 opacity-100"
+        leave-active-class="transition duration-120 ease-in"
+        leave-from-class="translate-y-0 opacity-100"
+        leave-to-class="translate-y-1 opacity-0"
       >
-        <div v-if="options.length === 0" class="px-3 py-5 text-center text-sm text-textMuted">
+        <div
+          v-if="isOpen"
+          ref="menuRef"
+          class="overflow-hidden border p-2 shadow-[0_22px_56px_rgba(15,35,65,0.22)]"
+          :class="tone === 'light' ? 'rounded-xl border-[#e2e8f2] bg-white' : 'rounded-3xl border-borderSoft bg-panel/95 backdrop-blur-xl'"
+          :style="layerStyle"
+        >
+            <div v-if="options.length === 0" class="px-3 py-5 text-center text-sm" :class="tone === 'light' ? 'text-[#7b8798]' : 'text-textMuted'">
           {{ emptyText }}
         </div>
 
@@ -231,11 +216,12 @@ onBeforeUnmount(() => {
             v-for="option in options"
             :key="option.value"
             type="button"
-            class="group flex w-full items-start justify-between gap-3 rounded-2xl px-3 py-3 text-left transition"
+            class="group flex w-full items-start justify-between gap-3 px-3 py-2.5 text-left transition"
             :class="[
+              tone === 'light' ? 'rounded-lg' : 'rounded-2xl',
               option.value === modelValue
-                ? 'bg-neon/12 text-textMain shadow-[inset_0_0_0_1px_rgba(69,215,255,0.18)]'
-                : 'text-textMuted hover:bg-panelSoft/80 hover:text-textMain',
+                ? (tone === 'light' ? 'bg-[#eef4ff] text-[#1768ff]' : 'bg-neon/12 text-textMain shadow-[inset_0_0_0_1px_rgba(69,215,255,0.18)]')
+                : (tone === 'light' ? 'text-[#536177] hover:bg-[#f5f8fc] hover:text-[#172033]' : 'text-textMuted hover:bg-panelSoft/80 hover:text-textMain'),
               option.disabled ? 'cursor-not-allowed opacity-45' : ''
             ]"
             :disabled="option.disabled"
@@ -256,7 +242,7 @@ onBeforeUnmount(() => {
                   {{ option.badge }}
                 </span>
               </div>
-              <p v-if="option.description" class="mt-1 line-clamp-2 text-xs leading-5 text-textMuted">
+              <p v-if="option.description" class="mt-1 line-clamp-2 text-xs leading-5" :class="tone === 'light' ? 'text-[#8a96a8]' : 'text-textMuted'">
                 {{ option.description }}
               </p>
             </div>
@@ -265,13 +251,12 @@ onBeforeUnmount(() => {
               v-if="option.value === modelValue"
               class="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-neon/15 text-neon"
             >
-              <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="m5 13 4 4L19 7" stroke-linecap="round" stroke-linejoin="round" />
-              </svg>
+              <Check class="h-3.5 w-3.5" />
             </span>
           </button>
         </div>
-      </div>
-    </transition>
+        </div>
+      </transition>
+    </Teleport>
   </div>
 </template>

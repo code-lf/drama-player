@@ -12,7 +12,7 @@ import type {
 import { useAccountStore } from '~/features/billing/store/useAccountStore'
 import { dramaService } from '~/shared/api/services/dramaService'
 import { ApiClientError } from '~/shared/api/errors'
-import BrandSparkIcon from '~/components/ui/BrandSparkIcon.vue'
+import CreditIcon from '~/components/ui/CreditIcon.vue'
 import {
   AlertTriangle,
   ArrowRight,
@@ -835,6 +835,8 @@ async function saveCurrentScene(snapshot = buildCurrentSceneSaveSnapshot()): Pro
 }
 
 async function confirmCurrentScriptVersion() {
+  // 网络响应期间禁止重复确认，并为用户提供明确的处理中状态。
+  if (confirmScriptBusy.value) return
   if (sceneAutoSaveTimer.value) {
     window.clearTimeout(sceneAutoSaveTimer.value)
     sceneAutoSaveTimer.value = null
@@ -846,6 +848,7 @@ async function confirmCurrentScriptVersion() {
     if (!saved) return
   }
   try {
+    confirmScriptBusy.value = true
     // 进入资产前由后端锁定正式版本与分析快照，后续角色、场景、道具和分镜只读这份快照。
     serverOptimizedDetail.value = await dramaService.confirmScriptVersion(projectId.value)
     emit('refresh')
@@ -854,6 +857,8 @@ async function confirmCurrentScriptVersion() {
     console.error('[script-stage] 确认剧本版本失败：', error)
     optimizationFailed.value = true
     optimizationErrorMessage.value = getOptimizationErrorMessage(error)
+  } finally {
+    confirmScriptBusy.value = false
   }
 }
 
@@ -1931,7 +1936,9 @@ const isCurrentReviewFailed = computed(() => {
 })
 const isCurrentReviewPending = computed(() => !isCurrentReviewReady.value && !isCurrentReviewFailed.value)
 const canConfirmScriptVersion = computed(() => props.currentAnalysisRun.reviewsReady)
+const confirmScriptBusy = ref(false)
 const confirmScriptButtonLabel = computed(() => {
+  if (confirmScriptBusy.value) return '正在确认剧本版本并准备资产…'
   if (canConfirmScriptVersion.value) return '确认当前剧本版本，进入资产制作'
   const failedCount = Object.values(props.currentAnalysisRun.nodes || {}).filter((node) =>
     ['failed', 'retryable_failed', 'stale', 'canceled'].includes(node.status)
@@ -3801,10 +3808,11 @@ defineExpose({ openAllSuggestions })
           <button
             type="button"
             class="flex h-11 w-[min(460px,calc(100vw-40px))] items-center justify-center gap-2 rounded-[10px] bg-[#0f67ff] px-5 text-sm font-semibold text-white shadow-[0_8px_22px_rgba(15,103,255,0.18)] disabled:cursor-not-allowed disabled:bg-[#94a3b8] disabled:shadow-none"
-            :disabled="sceneSaveBusy || !canConfirmScriptVersion"
+            :disabled="sceneSaveBusy || confirmScriptBusy || !canConfirmScriptVersion"
             @click="confirmCurrentScriptVersion"
           >
-            <BrandSparkIcon size="xs" /> {{ confirmScriptButtonLabel }} <ArrowRight v-if="canConfirmScriptVersion" class="h-4 w-4" />
+            <!-- 积分/AI 操作统一复用全站 CreditIcon；白色滤镜保证在蓝色主按钮上清晰可见。 -->
+            <CreditIcon size="xs" class="brightness-0 invert" /> {{ confirmScriptButtonLabel }} <ArrowRight v-if="canConfirmScriptVersion && !confirmScriptBusy" class="h-4 w-4" />
           </button>
         </div>
       </div>

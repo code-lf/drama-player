@@ -52,18 +52,40 @@ body {
   box-shadow: var(--shadow-neon);
 }
 
+/*
+ * 全站滚动条统一为细、浅、低干扰样式。
+ * Firefox 使用 scrollbar-width/color；Chromium 与 Safari 使用 ::-webkit-scrollbar。
+ * 轨道保持透明，只有正在滚动或悬停时拇指才具备足够识别度，避免抽屉多栏滚动条抢占内容注意力。
+ */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(135, 151, 177, 0.34) transparent;
+}
+
 ::-webkit-scrollbar {
-  width: 9px;
-  height: 9px;
+  width: 6px;
+  height: 6px;
 }
 
 ::-webkit-scrollbar-track {
-  background: rgba(20, 28, 45, 0.6);
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(98, 143, 233, 0.45);
+  min-height: 36px;
+  border: 1px solid transparent;
   border-radius: 100px;
+  background: rgba(135, 151, 177, 0.34);
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(112, 132, 165, 0.52);
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 /* 公告中心全局主题适配：组件可能出现在顶栏、工作区和 Teleport 弹窗里，统一在全局层兜底。 */

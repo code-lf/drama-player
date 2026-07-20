@@ -86,7 +86,7 @@ export interface DramaAnalyzePayload {
   aspectRatio?: string
   resolution?: string
   style?: string
-  /** 默认复用相同输入的已有解析；仅明确付费重做时设为 true。 */
+  /** 默认复用相同输入的已有解析；仅用户明确要求重新生成时设为 true。 */
   forceReanalyze?: boolean
 }
 
@@ -329,6 +329,186 @@ export interface DramaDeleteResult {
   deletedIds: string[]
 }
 
+// -----------------------------
+// 短剧资产工作台（第二阶段）
+// -----------------------------
+// 这些类型直接对应后端结构化资产档案。前端只负责编辑结构化字段，
+// 最终生图 Prompt 由后端结合已确认剧本和视觉基准统一编译，避免不同页面各自拼词导致风格漂移。
+export type DramaWorkspaceAssetType = 'role' | 'scene' | 'prop'
+export type DramaWorkspaceAssetStatus = 'candidate' | 'planned' | 'queued' | 'generating' | 'to_confirm' | 'locked' | 'stale' | 'failed' | 'skipped'
+
+export interface DramaVisualBible {
+  id: string
+  version_no: number
+  title: string
+  style_type: string
+  color_palette: string[]
+  lighting: string
+  materials: string
+  character_style: string
+  camera_language: string
+  forbidden_elements: string[]
+  reference_asset_ids: string[]
+  source_script_version: string
+  status: string
+}
+
+export interface DramaAssetVersion {
+  id: string
+  image_url: string
+  status: string
+  created_at: string
+  meta: Record<string, unknown>
+}
+
+export interface DramaAssetConsistencyReport {
+  id: string
+  status: string
+  overall_score: number
+  dimensions: Record<string, number>
+  issues: Array<Record<string, unknown>>
+  suggestions: string[]
+  billing_status: string
+  model_code: string
+  error_message: string
+  previous_score: number | null
+  score_delta: number | null
+  created_at: string
+  qualification_status: 'pending' | 'passed' | 'minor_deviation' | 'hard_failed' | 'service_failed' | string
+  responsibility: 'system' | 'user_or_reference' | 'uploaded_asset' | 'unknown' | string
+  root_cause: string
+  hard_fail: boolean
+  confidence: number
+  prompt_audit: Record<string, unknown>
+  diagnosis: Record<string, any>
+  repair_strategy: Record<string, any>
+  system_repair_available: boolean
+  system_repair_used: boolean
+  compensation_status: string
+}
+
+export interface DramaAssetConsistencyEstimate {
+  required_credits: number
+  current_balance: number
+  sufficient: boolean
+  billing_status: string
+  free_retry: boolean
+}
+
+export interface DramaAssetRoleVoice {
+  mode: 'none' | 'preset' | 'custom_audio'
+  voice_ref: string
+  preset_key: string
+  audio_asset: null | {
+    id: string
+    audio_url: string
+    file_name: string
+    mime_type: string
+    size_bytes: number
+    duration_sec: number | null
+    created_at: string
+  }
+  recommendation: {
+    voice_type: string
+    tone: string
+    pitch: string
+    pace: string
+  }
+  capabilities: {
+    wan_2_7: boolean
+    wan_2_6: boolean
+    seedance: boolean
+    preset_is_real_audio: boolean
+  }
+}
+
+export interface DramaAssetConsistencyRun {
+  report_id: string
+  run_id: string
+  status: string
+  required_credits: number
+  current_balance: number
+  billing_status: string
+}
+
+export interface DramaAssetProfile {
+  id: string
+  asset_type: DramaWorkspaceAssetType
+  asset_key: string
+  name: string
+  source_script_version: string
+  visual_bible_version_id: string
+  selected_asset_id: string
+  production_status: DramaWorkspaceAssetStatus
+  is_required: boolean
+  data: Record<string, any>
+  source_refs: Array<Record<string, any>>
+  stale_reason: string
+  locked_at: string
+  versions: DramaAssetVersion[]
+  consistency: DramaAssetConsistencyReport
+  /** 仅角色返回；继续绑定 analysis.roles[].voice_ref，分镜侧无需修改。 */
+  voice?: DramaAssetRoleVoice | null
+}
+
+export interface DramaAssetWorkspace {
+  project_id: string
+  source_script_version: string
+  confirmed_snapshot_id: string
+  confirmed_content_hash: string
+  asset_compiler_version: number
+  preparation_status: string
+  visual_bible: DramaVisualBible
+  assets: DramaAssetProfile[]
+  readiness: {
+    ready: boolean
+    required_total: number
+    locked_total: number
+    blockers: string[]
+  }
+}
+
+export interface DramaAssetGenerationEstimate {
+  target_count: number
+  required_credits: number
+  current_balance: number
+  sufficient: boolean
+  warnings: string[]
+  target_audits: Array<{
+    target: string
+    status: string
+    compile_hash: string
+    missing_requirements: string[]
+    conflicts: Array<Record<string, unknown>>
+    warnings: string[]
+    blocked: boolean
+  }>
+  blocked_targets: string[]
+  compile_hashes: Record<string, string>
+}
+
+export interface DramaAssetRepairEstimate {
+  report_id: string
+  mode: 'system_repair' | 'creative_variant'
+  required_credits: number
+  current_balance: number
+  sufficient: boolean
+  system_repair_available: boolean
+  reason: string
+}
+
+export interface DramaAssetRepairRequest {
+  report_id: string
+  mode: 'system_repair' | 'creative_variant'
+  user_instruction?: string
+}
+
+export interface DramaAssetGenerationRun {
+  run_id: string
+  status: string
+  target_count: number
+}
+
 export interface ApiAdapter {
   getLandingProjects(category?: string): Promise<ApiResponse<Project[]>>
   createProject(payload: { title?: string; category?: string }): Promise<ApiResponse<Project>>
@@ -354,6 +534,20 @@ export interface ApiAdapter {
   deleteDramaProject(projectId: string): Promise<ApiResponse<DramaDeleteResult>>
   batchDeleteDramaProjects(ids: string[]): Promise<ApiResponse<DramaDeleteResult>>
   getDramaProject(projectId: string): Promise<ApiResponse<DramaProjectDetail>>
+  // Mock 适配器仍可运行旧页面，因此新资产接口先声明为可选；真实 HTTP 适配器已完整实现。
+  getDramaAssetWorkspace?(projectId: string): Promise<ApiResponse<DramaAssetWorkspace>>
+  updateDramaVisualBible?(projectId: string, payload: Omit<DramaVisualBible, 'id' | 'version_no' | 'source_script_version' | 'status'>): Promise<ApiResponse<DramaAssetWorkspace>>
+  createDramaAssetProfile?(projectId: string, payload: { asset_type: DramaWorkspaceAssetType; name: string; is_required?: boolean; data?: Record<string, unknown> }): Promise<ApiResponse<DramaAssetWorkspace>>
+  updateDramaAssetProfile?(projectId: string, assetType: DramaWorkspaceAssetType, assetKey: string, payload: { name?: string; is_required?: boolean; production_status?: DramaWorkspaceAssetStatus; selected_asset_id?: string; data?: Record<string, unknown> }): Promise<ApiResponse<DramaAssetWorkspace>>
+  deleteDramaAssetProfile?(projectId: string, assetType: DramaWorkspaceAssetType, assetKey: string): Promise<ApiResponse<DramaAssetWorkspace>>
+  uploadDramaAssetReference?(projectId: string, assetType: DramaWorkspaceAssetType, assetKey: string, file: File): Promise<ApiResponse<DramaAssetWorkspace>>
+  estimateDramaAssetGeneration?(projectId: string, targets: string[]): Promise<ApiResponse<DramaAssetGenerationEstimate>>
+  generateDramaWorkspaceAssets?(projectId: string, targets: string[], overwrite?: boolean, compileHashes?: Record<string, string>): Promise<ApiResponse<DramaAssetGenerationRun>>
+  lockDramaWorkspaceAsset?(projectId: string, assetType: DramaWorkspaceAssetType, assetKey: string, locked: boolean): Promise<ApiResponse<DramaAssetWorkspace>>
+  estimateDramaAssetConsistency?(projectId: string, assetType: DramaWorkspaceAssetType, assetKey: string): Promise<ApiResponse<DramaAssetConsistencyEstimate>>
+  checkDramaAssetConsistency?(projectId: string, assetType: DramaWorkspaceAssetType, assetKey: string, manual?: boolean, force?: boolean): Promise<ApiResponse<DramaAssetConsistencyRun>>
+  estimateDramaAssetConsistencyRepair?(projectId: string, assetType: DramaWorkspaceAssetType, assetKey: string, payload: DramaAssetRepairRequest): Promise<ApiResponse<DramaAssetRepairEstimate>>
+  repairDramaAssetConsistency?(projectId: string, assetType: DramaWorkspaceAssetType, assetKey: string, payload: DramaAssetRepairRequest): Promise<ApiResponse<DramaAssetGenerationRun>>
   ingestDramaScript(projectId: string, payload: DramaScriptIngestPayload): Promise<ApiResponse<DramaProjectDetail>>
   ingestDramaScriptFile(projectId: string, file: File): Promise<ApiResponse<DramaProjectDetail>>
   previewDramaEntryCredits(payload: DramaEntryCreditPreviewPayload): Promise<ApiResponse<DramaCreditPreview>>
