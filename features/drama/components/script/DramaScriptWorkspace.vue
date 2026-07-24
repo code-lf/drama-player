@@ -13,6 +13,9 @@ import { useAccountStore } from '~/features/billing/store/useAccountStore'
 import { dramaService } from '~/shared/api/services/dramaService'
 import { ApiClientError } from '~/shared/api/errors'
 import CreditIcon from '~/components/ui/CreditIcon.vue'
+import LivButton from '~/components/liv-ui/LivButton.vue'
+import LivDialog from '~/components/liv-ui/LivDialog.vue'
+import LivDrawer from '~/components/liv-ui/LivDrawer.vue'
 import {
   AlertTriangle,
   ArrowRight,
@@ -287,6 +290,8 @@ const serverOptimizedDetail = ref<DramaProjectDetail | null>(null)
 const pendingOptimizedDetail = ref<DramaProjectDetail | null>(null)
 const optimizationErrorMessage = ref('')
 const optimizationFailed = ref(false)
+// 页面操作反馈统一交由 Nuxt UI 顶部 Toast 呈现，避免底部操作区被临时提示挤压。
+const toast = useToast()
 const sourceResolveBusy = ref(false)
 const sourceResolveError = ref('')
 const suggestionAdjustmentInstruction = ref('')
@@ -851,12 +856,26 @@ async function confirmCurrentScriptVersion() {
     confirmScriptBusy.value = true
     // 进入资产前由后端锁定正式版本与分析快照，后续角色、场景、道具和分镜只读这份快照。
     serverOptimizedDetail.value = await dramaService.confirmScriptVersion(projectId.value)
+    toast.add({
+      title: '剧本版本已确认',
+      description: '已冻结当前剧本与分析快照，正在进入资产制作。',
+      color: 'success',
+      icon: 'i-lucide-circle-check',
+      close: true,
+      duration: 4200,
+    })
     emit('refresh')
     await props.confirmScriptAction()
   } catch (error) {
     console.error('[script-stage] 确认剧本版本失败：', error)
-    optimizationFailed.value = true
-    optimizationErrorMessage.value = getOptimizationErrorMessage(error)
+    toast.add({
+      title: '剧本版本未确认',
+      description: getOptimizationErrorMessage(error),
+      color: 'error',
+      icon: 'i-lucide-circle-alert',
+      close: true,
+      duration: 6000,
+    })
   } finally {
     confirmScriptBusy.value = false
   }
@@ -3229,7 +3248,7 @@ defineExpose({ openAllSuggestions })
 </script>
 
 <template>
-  <section class="space-y-5 pb-20">
+  <section class="script-workspace space-y-5 pb-20">
     <div
       v-if="shouldShowScriptProgressPanel && !shouldPreferAnalysisResultView"
       class="flex min-h-[560px] flex-col items-center justify-center rounded-[32px] border border-[#dfe8f6] bg-white p-8 shadow-[0_18px_60px_rgba(15,23,42,0.06)]"
@@ -3804,24 +3823,22 @@ defineExpose({ openAllSuggestions })
       </div>
 
       <div class="fixed inset-x-0 bottom-0 z-20 border-t border-[#dfe8f6] bg-white/90 px-5 py-2.5 shadow-[0_-8px_28px_rgba(15,23,42,0.05)] backdrop-blur-md">
-        <div class="mx-auto flex max-w-[1920px] items-center justify-center">
+        <div class="mx-auto flex max-w-[1920px] flex-col items-center justify-center gap-2">
           <button
             type="button"
             class="flex h-11 w-[min(460px,calc(100vw-40px))] items-center justify-center gap-2 rounded-[10px] bg-[#0f67ff] px-5 text-sm font-semibold text-white shadow-[0_8px_22px_rgba(15,103,255,0.18)] disabled:cursor-not-allowed disabled:bg-[#94a3b8] disabled:shadow-none"
             :disabled="sceneSaveBusy || confirmScriptBusy || !canConfirmScriptVersion"
             @click="confirmCurrentScriptVersion"
           >
-            <!-- 积分/AI 操作统一复用全站 CreditIcon；白色滤镜保证在蓝色主按钮上清晰可见。 -->
-            <CreditIcon size="xs" class="brightness-0 invert" /> {{ confirmScriptButtonLabel }} <ArrowRight v-if="canConfirmScriptVersion && !confirmScriptBusy" class="h-4 w-4" />
+            <!-- 积分/AI 操作统一复用全站 CreditIcon，主按钮颜色由 currentColor 继承。 -->
+            <CreditIcon size="md" /> {{ confirmScriptButtonLabel }} <ArrowRight v-if="canConfirmScriptVersion && !confirmScriptBusy" class="h-4 w-4" />
           </button>
         </div>
       </div>
     </template>
 
     <Teleport to="body">
-      <div v-if="modeDialogVisible" class="fixed inset-0 z-[80] flex items-center justify-center bg-[#0f172a]/45 p-4">
-        <div class="w-full max-w-[680px] rounded-[24px] bg-white p-6 shadow-2xl">
-          <div class="flex items-center justify-between"><h3 class="text-xl font-semibold">调整内容模式</h3><button @click="modeDialogVisible = false"><X class="h-5 w-5" /></button></div>
+      <LivDialog :open="modeDialogVisible" title="调整内容模式" description="切换后将重新执行内容结构分析、人物关系识别、分集节奏分析与 AI 体检。" width="md" @update:open="modeDialogVisible = $event">
           <p class="mt-4 text-sm text-[#475569]">当前识别模式：<span class="rounded-full bg-[#e8f1ff] px-2 py-1 font-semibold text-[#0f67ff]">{{ modeLabel }}</span></p>
           <div class="mt-5 space-y-3">
             <label v-for="mode in modeOptions" :key="mode.value" class="flex cursor-pointer items-center gap-4 rounded-[18px] border p-4" :class="pendingMode === mode.value ? 'border-[#0f67ff] bg-[#f8fbff]' : 'border-[#e2e8f0]'">
@@ -3833,9 +3850,8 @@ defineExpose({ openAllSuggestions })
           <div class="mt-5 rounded-[16px] bg-[#f8fbff] p-4 text-sm leading-7 text-[#64748b]">
             切换后将重新执行内容结构分析、人物关系识别、分集节奏分析与 AI 体检；不会影响原始剧本文本和历史版本。
           </div>
-          <div class="mt-6 flex justify-end gap-3"><button class="rounded-[14px] border px-6 py-3" @click="modeDialogVisible = false">取消</button><button class="rounded-[14px] bg-[#0f67ff] px-6 py-3 font-semibold text-white" @click="confirmModeSwitch">确认切换并重新分析</button></div>
-        </div>
-      </div>
+          <template #footer><LivButton variant="secondary" @click="modeDialogVisible = false">取消</LivButton><LivButton variant="primary" @click="confirmModeSwitch">确认切换并重新分析</LivButton></template>
+      </LivDialog>
 
       <div v-if="modeSwitchProgressVisible" class="fixed inset-0 z-[90] flex items-center justify-center bg-[#0f172a]/45 p-4">
         <div class="w-full max-w-[620px] rounded-[24px] bg-white p-8 text-center shadow-2xl">
@@ -3845,11 +3861,7 @@ defineExpose({ openAllSuggestions })
         </div>
       </div>
 
-      <aside v-if="outlineDrawerVisible" class="fixed inset-y-0 right-0 z-[76] flex w-[min(700px,100vw)] flex-col overflow-hidden border-l border-[#dfe8f6] bg-white shadow-2xl">
-        <div class="flex shrink-0 items-center justify-between gap-4 border-b border-[#eef2f7] px-7 pb-5 pt-7">
-          <div><p class="text-sm font-semibold text-[#0f67ff]">故事概览</p><h3 class="mt-1 text-2xl font-semibold">完整故事大纲</h3></div>
-          <button type="button" title="关闭" @click="outlineDrawerVisible = false"><X class="h-5 w-5" /></button>
-        </div>
+      <LivDrawer :open="outlineDrawerVisible" title="完整故事大纲" description="故事概览、背景与全季剧情推进" width="lg" @update:open="outlineDrawerVisible = $event">
         <div class="min-h-0 flex-1 overflow-y-auto px-7 pb-7">
           <div class="mt-6 space-y-5">
             <section class="rounded-[16px] border border-[#e2e8f0] p-5"><h4 class="font-semibold">一句话梗概</h4><p class="mt-2 leading-7 text-[#475569]">{{ analysis?.logline || '暂无一句话梗概' }}</p></section>
@@ -3868,11 +3880,10 @@ defineExpose({ openAllSuggestions })
           <button v-if="!outlineEditMode" class="rounded-[10px] bg-[#0f67ff] px-5 py-3 font-semibold text-white" @click="outlineEditMode = true">编辑大纲</button>
           <button v-else class="rounded-[10px] bg-[#0f67ff] px-5 py-3 font-semibold text-white disabled:bg-[#94a3b8]" :disabled="!outlineDraftInstruction.trim()" @click="createOutlineDraft">生成大纲草稿</button>
         </div>
-      </aside>
+      </LivDrawer>
 
-      <div v-if="reviewEvidenceIssue" class="fixed inset-0 z-[84] flex items-center justify-center bg-[#0f172a]/45 p-4">
-        <div class="w-full max-w-[620px] rounded-[22px] bg-white p-6 shadow-2xl">
-          <div class="flex items-center justify-between"><h3 class="text-xl font-semibold">评分依据</h3><button type="button" @click="reviewEvidenceIssue = null"><X class="h-5 w-5" /></button></div>
+      <LivDialog :open="Boolean(reviewEvidenceIssue)" title="评分依据" description="当前结论来自本次剧本专业分析" width="sm" @update:open="value => { if (!value) reviewEvidenceIssue = null }">
+        <template v-if="reviewEvidenceIssue">
           <div class="mt-5 rounded-[16px] border border-[#dbe7f7] bg-[#f8fbff] p-4">
             <p class="font-semibold text-[#0f172a]">{{ reviewEvidenceIssue.title }}</p>
             <p class="mt-2 text-sm leading-7 text-[#475569]">{{ reviewEvidenceIssue.detail || '当前结论来自本次剧本人物分析。' }}</p>
@@ -3881,12 +3892,11 @@ defineExpose({ openAllSuggestions })
             <p class="font-semibold">原文依据</p>
             <p v-for="evidence in reviewEvidenceIssue.evidence" :key="evidence" class="mt-2 text-sm leading-6 text-[#64748b]">{{ evidence }}</p>
           </div>
-          <div class="mt-5 flex justify-end"><button type="button" class="rounded-[12px] bg-[#0f67ff] px-5 py-2.5 font-semibold text-white" @click="reviewEvidenceIssue = null">知道了</button></div>
-        </div>
-      </div>
+        </template>
+        <template #footer><LivButton variant="primary" @click="reviewEvidenceIssue = null">知道了</LivButton></template>
+      </LivDialog>
 
-      <aside v-if="suggestionDrawerVisible" class="fixed inset-y-0 right-0 z-[75] w-[min(620px,100vw)] overflow-y-auto border-l border-[#dfe8f6] bg-white p-6 shadow-2xl">
-        <div class="flex items-center justify-between"><h3 class="flex items-center text-2xl font-semibold"><BrandSparkIcon size="sm" /><span class="ml-2">AI 优化建议中心</span></h3><button @click="suggestionDrawerVisible = false"><X class="h-5 w-5" /></button></div>
+      <LivDrawer :open="suggestionDrawerVisible" title="AI 优化建议中心" description="集中处理故事、人物、分集与文本建议" width="lg" @update:open="suggestionDrawerVisible = $event">
         <div class="mt-5 grid grid-cols-3 gap-3 rounded-[18px] border border-[#e2e8f0] p-4 text-center">
           <div><p class="text-[#64748b]">待优化建议</p><b class="text-2xl text-[#0f172a]">{{ filteredSuggestions.filter(item => item.actionable).length }}</b></div>
           <div><p class="text-[#64748b]">高优先级</p><b class="text-2xl text-[#ef4444]">{{ highPrioritySuggestionCount }}</b></div>
@@ -3981,7 +3991,7 @@ defineExpose({ openAllSuggestions })
           </button>
           <button v-if="suggestionStatusFilter === 'pending'" class="rounded-[14px] border border-[#0f67ff] px-4 py-3 font-semibold text-[#0f67ff]" @click="generateAllSuggestionDrafts">全部建议生成优化稿</button>
         </div>
-      </aside>
+      </LivDrawer>
 
       <div v-if="suggestionDetailVisible && selectedSuggestion" class="fixed inset-x-0 bottom-0 top-[106px] z-[85] overflow-y-auto bg-[#f5f8fc] p-4 sm:p-6">
         <div class="mx-auto max-w-[1680px] overflow-hidden rounded-[22px] border border-[#dfe8f6] bg-white shadow-[0_20px_60px_rgba(15,23,42,0.08)]">

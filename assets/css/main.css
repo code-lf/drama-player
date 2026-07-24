@@ -1,6 +1,66 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+@import "@nuxt/ui";
+
+/*
+ * Tailwind 4 迁移期继续读取项目现有语义色和阴影配置，避免业务页面一次性重写。
+ * 新增通用控件优先使用 Nuxt UI 主题变量，业务布局仍可消费现有 bg/panel/textMain 等类名。
+ */
+@config "../../tailwind.config.ts";
+
+/*
+ * Livliv 创作工作台统一 UI 变量。
+ * 页面只消费这些语义变量，不再自行添加任意字号、控件高度、圆角和阴影。
+ */
+:root {
+  --liv-font-caption: 12px;
+  --liv-font-secondary: 13px;
+  --liv-font-body: 14px;
+  --liv-font-section: 16px;
+  --liv-font-panel: 20px;
+  --liv-font-page: 24px;
+  --liv-control-sm: 32px;
+  --liv-control-md: 36px;
+  --liv-control-lg: 40px;
+  --liv-radius-sm: 4px;
+  --liv-radius-md: 6px;
+  --liv-radius-lg: 8px;
+  --liv-space-1: 4px;
+  --liv-space-2: 8px;
+  --liv-space-3: 12px;
+  --liv-space-4: 16px;
+  --liv-space-6: 24px;
+  --liv-space-8: 32px;
+  --liv-ui-primary: #1768ff;
+  --liv-ui-primary-hover: #0e5ae8;
+  --liv-ui-primary-soft: #eef4ff;
+  --liv-ui-border: #dce5f2;
+  --liv-ui-border-strong: #b8cdf1;
+  --liv-ui-text: #172033;
+  --liv-ui-muted: #667085;
+  --liv-ui-subtle: #f6f8fc;
+  --liv-ui-danger: #dc354b;
+  --liv-ui-warning: #e98b18;
+  --liv-ui-success: #159a62;
+  --liv-ui-overlay: rgba(15, 23, 42, 0.48);
+  --liv-ui-dialog-shadow: 0 28px 80px rgba(15, 35, 65, 0.22);
+}
+
+@layer components {
+  .liv-focus-ring {
+    @apply outline-none focus-visible:ring-2 focus-visible:ring-[#1768ff]/25 focus-visible:ring-offset-2;
+  }
+
+  .liv-field-label {
+    font-size: var(--liv-font-secondary);
+    font-weight: 600;
+    color: var(--liv-ui-text);
+  }
+
+  .liv-field-help {
+    font-size: var(--liv-font-caption);
+    color: var(--liv-ui-muted);
+  }
+}
 
 html,
 body,

@@ -34,6 +34,7 @@ import type {
 } from '~/shared/api/types'
 import CreditAmount from '~/components/ui/CreditAmount.vue'
 import DramaAssetWorkspace from '~/components/drama/assets/DramaAssetWorkspace.vue'
+import DramaStoryboardWorkspace from '~/components/drama/storyboard/DramaStoryboardWorkspace.vue'
 import DramaScriptWorkspace from '~/features/drama/components/script/DramaScriptWorkspace.vue'
 import { Copy, Ellipsis, Plus, Trash2 } from '@lucide/vue'
 import { useAuthStore } from '~/features/auth/store/useAuthStore'
@@ -2331,11 +2332,13 @@ async function generateStoryboards(): Promise<void> {
       dramaService.generateStoryboards(projectDetail.value!.projectId, {
         model: selectedTextModel.value,
         shotCount: 12,
+        planningMode: 'dynamic',
         style: resolvedVisualStyle.value,
         provider: selectedVideoProvider.value,
-        resolution: selectedResolution.value
+        resolution: selectedResolution.value,
+        qualityPolicy: 'smart'
       }),
-    '分镜表生成完成。'
+    '分镜规划任务已开始，镜头会逐个写入工作台。'
   )
   if (result) {
     projectDetail.value = result
@@ -3404,11 +3407,22 @@ function selectStep(step: WorkflowStepKey): void {
   persistActiveStep()
 }
 
-function enterStoryboardFromAssetWorkspace(): void {
+async function enterStoryboardFromAssetWorkspace(): Promise<void> {
   // 新资产工作台在后端 readiness 门禁通过后才会触发该事件，
   // 因此这里不再复用旧页面基于图片数量推算的 areSettingsReady 判断。
+  // 进入新版镜头工作台后立即提交分镜规划，避免只切换页面却留下 0 镜头空状态。
   activeStep.value = 'storyboard'
+  confirmedStepIndex.value = Math.max(confirmedStepIndex.value, 2)
   persistActiveStep()
+  persistConfirmedStepIndex()
+
+  const runStatus = projectDetail.value?.storyboardRun?.status || 'idle'
+  if (
+    !hasStoryboards.value
+    && !['queued', 'running'].includes(runStatus)
+  ) {
+    await generateStoryboards()
+  }
 }
 
 async function goNextStep(): Promise<void> {
@@ -3955,22 +3969,25 @@ onBeforeUnmount(() => {
     <header class="sticky top-0 z-30 border-b border-borderSoft bg-panel/92 backdrop-blur-xl">
       <div class="grid grid-cols-[minmax(300px,1fr)_auto_minmax(300px,1fr)] items-center gap-4 px-6 py-3 xl:px-10">
         <div class="flex min-w-0 items-start gap-4 justify-self-start">
-          <button
-            type="button"
-            class="flex h-11 w-11 items-center justify-center rounded-2xl border border-[#d9e1f1] bg-panel text-textMain transition hover:border-[#94a3b8]"
-            @click="goBack"
-          >
-            <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="m15 18-6-6 6-6" stroke-linecap="round" stroke-linejoin="round" />
-            </svg>
-          </button>
+          <UTooltip text="返回项目列表">
+            <UButton
+              icon="i-lucide-chevron-left"
+              color="neutral"
+              variant="outline"
+              size="lg"
+              square
+              aria-label="返回项目列表"
+              class="rounded-lg bg-white"
+              @click="goBack"
+            />
+          </UTooltip>
 
           <div class="min-w-0">
             <div class="flex items-start gap-3">
               <div class="min-w-0">
                 <div class="flex min-w-0 items-center gap-2">
                   <h1 class="truncate text-[20px] font-semibold tracking-[-0.04em] xl:text-[22px]">{{ currentTitle }}</h1>
-                  <span class="shrink-0 rounded-full bg-[#e8f1ff] px-2.5 py-1 text-[11px] font-semibold text-[#0f67ff]">{{ headerStyleTag }}</span>
+                  <UBadge :label="headerStyleTag" color="primary" variant="soft" size="sm" class="shrink-0 rounded-full" />
                 </div>
                 <div class="mt-2 flex flex-wrap items-center gap-2 text-xs text-textMuted">
                   <span v-for="item in headerInfoItems" :key="item" class="rounded-full border border-borderSoft bg-panelSoft px-3 py-1">
@@ -4010,12 +4027,14 @@ onBeforeUnmount(() => {
          </nav>
 
         <div class="flex min-w-0 items-center justify-end gap-3 justify-self-end">
-          <button class="rounded-full border border-borderSoft bg-panel px-4 py-2 text-sm font-medium text-textMuted transition hover:border-[#94a3b8]" @click="scriptWorkspaceRef?.openAllSuggestions()">
-            全部建议
-          </button>
-          <div class="rounded-full bg-neonSoft/20 px-4 py-2 text-sm font-semibold text-neon">
-            {{ workflowRunInfo?.status === 'success' ? '视频已生成' : '流程进行中' }}
-          </div>
+          <UButton color="neutral" variant="outline" size="sm" label="全部建议" @click="scriptWorkspaceRef?.openAllSuggestions()" />
+          <UBadge
+            :label="workflowRunInfo?.status === 'success' ? '视频已生成' : '流程进行中'"
+            :color="workflowRunInfo?.status === 'success' ? 'success' : 'primary'"
+            variant="soft"
+            size="lg"
+            class="rounded-full"
+          />
         </div>
       </div>
     </header>
@@ -4739,8 +4758,20 @@ onBeforeUnmount(() => {
           </template>
         </section>
 
-        <section
+        <DramaStoryboardWorkspace
           v-else-if="activeStep === 'storyboard'"
+          :project-id="currentProjectId"
+          :episode-no="selectedEpisodeNo"
+          :episode-count="storyboardEpisodeItems.length"
+          :run-status="currentStoryboardRun.status"
+          :cover-url="scriptCoverUrl"
+          @update:episode-no="selectedEpisodeNo = $event"
+          @generate="generateStoryboards"
+          @continue="goNextStep"
+        />
+
+        <section
+          v-else-if="false && activeStep === 'storyboard'"
           class="rounded-[32px] border border-[#e8edf5] bg-panel p-8 shadow-[0_18px_60px_rgba(15,23,42,0.06)]"
         >
           <div
@@ -5567,7 +5598,7 @@ onBeforeUnmount(() => {
     </section>
 
     <div
-      v-if="showFloatingConfirmButton && activeStep !== 'setting'"
+      v-if="showFloatingConfirmButton && activeStep !== 'setting' && activeStep !== 'storyboard'"
       class="pointer-events-none fixed inset-x-0 bottom-0 z-[100] flex justify-center px-4 pb-6"
     >
       <div class="pointer-events-auto rounded-full bg-[#0f172a] p-1.5 shadow-[0_24px_50px_rgba(15,23,42,0.28)]">

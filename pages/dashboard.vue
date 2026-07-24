@@ -1421,8 +1421,9 @@ onBeforeUnmount(() => {
                     </div>
                   </div>
 
-                  <UiBaseSelect v-model="selectedAspectRatio" :options="aspectRatioOptions" label="画面比例" placeholder="画面比例" size="sm" class="min-w-0" />
-                  <UiBaseSelect v-model="selectedResolution" :options="resolutionOptions" label="清晰度" placeholder="清晰度" size="sm" class="min-w-0" />
+                  <!-- 入口参数与内容类型、作品风格使用同一组大号选择控件，保证视觉层级一致。 -->
+                  <UiBaseSelect v-model="selectedAspectRatio" :options="aspectRatioOptions" label="画面比例" placeholder="画面比例" tone="dashboard" size="sm" class="min-w-0" />
+                  <UiBaseSelect v-model="selectedResolution" :options="resolutionOptions" label="清晰度" placeholder="清晰度" tone="dashboard" size="sm" class="min-w-0" />
                 </div>
               </div>
 
@@ -1467,16 +1468,22 @@ onBeforeUnmount(() => {
                 </div>
                 <div class="grid grid-cols-1 gap-6 md:grid-cols-3">
                   <article
-                    v-for="project in recentProjectCards"
+                    v-for="(project, index) in recentProjectCards"
                     :key="project.id"
                     class="dashboard-project-card group relative flex min-h-[128px] cursor-pointer gap-5 rounded-[12px] border border-[#dfe7f2] bg-white p-4 shadow-[0_18px_48px_rgba(15,23,42,0.06)] transition hover:-translate-y-1 hover:shadow-[0_22px_58px_rgba(15,23,42,0.12)]"
                     @click="openRecentProject(project)"
                   >
-                    <div class="grid h-[96px] w-[74px] shrink-0 place-items-center rounded-[8px] bg-gradient-to-br from-[#dbeafe] to-[#f0f7ff] text-white">
-                      <svg viewBox="0 0 24 24" class="h-9 w-9 text-white" fill="currentColor">
+                    <div
+                      class="relative h-[96px] w-[74px] shrink-0 overflow-hidden rounded-[8px] bg-cover bg-center"
+                      :style="projectCoverStyle(project, index)"
+                    >
+                      <!-- 没有封面时保留轻量占位图标；有封面时由背景图直接展示项目海报。 -->
+                      <div v-if="!project.coverImageUrl" class="grid h-full w-full place-items-center bg-white/10 text-white">
+                        <svg viewBox="0 0 24 24" class="h-9 w-9 text-white" fill="currentColor">
                         <path d="M7 3.5h7l4 4V20a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 6 20V5A1.5 1.5 0 0 1 7.5 3.5Z" opacity=".92" />
                         <path d="M14 3.5V8h4" fill="#bfdbfe" />
-                      </svg>
+                        </svg>
+                      </div>
                     </div>
                     <div class="min-w-0 flex-1">
                       <div class="flex items-start justify-between gap-3">

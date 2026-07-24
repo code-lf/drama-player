@@ -3,7 +3,7 @@ import type { SystemAnnouncement } from '~/entities/announcement/types'
 import type { AuthSession } from '~/entities/auth/types'
 import type { DramaCreditPreview, DramaProjectCard, DramaProjectDetail, DramaRuntimeConfig } from '~/entities/drama/types'
 import type { ProductImageGeneratePayload, ProductSellingPoint } from '~/entities/product-image/types'
-import type { StoryboardClipContract, StoryboardContinuationPolicy, StoryboardContinuityState, StoryboardReferenceBinding } from '~/entities/storyboard/types'
+import type { StoryboardClipContract, StoryboardContinuationPolicy, StoryboardContinuityState, StoryboardReferenceBinding, StoryboardWorkspace } from '~/entities/storyboard/types'
 import { defaultNodes } from '~/shared/constants/canvas'
 import { mockProjects } from '~/shared/constants/landing'
 import { mockStoryboardRows } from '~/shared/constants/storyboard'
@@ -326,6 +326,68 @@ function createMockReferenceBindings(row: any): StoryboardReferenceBinding[] {
       source: 'mock:identity'
     }
   ]
+}
+
+function createMockStoryboardWorkspace(projectId: string, episodeNo = 1): StoryboardWorkspace {
+  const current = mockDramaProjectMap.get(projectId)!
+  const rows = (current.storyboards || []).filter(row => row.episodeNo === episodeNo)
+  const accepted = rows.filter(row => row.reviewStatus === 'passed').length
+  return {
+    projectId,
+    episodeNo,
+    sourceTitle: current.title,
+    sourceSummary: current.analysis?.outline || '',
+    sourceScriptVersion: current.analysis?.currentScriptVersion || 'mock-v1',
+    visualBible: {},
+    assetReadiness: { ready: true },
+    currentPlan: {
+      id: `mock-plan-${episodeNo}`,
+      episodeNo,
+      versionNo: 1,
+      versionLabel: 'v1',
+      status: 'draft',
+      isCurrent: true,
+      sourceScriptVersion: 'mock-v1',
+      tuning: {},
+      validation: {},
+      createdAt: new Date().toISOString()
+    },
+    summary: {
+      total: rows.length,
+      planConfirmed: rows.filter(row => row.planStatus === 'confirmed').length,
+      reviewRequired: rows.filter(row => row.reviewStatus !== 'passed').length,
+      videoQueued: rows.filter(row => row.videoStatus === 'queued').length,
+      videoRunning: rows.filter(row => row.videoStatus === 'running').length,
+      videoSucceeded: rows.filter(row => ['success', 'succeeded'].includes(row.videoStatus)).length,
+      videoFailed: rows.filter(row => row.videoStatus === 'failed').length,
+      accepted,
+      estimatedDurationSec: rows.reduce((total, row) => total + row.durationSec, 0)
+    },
+    rows,
+    latestBatch: {
+      batchId: '',
+      status: '',
+      qualityPolicy: 'smart',
+      estimatedCredits: 0,
+      settledCredits: 0,
+      refundedCredits: 0,
+      counts: {},
+      errorMessage: '',
+      createdAt: ''
+    },
+    run: current.storyboardRun || {
+      status: rows.length ? 'completed' : 'idle',
+      totalEpisodes: 1,
+      currentEpisodeNo: episodeNo,
+      episodeStatuses: { [episodeNo]: rows.length ? 'completed' : 'idle' },
+      episodeProgresses: { [episodeNo]: rows.length ? 100 : 0 },
+      generatedCounts: { [episodeNo]: rows.length },
+      expectedCounts: { [episodeNo]: rows.length },
+      style: '',
+      errorMessage: '',
+      updatedAt: new Date().toISOString()
+    }
+  }
 }
 
 export const mockAdapter: ApiAdapter = {
@@ -1443,6 +1505,106 @@ export const mockAdapter: ApiAdapter = {
     })
   },
 
+  async getStoryboardWorkspace(projectId: string, episodeNo = 1) {
+    await sleep(100)
+    return ok(createMockStoryboardWorkspace(projectId, episodeNo))
+  },
+
+  async updateStoryboardDirectorSegments(projectId: string, rowId: string, payload) {
+    await sleep(100)
+    const current = mockDramaProjectMap.get(projectId)!
+    current.storyboards = current.storyboards.map(row => row.id === rowId ? { ...row, directorSegments: payload.segments } : row)
+    return ok(createMockStoryboardWorkspace(projectId, current.storyboards.find(row => row.id === rowId)?.episodeNo || 1))
+  },
+
+  async tuneStoryboardShot(projectId: string, rowId: string, payload) {
+    await sleep(180)
+    const current = mockDramaProjectMap.get(projectId)!
+    current.storyboards = current.storyboards.map(row => row.id === rowId
+      ? { ...row, durationSec: payload.durationSec, planStatus: 'review_required', reviewStatus: 'unreviewed' }
+      : row)
+    return ok(createMockStoryboardWorkspace(projectId, current.storyboards.find(row => row.id === rowId)?.episodeNo || 1))
+  },
+
+  async generateStoryboardPrevisualization(projectId: string, rowId: string) {
+    await sleep(180)
+    const current = mockDramaProjectMap.get(projectId)!
+    current.storyboards = current.storyboards.map(row => row.id === rowId
+      ? { ...row, previsualizationStatus: 'queued' }
+      : row)
+    return ok(createMockStoryboardWorkspace(projectId, current.storyboards.find(row => row.id === rowId)?.episodeNo || 1))
+  },
+
+  async reviewStoryboards(projectId: string, payload) {
+    await sleep(100)
+    const current = mockDramaProjectMap.get(projectId)!
+    const states = new Map(payload.reviews.map(item => [item.rowId, item.status]))
+    current.storyboards = current.storyboards.map(row => states.has(row.id) ? { ...row, reviewStatus: states.get(row.id)! } : row)
+    return ok(createMockStoryboardWorkspace(projectId, current.storyboards[0]?.episodeNo || 1))
+  },
+
+  async previewStoryboardTuning(projectId: string, payload) {
+    await sleep(80)
+    const rows = createMockStoryboardWorkspace(projectId, payload.episodeNo).rows
+    const affected = rows.filter(row => payload.scope === 'all' || !['success', 'succeeded'].includes(row.videoStatus)).map(row => row.id)
+    return ok({
+      affectedRowIds: affected,
+      lockedRowIds: [],
+      affectedCount: affected.length,
+      estimatedDurationSec: rows.filter(row => affected.includes(row.id)).reduce((total, row) => total + row.durationSec, 0),
+      createsNewVersion: payload.scope === 'all',
+      changes: ['调整整集节奏与镜头语言', '保留已验收镜头']
+    })
+  },
+
+  async applyStoryboardTuning(projectId: string, payload) {
+    await sleep(120)
+    return ok(createMockStoryboardWorkspace(projectId, payload.episodeNo))
+  },
+
+  async estimateStoryboardVideoBatch(projectId: string, payload) {
+    await sleep(80)
+    const rows = createMockStoryboardWorkspace(projectId, payload.episodeNo).rows
+    const eligible = payload.rowIds?.length ? rows.filter(row => payload.rowIds!.includes(row.id)) : rows
+    return ok({
+      eligibleRowIds: eligible.map(row => row.id),
+      blocked: [],
+      totalDurationSec: eligible.reduce((total, row) => total + row.durationSec, 0),
+      estimatedCredits: eligible.length * 300,
+      currentBalance: 3600,
+      sufficient: true
+    })
+  },
+
+  async createStoryboardVideoBatch(projectId: string, payload) {
+    await sleep(80)
+    const rows = createMockStoryboardWorkspace(projectId, payload.episodeNo).rows
+    const eligible = payload.rowIds?.length ? rows.filter(row => payload.rowIds!.includes(row.id)) : rows
+    return ok({
+      batchId: `mock-batch-${Date.now()}`,
+      runs: eligible.map(row => ({ storyboardRowId: row.id, runId: `mock-run-${row.id}`, status: 'pending' }))
+    })
+  },
+
+  async retryFailedStoryboardVideoBatch() {
+    await sleep(80)
+    return ok({ batchId: `mock-retry-${Date.now()}`, runs: [] })
+  },
+
+  async selectStoryboardTake(projectId: string, rowId: string, takeId: string, payload) {
+    await sleep(80)
+    const current = mockDramaProjectMap.get(projectId)!
+    current.storyboards = current.storyboards.map(row => row.id === rowId
+      ? {
+          ...row,
+          selectedTakeId: takeId,
+          reviewStatus: payload?.reviewStatus || 'passed',
+          takes: row.takes.map(take => ({ ...take, isSelected: take.id === takeId }))
+        }
+      : row)
+    return ok(createMockStoryboardWorkspace(projectId, current.storyboards.find(row => row.id === rowId)?.episodeNo || 1))
+  },
+
   async createDramaStoryboard(projectId: string, payload) {
     await sleep(120)
     const current = mockDramaProjectMap.get(projectId)!
@@ -1636,14 +1798,15 @@ export const mockAdapter: ApiAdapter = {
   async batchGenerateStoryboardVideos(projectId: string, payload) {
     await sleep(80)
     const current = mockDramaProjectMap.get(projectId)!
-    return ok(
-      (current.storyboards || [])
+    return ok({
+      batchId: `mock-batch-${Date.now()}`,
+      runs: (current.storyboards || [])
         .filter((row) => row.episodeNo === payload.episodeNo)
         .map((row) => ({
           storyboardRowId: row.id,
           runId: `${projectId}-${row.id}-video-run`,
           status: 'pending'
         }))
-    )
+    })
   }
 }

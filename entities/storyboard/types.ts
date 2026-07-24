@@ -4,6 +4,57 @@ export type StoryboardReferenceRole = 'identity' | 'scene' | 'prop' | 'motion' |
 export type StoryboardContinuationPolicy = 'auto' | 'manual' | 'none'
 export type StoryboardStoryFunction = 'hook' | 'conflict' | 'reveal' | 'transition' | 'payoff' | 'cta'
 export type StoryboardVideoPromptSource = 'system' | 'user' | 'adapted'
+export type StoryboardQualityPolicy = 'smart' | 'economy' | 'quality'
+export type StoryboardPlanStatus = 'draft' | 'preflight_running' | 'review_required' | 'confirmed' | 'stale'
+export type StoryboardReviewStatus = 'unreviewed' | 'passed' | 'needs_revision'
+
+export interface StoryboardDirectorSegment {
+  id: string
+  sortIndex: number
+  startMs: number
+  endMs: number
+  shotSize: string
+  cameraMotion: string
+  visualFocus: string
+  actionDesc: string
+  emotionDesc: string
+  audioCue: string
+  extra: Record<string, unknown>
+}
+
+export interface StoryboardAudioIntent {
+  speakers: string[]
+  dialogueLines: Array<{ speaker: string; text: string }>
+  ambience: string
+  foley: string
+  voiceRequired: boolean
+  voiceReferenceStatus: 'not_required' | 'ready' | 'missing' | 'stale'
+}
+
+export interface StoryboardTake {
+  id: string
+  versionNo: number
+  status: string
+  qualityPolicy: StoryboardQualityPolicy | 'legacy'
+  videoUrl: string
+  posterUrl: string
+  qc: Record<string, unknown>
+  isSelected: boolean
+  createdAt: string
+}
+
+export interface StoryboardPlanVersion {
+  id: string
+  episodeNo: number
+  versionNo: number
+  versionLabel: string
+  status: string
+  isCurrent: boolean
+  sourceScriptVersion: string
+  tuning: Record<string, unknown>
+  validation: Record<string, unknown>
+  createdAt: string
+}
 
 export interface StoryboardReferenceBinding {
   url: string
@@ -78,6 +129,21 @@ export interface StoryboardRow {
   roleKeys: string[]
   sceneKeys: string[]
   propKeys: string[]
+  planVersionId: string
+  sourceSceneIds: string[]
+  sourceBlockIds: string[]
+  beatKeys: string[]
+  contextHash: string
+  planStatus: StoryboardPlanStatus
+  reviewStatus: StoryboardReviewStatus
+  riskLevel: 'low' | 'medium' | 'high'
+  riskReasons: string[]
+  previsualizationStatus: string
+  previsualizationUrl: string
+  audioIntent: StoryboardAudioIntent
+  directorSegments: StoryboardDirectorSegment[]
+  selectedTakeId: string
+  takes: StoryboardTake[]
   videoPrompt: string
   videoModel: string
   videoDurationSec: number
@@ -90,4 +156,54 @@ export interface StoryboardRow {
   generationProgress: number
   generationErrorMessage: string
   extra: StoryboardRuntimeExtra
+}
+
+export interface StoryboardWorkspaceSummary {
+  total: number
+  planConfirmed: number
+  reviewRequired: number
+  videoQueued: number
+  videoRunning: number
+  videoSucceeded: number
+  videoFailed: number
+  accepted: number
+  estimatedDurationSec: number
+}
+
+export interface StoryboardVideoBatchSummary {
+  batchId: string
+  status: string
+  qualityPolicy: StoryboardQualityPolicy
+  estimatedCredits: number
+  settledCredits: number
+  refundedCredits: number
+  counts: Record<string, number>
+  errorMessage: string
+  createdAt: string
+}
+
+export interface StoryboardWorkspace {
+  projectId: string
+  episodeNo: number
+  sourceTitle: string
+  sourceSummary: string
+  sourceScriptVersion: string
+  visualBible: Record<string, unknown>
+  assetReadiness: { ready?: boolean; legacy?: boolean; blockers?: string[] }
+  currentPlan: StoryboardPlanVersion
+  summary: StoryboardWorkspaceSummary
+  rows: StoryboardRow[]
+  latestBatch: StoryboardVideoBatchSummary
+  run: {
+    status: string
+    totalEpisodes: number
+    currentEpisodeNo: number
+    episodeStatuses: Record<string, string>
+    episodeProgresses: Record<string, number>
+    generatedCounts: Record<string, number>
+    expectedCounts: Record<string, number>
+    style: string
+    errorMessage: string
+    updatedAt: string
+  }
 }

@@ -13,6 +13,8 @@ import FluidImage from '~/components/ui/FluidImage.vue'
 import BaseMenu, { type BaseMenuItem } from '~/components/ui/BaseMenu.vue'
 import BaseSelect, { type BaseSelectOption } from '~/components/ui/BaseSelect.vue'
 import BaseTooltip from '~/components/ui/BaseTooltip.vue'
+import LivButton from '~/components/liv-ui/LivButton.vue'
+import LivDialog from '~/components/liv-ui/LivDialog.vue'
 import type {
   DramaAssetConsistencyEstimate,
   DramaAssetGenerationEstimate,
@@ -33,6 +35,7 @@ const emit = defineEmits<{ continue: [] }>()
 
 const runtime = useRuntimeConfig()
 const authStore = useAuthStore()
+const toast = useToast()
 const workspace = ref<DramaAssetWorkspace | null>(null)
 const activeType = ref<DramaWorkspaceAssetType>('role')
 const selectedProfile = ref<DramaAssetProfile | null>(null)
@@ -44,10 +47,11 @@ const actionBusy = ref('')
 const errorMessage = ref('')
 // 生成确认弹窗使用独立错误状态：提交失败时弹窗继续保留，用户能看到原因并直接重试。
 const generationErrorMessage = ref('')
-const noticeMessage = ref('')
 const showBibleEditor = ref(false)
 const showEstimate = ref(false)
 const estimate = ref<DramaAssetGenerationEstimate | null>(null)
+// 生成确认必须冻结本次估价对应的目标，避免用户在弹窗开启后改变勾选导致错生成或不生成。
+const estimatedGenerationTargets = ref<string[]>([])
 const generationMode = ref<'generate' | 'repair'>('generate')
 const repairMode = ref<'system_repair' | 'creative_variant'>('creative_variant')
 const repairTarget = ref<DramaAssetProfile | null>(null)
@@ -57,7 +61,12 @@ const consistencyTarget = ref<DramaAssetProfile | null>(null)
 // 检测按钮直接展示实际消耗点数；点数必须来自后端估价，前端不写死计费规则。
 const consistencyEstimateCache = ref<Record<string, DramaAssetConsistencyEstimate>>({})
 const consistencyEstimateLoading = ref<Record<string, boolean>>({})
-const drawerFeedback = ref<{ tone: 'success' | 'error'; message: string } | null>(null)
+// 单项与批量锁定统一使用产品内确认弹窗，避免浏览器原生 confirm 打断页面体验。
+const showLockConfirm = ref(false)
+const pendingLockProfiles = ref<DramaAssetProfile[]>([])
+const lockConfirmError = ref('')
+// 删除资产属于不可逆业务动作，统一使用产品内弹窗确认，不调用浏览器原生 confirm。
+const removeConfirmTarget = ref<DramaAssetProfile | null>(null)
 // 大图预览单独使用全局遮罩，不嵌在抽屉滚动区内，避免图片被三栏布局裁切。
 const previewImageUrl = ref('')
 const previewImageAlt = ref('')
@@ -69,7 +78,21 @@ const voicePreset = ref('')
 const bibleDraft = ref<Omit<DramaVisualBible, 'id' | 'version_no' | 'source_script_version' | 'status'> | null>(null)
 let assetEventSource: EventSource | null = null
 let fallbackPollTimer: number | null = null
-let feedbackTimer: number | null = null
+
+/**
+ * 页面级任务反馈统一走顶部 Toast，避免横幅占用资产网格的有效工作空间。
+ * 需要用户继续填写或确认的错误仍保留在对应抽屉/弹窗内。
+ */
+function showGlobalNotice(message: string, tone: 'success' | 'error' = 'success'): void {
+  toast.add({
+    title: tone === 'error' ? '操作未完成' : '操作已完成',
+    description: message,
+    color: tone === 'error' ? 'error' : 'success',
+    icon: tone === 'error' ? 'i-lucide-circle-alert' : 'i-lucide-circle-check',
+    close: true,
+    duration: tone === 'error' ? 6000 : 4200,
+  })
+}
 
 const typeMeta: Record<DramaWorkspaceAssetType, { label: string; icon: any; empty: string }> = {
   role: { label: '角色', icon: Users, empty: '已确认剧本中暂未识别到角色候选' },
@@ -92,12 +115,9 @@ const currentAssets = computed(() => {
   })
 })
 
-// “全选”只选择允许生成/重试的当前筛选结果；已锁定与生成中的资产不会误入扣点清单。
-const selectableCurrentAssets = computed(() => currentAssets.value.filter(item =>
-  ['candidate', 'planned', 'failed', 'stale'].includes(item.production_status)
-))
-const allCurrentSelected = computed(() => selectableCurrentAssets.value.length > 0
-  && selectableCurrentAssets.value.every(item => selectedKeys.value.includes(profileTarget(item))))
+// 全选代表当前筛选结果，不再和“可生成项”混为一谈；生成和锁定各自从选择中筛选合法目标。
+const allCurrentSelected = computed(() => currentAssets.value.length > 0
+  && currentAssets.value.every(item => selectedKeys.value.includes(profileTarget(item))))
 
 const currentStats = computed(() => {
   const rows = allAssets.value.filter(item => item.asset_type === activeType.value)
@@ -111,11 +131,19 @@ const currentStats = computed(() => {
   }
 })
 
-const selectionTargets = computed(() => selectedKeys.value.length
-  ? selectedKeys.value
-  : currentAssets.value
-      .filter(item => ['candidate', 'planned', 'failed', 'stale'].includes(item.production_status))
-      .map(profileTarget))
+const selectedProfiles = computed(() => allAssets.value.filter(item => selectedKeys.value.includes(profileTarget(item))))
+const selectionTargets = computed(() => selectedProfiles.value
+  .filter(item => ['candidate', 'planned', 'failed', 'stale'].includes(item.production_status))
+  .map(profileTarget))
+const lockableSelectedProfiles = computed(() => selectedProfiles.value.filter(item =>
+  Boolean(item.selected_asset_id)
+  && item.production_status !== 'locked'
+  && !['queued', 'generating'].includes(item.production_status)
+))
+const riskyPendingLockProfiles = computed(() => pendingLockProfiles.value.filter(item =>
+  item.consistency.status === 'succeeded'
+  && (item.consistency.hard_fail || item.consistency.overall_score < 75)
+))
 
 const hasRunningAssets = computed(() => allAssets.value.some(item =>
   ['queued', 'generating'].includes(item.production_status)
@@ -495,7 +523,7 @@ function toggleSelect(profile: DramaAssetProfile): void {
 }
 
 function toggleSelectAll(): void {
-  const visibleTargets = selectableCurrentAssets.value.map(profileTarget)
+  const visibleTargets = currentAssets.value.map(profileTarget)
   if (allCurrentSelected.value) {
     selectedKeys.value = selectedKeys.value.filter(item => !visibleTargets.includes(item))
     return
@@ -557,7 +585,6 @@ function resetEditDraft(profile: DramaAssetProfile): void {
 function openDetail(profile: DramaAssetProfile): void {
   selectedProfile.value = profile
   resetEditDraft(profile)
-  drawerFeedback.value = null
   void preloadConsistencyEstimate(profile)
 }
 
@@ -683,6 +710,7 @@ async function requestEstimate(targets = selectionTargets.value): Promise<void> 
   try {
     generationMode.value = 'generate'
     repairTarget.value = null
+    estimatedGenerationTargets.value = [...targets]
     estimate.value = await dramaService.estimateAssetGeneration(props.projectId, targets)
     showEstimate.value = true
   } finally {
@@ -711,7 +739,7 @@ async function startGeneration(targets = selectionTargets.value, overwrite = fal
       await dramaService.generateWorkspaceAssets(props.projectId, targets, overwrite, estimate.value?.compile_hashes || {})
     }
     showEstimate.value = false
-    noticeMessage.value = `已提交 ${targets.length} 项资产生成任务，每项会独立执行和重试。`
+    showGlobalNotice(`已提交 ${targets.length} 项资产生成任务，每项会独立执行和重试。`)
     await loadWorkspace(true)
   } catch (error: any) {
     // 以前异常被 finally 静默吞到控制台，用户只能看到按钮恢复，误以为点击无效。
@@ -723,26 +751,87 @@ async function startGeneration(targets = selectionTargets.value, overwrite = fal
 }
 
 async function lockProfile(profile: DramaAssetProfile, locked = true): Promise<void> {
-  if (locked && !profile.selected_asset_id) {
-    const message = '请先生成或上传一张资产图片，再确认并锁定。'
-    if (selectedProfile.value?.id === profile.id) showDrawerFeedback('error', message)
-    else noticeMessage.value = message
+  if (!locked) {
+    await applyProfileLocks([profile], false)
     return
   }
-  if (locked && profile.consistency.status === 'succeeded'
-    && (profile.consistency.hard_fail || profile.consistency.overall_score < 75)) {
-    const confirmed = window.confirm('当前图片存在尚未解决的质量偏差。仍要锁定当前版本吗？该偏差可能继续影响后续分镜的一致性。')
-    if (!confirmed) return
+  requestProfileLocks([profile])
+}
+
+function requestBatchLock(): void {
+  requestProfileLocks(lockableSelectedProfiles.value)
+}
+
+function requestProfileLocks(profiles: DramaAssetProfile[]): void {
+  const candidates = profiles.filter(profile => profile.production_status !== 'locked')
+  const missingImageProfiles = candidates.filter(profile => !profile.selected_asset_id)
+  if (missingImageProfiles.length) {
+    const message = '请先生成或上传一张资产图片，再确认并锁定。'
+    if (candidates.length === 1 && selectedProfile.value?.id === candidates[0]?.id) showDrawerFeedback('error', message)
+    else showGlobalNotice(message, 'error')
+    return
   }
-  actionBusy.value = `lock:${profile.id}`
+  if (!candidates.length) {
+    showGlobalNotice('当前选中资产均已锁定。')
+    return
+  }
+
+  pendingLockProfiles.value = candidates
+  lockConfirmError.value = ''
+  const hasQualityRisk = candidates.some(profile => profile.consistency.status === 'succeeded'
+    && (profile.consistency.hard_fail || profile.consistency.overall_score < 75))
+  // 批量锁定始终二次确认；单项仅在存在质量偏差时确认，保留正常资产的高效操作。
+  if (candidates.length > 1 || hasQualityRisk) {
+    showLockConfirm.value = true
+    return
+  }
+  void applyProfileLocks(candidates, true)
+}
+
+async function applyProfileLocks(profiles: DramaAssetProfile[], locked = true): Promise<void> {
+  if (!profiles.length) return
+  const isBatch = profiles.length > 1
+  actionBusy.value = isBatch ? 'batch-lock' : `lock:${profiles[0]!.id}`
+  const succeededIds: string[] = []
+  const failures: string[] = []
   try {
-    workspace.value = await dramaService.lockWorkspaceAsset(props.projectId, profile.asset_type, profile.asset_key, locked)
-    const fresh = workspace.value.assets.find(item => item.id === profile.id)
-    if (selectedProfile.value?.id === profile.id) selectedProfile.value = fresh || null
-    if (selectedProfile.value?.id === profile.id) showDrawerFeedback('success', locked ? '资产图片与设定已锁定。' : '已解除锁定。')
-  } catch (error: any) {
-    if (selectedProfile.value?.id === profile.id) showDrawerFeedback('error', error?.message || '锁定操作失败。')
-    else noticeMessage.value = error?.message || '锁定操作失败。'
+    // 复用单资产后端接口并串行执行，避免并发返回的旧 workspace 快照互相覆盖。
+    for (const profile of profiles) {
+      try {
+        workspace.value = await dramaService.lockWorkspaceAsset(
+          props.projectId,
+          profile.asset_type,
+          profile.asset_key,
+          locked,
+        )
+        succeededIds.push(profile.id)
+      } catch (error: any) {
+        failures.push(`${profile.name}：${error?.message || '操作失败'}`)
+      }
+    }
+
+    if (workspace.value && selectedProfile.value) {
+      selectedProfile.value = workspace.value.assets.find(item => item.id === selectedProfile.value?.id) || null
+    }
+    if (isBatch) {
+      showGlobalNotice(failures.length
+        ? `已锁定 ${succeededIds.length} 项，${failures.length} 项失败：${failures.join('；')}`
+        : `已锁定 ${succeededIds.length} 项资产，可继续选择其他分类处理。`, failures.length ? 'error' : 'success')
+    } else if (failures.length) {
+      const message = failures[0] || '锁定操作失败。'
+      if (selectedProfile.value?.id === profiles[0]?.id) showDrawerFeedback('error', message)
+      else showGlobalNotice(message, 'error')
+    } else if (selectedProfile.value?.id === profiles[0]?.id) {
+      showDrawerFeedback('success', locked ? '资产图片与设定已锁定。' : '已解除锁定。')
+    }
+
+    if (showLockConfirm.value && failures.length && !succeededIds.length) {
+      lockConfirmError.value = failures.join('；')
+      return
+    }
+    showLockConfirm.value = false
+    pendingLockProfiles.value = []
+    lockConfirmError.value = ''
   } finally {
     actionBusy.value = ''
   }
@@ -825,9 +914,8 @@ function repairInstruction(profile: DramaAssetProfile): string {
 }
 
 function showDrawerFeedback(tone: 'success' | 'error', message: string): void {
-  drawerFeedback.value = { tone, message }
-  if (feedbackTimer) window.clearTimeout(feedbackTimer)
-  feedbackTimer = window.setTimeout(() => { drawerFeedback.value = null }, 4000)
+  // 抽屉内的保存、上传和修复反馈也统一走顶部 Toast，避免局部提示被滚动内容遮挡。
+  showGlobalNotice(message, tone)
 }
 
 function assetMenuItems(profile: DramaAssetProfile): BaseMenuItem[] {
@@ -877,8 +965,19 @@ async function uploadReference(profile: DramaAssetProfile, event: Event): Promis
 }
 
 async function removeProfile(profile: DramaAssetProfile): Promise<void> {
-  if (!window.confirm(`确认删除资产“${profile.name}”？历史图片会保留，分镜引用不会被物理删除。`)) return
-  workspace.value = await dramaService.deleteAssetProfile(props.projectId, profile.asset_type, profile.asset_key)
+  removeConfirmTarget.value = profile
+}
+
+async function confirmRemoveProfile(): Promise<void> {
+  const profile = removeConfirmTarget.value
+  if (!profile) return
+  actionBusy.value = `remove:${profile.id}`
+  try {
+    workspace.value = await dramaService.deleteAssetProfile(props.projectId, profile.asset_type, profile.asset_key)
+    removeConfirmTarget.value = null
+  } finally {
+    actionBusy.value = ''
+  }
   closeDetail()
 }
 
@@ -895,7 +994,7 @@ async function saveBible(): Promise<void> {
   try {
     workspace.value = await dramaService.updateVisualBible(props.projectId, bibleDraft.value)
     showBibleEditor.value = false
-    noticeMessage.value = '已创建新的视觉基准版本，受影响的旧资产已标记为需要重新确认。'
+    showGlobalNotice('已创建新的视觉基准版本，受影响的旧资产已标记为需要重新确认。')
   } finally {
     actionBusy.value = ''
   }
@@ -940,7 +1039,6 @@ onMounted(() => {
 })
 onBeforeUnmount(() => {
   stopRealtimeTracking()
-  if (feedbackTimer) window.clearTimeout(feedbackTimer)
   window.removeEventListener('keydown', handlePreviewKeydown)
 })
 </script>
@@ -958,11 +1056,6 @@ onBeforeUnmount(() => {
     </div>
 
     <template v-else-if="workspace">
-      <div v-if="noticeMessage" class="notice-bar">
-        <Check :size="16" /> {{ noticeMessage }}
-        <button @click="noticeMessage = ''"><X :size="16" /></button>
-      </div>
-
       <div class="asset-overview">
         <header class="visual-bible-card">
           <div class="bible-reference">
@@ -1007,7 +1100,15 @@ onBeforeUnmount(() => {
               <div class="feature-copy"><span>人物表现</span><b>{{ workspace.visual_bible.character_style || '未设置' }}</b><div><em v-for="item in visualKeywords(workspace.visual_bible.character_style, ['影视质感', '真实皮肤'])" :key="item">{{ item }}</em></div></div>
             </article>
           </div>
-          <button class="outline-button" @click="openBible"><WandSparkles :size="16" /> 编辑视觉规范</button>
+          <UButton
+            class="outline-button"
+            icon="i-lucide-wand-sparkles"
+            label="编辑视觉规范"
+            color="primary"
+            variant="outline"
+            size="sm"
+            @click="openBible"
+          />
         </header>
 
         <div class="workspace-toolbar">
@@ -1020,21 +1121,29 @@ onBeforeUnmount(() => {
           <div class="toolbar-actions">
             <!--
               全选必须是工具栏里的明确操作，不能藏在状态筛选行最右侧的小复选框中。
-              这里仍然复用 toggleSelectAll 的安全规则：只选择当前筛选结果中可生成、可重试的资产，
-              已锁定和生成中的资产不会被加入扣点任务。
+              全选覆盖当前筛选结果；后续“生成”和“锁定”按钮会各自筛选符合条件的资产，
+              避免一个选择状态同时承担两套互相冲突的业务规则。
             -->
-            <button
+            <UButton
               class="select-all-button"
-              :class="{ active: allCurrentSelected }"
-              :disabled="!selectableCurrentAssets.length"
+              icon="i-lucide-check"
+              :label="allCurrentSelected ? '取消全选' : '全选'"
+              color="neutral"
+              :variant="allCurrentSelected ? 'soft' : 'outline'"
+              size="sm"
+              :disabled="!currentAssets.length"
               @click="toggleSelectAll"
-            >
-              <Check :size="15" />
-              {{ allCurrentSelected ? '取消全选' : '全选' }}
-            </button>
-            <label class="search-box"><Search :size="17" /><input v-model="searchKeyword" placeholder="搜索资产名称" /></label>
+            />
+            <UInput v-model="searchKeyword" class="asset-search-input" icon="i-lucide-search" placeholder="搜索资产名称" size="md" />
             <BaseSelect v-model="statusFilter" class="status-select" tone="light" size="sm" :options="statusOptions" />
-            <button class="primary-small"><Plus :size="17" /> 新增{{ typeMeta[activeType].label }}</button>
+            <UButton
+              class="primary-small"
+              icon="i-lucide-plus"
+              :label="`新增${typeMeta[activeType].label}`"
+              color="primary"
+              variant="solid"
+              size="sm"
+            />
           </div>
         </div>
 
@@ -1045,7 +1154,18 @@ onBeforeUnmount(() => {
           <button :class="{ active: statusFilter === 'locked' }" @click="setStatusFilter('locked')">已锁定 {{ currentStats.locked }}</button>
           <button :class="{ active: statusFilter === 'generating' }" @click="setStatusFilter('generating')">生成中 {{ currentStats.generating }}</button>
           <button v-if="currentStats.failed" class="failed-filter" :class="{ active: statusFilter === 'failed' }" @click="setStatusFilter('failed')">失败 {{ currentStats.failed }}</button>
-          <button v-if="currentStats.failed" class="retry-failed" :disabled="Boolean(actionBusy)" title="重试当前分类的全部失败项" @click="retryAllFailed"><RefreshCw :size="14" /> 重试全部失败项</button>
+          <UButton
+            v-if="currentStats.failed"
+            class="retry-failed"
+            icon="i-lucide-refresh-cw"
+            label="重试全部失败项"
+            color="error"
+            variant="soft"
+            size="sm"
+            :loading="Boolean(actionBusy)"
+            title="重试当前分类的全部失败项"
+            @click="retryAllFailed"
+          />
         </div>
 
         <div class="workspace-body">
@@ -1064,16 +1184,16 @@ onBeforeUnmount(() => {
                     :loading-label="assetImage(profile) ? `${profile.name}加载中` : ''"
                   />
                   <div v-if="!assetImage(profile)" class="image-placeholder-label"><ImageIcon :size="25" /><span>{{ statusLabel(profile.production_status) }}</span></div>
-                  <button class="select-check" :class="{ checked: isSelected(profile) }" @click.stop="toggleSelect(profile)"><Check :size="14" /></button>
+                  <UButton class="select-check" :class="{ checked: isSelected(profile) }" icon="i-lucide-check" :color="isSelected(profile) ? 'primary' : 'neutral'" :variant="isSelected(profile) ? 'solid' : 'soft'" size="sm" square :aria-label="isSelected(profile) ? '取消选择' : '选择资产'" @click.stop="toggleSelect(profile)" />
                   <span v-if="profile.production_status === 'locked'" class="image-lock"><LockKeyhole :size="14" /></span>
-                  <span class="more-button"><BaseMenu :items="assetMenuItems(profile)" @select="handleAssetMenu(profile, $event)"><template #trigger><MoreHorizontal :size="19" /></template></BaseMenu></span>
+                  <span class="more-button"><BaseMenu :items="assetMenuItems(profile)" @select="handleAssetMenu(profile, $event)"><template #trigger><UIcon name="i-lucide-ellipsis" class="size-4" /></template></BaseMenu></span>
                 </div>
                 <div class="card-content">
                   <div class="card-title"><div><h3>{{ profile.name }}</h3><p :title="dataText(profile) || '制作资料待补充'">{{ dataText(profile) || '制作资料待补充' }}</p></div><span v-if="profile.is_required">必需</span></div>
                   <p class="card-description" :title="descriptionText(profile)">{{ descriptionText(profile) }}</p>
                   <div class="tag-row"><span v-for="tag in tags(profile)" :key="String(tag)">{{ tag }}</span><span v-if="profile.data.appearance_source === 'ai_completion'" class="ai-tag">AI 补全</span><span v-if="profile.asset_type === 'role'" class="voice-card-tag"><Volume2 :size="11" />{{ roleVoiceStatus(profile) }}</span></div>
                   <div class="card-status"><span :class="`status-${profile.production_status}`">{{ statusLabel(profile.production_status) }}</span><button class="consistency-tag" :class="`tone-${consistencyTone(profile)}`" @click="openDetail(profile)">{{ consistencyLabel(profile) }}</button></div>
-                  <div class="card-actions"><button @click="openDetail(profile)">编辑</button><button @click="requestEstimate([profileTarget(profile)])">重新生成</button><BaseTooltip :text="!profile.selected_asset_id ? '请先生成或上传一张资产图片' : ''" align="right"><button class="primary" :disabled="!profile.selected_asset_id" @click="lockProfile(profile, profile.production_status !== 'locked')">{{ profile.production_status === 'locked' ? '已锁定' : '确认并锁定' }}</button></BaseTooltip></div>
+                  <div class="card-actions"><UButton color="neutral" variant="outline" size="sm" label="编辑" @click="openDetail(profile)" /><UButton color="neutral" variant="outline" size="sm" label="重新生成" @click="requestEstimate([profileTarget(profile)])" /><BaseTooltip :text="!profile.selected_asset_id ? '请先生成或上传一张资产图片' : ''" align="right"><UButton class="primary" color="primary" variant="solid" size="sm" :label="profile.production_status === 'locked' ? '已锁定' : '确认并锁定'" :disabled="!profile.selected_asset_id" @click="lockProfile(profile, profile.production_status !== 'locked')" /></BaseTooltip></div>
                 </div>
               </article>
             </div>
@@ -1083,23 +1203,45 @@ onBeforeUnmount(() => {
 
         <footer class="asset-footer">
           <div><strong>已选择 {{ selectedKeys.length }} 项</strong><button class="readiness-link" :title="workspace.readiness.blockers.join('\n')"><ShieldCheck :size="14" /> 已锁定 {{ workspace.readiness.locked_total }}/{{ workspace.readiness.required_total }} 项必需资产</button></div>
-          <button v-if="selectionTargets.length" class="secondary-action" :disabled="Boolean(actionBusy)" @click="requestEstimate()"><CreditIcon size="xs" /> 生成选中资产</button>
-          <button class="main-action" :disabled="!workspace.readiness.ready" @click="enterStoryboard"><Check :size="18" /> 确认资产并进入分镜</button>
+          <!-- 资产批量生成属于主操作，使用更清晰的中号积分图标。 -->
+          <UButton v-if="selectionTargets.length" class="secondary-action" color="primary" variant="outline" size="md" :loading="Boolean(actionBusy)" @click="requestEstimate()"><CreditIcon size="sm" /> 生成选中资产</UButton>
+          <UButton
+            v-if="lockableSelectedProfiles.length"
+            class="secondary-action batch-lock-action"
+            icon="i-lucide-lock-keyhole"
+            :label="`${allCurrentSelected ? '全部锁定' : '锁定选中'} ${lockableSelectedProfiles.length} 项`"
+            color="primary"
+            variant="outline"
+            size="md"
+            :loading="Boolean(actionBusy)"
+            @click="requestBatchLock"
+          />
+          <UButton
+            class="main-action"
+            icon="i-lucide-check"
+            label="确认资产并进入分镜"
+            color="primary"
+            variant="solid"
+            size="md"
+            :disabled="!workspace.readiness.ready"
+            @click="enterStoryboard"
+          />
         </footer>
       </div>
 
-      <div v-if="selectedProfile" class="asset-drawer-mask" @click.self="closeDetail">
+      <LivDialog
+        :open="Boolean(selectedProfile)"
+        :title="selectedProfile?.name || '资产编辑'"
+        :description="selectedProfile ? `${typeMeta[selectedProfile.asset_type].label}资产 · 历史版本 ${selectedProfile.versions.length} · ${statusLabel(selectedProfile.production_status)}` : ''"
+        width="full"
+        flush
+        @update:open="value => { if (!value) closeDetail() }"
+      >
+        <template v-if="selectedProfile">
         <!--
           三类资产统一使用同一套“三栏工作台”：左图像版本、中资料、右建议与质检。
           统一骨架可以避免角色、场景、道具各自维护一套抽屉，后续增加字段时只改中栏内容。
         -->
-        <section class="asset-drawer" role="dialog" aria-modal="true" :aria-label="`${selectedProfile.name}资产编辑`">
-          <header class="detail-head">
-            <div><h2>{{ selectedProfile.name }}</h2><span :class="`status-${selectedProfile.production_status}`">{{ statusLabel(selectedProfile.production_status) }}</span></div>
-            <div class="drawer-head-actions"><span><Clock3 :size="15" /> 历史版本 {{ selectedProfile.versions.length }}</span><button class="drawer-close" aria-label="关闭资产编辑" @click="closeDetail"><X :size="20" /></button></div>
-          </header>
-          <div v-if="drawerFeedback" class="drawer-feedback" :class="drawerFeedback.tone"><component :is="drawerFeedback.tone === 'success' ? Check : AlertTriangle" :size="16" />{{ drawerFeedback.message }}</div>
-
           <div class="asset-editor-body">
             <!-- 左栏只负责图片与版本选择，图片不会再和表单挤在同一个网格里。 -->
             <aside class="asset-media-column">
@@ -1134,29 +1276,29 @@ onBeforeUnmount(() => {
             <main class="detail-editor">
               <section class="editor-section">
                 <h3>基础信息</h3>
-                <div class="base-fields"><label>资产名称<input v-model="editDraft.name" /></label><label v-if="selectedProfile.asset_type === 'role'">身份<input v-model="editDraft.identity" /></label><label v-if="selectedProfile.asset_type === 'role'">年龄<input v-model="editDraft.age" /></label><label>资产定位<BaseSelect v-if="selectedProfile.asset_type === 'role'" v-model="editDraft.role_label" tone="light" full :options="rolePositionOptions" /><input v-else v-model="editDraft.canonical_location" /></label><label class="check-line"><input v-model="editDraft.is_required" type="checkbox" /> 分镜必需资产<BaseTooltip text="勾选后，该资产必须生成并锁定，项目才能进入分镜；分镜会优先引用当前图片与设定。只有不会在实际镜头中出现的候选资产才建议取消。"><CircleHelp :size="15" /></BaseTooltip></label></div>
+                <div class="base-fields"><label>资产名称<UInput v-model="editDraft.name" class="w-full" /></label><label v-if="selectedProfile.asset_type === 'role'">身份<UInput v-model="editDraft.identity" class="w-full" /></label><label v-if="selectedProfile.asset_type === 'role'">年龄<UInput v-model="editDraft.age" class="w-full" /></label><label>资产定位<BaseSelect v-if="selectedProfile.asset_type === 'role'" v-model="editDraft.role_label" tone="light" full :options="rolePositionOptions" /><UInput v-else v-model="editDraft.canonical_location" class="w-full" /></label><div class="check-line"><UCheckbox v-model="editDraft.is_required" label="分镜必需资产" /><BaseTooltip text="勾选后，该资产必须生成并锁定，项目才能进入分镜；分镜会优先引用当前图片与设定。只有不会在实际镜头中出现的候选资产才建议取消。"><CircleHelp :size="15" /></BaseTooltip></div></div>
               </section>
 
               <section class="editor-section">
                 <h3>{{ selectedProfile.asset_type === 'role' ? '角色设定' : selectedProfile.asset_type === 'scene' ? '场景设定' : '道具设定' }}</h3>
-                <div class="field-grid" v-if="selectedProfile.asset_type === 'role'"><label>固定外貌<textarea v-model="editDraft.stable_features" rows="4" /></label><label>服装与配饰<textarea v-model="editDraft.costume" rows="4" /></label><label>性格外化<textarea v-model="editDraft.personality" rows="3" /></label><label>核心动机<textarea v-model="editDraft.motivation" rows="3" /></label><label class="wide">核心冲突<textarea v-model="editDraft.conflict" rows="3" /></label></div>
+                <div class="field-grid" v-if="selectedProfile.asset_type === 'role'"><label>固定外貌<UTextarea v-model="editDraft.stable_features" class="w-full" :rows="4" /></label><label>服装与配饰<UTextarea v-model="editDraft.costume" class="w-full" :rows="4" /></label><label>性格外化<UTextarea v-model="editDraft.personality" class="w-full" :rows="3" /></label><label>核心动机<UTextarea v-model="editDraft.motivation" class="w-full" :rows="3" /></label><label class="wide">核心冲突<UTextarea v-model="editDraft.conflict" class="w-full" :rows="3" /></label></div>
                 <div class="field-grid" v-else-if="selectedProfile.asset_type === 'scene'">
-                  <label class="wide">场景描述<textarea v-model="editDraft.description" rows="4" /></label>
-                  <label>空间结构<textarea v-model="editDraft.spatial_layout" rows="4" /></label>
-                  <label>材质语言<textarea v-model="editDraft.materials" rows="4" /></label>
-                  <label>天气<textarea v-model="editDraft.weather" rows="3" /></label>
-                  <label>光影<textarea v-model="editDraft.lighting" rows="3" /></label>
-                  <label class="wide">场景状态<textarea v-model="editDraft.damage_state" rows="2" placeholder="例如：常态、破损、战后废墟" /></label>
+                  <label class="wide">场景描述<UTextarea v-model="editDraft.description" class="w-full" :rows="4" /></label>
+                  <label>空间结构<UTextarea v-model="editDraft.spatial_layout" class="w-full" :rows="4" /></label>
+                  <label>材质语言<UTextarea v-model="editDraft.materials" class="w-full" :rows="4" /></label>
+                  <label>天气<UTextarea v-model="editDraft.weather" class="w-full" :rows="3" /></label>
+                  <label>光影<UTextarea v-model="editDraft.lighting" class="w-full" :rows="3" /></label>
+                  <label class="wide">场景状态<UTextarea v-model="editDraft.damage_state" class="w-full" :rows="2" placeholder="例如：常态、破损、战后废墟" /></label>
                 </div>
                 <div class="field-grid" v-else>
-                  <label class="wide">道具描述<textarea v-model="editDraft.description" rows="4" /></label>
-                  <label>核心造型<textarea v-model="editDraft.shape" rows="3" /></label>
-                  <label>材质<textarea v-model="editDraft.material" rows="3" /></label>
-                  <label>颜色<input v-model="editDraft.color" /></label>
-                  <label>尺寸<input v-model="editDraft.size" /></label>
-                  <label>持有人<input v-model="editDraft.owner" /></label>
-                  <label>状态变化<input v-model="editDraft.state_variants_text" placeholder="常态、破损、激活" /></label>
-                  <label class="wide">剧情意义<textarea v-model="editDraft.plot_significance" rows="3" /></label>
+                  <label class="wide">道具描述<UTextarea v-model="editDraft.description" class="w-full" :rows="4" /></label>
+                  <label>核心造型<UTextarea v-model="editDraft.shape" class="w-full" :rows="3" /></label>
+                  <label>材质<UTextarea v-model="editDraft.material" class="w-full" :rows="3" /></label>
+                  <label>颜色<UInput v-model="editDraft.color" class="w-full" /></label>
+                  <label>尺寸<UInput v-model="editDraft.size" class="w-full" /></label>
+                  <label>持有人<UInput v-model="editDraft.owner" class="w-full" /></label>
+                  <label>状态变化<UInput v-model="editDraft.state_variants_text" class="w-full" placeholder="常态、破损、激活" /></label>
+                  <label class="wide">剧情意义<UTextarea v-model="editDraft.plot_significance" class="w-full" :rows="3" /></label>
                 </div>
               </section>
 
@@ -1260,14 +1402,16 @@ onBeforeUnmount(() => {
           </div>
 
           <!-- 所有会改变资产状态的操作统一进入底部 Footer，减少用户在三栏之间寻找按钮。 -->
-          <footer class="asset-editor-footer">
+        </template>
+        <template v-if="selectedProfile" #footer>
+          <div class="asset-editor-footer liv-asset-editor-footer">
             <div class="footer-lock-tip"><LockKeyhole :size="16" /><span>{{ selectedProfile.production_status === 'locked' ? '当前资产已锁定；解除后才能调整设定与图片版本。' : '锁定后将作为后续分镜与成片生成的统一引用。' }}</span></div>
-            <button class="outline-button" @click="requestEstimate([profileTarget(selectedProfile)])"><RefreshCw :size="16" /> 重新生成</button>
-            <button class="outline-button save-button" :disabled="actionBusy === 'save-profile'" @click="saveProfile"><RefreshCw v-if="actionBusy === 'save-profile'" class="spin" :size="15" /><ShieldCheck v-else :size="16" />{{ actionBusy === 'save-profile' ? '保存中…' : '保存资产设定' }}</button>
-            <BaseTooltip :text="!selectedProfile.selected_asset_id ? '请先生成或上传一张资产图片' : ''" align="right"><button class="main-action" :disabled="!selectedProfile.selected_asset_id" @click="lockProfile(selectedProfile, selectedProfile.production_status !== 'locked')"><component :is="selectedProfile.production_status === 'locked' ? Unlock : LockKeyhole" :size="16" /> {{ selectedProfile.production_status === 'locked' ? '解除锁定' : '确认并锁定' }}</button></BaseTooltip>
-          </footer>
-        </section>
-      </div>
+            <LivButton variant="secondary" @click="requestEstimate([profileTarget(selectedProfile)])"><template #icon><RefreshCw :size="16" /></template>重新生成</LivButton>
+            <LivButton variant="secondary" :loading="actionBusy === 'save-profile'" @click="saveProfile"><template #icon><ShieldCheck :size="16" /></template>保存资产设定</LivButton>
+            <BaseTooltip :text="!selectedProfile.selected_asset_id ? '请先生成或上传一张资产图片' : ''" align="right"><LivButton variant="primary" :disabled="!selectedProfile.selected_asset_id" @click="lockProfile(selectedProfile, selectedProfile.production_status !== 'locked')"><template #icon><component :is="selectedProfile.production_status === 'locked' ? Unlock : LockKeyhole" :size="16" /></template>{{ selectedProfile.production_status === 'locked' ? '解除锁定' : '确认并锁定' }}</LivButton></BaseTooltip>
+          </div>
+        </template>
+      </LivDialog>
     </template>
 
     <!--
@@ -1287,11 +1431,53 @@ onBeforeUnmount(() => {
     <!-- 三点菜单通过隐藏文件框复用既有上传接口；菜单本身只负责触发，避免浮层里嵌套 file input。 -->
     <input ref="menuUploadInput" class="sr-only" type="file" accept="image/*" @change="uploadFromMenu" />
 
-    <div v-if="showEstimate && estimate" class="modal-mask" @click.self="showEstimate = false"><div class="confirm-modal"><button class="modal-close" @click="showEstimate = false"><X :size="19" /></button><CreditIcon class="modal-icon" size="lg" /><h3>{{ generationMode === 'repair' ? (repairMode === 'system_repair' ? '确认系统修正' : '确认生成优化版本') : '确认生成资产' }}</h3><p>{{ generationMode === 'repair' ? '系统会创建一个新图片版本，原图、原始生成要求与旧报告都会保留。' : `本次将生成 ${estimate.target_count} 项资产。生成完成后页面会自动更新，期间可以继续浏览或离开页面。本次生成包含一次自动质量检测；若发现系统硬性生成偏差，可0积分修正一次。` }}</p><div class="cost-box"><div><span>预计消耗</span><CreditAmount :value="estimate.required_credits" size="md" tone="accent" :show-unit="true" /></div><div><span>当前余额</span><CreditAmount :value="estimate.current_balance" size="md" tone="default" :show-unit="true" /></div></div><ul v-if="estimate.warnings.length"><li v-for="item in estimate.warnings" :key="item">{{ item }}</li></ul><div v-if="blockedAuditDetails.length" class="prompt-audit-blocked"><div class="prompt-audit-title"><AlertTriangle :size="16" /><strong>以下资产的生成资料需要先确认</strong></div><div v-for="item in blockedAuditDetails" :key="item.target" class="prompt-audit-item"><b>{{ item.name }}</b><span>{{ item.reasons.join('；') || '存在硬性生成要求冲突' }}</span></div></div><div v-if="generationErrorMessage" class="generation-submit-error"><AlertTriangle :size="15" />{{ generationErrorMessage }}</div><button class="main-action full" :disabled="!estimate.sufficient || actionBusy === 'generate'" @click="startGeneration(generationMode === 'repair' && repairTarget ? [profileTarget(repairTarget)] : selectionTargets)"><RefreshCw v-if="actionBusy === 'generate'" class="spin" :size="15" /><CreditIcon v-else size="xs" class="button-credit-icon" />{{ generationSubmitLabel }}</button></div></div>
+    <!-- 单项风险确认与批量锁定共用 Reka 弹窗，焦点管理与遮罩行为和分镜阶段一致。 -->
+    <LivDialog
+      :open="showLockConfirm"
+      :title="pendingLockProfiles.length > 1 ? `确认锁定 ${pendingLockProfiles.length} 项资产` : '确认锁定当前版本'"
+      :description="riskyPendingLockProfiles.length ? `其中 ${riskyPendingLockProfiles.length} 项仍存在尚未解决的质量偏差，锁定后可能影响后续分镜一致性。` : '锁定后，当前图片与资产设定将作为后续分镜和视频生成的统一引用。'"
+      width="sm"
+      @update:open="showLockConfirm = $event"
+    >
+      <div class="lock-confirm-content">
+        <div class="lock-confirm-icon" :class="{ warning: riskyPendingLockProfiles.length }">
+          <AlertTriangle v-if="riskyPendingLockProfiles.length" :size="24" />
+          <LockKeyhole v-else :size="23" />
+        </div>
+        <div class="lock-confirm-summary">
+          <span><b>{{ pendingLockProfiles.length }}</b>待锁定</span>
+          <span :class="{ warning: riskyPendingLockProfiles.length }"><b>{{ riskyPendingLockProfiles.length }}</b>质量风险</span>
+        </div>
+        <div v-if="riskyPendingLockProfiles.length" class="lock-risk-list">
+          <span v-for="profile in riskyPendingLockProfiles" :key="profile.id"><AlertTriangle :size="13" />{{ profile.name }}<b>{{ profile.consistency.overall_score }} 分</b></span>
+        </div>
+        <div v-if="lockConfirmError" class="generation-submit-error"><AlertTriangle :size="15" />{{ lockConfirmError }}</div>
+      </div>
+      <template #footer><LivButton variant="secondary" :disabled="actionBusy === 'batch-lock'" @click="showLockConfirm = false">取消</LivButton><LivButton variant="primary" :loading="Boolean(actionBusy)" @click="applyProfileLocks(pendingLockProfiles, true)"><template #icon><LockKeyhole :size="16" /></template>{{ riskyPendingLockProfiles.length ? '确认风险并锁定' : '确认全部锁定' }}</LivButton></template>
+    </LivDialog>
 
-    <div v-if="showConsistencyEstimate && consistencyEstimate" class="modal-mask" @click.self="showConsistencyEstimate = false"><div class="confirm-modal"><button class="modal-close" @click="showConsistencyEstimate = false"><X :size="19" /></button><CreditIcon class="modal-icon" size="lg" /><h3>确认图片质量检测</h3><p>{{ consistencyEstimate.free_retry ? '本次属于检测服务异常后的0积分重新检测。' : '检测将使用真实图片理解模型，并返回可核验的预期、实际差异与修正方向。' }}</p><div class="cost-box"><div><span>预计消耗</span><CreditAmount :value="consistencyEstimate.required_credits" size="md" tone="accent" :show-unit="true" /></div><div><span>当前余额</span><CreditAmount :value="consistencyEstimate.current_balance" size="md" tone="default" :show-unit="true" /></div></div><button class="main-action full" :disabled="!consistencyEstimate.sufficient || actionBusy.startsWith('check:')" @click="confirmConsistency"><RefreshCw v-if="actionBusy.startsWith('check:')" class="spin" :size="15" /><CreditIcon v-else size="xs" class="button-credit-icon" />{{ consistencyEstimate.sufficient ? `消耗 ${consistencyEstimate.required_credits} 点积分 · 开始检测` : '点数不足' }}</button></div></div>
+    <LivDialog v-if="estimate" :open="showEstimate" :title="generationMode === 'repair' ? (repairMode === 'system_repair' ? '确认系统修正' : '确认生成优化版本') : '确认生成资产'" :description="generationMode === 'repair' ? '系统会创建一个新图片版本，原图、原始生成要求与旧报告都会保留。' : `本次将生成 ${estimate.target_count} 项资产，生成后自动进行一次质量检测。`" width="sm" @update:open="showEstimate = $event">
+      <div class="cost-box"><div><span>预计消耗</span><CreditAmount :value="estimate.required_credits" size="md" tone="accent" :show-unit="true" /></div><div><span>当前余额</span><CreditAmount :value="estimate.current_balance" size="md" tone="default" :show-unit="true" /></div></div>
+      <ul v-if="estimate.warnings.length" class="liv-modal-warning-list"><li v-for="item in estimate.warnings" :key="item">{{ item }}</li></ul>
+      <div v-if="blockedAuditDetails.length" class="prompt-audit-blocked"><div class="prompt-audit-title"><AlertTriangle :size="16" /><strong>以下资产的生成资料需要先确认</strong></div><div v-for="item in blockedAuditDetails" :key="item.target" class="prompt-audit-item"><b>{{ item.name }}</b><span>{{ item.reasons.join('；') || '存在硬性生成要求冲突' }}</span></div></div>
+      <div v-if="generationErrorMessage" class="generation-submit-error"><AlertTriangle :size="15" />{{ generationErrorMessage }}</div>
+      <template #footer><LivButton variant="secondary" @click="showEstimate = false">取消</LivButton><LivButton variant="primary" :loading="actionBusy === 'generate'" :disabled="!estimate.sufficient" @click="startGeneration(generationMode === 'repair' && repairTarget ? [profileTarget(repairTarget)] : estimatedGenerationTargets)"><template #icon><CreditIcon size="md" class="button-credit-icon" /></template>{{ generationSubmitLabel }}</LivButton></template>
+    </LivDialog>
 
-    <div v-if="showBibleEditor && bibleDraft" class="modal-mask" @click.self="showBibleEditor = false"><div class="bible-modal"><button class="modal-close" @click="showBibleEditor = false"><X :size="19" /></button><h3>创建新的项目视觉基准版本</h3><p>不会覆盖旧版本；旧资产会保留并标记为需要重新确认。</p><div class="field-grid"><label>风格类型<input v-model="bibleDraft.style_type" /></label><label>主色调（用顿号分隔）<input :value="bibleDraft.color_palette.join('、')" @input="bibleDraft!.color_palette = ($event.target as HTMLInputElement).value.split(/[、,，]/).filter(Boolean)" /></label><label>光影氛围<textarea v-model="bibleDraft.lighting" rows="3" /></label><label>材质语言<textarea v-model="bibleDraft.materials" rows="3" /></label><label>人物表现<textarea v-model="bibleDraft.character_style" rows="3" /></label><label>镜头语言<textarea v-model="bibleDraft.camera_language" rows="3" /></label><label class="wide">禁止元素（用顿号分隔）<input :value="bibleDraft.forbidden_elements.join('、')" @input="bibleDraft!.forbidden_elements = ($event.target as HTMLInputElement).value.split(/[、,，]/).filter(Boolean)" /></label></div><button class="main-action full" :disabled="actionBusy === 'save-bible'" @click="saveBible">保存为新版本</button></div></div>
+    <LivDialog v-if="consistencyEstimate" :open="showConsistencyEstimate" title="确认图片质量检测" :description="consistencyEstimate.free_retry ? '本次属于检测服务异常后的0积分重新检测。' : '检测将使用真实图片理解模型，并返回可核验的预期、实际差异与修正方向。'" width="sm" @update:open="showConsistencyEstimate = $event">
+      <div class="cost-box"><div><span>预计消耗</span><CreditAmount :value="consistencyEstimate.required_credits" size="md" tone="accent" :show-unit="true" /></div><div><span>当前余额</span><CreditAmount :value="consistencyEstimate.current_balance" size="md" tone="default" :show-unit="true" /></div></div>
+      <template #footer><LivButton variant="secondary" @click="showConsistencyEstimate = false">取消</LivButton><LivButton variant="primary" :loading="actionBusy.startsWith('check:')" :disabled="!consistencyEstimate.sufficient" @click="confirmConsistency"><template #icon><CreditIcon size="md" class="button-credit-icon" /></template>{{ consistencyEstimate.sufficient ? `消耗 ${consistencyEstimate.required_credits} 点积分 · 开始检测` : '点数不足' }}</LivButton></template>
+    </LivDialog>
+
+    <LivDialog v-if="bibleDraft" :open="showBibleEditor" title="创建新的项目视觉基准版本" description="不会覆盖旧版本；旧资产会保留并标记为需要重新确认。" width="md" @update:open="showBibleEditor = $event">
+      <div class="field-grid liv-bible-fields"><label>风格类型<input v-model="bibleDraft.style_type" /></label><label>主色调（用顿号分隔）<input :value="bibleDraft.color_palette.join('、')" @input="bibleDraft!.color_palette = ($event.target as HTMLInputElement).value.split(/[、,，]/).filter(Boolean)" /></label><label>光影氛围<textarea v-model="bibleDraft.lighting" rows="3" /></label><label>材质语言<textarea v-model="bibleDraft.materials" rows="3" /></label><label>人物表现<textarea v-model="bibleDraft.character_style" rows="3" /></label><label>镜头语言<textarea v-model="bibleDraft.camera_language" rows="3" /></label><label class="wide">禁止元素（用顿号分隔）<input :value="bibleDraft.forbidden_elements.join('、')" @input="bibleDraft!.forbidden_elements = ($event.target as HTMLInputElement).value.split(/[、,，]/).filter(Boolean)" /></label></div>
+      <template #footer><LivButton variant="secondary" @click="showBibleEditor = false">取消</LivButton><LivButton variant="primary" :loading="actionBusy === 'save-bible'" @click="saveBible">保存为新版本</LivButton></template>
+    </LivDialog>
+
+    <LivDialog :open="Boolean(removeConfirmTarget)" :title="`删除资产${removeConfirmTarget ? `“${removeConfirmTarget.name}”` : ''}？`" description="历史图片会保留，分镜引用不会被物理删除；当前资产会从工作台移除。" width="sm" @update:open="value => { if (!value) removeConfirmTarget = null }">
+      <div class="generation-submit-error"><AlertTriangle :size="16" />请确认该资产不再用于后续镜头规划。</div>
+      <template #footer><LivButton variant="secondary" @click="removeConfirmTarget = null">取消</LivButton><LivButton variant="danger" :loading="Boolean(removeConfirmTarget && actionBusy === `remove:${removeConfirmTarget.id}`)" @click="confirmRemoveProfile"><template #icon><Trash2 :size="16" /></template>确认删除</LivButton></template>
+    </LivDialog>
   </section>
 </template>
 
@@ -1310,7 +1496,8 @@ onBeforeUnmount(() => {
 .card-image{height:184px;overflow:hidden}.card-image>:deep(.relative){border-radius:11px}.image-placeholder-label{position:absolute;inset:0;z-index:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:9px;pointer-events:none;color:#72839b;font-size:12px;font-weight:650}.image-placeholder-label.large{font-size:13px}.select-check,.more-button,.image-lock{z-index:4}.card-menu{z-index:8}
 .card-content{padding:7px 16px 16px}.card-title h3{font-size:17px;line-height:24px}.card-title p{font-size:13px;line-height:20px}.card-title>span{height:auto;padding:4px 8px;font-size:11px}.card-description{min-height:44px;margin:10px 0 9px;font-size:13px;line-height:22px}.tag-row{gap:6px;min-height:26px}.tag-row span{padding:5px 8px;font-size:11px}.card-status{margin:12px 0;font-size:12px}.card-actions{gap:8px}.card-actions button{padding:9px 6px;font-size:12px}
 .consistency-panel{padding:18px}.panel-title h3{font-size:16px}.panel-title p{font-size:11px;line-height:18px}.panel-empty p{font-size:12px}.readiness-box h4{font-size:14px}.readiness-box p,.readiness-box li{font-size:11px;line-height:18px}
-.button-credit-icon{filter:brightness(0) invert(1)}
+/* 积分 SVG 直接继承按钮颜色，不再用滤镜处理 PNG。 */
+.button-credit-icon{color:currentColor}
 .source-mixed{background:#eef4ff;color:#356bc4}
 .generation-submit-error{display:flex;align-items:flex-start;gap:7px;margin:0 0 12px;border:1px solid #fecdd3;border-radius:9px;background:#fff5f6;padding:9px 11px;color:#c53549;font-size:11px;line-height:18px}.generation-submit-error svg{flex:0 0 auto;margin-top:1px}
 .prompt-audit-blocked{margin:0 0 14px;border:1px solid #fed7aa;border-radius:10px;background:#fffaf2;padding:11px 12px;color:#9a5514}.prompt-audit-title{display:flex;align-items:center;gap:7px;font-size:12px}.prompt-audit-item{display:flex;flex-direction:column;gap:3px;margin-top:8px;padding-top:8px;border-top:1px solid #ffead0;font-size:11px;line-height:18px}.prompt-audit-item b{color:#713f12}.prompt-audit-item span{color:#a16207}
@@ -1559,6 +1746,65 @@ onBeforeUnmount(() => {
 .voice-audio-card{border:1px solid #e1e7f0;border-radius:10px;background:#fff;padding:12px}.voice-audio-heading{display:flex;align-items:center;gap:9px}.voice-audio-heading div{display:flex;flex-direction:column;gap:3px}.voice-audio-heading strong{font-size:12px}.voice-audio-heading span{color:#7b8799;font-size:10px}.voice-audio-card audio{width:100%;height:36px;margin-top:11px}.voice-audio-card>p{margin-top:6px;color:#65748b;font-size:10px}
 .voice-actions{display:flex;align-items:center;gap:10px;margin-top:10px}.voice-actions .outline-button{padding:8px 12px}.voice-remove{display:inline-flex;align-items:center;gap:6px;color:#d13e53;font-size:11px}.voice-actions button:disabled{cursor:not-allowed;opacity:.5}
 .voice-compatibility{margin:0!important;border-left:3px solid #8fb2ff;padding:7px 10px;color:#68778c!important;font-size:10px!important;line-height:18px!important}
+
+/* 锁定确认沿用工作台的白底、蓝色主操作与轻量风险色，不再调用浏览器原生弹窗。 */
+.batch-lock-action{border-color:#b9caff;background:#f6f8ff;color:#315fd1}
+.lock-confirm-modal{position:relative;width:min(500px,calc(100vw - 32px));border:1px solid #e2e9f4;border-radius:16px;background:#fff;padding:28px;box-shadow:0 28px 80px rgba(7,20,43,.24)}
+.lock-confirm-icon{width:46px;height:46px;display:flex;align-items:center;justify-content:center;border-radius:12px;background:#edf4ff;color:#1768ff}
+.lock-confirm-icon.warning{background:#fff5e8;color:#d47a09}
+.lock-confirm-modal h3{margin:16px 0 8px;font-size:20px;font-weight:750;letter-spacing:0}
+.lock-confirm-modal>p{color:#66758b;font-size:13px;line-height:22px}
+.lock-confirm-summary{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:20px 0 12px}
+.lock-confirm-summary span{display:flex;align-items:baseline;justify-content:space-between;border:1px solid #e4ebf5;border-radius:10px;background:#f8faff;padding:12px 14px;color:#67758a;font-size:12px}
+.lock-confirm-summary span.warning{border-color:#ffd7a8;background:#fff8ef;color:#b86608}
+.lock-confirm-summary b{color:#1d2b43;font-size:20px}
+.lock-risk-list{max-height:136px;overflow:auto;border:1px solid #ffe0ba;border-radius:10px;background:#fffaf4;padding:4px 12px}
+.lock-risk-list span{display:grid;grid-template-columns:16px minmax(0,1fr) auto;align-items:center;gap:7px;padding:9px 0;border-bottom:1px solid #ffead0;color:#76512a;font-size:12px}
+.lock-risk-list span:last-child{border-bottom:0}.lock-risk-list b{color:#c66d08;font-weight:700}
+.lock-confirm-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:22px}.lock-confirm-actions button{min-width:112px}
+
+/*
+ * Nuxt UI 迁移后的资产工作台收口：
+ * 1. 弹窗三栏直接以 LivDialog 的 body 为高度基准，各栏独立滚动；
+ * 2. 表单字段由 UInput/UTextarea/UCheckbox 提供边框、聚焦和禁用状态；
+ * 3. 资产卡片保留业务布局，选择、菜单与操作按钮统一使用 Nuxt UI。
+ */
+.asset-search-input{width:188px}
+.asset-card{border-color:#dfe7f2;background:#fff;box-shadow:0 2px 8px rgba(15,35,65,.025)}
+.asset-card:hover,.asset-card.selected{border-color:#75a4ff;box-shadow:0 10px 28px rgba(28,92,210,.1)}
+.asset-card.selected{background:linear-gradient(180deg,#fff 0%,#fbfdff 100%)}
+.select-check{position:absolute!important;padding:0!important}
+.select-check:not(.checked) :deep(.iconify){opacity:0}
+.more-button{padding:0}
+.more-button :deep(.base-menu-trigger){width:25px;height:25px;min-height:25px;border-radius:7px;background:rgba(255,255,255,.95);box-shadow:0 2px 10px rgba(0,0,0,.08)}
+.card-title h3{letter-spacing:0}
+.card-actions :deep(button){width:100%;min-height:34px;justify-content:center;border-radius:7px;font-size:12px}
+.card-actions :deep(.primary){box-shadow:0 5px 12px rgba(23,104,255,.16)}
+
+.asset-editor-body{width:100%;height:min(760px,calc(100vh - 190px));min-height:560px}
+.asset-editor-body>.asset-media-column,
+.asset-editor-body>.detail-editor,
+.asset-editor-body>.detail-advice{min-width:0;min-height:0;height:100%;overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;border:1px solid var(--line);border-radius:12px;background:#fff;scrollbar-gutter:stable}
+.asset-editor-body>.detail-editor{padding:0}
+.asset-editor-body>.detail-advice{display:flex;grid-column:auto;padding:12px;background:#fbfcfe}
+.asset-editor-body .base-fields label,
+.asset-editor-body .field-grid label{font-size:12px}
+.asset-editor-body .base-fields :deep(input),
+.asset-editor-body .field-grid :deep(input),
+.asset-editor-body .field-grid :deep(textarea){font-size:13px;line-height:20px}
+.asset-editor-body .field-grid{margin-top:14px}
+.asset-editor-body .issue-list{display:flex;flex-direction:column;gap:8px;margin:12px 0;color:#59677c;list-style:none}
+.asset-editor-body .issue-list li{border:1px solid #eef1f6;border-radius:8px;background:#fafbfe;padding:9px 10px;font-size:10px;line-height:17px}
+
+@media(max-width:1200px){
+  .asset-editor-body{height:min(720px,calc(100vh - 170px));grid-template-columns:minmax(260px,32%) minmax(380px,1fr);overflow:auto}
+  .asset-editor-body>.detail-advice{grid-column:1/-1;display:grid;height:auto;grid-template-columns:repeat(3,minmax(0,1fr));overflow:visible}
+}
+@media(max-width:760px){
+  .asset-editor-body{height:calc(100vh - 150px);min-height:0;grid-template-columns:1fr;overflow-y:auto}
+  .asset-editor-body>.asset-media-column,.asset-editor-body>.detail-editor,.asset-editor-body>.detail-advice{height:auto;overflow:visible}
+  .asset-editor-body>.detail-advice{display:flex;grid-column:auto}
+}
 
 @media(max-width:1280px){
   .visual-bible-card{grid-template-columns:78px 270px minmax(0,1fr) auto;gap:14px;padding:15px}

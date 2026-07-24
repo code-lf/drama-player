@@ -20,9 +20,14 @@ import type {
   StoryboardClipContract,
   StoryboardContinuationPolicy,
   StoryboardContinuityState,
+  StoryboardDirectorSegment,
+  StoryboardPlanVersion,
   StoryboardPromptLoad,
+  StoryboardQualityPolicy,
   StoryboardReferenceBinding,
-  StoryboardRow
+  StoryboardRow,
+  StoryboardTake,
+  StoryboardWorkspace
 } from '~/entities/storyboard/types'
 import type { AuthSession } from '~/entities/auth/types'
 import type { SystemAnnouncement } from '~/entities/announcement/types'
@@ -54,10 +59,17 @@ import type {
   DramaScriptSceneUpdatePayload,
   DramaScriptOptimizationPayload,
   DramaStoryboardGeneratePayload,
+  StoryboardBatchEstimate,
   StoryboardCreatePayload,
+  StoryboardDirectorSegmentsPayload,
   StoryboardGeneratePayload,
+  StoryboardReviewBatchPayload,
+  StoryboardTuningPayload,
+  StoryboardShotTuningPayload,
+  StoryboardTuningPreview,
   StoryboardUpdatePayload,
   StoryboardVideoBatchPayload,
+  StoryboardVideoBatchResult,
   StoryboardVideoGeneratePayload,
   WorkflowRunCreatePayload,
 } from '~/shared/api/types'
@@ -101,6 +113,21 @@ interface BackendStoryboardRow {
   role_keys?: string[]
   scene_keys?: string[]
   prop_keys?: string[]
+  plan_version_id?: string
+  source_scene_ids?: string[]
+  source_block_ids?: string[]
+  beat_keys?: string[]
+  context_hash?: string
+  plan_status?: string
+  review_status?: string
+  risk_level?: 'low' | 'medium' | 'high'
+  risk_reasons?: string[]
+  previsualization_status?: string
+  previsualization_url?: string
+  audio_intent?: BackendStoryboardAudioIntent
+  director_segments?: BackendStoryboardDirectorSegment[]
+  selected_take_id?: string
+  takes?: BackendStoryboardTake[]
   video_prompt?: string
   video_model?: string
   video_duration_sec?: number
@@ -113,6 +140,41 @@ interface BackendStoryboardRow {
   generation_progress?: number
   generation_error_message?: string
   extra?: Record<string, unknown>
+}
+
+interface BackendStoryboardDirectorSegment {
+  id?: string
+  sort_index?: number
+  start_ms?: number
+  end_ms?: number
+  shot_size?: string
+  camera_motion?: string
+  visual_focus?: string
+  action_desc?: string
+  emotion_desc?: string
+  audio_cue?: string
+  extra?: Record<string, unknown>
+}
+
+interface BackendStoryboardAudioIntent {
+  speakers?: string[]
+  dialogue_lines?: Array<{ speaker?: string; text?: string }>
+  ambience?: string
+  foley?: string
+  voice_required?: boolean
+  voice_reference_status?: 'not_required' | 'ready' | 'missing' | 'stale'
+}
+
+interface BackendStoryboardTake {
+  id?: string
+  version_no?: number
+  status?: string
+  quality_policy?: string
+  video_url?: string
+  poster_url?: string
+  qc?: Record<string, unknown>
+  is_selected?: boolean
+  created_at?: string
 }
 
 interface BackendStoryboardGenerateResponse {
@@ -628,7 +690,33 @@ interface BackendStoryboardVideoPromptResponse {
 }
 
 interface BackendStoryboardVideoBatchResponse {
+  batch_id?: string
   runs: BackendStoryboardVideoRunResponse[]
+}
+
+interface BackendStoryboardWorkspaceResponse {
+  project_id: string
+  episode_no: number
+  source_title: string
+  source_summary: string
+  source_script_version: string
+  visual_bible: Record<string, unknown>
+  asset_readiness: Record<string, unknown>
+  current_plan: Record<string, unknown>
+  summary: Record<string, unknown>
+  rows: BackendStoryboardRow[]
+  run?: BackendStoryboardRowsResponse['run']
+  latest_batch?: {
+    batch_id?: string
+    status?: string
+    quality_policy?: string
+    estimated_credits?: number
+    settled_credits?: number
+    refunded_credits?: number
+    counts?: Record<string, number>
+    error_message?: string
+    created_at?: string
+  }
 }
 
 function formatStoryboardVideoErrorMessage(message: string): string {
@@ -983,6 +1071,51 @@ function mapStoryboardRuntimeExtra(raw?: Record<string, unknown>) {
   }
 }
 
+function mapStoryboardDirectorSegments(rows?: BackendStoryboardDirectorSegment[]): StoryboardDirectorSegment[] {
+  return (rows || []).map((item, index) => ({
+    id: item.id || `segment-${index + 1}`,
+    sortIndex: Number(item.sort_index || index + 1),
+    startMs: Number(item.start_ms || 0),
+    endMs: Number(item.end_ms || 1000),
+    shotSize: item.shot_size || '中景',
+    cameraMotion: item.camera_motion || '固定',
+    visualFocus: item.visual_focus || '',
+    actionDesc: item.action_desc || '',
+    emotionDesc: item.emotion_desc || '',
+    audioCue: item.audio_cue || '',
+    extra: item.extra || {}
+  }))
+}
+
+function mapStoryboardTakes(rows?: BackendStoryboardTake[]): StoryboardTake[] {
+  return (rows || []).map(item => ({
+    id: item.id || '',
+    versionNo: Number(item.version_no || 1),
+    status: item.status || 'queued',
+    qualityPolicy: (item.quality_policy || 'smart') as StoryboardTake['qualityPolicy'],
+    videoUrl: item.video_url || '',
+    posterUrl: item.poster_url || '',
+    qc: item.qc || {},
+    isSelected: Boolean(item.is_selected),
+    createdAt: item.created_at || ''
+  }))
+}
+
+function mapStoryboardPlan(raw?: Record<string, unknown>): StoryboardPlanVersion {
+  return {
+    id: String(raw?.id || ''),
+    episodeNo: Number(raw?.episode_no || 1),
+    versionNo: Number(raw?.version_no || 1),
+    versionLabel: String(raw?.version_label || 'v1'),
+    status: String(raw?.status || 'draft'),
+    isCurrent: Boolean(raw?.is_current ?? true),
+    sourceScriptVersion: String(raw?.source_script_version || ''),
+    tuning: (raw?.tuning || {}) as Record<string, unknown>,
+    validation: (raw?.validation || {}) as Record<string, unknown>,
+    createdAt: String(raw?.created_at || '')
+  }
+}
+
 function mapStoryboardRows(projectId: string, nodeId: string, rows: BackendStoryboardRow[]): StoryboardRow[] {
   return rows.map((row) => ({
     id: row.id || `${projectId}-${row.source_node_id || nodeId}-${row.shot_no}`,
@@ -1003,6 +1136,31 @@ function mapStoryboardRows(projectId: string, nodeId: string, rows: BackendStory
     roleKeys: row.role_keys || [],
     sceneKeys: row.scene_keys || [],
     propKeys: row.prop_keys || [],
+    planVersionId: row.plan_version_id || '',
+    sourceSceneIds: row.source_scene_ids || [],
+    sourceBlockIds: row.source_block_ids || [],
+    beatKeys: row.beat_keys || [],
+    contextHash: row.context_hash || '',
+    planStatus: (row.plan_status || 'draft') as StoryboardRow['planStatus'],
+    reviewStatus: (row.review_status || 'unreviewed') as StoryboardRow['reviewStatus'],
+    riskLevel: row.risk_level || 'low',
+    riskReasons: row.risk_reasons || [],
+    previsualizationStatus: row.previsualization_status || 'not_required',
+    previsualizationUrl: row.previsualization_url || '',
+    audioIntent: {
+      speakers: row.audio_intent?.speakers || [],
+      dialogueLines: (row.audio_intent?.dialogue_lines || []).map(item => ({
+        speaker: item.speaker || '',
+        text: item.text || ''
+      })),
+      ambience: row.audio_intent?.ambience || '',
+      foley: row.audio_intent?.foley || '',
+      voiceRequired: Boolean(row.audio_intent?.voice_required),
+      voiceReferenceStatus: row.audio_intent?.voice_reference_status || 'not_required'
+    },
+    directorSegments: mapStoryboardDirectorSegments(row.director_segments),
+    selectedTakeId: row.selected_take_id || '',
+    takes: mapStoryboardTakes(row.takes),
     videoPrompt: normalizeStoryboardVideoPrompt(
       row.video_prompt || row.camera_motion_prompt || row.action_desc || '',
       row.video_duration_sec || row.duration_sec || 5
@@ -1019,6 +1177,119 @@ function mapStoryboardRows(projectId: string, nodeId: string, rows: BackendStory
     generationErrorMessage: row.generation_error_message || '',
     extra: mapStoryboardRuntimeExtra(row.extra || {})
   }))
+}
+
+function mapStoryboardRun(run?: BackendStoryboardRowsResponse['run']): StoryboardWorkspace['run'] {
+  return {
+    status: run?.status || 'idle',
+    totalEpisodes: run?.total_episodes || 1,
+    currentEpisodeNo: run?.current_episode_no || 1,
+    episodeStatuses: run?.episode_statuses || {},
+    episodeProgresses: run?.episode_progresses || {},
+    generatedCounts: run?.generated_counts || {},
+    expectedCounts: run?.expected_counts || {},
+    style: run?.style || '',
+    errorMessage: run?.error_message || '',
+    updatedAt: run?.updated_at || ''
+  }
+}
+
+function mapStoryboardWorkspace(raw: BackendStoryboardWorkspaceResponse): StoryboardWorkspace {
+  const summary = raw.summary || {}
+  const latestBatch = raw.latest_batch || {}
+  return {
+    projectId: raw.project_id,
+    episodeNo: Number(raw.episode_no || 1),
+    sourceTitle: raw.source_title || '',
+    sourceSummary: raw.source_summary || '',
+    sourceScriptVersion: raw.source_script_version || '',
+    visualBible: raw.visual_bible || {},
+    assetReadiness: raw.asset_readiness || {},
+    currentPlan: mapStoryboardPlan(raw.current_plan),
+    summary: {
+      total: Number(summary.total || 0),
+      planConfirmed: Number(summary.plan_confirmed || 0),
+      reviewRequired: Number(summary.review_required || 0),
+      videoQueued: Number(summary.video_queued || 0),
+      videoRunning: Number(summary.video_running || 0),
+      videoSucceeded: Number(summary.video_succeeded || 0),
+      videoFailed: Number(summary.video_failed || 0),
+      accepted: Number(summary.accepted || 0),
+      estimatedDurationSec: Number(summary.estimated_duration_sec || 0)
+    },
+    rows: mapStoryboardRows(raw.project_id, `drama-${raw.project_id}`, raw.rows || []),
+    latestBatch: {
+      batchId: latestBatch.batch_id || '',
+      status: latestBatch.status || '',
+      qualityPolicy: (latestBatch.quality_policy || 'smart') as StoryboardQualityPolicy,
+      estimatedCredits: Number(latestBatch.estimated_credits || 0),
+      settledCredits: Number(latestBatch.settled_credits || 0),
+      refundedCredits: Number(latestBatch.refunded_credits || 0),
+      counts: latestBatch.counts || {},
+      errorMessage: latestBatch.error_message || '',
+      createdAt: latestBatch.created_at || ''
+    },
+    run: mapStoryboardRun(raw.run)
+  }
+}
+
+function buildStoryboardTuningPayload(payload: StoryboardTuningPayload) {
+  return {
+    episode_no: payload.episodeNo,
+    rhythm: payload.rhythm,
+    shot_scale: payload.shotScale,
+    camera_style: payload.cameraStyle,
+    emotion_tone: payload.emotionTone,
+    continuity_priority: payload.continuityPriority,
+    quality_policy: payload.qualityPolicy,
+    scope: payload.scope
+  }
+}
+
+function mapStoryboardTuningPreview(raw: Record<string, unknown>): StoryboardTuningPreview {
+  return {
+    affectedRowIds: (raw.affected_row_ids || []) as string[],
+    lockedRowIds: (raw.locked_row_ids || []) as string[],
+    affectedCount: Number(raw.affected_count || 0),
+    estimatedDurationSec: Number(raw.estimated_duration_sec || 0),
+    createsNewVersion: Boolean(raw.creates_new_version),
+    changes: (raw.changes || []) as string[]
+  }
+}
+
+function buildStoryboardVideoBatchPayload(payload: StoryboardVideoBatchPayload) {
+  return {
+    episode_no: payload.episodeNo,
+    model: payload.model || '',
+    duration_sec: payload.durationSec,
+    resolution: payload.resolution || '720p',
+    audio: payload.audioMode !== 'silent',
+    quality_policy: payload.qualityPolicy || 'smart',
+    row_ids: payload.rowIds || [],
+    idempotency_key: payload.idempotencyKey || ''
+  }
+}
+
+function mapStoryboardBatchEstimate(raw: Record<string, unknown>): StoryboardBatchEstimate {
+  return {
+    eligibleRowIds: (raw.eligible_row_ids || []) as string[],
+    blocked: (raw.blocked || []) as StoryboardBatchEstimate['blocked'],
+    totalDurationSec: Number(raw.total_duration_sec || 0),
+    estimatedCredits: Number(raw.estimated_credits || 0),
+    currentBalance: Number(raw.current_balance || 0),
+    sufficient: Boolean(raw.sufficient)
+  }
+}
+
+function mapStoryboardVideoBatch(raw: BackendStoryboardVideoBatchResponse): StoryboardVideoBatchResult {
+  return {
+    batchId: raw.batch_id || '',
+    runs: (raw.runs || []).map(run => ({
+      storyboardRowId: run.storyboard_row_id,
+      runId: run.run_id,
+      status: run.status
+    }))
+  }
 }
 
 function mapDramaAsset(raw: BackendDramaAssetItem): DramaAssetItem {
@@ -2265,9 +2536,11 @@ export const httpAdapter: ApiAdapter = {
       body: {
         model: payload?.model || '',
         shot_count: payload?.shotCount || 12,
+        planning_mode: payload?.planningMode || 'dynamic',
         style: payload?.style || '',
         provider: payload?.provider || 'alibaba',
-        resolution: payload?.resolution || '360p'
+        resolution: payload?.resolution || '360p',
+        quality_policy: payload?.qualityPolicy || 'smart'
       }
     })
     return ok(mapDramaDetail(response))
@@ -2294,6 +2567,113 @@ export const httpAdapter: ApiAdapter = {
     })
   },
 
+  async getStoryboardWorkspace(projectId: string, episodeNo = 1) {
+    const response = await request<BackendStoryboardWorkspaceResponse>(`/drama/projects/${projectId}/storyboard-workspace?episode_no=${episodeNo}`)
+    return ok(mapStoryboardWorkspace(response))
+  },
+
+  async updateStoryboardDirectorSegments(projectId: string, rowId: string, payload: StoryboardDirectorSegmentsPayload) {
+    const response = await request<BackendStoryboardWorkspaceResponse>(`/drama/projects/${projectId}/storyboards/${rowId}/director-segments`, {
+      method: 'PUT',
+      body: {
+        segments: payload.segments.map(segment => ({
+          id: segment.id,
+          sort_index: segment.sortIndex,
+          start_ms: segment.startMs,
+          end_ms: segment.endMs,
+          shot_size: segment.shotSize,
+          camera_motion: segment.cameraMotion,
+          visual_focus: segment.visualFocus,
+          action_desc: segment.actionDesc,
+          emotion_desc: segment.emotionDesc,
+          audio_cue: segment.audioCue,
+          extra: segment.extra
+        }))
+      }
+    })
+    return ok(mapStoryboardWorkspace(response))
+  },
+
+  async tuneStoryboardShot(projectId: string, rowId: string, payload: StoryboardShotTuningPayload) {
+    const response = await request<BackendStoryboardWorkspaceResponse>(`/drama/projects/${projectId}/storyboards/${rowId}/tune`, {
+      method: 'POST',
+      body: {
+        duration_sec: payload.durationSec,
+        instruction: payload.instruction,
+        preserve_assets: payload.preserveAssets !== false
+      }
+    })
+    return ok(mapStoryboardWorkspace(response))
+  },
+
+  async generateStoryboardPrevisualization(projectId: string, rowId: string) {
+    const response = await request<BackendStoryboardWorkspaceResponse>(`/drama/projects/${projectId}/storyboards/${rowId}/previsualization`, {
+      method: 'POST'
+    })
+    return ok(mapStoryboardWorkspace(response))
+  },
+
+  async reviewStoryboards(projectId: string, payload: StoryboardReviewBatchPayload) {
+    const response = await request<BackendStoryboardWorkspaceResponse>(`/drama/projects/${projectId}/storyboards/reviews`, {
+      method: 'POST',
+      body: {
+        reviews: payload.reviews.map(item => ({
+          row_id: item.rowId,
+          status: item.status,
+          note: item.note || ''
+        }))
+      }
+    })
+    return ok(mapStoryboardWorkspace(response))
+  },
+
+  async previewStoryboardTuning(projectId: string, payload: StoryboardTuningPayload) {
+    const response = await request<Record<string, unknown>>(`/drama/projects/${projectId}/storyboard-tuning/preview`, {
+      method: 'POST',
+      body: buildStoryboardTuningPayload(payload)
+    })
+    return ok(mapStoryboardTuningPreview(response))
+  },
+
+  async applyStoryboardTuning(projectId: string, payload: StoryboardTuningPayload) {
+    const response = await request<BackendStoryboardWorkspaceResponse>(`/drama/projects/${projectId}/storyboard-tuning/apply`, {
+      method: 'POST',
+      body: buildStoryboardTuningPayload(payload)
+    })
+    return ok(mapStoryboardWorkspace(response))
+  },
+
+  async estimateStoryboardVideoBatch(projectId: string, payload: StoryboardVideoBatchPayload) {
+    const response = await request<Record<string, unknown>>(`/drama/projects/${projectId}/storyboard-video-batches/estimate`, {
+      method: 'POST',
+      body: buildStoryboardVideoBatchPayload(payload)
+    })
+    return ok(mapStoryboardBatchEstimate(response))
+  },
+
+  async createStoryboardVideoBatch(projectId: string, payload: StoryboardVideoBatchPayload) {
+    const response = await request<BackendStoryboardVideoBatchResponse>(`/drama/projects/${projectId}/storyboard-video-batches`, {
+      method: 'POST',
+      body: buildStoryboardVideoBatchPayload(payload)
+    })
+    return ok(mapStoryboardVideoBatch(response))
+  },
+
+  async retryFailedStoryboardVideoBatch(projectId: string, batchId: string) {
+    const response = await request<BackendStoryboardVideoBatchResponse>(`/drama/projects/${projectId}/storyboard-video-batches/${batchId}/retry-failed`, {
+      method: 'POST'
+    })
+    return ok(mapStoryboardVideoBatch(response))
+  },
+
+  async selectStoryboardTake(projectId: string, rowId: string, takeId: string, payload) {
+    const response = await request<BackendStoryboardWorkspaceResponse>(`/drama/projects/${projectId}/storyboards/${rowId}/takes/${takeId}/select`, {
+      method: 'PATCH',
+      body: { review_status: payload?.reviewStatus || 'passed' }
+    })
+    return ok(mapStoryboardWorkspace(response))
+  },
+
   async createDramaStoryboard(projectId: string, payload: StoryboardCreatePayload) {
     const response = await request<BackendDramaDetailResponse>(`/drama/projects/${projectId}/storyboards`, {
       method: 'POST',
@@ -2309,6 +2689,8 @@ export const httpAdapter: ApiAdapter = {
     const response = await request<BackendDramaDetailResponse>(`/drama/projects/${projectId}/storyboards/${rowId}`, {
       method: 'PATCH',
       body: {
+        sort_index: payload.sortIndex,
+        duration_sec: payload.durationSec,
         scene_description: payload.sceneDescription,
         role_name: payload.roleName,
         shot_type: payload.shotType,
@@ -2324,6 +2706,8 @@ export const httpAdapter: ApiAdapter = {
         video_prompt: payload.videoPrompt,
         video_model: payload.videoModel,
         video_duration_sec: payload.videoDurationSec,
+        plan_status: payload.planStatus,
+        review_status: payload.reviewStatus,
         extra_json: payload.extra
       }
     })
@@ -2378,14 +2762,15 @@ export const httpAdapter: ApiAdapter = {
       method: 'POST',
       body: {
         model: payload?.model || '',
-        duration_sec: payload?.durationSec || 5,
+        duration_sec: payload?.durationSec,
         resolution: payload?.resolution || '720p',
         reference_urls: payload?.referenceUrls || [],
         reference_bindings: payload?.referenceBindings || [],
         continuation_from_row_id: payload?.continuationFromRowId || '',
         continuation_policy: payload?.continuationPolicy || 'auto',
         retry_reason: payload?.retryReason || '',
-        audio: payload?.audioMode !== 'silent'
+        audio: payload?.audioMode !== 'silent',
+        quality_policy: payload?.qualityPolicy || 'smart'
       }
     })
     return ok({
@@ -2398,20 +2783,8 @@ export const httpAdapter: ApiAdapter = {
   async batchGenerateStoryboardVideos(projectId: string, payload) {
     const response = await request<BackendStoryboardVideoBatchResponse>(`/drama/projects/${projectId}/storyboards/videos/batch`, {
       method: 'POST',
-      body: {
-        episode_no: payload.episodeNo,
-        model: payload.model || '',
-        duration_sec: payload.durationSec || 5,
-        resolution: payload.resolution || '720p',
-        audio: payload.audioMode !== 'silent'
-      }
+      body: buildStoryboardVideoBatchPayload(payload)
     })
-    return ok(
-      (response.runs || []).map((run) => ({
-        storyboardRowId: run.storyboard_row_id,
-        runId: run.run_id,
-        status: run.status
-      }))
-    )
+    return ok(mapStoryboardVideoBatch(response))
   }
 }

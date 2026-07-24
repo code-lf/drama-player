@@ -20,6 +20,12 @@ const defaultApiBase = process.env.NUXT_PUBLIC_API_BASE || (isProductionBuild ? 
 const localApiProxyTarget = process.env.NUXT_LOCAL_API_PROXY_TARGET || 'http://127.0.0.1:8000/api'
 
 export default defineNuxtConfig({
+  // Nuxt UI v4 需要 Nuxt 4，但现有项目仍采用 Nuxt 3 的根目录结构。
+  // 显式保留 Nuxt 3 目录约定，避免 Nuxt 4 默认从 app/ 目录读取并退回欢迎页。
+  future: {
+    compatibilityVersion: 3
+  },
+
   // 关闭 devtools，保持演示界面简洁
   devtools: { enabled: false },
 
@@ -58,8 +64,25 @@ export default defineNuxtConfig({
   // 全局样式：设计令牌、基础样式、Vue Flow 样式
   css: ['~/assets/css/tokens.css', '~/assets/css/main.css', '@vue-flow/core/dist/style.css', '@vue-flow/core/dist/theme-default.css'],
 
-  // 启用 Pinia
-  modules: ['@pinia/nuxt'],
+  // Nuxt UI 统一提供按钮、图标、下拉、徽章、弹窗、抽屉等基础交互；
+  // 项目业务卡片仍保留 Livliv 自己的页面结构和视觉规范。
+  modules: ['@pinia/nuxt', '@nuxt/ui'],
+
+  ui: {
+    // 项目已有完整中文字体栈和明暗主题逻辑，关闭模块的自动字体与颜色模式，避免重复初始化。
+    fonts: false,
+    colorMode: false,
+    experimental: {
+      // 仅为实际使用到的组件生成主题 CSS，控制用户端工作台的构建体积。
+      componentDetection: true
+    },
+    theme: {
+      defaultVariants: {
+        color: 'primary',
+        size: 'md'
+      }
+    }
+  },
 
   // 路由渲染策略：首页 SSR，创作页 CSR
   routeRules: {
@@ -118,13 +141,6 @@ export default defineNuxtConfig({
   typescript: {
     strict: true,
     typeCheck: false
-  },
-
-  postcss: {
-    plugins: {
-      tailwindcss: {},
-      autoprefixer: {}
-    }
   },
 
   compatibilityDate: '2025-01-01'

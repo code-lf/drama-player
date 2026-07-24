@@ -20,8 +20,11 @@ const sizeClassName = computed(() => sizeClassMap[props.size])
 </script>
 
 <template>
+  <!-- 品牌积分标记沿用无透明留白的 SVG，颜色由外层文字颜色统一控制。 -->
   <span class="inline-flex shrink-0 items-center justify-center" :class="sizeClassName" aria-hidden="true">
-    <img src="/icons/credit-star-light.png?v=20260715" alt="" class="h-full w-full scale-[1.38] object-contain dark:hidden" draggable="false">
-    <img src="/icons/credit-star-dark.png?v=20260715" alt="" class="hidden h-full w-full scale-[1.38] object-contain dark:block" draggable="false">
+    <svg class="h-full w-full" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path fill="currentColor" d="M9.82 2.1c.51 4.56 2.34 7.1 6.93 8.02-4.59.92-6.42 3.46-6.93 8.02-.51-4.56-2.34-7.1-6.93-8.02 4.59-.92 6.42-3.46 6.93-8.02Z" />
+      <path fill="currentColor" d="M17.85 3.25c.25 1.75 1.12 2.7 2.88 2.99-1.76.29-2.63 1.24-2.88 2.99-.25-1.75-1.12-2.7-2.88-2.99 1.76-.29 2.63-1.24 2.88-2.99Z" />
+    </svg>
   </span>
 </template>

@@ -22,6 +22,10 @@ import type {
   DramaScriptOptimizationPayload,
   DramaSuggestionSourceRangePayload,
   DramaStoryboardGeneratePayload,
+  StoryboardDirectorSegmentsPayload,
+  StoryboardReviewBatchPayload,
+  StoryboardTuningPayload,
+  StoryboardShotTuningPayload,
   StoryboardCreatePayload,
   StoryboardUpdatePayload,
   StoryboardVideoBatchPayload,
@@ -56,6 +60,10 @@ export const dramaService = {
 
   async getAssetWorkspace(projectId: string) {
     return callApi('drama/getAssetWorkspace', (adapter) => adapter.getDramaAssetWorkspace!(projectId))
+  },
+
+  async createAssetProfile(projectId: string, payload: { asset_type: DramaWorkspaceAssetType; name: string; is_required?: boolean; data?: Record<string, unknown> }) {
+    return callApi('drama/createAssetProfile', (adapter) => adapter.createDramaAssetProfile!(projectId, payload))
   },
 
   async updateVisualBible(projectId: string, payload: Omit<DramaVisualBible, 'id' | 'version_no' | 'source_script_version' | 'status'>) {
@@ -228,6 +236,50 @@ export const dramaService = {
 
   async listStoryboards(projectId: string, episodeNo?: number) {
     return callApi('drama/listStoryboards', (adapter) => adapter.listDramaStoryboards(projectId, episodeNo))
+  },
+
+  async getStoryboardWorkspace(projectId: string, episodeNo = 1) {
+    return callApi('drama/getStoryboardWorkspace', adapter => adapter.getStoryboardWorkspace(projectId, episodeNo))
+  },
+
+  async updateStoryboardDirectorSegments(projectId: string, rowId: string, payload: StoryboardDirectorSegmentsPayload) {
+    return callApi('drama/updateStoryboardDirectorSegments', adapter => adapter.updateStoryboardDirectorSegments(projectId, rowId, payload))
+  },
+
+  async tuneStoryboardShot(projectId: string, rowId: string, payload: StoryboardShotTuningPayload) {
+    return callApi('drama/tuneStoryboardShot', adapter => adapter.tuneStoryboardShot(projectId, rowId, payload))
+  },
+
+  async generateStoryboardPrevisualization(projectId: string, rowId: string) {
+    return callApi('drama/generateStoryboardPrevisualization', adapter => adapter.generateStoryboardPrevisualization(projectId, rowId))
+  },
+
+  async reviewStoryboards(projectId: string, payload: StoryboardReviewBatchPayload) {
+    return callApi('drama/reviewStoryboards', adapter => adapter.reviewStoryboards(projectId, payload))
+  },
+
+  async previewStoryboardTuning(projectId: string, payload: StoryboardTuningPayload) {
+    return callApi('drama/previewStoryboardTuning', adapter => adapter.previewStoryboardTuning(projectId, payload))
+  },
+
+  async applyStoryboardTuning(projectId: string, payload: StoryboardTuningPayload) {
+    return callApi('drama/applyStoryboardTuning', adapter => adapter.applyStoryboardTuning(projectId, payload))
+  },
+
+  async estimateStoryboardVideoBatch(projectId: string, payload: StoryboardVideoBatchPayload) {
+    return callApi('drama/estimateStoryboardVideoBatch', adapter => adapter.estimateStoryboardVideoBatch(projectId, payload))
+  },
+
+  async createStoryboardVideoBatch(projectId: string, payload: StoryboardVideoBatchPayload) {
+    return callApi('drama/createStoryboardVideoBatch', adapter => adapter.createStoryboardVideoBatch(projectId, payload))
+  },
+
+  async retryFailedStoryboardVideoBatch(projectId: string, batchId: string) {
+    return callApi('drama/retryFailedStoryboardVideoBatch', adapter => adapter.retryFailedStoryboardVideoBatch(projectId, batchId))
+  },
+
+  async selectStoryboardTake(projectId: string, rowId: string, takeId: string, reviewStatus: 'unreviewed' | 'passed' | 'needs_revision' = 'passed') {
+    return callApi('drama/selectStoryboardTake', adapter => adapter.selectStoryboardTake(projectId, rowId, takeId, { reviewStatus }))
   },
 
   async createStoryboard(projectId: string, payload: StoryboardCreatePayload) {

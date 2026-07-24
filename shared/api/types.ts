@@ -21,10 +21,13 @@ import type {
   StoryboardClipContract,
   StoryboardContinuationPolicy,
   StoryboardContinuityState,
+  StoryboardDirectorSegment,
   StoryboardPromptLoad,
+  StoryboardQualityPolicy,
   StoryboardReferenceBinding,
   StoryboardRetryReason,
-  StoryboardRow
+  StoryboardRow,
+  StoryboardWorkspace
 } from '~/entities/storyboard/types'
 
 export interface ApiResponse<T> {
@@ -135,9 +138,12 @@ export interface DramaPropUpdatePayload {
 export interface DramaStoryboardGeneratePayload {
   model?: string
   shotCount?: number
+  // 商业前台默认由 AI 根据剧情密度动态规划镜头数量，fixed 仅用于管理端联调。
+  planningMode?: 'dynamic' | 'fixed'
   style?: string
   provider?: 'bytedance' | 'alibaba'
   resolution?: string
+  qualityPolicy?: StoryboardQualityPolicy
 }
 
 export interface DramaCreditPreviewPayload {
@@ -256,6 +262,8 @@ export interface StoryboardCreatePayload {
 }
 
 export interface StoryboardUpdatePayload {
+  sortIndex?: number
+  durationSec?: number
   sceneDescription?: string
   roleName?: string
   shotType?: string
@@ -271,6 +279,9 @@ export interface StoryboardUpdatePayload {
   videoPrompt?: string
   videoModel?: string
   videoDurationSec?: number
+  // 调整时长、资产或导演方案后，显式同步方案与验收状态，避免旧方案继续生成。
+  planStatus?: 'draft' | 'preflight_running' | 'review_required' | 'confirmed' | 'stale'
+  reviewStatus?: 'unreviewed' | 'passed' | 'needs_revision'
   extra?: Record<string, unknown>
 }
 
@@ -284,6 +295,7 @@ export interface StoryboardVideoGeneratePayload {
   continuationPolicy?: StoryboardContinuationPolicy
   retryReason?: StoryboardRetryReason
   audioMode?: 'sound' | 'silent'
+  qualityPolicy?: StoryboardQualityPolicy
 }
 
 export interface StoryboardVideoPromptGeneratePayload {
@@ -323,6 +335,61 @@ export interface StoryboardVideoBatchPayload {
   durationSec?: number
   resolution?: string
   audioMode?: 'sound' | 'silent'
+  qualityPolicy?: StoryboardQualityPolicy
+  rowIds?: string[]
+  idempotencyKey?: string
+}
+
+export interface StoryboardDirectorSegmentsPayload {
+  segments: StoryboardDirectorSegment[]
+}
+
+export interface StoryboardReviewBatchPayload {
+  reviews: Array<{
+    rowId: string
+    status: 'passed' | 'needs_revision'
+    note?: string
+  }>
+}
+
+export interface StoryboardTuningPayload {
+  episodeNo: number
+  rhythm: 'fast' | 'standard' | 'slow'
+  shotScale: 'close' | 'balanced' | 'wide'
+  cameraStyle: 'stable' | 'light' | 'dynamic'
+  emotionTone: 'restrained' | 'dramatic' | 'lyrical'
+  continuityPriority: 'character' | 'scene' | 'style'
+  qualityPolicy: StoryboardQualityPolicy
+  scope: 'issues' | 'unconfirmed' | 'ungenerated' | 'all'
+}
+
+export interface StoryboardTuningPreview {
+  affectedRowIds: string[]
+  lockedRowIds: string[]
+  affectedCount: number
+  estimatedDurationSec: number
+  createsNewVersion: boolean
+  changes: string[]
+}
+
+export interface StoryboardShotTuningPayload {
+  durationSec: number
+  instruction: string
+  preserveAssets?: boolean
+}
+
+export interface StoryboardBatchEstimate {
+  eligibleRowIds: string[]
+  blocked: Array<{ row_id?: string; rowId?: string; reason: string }>
+  totalDurationSec: number
+  estimatedCredits: number
+  currentBalance: number
+  sufficient: boolean
+}
+
+export interface StoryboardVideoBatchResult {
+  batchId: string
+  runs: StoryboardVideoRunInfo[]
 }
 
 export interface DramaDeleteResult {
@@ -580,13 +647,24 @@ export interface ApiAdapter {
   generateDramaPropAssets(projectId: string, payload?: DramaAssetGeneratePayload): Promise<ApiResponse<DramaProjectDetail>>
   generateDramaStoryboards(projectId: string, payload?: DramaStoryboardGeneratePayload): Promise<ApiResponse<DramaProjectDetail>>
   listDramaStoryboards(projectId: string, episodeNo?: number): Promise<ApiResponse<{ rows: StoryboardRow[]; run: DramaProjectDetail['storyboardRun'] }>>
+  getStoryboardWorkspace(projectId: string, episodeNo?: number): Promise<ApiResponse<StoryboardWorkspace>>
+  updateStoryboardDirectorSegments(projectId: string, rowId: string, payload: StoryboardDirectorSegmentsPayload): Promise<ApiResponse<StoryboardWorkspace>>
+  tuneStoryboardShot(projectId: string, rowId: string, payload: StoryboardShotTuningPayload): Promise<ApiResponse<StoryboardWorkspace>>
+  generateStoryboardPrevisualization(projectId: string, rowId: string): Promise<ApiResponse<StoryboardWorkspace>>
+  reviewStoryboards(projectId: string, payload: StoryboardReviewBatchPayload): Promise<ApiResponse<StoryboardWorkspace>>
+  previewStoryboardTuning(projectId: string, payload: StoryboardTuningPayload): Promise<ApiResponse<StoryboardTuningPreview>>
+  applyStoryboardTuning(projectId: string, payload: StoryboardTuningPayload): Promise<ApiResponse<StoryboardWorkspace>>
+  estimateStoryboardVideoBatch(projectId: string, payload: StoryboardVideoBatchPayload): Promise<ApiResponse<StoryboardBatchEstimate>>
+  createStoryboardVideoBatch(projectId: string, payload: StoryboardVideoBatchPayload): Promise<ApiResponse<StoryboardVideoBatchResult>>
+  retryFailedStoryboardVideoBatch(projectId: string, batchId: string): Promise<ApiResponse<StoryboardVideoBatchResult>>
+  selectStoryboardTake(projectId: string, rowId: string, takeId: string, payload?: { reviewStatus?: 'unreviewed' | 'passed' | 'needs_revision' }): Promise<ApiResponse<StoryboardWorkspace>>
   createDramaStoryboard(projectId: string, payload: StoryboardCreatePayload): Promise<ApiResponse<DramaProjectDetail>>
   updateDramaStoryboard(projectId: string, rowId: string, payload: StoryboardUpdatePayload): Promise<ApiResponse<DramaProjectDetail>>
   copyDramaStoryboard(projectId: string, rowId: string): Promise<ApiResponse<DramaProjectDetail>>
   deleteDramaStoryboard(projectId: string, rowId: string): Promise<ApiResponse<DramaProjectDetail>>
   generateStoryboardVideoPrompt(projectId: string, rowId: string, payload?: StoryboardVideoPromptGeneratePayload): Promise<ApiResponse<StoryboardVideoPromptInfo>>
   generateStoryboardVideo(projectId: string, rowId: string, payload?: StoryboardVideoGeneratePayload): Promise<ApiResponse<StoryboardVideoRunInfo>>
-  batchGenerateStoryboardVideos(projectId: string, payload: StoryboardVideoBatchPayload): Promise<ApiResponse<StoryboardVideoRunInfo[]>>
+  batchGenerateStoryboardVideos(projectId: string, payload: StoryboardVideoBatchPayload): Promise<ApiResponse<StoryboardVideoBatchResult>>
   previewProductImageCredits(payload: Pick<ProductImageGeneratePayload, 'count' | 'model' | 'prompt' | 'splitSellingPoints'>): Promise<ApiResponse<ProductImageCreditPreview>>
   splitProductSellingPoints(payload: { prompt: string; count: number }): Promise<ApiResponse<ProductSellingPoint[]>>
   generateProductImages(payload: ProductImageGeneratePayload): Promise<ApiResponse<ProductImageGenerateResult>>
