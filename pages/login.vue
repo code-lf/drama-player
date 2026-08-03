@@ -7,8 +7,10 @@ import {
   UserRound
 } from '@lucide/vue'
 import { authService } from '~/shared/api/services/authService'
+import { supportService } from '~/shared/api/services/supportService'
 import { useAuthStore } from '~/features/auth/store/useAuthStore'
 import { useAccountStore } from '~/features/billing/store/useAccountStore'
+import { defaultWebsiteInfo, type LegalDocument, type WebsiteInfo } from '~/entities/support/types'
 
 const router = useRouter()
 const route = useRoute()
@@ -16,19 +18,38 @@ const authStore = useAuthStore()
 const accountStore = useAccountStore()
 
 type AuthMode = 'login' | 'register'
+type LoginMethod = 'password' | 'sms'
 
 const authMode = ref<AuthMode>('login')
-// 当前联调阶段默认填入测试账号，用户仍可直接修改输入内容。
-const account = ref('test@livliv.local')
+const loginMethod = ref<LoginMethod>('password')
+// 登录页不预填任何测试凭据，避免测试账号被误用于正式环境。
+const account = ref('')
 const nickname = ref('')
-const password = ref('Livliv@2026')
+const password = ref('')
 const verifyCode = ref('')
 const rememberMe = ref(true)
 const showPassword = ref(false)
 const loggingIn = ref(false)
 const sendingCode = ref(false)
+// 短信发送冷却由服务端返回，前端仅做体验层倒计时，最终以服务端限流为准。
+const codeCooldown = ref(0)
+let codeCooldownTimer: ReturnType<typeof setInterval> | undefined
 const errorMessage = ref('')
 const successMessage = ref('')
+// 网站公开信息由后台统一维护，接口暂不可用时使用产品默认内容。
+const websiteInfo = ref<WebsiteInfo>({ ...defaultWebsiteInfo })
+// 协议只有后台发布后才显示并强制勾选，草稿不会干扰当前用户登录注册。
+const legalDocuments = ref<LegalDocument[]>([])
+const legalAccepted = ref(false)
+const activeLegalDocument = ref<LegalDocument | null>(null)
+const requiredLegalDocuments = computed(() => legalDocuments.value.filter(item => item.versions[0]?.requiresAcceptance))
+const acceptedDocumentCodes = computed(() => legalAccepted.value ? requiredLegalDocuments.value.map(item => item.code) : [])
+
+// 主标题高亮文案的首个词沿用蓝色强调，其余文字保持白色，支持后台修改完整标题。
+const heroTitleHighlightParts = computed(() => {
+  const [accent = '', ...rest] = websiteInfo.value.heroTitleHighlight.trim().split(/\s+/)
+  return { accent, rest: rest.join(' ') }
+})
 
 const redirectPath = computed(() => {
   const redirect = route.query.redirect
@@ -36,9 +57,12 @@ const redirectPath = computed(() => {
 })
 
 const canSubmit = computed(() => {
-  const baseReady = account.value.trim().length > 0 && password.value.trim().length > 0 && !loggingIn.value
-  if (authMode.value === 'login') return baseReady
-  return baseReady && verifyCode.value.trim().length > 0
+  const phoneReady = isValidPhone(account.value.trim()) && !loggingIn.value
+  const agreementReady = requiredLegalDocuments.value.length === 0 || legalAccepted.value
+  if (authMode.value === 'register') return phoneReady && password.value.trim().length > 0 && verifyCode.value.trim().length === 6 && agreementReady
+  return loginMethod.value === 'sms'
+    ? phoneReady && verifyCode.value.trim().length === 6 && agreementReady
+    : phoneReady && password.value.trim().length > 0 && agreementReady
 })
 
 const featureItems = [
@@ -79,26 +103,69 @@ function clearFeedback(): void {
   successMessage.value = ''
 }
 
+function getRequestErrorMessage(error: unknown, fallback: string): string {
+  // Nitro/$fetch 将 FastAPI 的错误正文放在 data 或 response._data 中；优先展示可行动的服务端提示。
+  if (error && typeof error === 'object') {
+    const payload = error as {
+      message?: string
+      data?: { message?: string; detail?: string }
+      response?: { _data?: { message?: string; detail?: string } }
+    }
+    // ApiClientError 已将后端 detail 标准化到 message；此前遗漏该字段，
+    // 导致“验证码已失效 / 手机号未注册”等可行动提示被错误降级成笼统登录失败。
+    return payload.data?.message
+      || payload.data?.detail
+      || payload.response?._data?.message
+      || payload.response?._data?.detail
+      || payload.message
+      || fallback
+  }
+  return fallback
+}
+
 function switchAuthMode(mode: AuthMode): void {
   authMode.value = mode
+  verifyCode.value = ''
   clearFeedback()
+}
+
+function switchLoginMethod(method: LoginMethod): void {
+  loginMethod.value = method
+  verifyCode.value = ''
+  clearFeedback()
+}
+
+function isValidPhone(value: string): boolean {
+  return /^1[3-9]\d{9}$/.test(value)
+}
+
+function startCodeCooldown(seconds: number): void {
+  if (codeCooldownTimer) clearInterval(codeCooldownTimer)
+  codeCooldown.value = Math.max(1, seconds)
+  codeCooldownTimer = setInterval(() => {
+    codeCooldown.value = Math.max(0, codeCooldown.value - 1)
+    if (codeCooldown.value === 0 && codeCooldownTimer) {
+      clearInterval(codeCooldownTimer)
+      codeCooldownTimer = undefined
+    }
+  }, 1000)
 }
 
 async function sendVerifyCode(): Promise<void> {
   clearFeedback()
 
-  if (!account.value.trim()) {
-    errorMessage.value = '请输入账号后再获取验证码。'
+  if (!isValidPhone(account.value.trim())) {
+    errorMessage.value = '请输入有效的中国大陆手机号后再获取验证码。'
     return
   }
 
   sendingCode.value = true
   try {
-    // 当前后端是本地固定验证码，正式短信接入后这里仍复用同一个发送入口。
-    const result = await authService.sendSmsCode(account.value.trim())
-    successMessage.value = result.code ? `${result.message}：${result.code}` : result.message
+    const result = await authService.sendSmsCode(account.value.trim(), authMode.value === 'register' ? 'register' : 'login')
+    successMessage.value = result.message
+    startCodeCooldown(result.retryAfterSeconds || 60)
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '验证码获取失败，请稍后重试。'
+    errorMessage.value = getRequestErrorMessage(error, '验证码获取失败，请稍后重试。')
   } finally {
     sendingCode.value = false
   }
@@ -107,18 +174,22 @@ async function sendVerifyCode(): Promise<void> {
 async function submitAuth(): Promise<void> {
   clearFeedback()
 
-  if (!account.value.trim()) {
-    errorMessage.value = '请输入账号。'
+  if (!isValidPhone(account.value.trim())) {
+    errorMessage.value = '请输入有效的中国大陆手机号。'
     return
   }
 
-  if (!password.value.trim()) {
+  if ((authMode.value === 'register' || loginMethod.value === 'password') && !password.value.trim()) {
     errorMessage.value = '请输入密码。'
     return
   }
 
-  if (authMode.value === 'register' && !verifyCode.value.trim()) {
+  if ((authMode.value === 'register' || loginMethod.value === 'sms') && verifyCode.value.trim().length !== 6) {
     errorMessage.value = '请输入验证码。'
+    return
+  }
+  if (requiredLegalDocuments.value.length > 0 && !legalAccepted.value) {
+    errorMessage.value = '请阅读并同意服务协议与隐私政策后继续。'
     return
   }
 
@@ -130,9 +201,12 @@ async function submitAuth(): Promise<void> {
           account: account.value.trim(),
           password: password.value.trim(),
           code: verifyCode.value.trim(),
-          nickname: nickname.value.trim()
+          nickname: nickname.value.trim(),
+          acceptedDocumentCodes: acceptedDocumentCodes.value
         })
-      : await authService.accountLogin(account.value.trim(), password.value.trim())
+      : loginMethod.value === 'sms'
+        ? await authService.phoneLogin(account.value.trim(), verifyCode.value.trim(), acceptedDocumentCodes.value)
+        : await authService.accountLogin(account.value.trim(), password.value.trim(), acceptedDocumentCodes.value)
     authStore.applySession(session)
 
     try {
@@ -145,9 +219,9 @@ async function submitAuth(): Promise<void> {
 
     await router.push(redirectPath.value)
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : authMode.value === 'register'
+    errorMessage.value = getRequestErrorMessage(error, authMode.value === 'register'
       ? '注册失败，请检查账号、密码和验证码后重试。'
-      : '登录失败，请检查账号和密码后重试。'
+      : '登录失败，请检查账号和密码后重试。')
   } finally {
     loggingIn.value = false
   }
@@ -156,6 +230,20 @@ async function submitAuth(): Promise<void> {
 onMounted(async () => {
   authStore.hydrate()
 
+  try {
+    // 登录页是公开页面，网站信息读取失败不能阻断正常登录。
+    websiteInfo.value = await supportService.getLoginAppearance()
+  } catch (error) {
+    console.warn('[livliv] 网站信息配置读取失败，已回退默认内容', error)
+  }
+
+  try {
+    legalDocuments.value = await supportService.getLegalDocuments()
+  } catch (error) {
+    // 协议读取失败时由服务端在提交时兜底拒绝，避免前端错误地假设没有协议。
+    console.warn('[livliv] 登录页协议读取失败，将在提交时由服务端校验', error)
+  }
+
   if (authStore.session.loggedIn) {
     try {
       await accountStore.refreshProfile()
@@ -163,6 +251,10 @@ onMounted(async () => {
       console.warn('[livliv] 已登录用户刷新账户资料失败', error)
     }
   }
+})
+
+onBeforeUnmount(() => {
+  if (codeCooldownTimer) clearInterval(codeCooldownTimer)
 })
 
 </script>
@@ -176,16 +268,19 @@ onMounted(async () => {
       <div class="hero-content">
         <NuxtLink class="brand" to="/">
           <img class="brand-logo" src="/login/login-logo.png" alt="Livliv" />
-          <span class="brand-name">Livliv</span>
-          <span class="brand-subtitle">短剧创作平台</span>
+          <span class="brand-name">{{ websiteInfo.brandName }}</span>
+          <span class="brand-subtitle">{{ websiteInfo.brandSubtitle }}</span>
         </NuxtLink>
 
         <div class="hero-copy">
           <h1>
-            登录 Livliv，开启你的
-            <span class="hero-title-line"><em>AI</em> 短剧创作</span>
+            {{ websiteInfo.heroTitlePrefix }}
+            <span class="hero-title-line">
+              <em>{{ heroTitleHighlightParts.accent }}</em>
+              <template v-if="heroTitleHighlightParts.rest"> {{ heroTitleHighlightParts.rest }}</template>
+            </span>
           </h1>
-          <p>从灵感到成片，AI 助你高效创作</p>
+          <p>{{ websiteInfo.heroSubtitle }}</p>
         </div>
 
         <div class="feature-row">
@@ -211,11 +306,13 @@ onMounted(async () => {
         </div>
 
         <div class="copyright">
-          © 2024 Livliv 短剧创作平台
+          © {{ websiteInfo.footerCopyright }}
           <span />
-          京ICP备2024001234号-1
+          {{ websiteInfo.companyName }}
           <span />
-          京公网安备 11010802012345号
+          <a :href="websiteInfo.icpRecordUrl" target="_blank" rel="noopener noreferrer">
+            {{ websiteInfo.icpRecordNumber }}
+          </a>
         </div>
       </div>
 
@@ -242,9 +339,13 @@ onMounted(async () => {
         </div>
 
         <form class="login-form" @submit.prevent="submitAuth">
+          <div v-if="authMode === 'login'" class="login-method-tabs">
+            <button type="button" :class="{ active: loginMethod === 'password' }" @click="switchLoginMethod('password')">密码登录</button>
+            <button type="button" :class="{ active: loginMethod === 'sms' }" @click="switchLoginMethod('sms')">验证码登录</button>
+          </div>
           <label class="input-shell">
             <UserRound class="field-icon" />
-            <input v-model.trim="account" type="text" placeholder="账号" autocomplete="username" />
+            <input v-model.trim="account" type="tel" inputmode="numeric" maxlength="11" placeholder="手机号" autocomplete="tel" />
           </label>
 
           <label v-if="authMode === 'register'" class="input-shell">
@@ -252,12 +353,12 @@ onMounted(async () => {
             <input v-model.trim="nickname" type="text" placeholder="昵称（可选）" autocomplete="nickname" />
           </label>
 
-          <label class="input-shell">
+          <label v-if="authMode === 'register' || loginMethod === 'password'" class="input-shell">
             <Lock class="field-icon" />
             <input
               v-model="password"
               :type="showPassword ? 'text' : 'password'"
-              placeholder="密码"
+              placeholder="密码（至少 8 位，含字母和数字）"
               autocomplete="current-password"
             />
             <button class="eye-button" type="button" @click="showPassword = !showPassword">
@@ -266,11 +367,11 @@ onMounted(async () => {
             </button>
           </label>
 
-          <label v-if="authMode === 'register'" class="input-shell code-shell">
+          <label v-if="authMode === 'register' || loginMethod === 'sms'" class="input-shell code-shell">
             <Lock class="field-icon" />
-            <input v-model.trim="verifyCode" type="text" placeholder="验证码" autocomplete="one-time-code" />
-            <button class="code-button" type="button" :disabled="sendingCode" @click="sendVerifyCode">
-              {{ sendingCode ? '生成中...' : '获取验证码' }}
+            <input v-model.trim="verifyCode" type="text" inputmode="numeric" maxlength="6" placeholder="验证码" autocomplete="one-time-code" />
+            <button class="code-button" type="button" :disabled="sendingCode || codeCooldown > 0" @click="sendVerifyCode">
+              {{ sendingCode ? '发送中...' : codeCooldown > 0 ? `${codeCooldown}s 后重试` : '获取验证码' }}
             </button>
           </label>
 
@@ -288,6 +389,17 @@ onMounted(async () => {
             </label>
           </div>
 
+          <label v-if="requiredLegalDocuments.length" class="legal-consent">
+            <input v-model="legalAccepted" type="checkbox" />
+            <span>我已阅读并同意</span>
+            <button
+              v-for="document in requiredLegalDocuments"
+              :key="document.code"
+              type="button"
+              @click.prevent="activeLegalDocument = document"
+            >《{{ document.versions[0]?.title }}》</button>
+          </label>
+
           <button class="submit-button" type="submit" :disabled="!canSubmit">
             {{ loggingIn ? (authMode === 'register' ? '注册中...' : '登录中...') : (authMode === 'register' ? '注册并登录' : '登录') }}
           </button>
@@ -300,12 +412,35 @@ onMounted(async () => {
           </button>
         </div>
       </aside>
+
+      <Teleport to="body">
+        <div v-if="activeLegalDocument" class="legal-dialog-mask" @click.self="activeLegalDocument = null">
+          <section class="legal-dialog" role="dialog" aria-modal="true" :aria-label="activeLegalDocument.versions[0]?.title">
+            <header>
+              <strong>{{ activeLegalDocument.versions[0]?.title }}</strong>
+              <button type="button" @click="activeLegalDocument = null">关闭</button>
+            </header>
+            <p v-if="activeLegalDocument.versions[0]?.summary">{{ activeLegalDocument.versions[0]?.summary }}</p>
+            <article>{{ activeLegalDocument.versions[0]?.content }}</article>
+          </section>
+        </div>
+      </Teleport>
     </section>
   </main>
 </template>
 
 <style scoped>
 .login-page {
+  /* 字号属于固定设计规范，不再交由后台配置，避免运营文案调整时破坏响应式布局。 */
+  --login-brand-name-size: 38px;
+  --login-brand-subtitle-size: 18px;
+  --login-hero-title-size: 52px;
+  --login-hero-subtitle-size: 20px;
+  --login-feature-title-size: 16px;
+  --login-feature-description-size: 12px;
+  --login-form-title-size: 21px;
+  --login-form-text-size: 16px;
+  --login-footer-size: 13px;
   min-height: 100vh;
   overflow: hidden;
   background: #06142f;
@@ -377,7 +512,7 @@ onMounted(async () => {
 }
 
 .brand-name {
-  font-size: 38px;
+  font-size: var(--login-brand-name-size);
   font-weight: 900;
   letter-spacing: 0;
   line-height: 1;
@@ -386,7 +521,7 @@ onMounted(async () => {
 .brand-subtitle {
   margin-left: 8px;
   color: rgba(228, 239, 255, 0.92);
-  font-size: 18px;
+  font-size: var(--login-brand-subtitle-size);
   font-weight: 700;
   line-height: 1;
 }
@@ -397,7 +532,9 @@ onMounted(async () => {
 
 .hero-copy h1 {
   max-width: 690px;
-  font-size: clamp(42px, 3.3vw, 52px);
+  /* 主标题必须在深色背景上保持白色，避免被全局标题色变量覆盖。 */
+  color: #ffffff;
+  font-size: clamp(calc(var(--login-hero-title-size) - 10px), 3.3vw, var(--login-hero-title-size));
   font-weight: 950;
   letter-spacing: 0;
   line-height: 1.28;
@@ -423,7 +560,7 @@ onMounted(async () => {
 .hero-copy p {
   margin-top: 22px;
   color: rgba(235, 245, 255, 0.9);
-  font-size: 20px;
+  font-size: var(--login-hero-subtitle-size);
   font-weight: 700;
   letter-spacing: 0;
 }
@@ -456,7 +593,7 @@ onMounted(async () => {
 .footer-pill strong {
   display: block;
   color: #ffffff;
-  font-size: 16px;
+  font-size: var(--login-feature-title-size);
   font-weight: 900;
 }
 
@@ -465,7 +602,7 @@ onMounted(async () => {
   display: block;
   margin-top: 4px;
   color: rgba(220, 235, 255, 0.72);
-  font-size: 12px;
+  font-size: var(--login-feature-description-size);
   font-weight: 600;
 }
 
@@ -501,13 +638,22 @@ onMounted(async () => {
   align-items: center;
   margin-top: 24px;
   color: rgba(212, 226, 250, 0.62);
-  font-size: 13px;
+  font-size: var(--login-footer-size);
 }
 
 .copyright span {
   height: 14px;
   width: 1px;
   background: rgba(222, 238, 255, 0.28);
+}
+
+.copyright a {
+  color: inherit;
+  transition: color 0.2s ease;
+}
+
+.copyright a:hover {
+  color: #ffffff;
 }
 
 .login-panel {
@@ -545,7 +691,7 @@ onMounted(async () => {
   position: relative;
   height: 44px;
   color: #7f8ba3;
-  font-size: 21px;
+  font-size: var(--login-form-title-size);
   font-weight: 900;
   letter-spacing: 0;
   transition: color 0.18s ease;
@@ -573,6 +719,35 @@ onMounted(async () => {
   gap: 18px;
 }
 
+.login-method-tabs {
+  display: flex;
+  gap: 20px;
+  margin: -2px 0 2px;
+}
+
+.login-method-tabs button {
+  position: relative;
+  color: #7f8ba3;
+  font-size: calc(var(--login-form-text-size) - 2px);
+  font-weight: 800;
+  padding-bottom: 5px;
+}
+
+.login-method-tabs button.active {
+  color: #0b6bff;
+}
+
+.login-method-tabs button.active::after {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 2px;
+  border-radius: 999px;
+  background: #0b6bff;
+  content: '';
+}
+
 .input-shell {
   display: flex;
   align-items: center;
@@ -598,7 +773,7 @@ onMounted(async () => {
   border: 0;
   outline: none;
   color: #10203f;
-  font-size: 16px;
+  font-size: var(--login-form-text-size);
   font-weight: 700;
 }
 
@@ -616,7 +791,7 @@ onMounted(async () => {
   border-radius: 12px;
   background: #f3f7ff;
   color: #0b6bff;
-  font-size: 14px;
+  font-size: calc(var(--login-form-text-size) - 2px);
   font-weight: 800;
 }
 
@@ -629,7 +804,7 @@ onMounted(async () => {
   margin-top: -6px;
   border-radius: 12px;
   padding: 12px 14px;
-  font-size: 14px;
+  font-size: calc(var(--login-form-text-size) - 2px);
   font-weight: 700;
 }
 
@@ -648,7 +823,7 @@ onMounted(async () => {
   align-items: center;
   justify-content: space-between;
   color: #6f7f98;
-  font-size: 14px;
+  font-size: calc(var(--login-form-text-size) - 2px);
   font-weight: 700;
 }
 
@@ -677,7 +852,7 @@ onMounted(async () => {
   border-radius: 14px;
   background: linear-gradient(180deg, #247cff 0%, #0b5fff 100%);
   color: #ffffff;
-  font-size: 20px;
+  font-size: calc(var(--login-form-title-size) - 1px);
   font-weight: 900;
   box-shadow: 0 18px 34px rgba(7, 91, 255, 0.28);
   transition: transform 0.16s ease, opacity 0.16s ease;
@@ -699,7 +874,7 @@ onMounted(async () => {
   align-items: center;
   margin: 10px 0 0;
   color: #8793aa;
-  font-size: 15px;
+  font-size: calc(var(--login-form-text-size) - 1px);
   font-style: normal;
   font-weight: 700;
 }
@@ -725,7 +900,7 @@ onMounted(async () => {
   align-items: center;
   gap: 10px;
   color: #1d2b48;
-  font-size: 14px;
+  font-size: calc(var(--login-form-text-size) - 2px);
   font-weight: 800;
 }
 
@@ -772,14 +947,14 @@ onMounted(async () => {
 
 .scan-login h2 {
   margin-top: 24px;
-  font-size: 24px;
+  font-size: calc(var(--login-form-title-size) + 3px);
   font-weight: 900;
 }
 
 .scan-login p {
   margin: 12px 0 28px;
   color: #6f7f98;
-  font-size: 16px;
+  font-size: var(--login-form-text-size);
   font-weight: 700;
 }
 
@@ -789,7 +964,7 @@ onMounted(async () => {
   gap: 6px;
   margin-top: 26px;
   color: #596982;
-  font-size: 14px;
+  font-size: calc(var(--login-form-text-size) - 2px);
   font-weight: 700;
 }
 
@@ -799,6 +974,65 @@ onMounted(async () => {
   gap: 2px;
   margin-left: auto;
 }
+
+.legal-consent {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 12px;
+  color: #596982;
+  font-size: calc(var(--login-form-text-size) - 3px);
+  line-height: 1.6;
+}
+
+.legal-consent input {
+  margin: 5px 4px 0 0;
+  accent-color: #1769ff;
+}
+
+.legal-consent button {
+  padding: 0;
+  color: #1769ff;
+  font: inherit;
+  font-weight: 700;
+}
+
+.legal-dialog-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(3, 15, 38, .58);
+}
+
+.legal-dialog {
+  display: flex;
+  width: min(680px, 100%);
+  max-height: min(76vh, 720px);
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, .6);
+  border-radius: 18px;
+  background: #fff;
+  box-shadow: 0 24px 80px rgba(3, 15, 38, .32);
+  color: #14213a;
+}
+
+.legal-dialog header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 22px;
+  border-bottom: 1px solid #e6edf8;
+}
+
+.legal-dialog header strong { font-size: 18px; }
+.legal-dialog header button { color: #1769ff; font-weight: 700; }
+.legal-dialog p { margin: 16px 22px 0; color: #64748b; }
+.legal-dialog article { overflow-y: auto; padding: 16px 22px 24px; white-space: pre-wrap; line-height: 1.8; }
 
 @media (max-width: 1180px) {
   .login-hero {
@@ -832,11 +1066,11 @@ onMounted(async () => {
   }
 
   .brand-name {
-    font-size: 34px;
+    font-size: calc(var(--login-brand-name-size) - 4px);
   }
 
   .brand-subtitle {
-    font-size: 16px;
+    font-size: calc(var(--login-brand-subtitle-size) - 2px);
   }
 }
 
@@ -860,12 +1094,12 @@ onMounted(async () => {
   }
 
   .brand-name {
-    font-size: 28px;
+    font-size: max(24px, calc(var(--login-brand-name-size) - 10px));
   }
 
   .brand-subtitle {
     margin-left: 2px;
-    font-size: 14px;
+    font-size: max(12px, calc(var(--login-brand-subtitle-size) - 4px));
   }
 
   .feature-row {

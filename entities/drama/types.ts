@@ -454,12 +454,23 @@ export interface DramaProjectPage {
 }
 
 export interface RuntimeModelOption {
-  provider: 'alibaba' | 'bytedance'
+  provider: 'alibaba' | 'bytedance' | 'huoshan'
   model: string
   label: string
   description: string
   baseCredits: number
   billingMode: string
+  /**
+   * 视频模型的运行边界由后台模型配置维护。
+   * 前端仅用它收窄下拉选项；最终仍由服务端校验，防止请求绕过页面限制。
+   */
+  limits: {
+    minDurationSec?: number
+    maxDurationSec?: number
+    resolutions?: string[]
+    maxReferenceCount?: number
+    supportsSilent?: boolean
+  }
 }
 
 export interface DramaRuntimeConfig {

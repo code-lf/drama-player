@@ -1,4 +1,4 @@
-import type { AccountProfile, CreditLedgerPage, CreditPackage } from '~/entities/account/types'
+import type { AccountProfile, AccountSecuritySummary, CreditLedgerPage, CreditPackage, PaymentOrder, PaymentOrderPage } from '~/entities/account/types'
 import type { CanvasGraph } from '~/entities/canvas/types'
 import type {
   DramaCreditPreview,
@@ -8,14 +8,19 @@ import type {
   DramaProjectDetail,
   DramaRuntimeConfig
 } from '~/entities/drama/types'
+import type { EpisodeCutDraft, EpisodeCutSavePayload, EpisodeCutTask } from '~/entities/drama/episodeCutTypes'
 import type { Project } from '~/entities/project/types'
+import type { FeedbackPage, FeedbackSubmitPayload, LegalDocument, RedeemCodeResult, SupportCenter, UserFeedback, WebsiteInfo } from '~/entities/support/types'
+import { defaultWebsiteInfo } from '~/entities/support/types'
 import type {
   ProductImageCreditPreview,
   ProductImageGeneratePayload,
   ProductImageGenerateResult,
   ProductImageResult,
+  ProductImageTemplate,
   ProductSellingPoint
 } from '~/entities/product-image/types'
+import type { ProductVideoCreatePayload, ProductVideoCreditPreview, ProductVideoHome, ProductVideoResult, ProductVideoTask, ProductVideoTemplate } from '~/entities/product-video/types'
 import type {
   StoryboardClipContract,
   StoryboardContinuationPolicy,
@@ -81,6 +86,43 @@ interface BackendProjectItem {
   category: string
   status: 'draft' | 'generating' | 'published'
   updated_at: string
+}
+
+interface BackendEpisodeCut {
+  id: string
+  episode_no: number
+  version_no: number
+  status: string
+  clips: Array<{
+    storyboard_row_id: string
+    take_id: string
+    sort_index: number
+    trim_in_ms: number
+    trim_out_ms: number
+    native_audio_gain: number
+    native_audio_muted: boolean
+  }>
+  captions: Array<{
+    sort_index: number
+    start_ms: number
+    end_ms: number
+    text: string
+  }>
+  bgm_url: string
+  bgm_gain: number
+  bgm_fade_in_ms: number
+  bgm_fade_out_ms: number
+  subtitle_style: Record<string, unknown>
+  export_settings: Record<string, unknown>
+}
+
+interface BackendEpisodeCutTask {
+  id: string
+  task_type: 'captions' | 'render' | 'editor_package'
+  status: string
+  progress: number
+  output_url: string
+  error_message: string
 }
 
 interface BackendProjectListResponse {
@@ -200,10 +242,19 @@ interface BackendStoryboardRowsResponse {
 }
 
 interface BackendRuntimeModelOption {
-  provider: 'alibaba' | 'bytedance'
+  provider: 'alibaba' | 'bytedance' | 'huoshan'
   model: string
   label: string
   description: string
+  base_credits?: number
+  billing_mode?: string
+  limits?: {
+    min_duration_sec?: number
+    max_duration_sec?: number
+    resolutions?: string[]
+    max_reference_count?: number
+    supports_silent?: boolean
+  }
 }
 
 interface BackendRuntimeConfigResponse {
@@ -225,6 +276,12 @@ interface BackendAccountProfileResponse {
   credits?: number
   points?: number
   balance?: number
+}
+
+interface BackendAccountSecuritySummaryResponse {
+  masked_phone: string
+  phone_bound: boolean
+  password_enabled: boolean
 }
 
 interface BackendCreditPackageResponse {
@@ -253,6 +310,117 @@ interface BackendCreditLedgerResponse {
 
 interface BackendCreditLedgerPageResponse {
   items: BackendCreditLedgerResponse[]
+  total: number
+  page: number
+  page_size: number
+}
+
+interface BackendPaymentOrderResponse {
+  id: string
+  order_no: string
+  channel: 'wechat' | 'alipay'
+  status: string
+  package_name_snapshot: string
+  credits_snapshot: number
+  amount: number
+  currency: string
+  checkout_url?: string
+  expires_at?: string
+  paid_at?: string
+  failure_code?: string
+  failure_message?: string
+  created_at: string
+  updated_at: string
+}
+
+interface BackendPaymentOrderPageResponse {
+  items: BackendPaymentOrderResponse[]
+  total: number
+  page: number
+  page_size: number
+}
+
+interface BackendRedeemCodeResponse {
+  reward_label: string
+  reward_credits: number
+  balance_after: number
+  redeemed_at: string
+}
+
+interface BackendHelpArticle {
+  id: string
+  category: string
+  title: string
+  content: string
+  sort_order: number
+  is_published: boolean
+  created_at: string
+  updated_at: string
+}
+
+interface BackendSupportCenterResponse {
+  support_email: string
+  articles: BackendHelpArticle[]
+}
+
+interface BackendLoginAppearanceResponse {
+  brand_name: string
+  brand_subtitle: string
+  hero_title_prefix: string
+  hero_title_highlight: string
+  hero_subtitle: string
+  footer_copyright: string
+  company_name: string
+  icp_record_number: string
+  icp_record_url: string
+}
+
+interface BackendLegalDocumentListResponse {
+  items: Array<{
+    id: string
+    code: string
+    sort_order: number
+    is_active: boolean
+    versions: Array<{
+      id: string
+      version: string
+      title: string
+      summary: string
+      content: string
+      status: 'draft' | 'published' | 'archived'
+      requires_acceptance: boolean
+      effective_at: string
+      published_at: string
+    }>
+  }>
+}
+
+interface BackendFeedbackAttachment {
+  id: string
+  file_url: string
+  file_name: string
+  mime_type: string
+  size_bytes: number
+}
+
+interface BackendFeedbackResponse {
+  id: string
+  user_id: string
+  category: 'bug' | 'product' | 'billing' | 'other'
+  content: string
+  contact_email: string
+  page_path: string
+  status: 'submitted' | 'processing' | 'resolved' | 'closed'
+  admin_reply: string
+  replied_at: string | null
+  resolved_at: string | null
+  created_at: string
+  updated_at: string
+  attachments: BackendFeedbackAttachment[]
+}
+
+interface BackendFeedbackPageResponse {
+  items: BackendFeedbackResponse[]
   total: number
   page: number
   page_size: number
@@ -314,6 +482,19 @@ interface BackendProductImageGenerateResponse {
   split_selling_points: boolean
   selling_points: BackendProductSellingPointResponse[]
   results: BackendProductImageResultResponse[]
+}
+
+interface BackendProductImageTemplateResponse {
+  id: string
+  code: string
+  name: string
+  category: string
+  description?: string
+  cover_url?: string
+  style_name?: string
+  aspect_ratio?: string
+  is_featured?: boolean
+  sort_order?: number
 }
 
 interface BackendDramaAssetItem {
@@ -887,6 +1068,14 @@ function mapAccountProfile(raw: BackendAccountProfileResponse): AccountProfile {
   }
 }
 
+function mapAccountSecuritySummary(raw: BackendAccountSecuritySummaryResponse): AccountSecuritySummary {
+  return {
+    maskedPhone: raw.masked_phone || '',
+    phoneBound: Boolean(raw.phone_bound),
+    passwordEnabled: Boolean(raw.password_enabled)
+  }
+}
+
 function mapCreditPackage(raw: BackendCreditPackageResponse): CreditPackage {
   return {
     id: raw.id,
@@ -917,6 +1106,123 @@ function mapCreditLedgerPage(raw: BackendCreditLedgerPageResponse): CreditLedger
     total: raw.total || 0,
     page: raw.page || 1,
     pageSize: raw.page_size || 10
+  }
+}
+
+function mapPaymentOrder(raw: BackendPaymentOrderResponse): PaymentOrder {
+  return {
+    id: raw.id,
+    orderNo: raw.order_no,
+    channel: raw.channel,
+    status: raw.status,
+    packageNameSnapshot: raw.package_name_snapshot,
+    creditsSnapshot: Number(raw.credits_snapshot || 0),
+    amount: Number(raw.amount || 0),
+    currency: raw.currency || 'CNY',
+    checkoutUrl: raw.checkout_url || '',
+    expiresAt: raw.expires_at || '',
+    paidAt: raw.paid_at || '',
+    failureCode: raw.failure_code || '',
+    failureMessage: raw.failure_message || '',
+    createdAt: raw.created_at || '',
+    updatedAt: raw.updated_at || ''
+  }
+}
+
+function mapPaymentOrderPage(raw: BackendPaymentOrderPageResponse): PaymentOrderPage {
+  return {
+    items: (raw.items || []).map(mapPaymentOrder),
+    total: Number(raw.total || 0),
+    page: Number(raw.page || 1),
+    pageSize: Number(raw.page_size || 10)
+  }
+}
+
+function mapSupportCenter(raw: BackendSupportCenterResponse): SupportCenter {
+  return {
+    supportEmail: raw.support_email || '',
+    articles: (raw.articles || []).map(item => ({
+      id: item.id,
+      category: item.category || '使用指南',
+      title: item.title || '',
+      content: item.content || '',
+      sortOrder: Number(item.sort_order || 100),
+      isPublished: Boolean(item.is_published),
+      createdAt: item.created_at || '',
+      updatedAt: item.updated_at || ''
+    }))
+  }
+}
+
+function mapLoginAppearance(raw: BackendLoginAppearanceResponse): WebsiteInfo {
+  // 公开文案仅接受非空字符串，异常字段回退产品默认值，避免登录页出现空标题。
+  const text = (value: unknown, fallback: string) =>
+    typeof value === 'string' && value.trim() ? value.trim() : fallback
+  const recordUrl = text(raw.icp_record_url, defaultWebsiteInfo.icpRecordUrl)
+  return {
+    brandName: text(raw.brand_name, defaultWebsiteInfo.brandName),
+    brandSubtitle: text(raw.brand_subtitle, defaultWebsiteInfo.brandSubtitle),
+    heroTitlePrefix: text(raw.hero_title_prefix, defaultWebsiteInfo.heroTitlePrefix),
+    heroTitleHighlight: text(raw.hero_title_highlight, defaultWebsiteInfo.heroTitleHighlight),
+    heroSubtitle: text(raw.hero_subtitle, defaultWebsiteInfo.heroSubtitle),
+    footerCopyright: text(raw.footer_copyright, defaultWebsiteInfo.footerCopyright),
+    companyName: text(raw.company_name, defaultWebsiteInfo.companyName),
+    icpRecordNumber: text(raw.icp_record_number, defaultWebsiteInfo.icpRecordNumber),
+    // 后台约束为 HTTPS；这里再做防御性校验，避免配置异常产生不安全跳转。
+    icpRecordUrl: recordUrl.startsWith('https://') ? recordUrl : defaultWebsiteInfo.icpRecordUrl
+  }
+}
+
+function mapLegalDocuments(raw: BackendLegalDocumentListResponse): LegalDocument[] {
+  return (raw.items || []).map(document => ({
+    id: document.id,
+    code: document.code,
+    sortOrder: Number(document.sort_order || 100),
+    isActive: Boolean(document.is_active),
+    versions: (document.versions || []).map(version => ({
+      id: version.id,
+      version: version.version,
+      title: version.title,
+      summary: version.summary || '',
+      content: version.content || '',
+      status: version.status,
+      requiresAcceptance: Boolean(version.requires_acceptance),
+      effectiveAt: version.effective_at || '',
+      publishedAt: version.published_at || ''
+    }))
+  }))
+}
+
+function mapFeedback(raw: BackendFeedbackResponse): UserFeedback {
+  return {
+    id: raw.id,
+    userId: raw.user_id,
+    category: raw.category || 'other',
+    content: raw.content || '',
+    contactEmail: raw.contact_email || '',
+    pagePath: raw.page_path || '',
+    status: raw.status || 'submitted',
+    adminReply: raw.admin_reply || '',
+    repliedAt: raw.replied_at || '',
+    resolvedAt: raw.resolved_at || '',
+    createdAt: raw.created_at || '',
+    updatedAt: raw.updated_at || '',
+    attachments: (raw.attachments || []).map(item => ({
+      id: item.id,
+      fileUrl: item.file_url,
+      fileName: item.file_name || '',
+      mimeType: item.mime_type || '',
+      sizeBytes: Number(item.size_bytes || 0)
+    }))
+  }
+}
+
+function mapFeedbackPage(raw: BackendFeedbackPageResponse): FeedbackPage {
+  return {
+    items: (raw.items || []).map(mapFeedback),
+    total: Number(raw.total || 0),
+    page: Number(raw.page || 1),
+    pageSize: Number(raw.page_size || 20)
   }
 }
 
@@ -988,11 +1294,21 @@ function mapProductImageGenerateResult(raw: BackendProductImageGenerateResponse)
   }
 }
 
+/** 统一处理后端的 snake_case 模板字段，页面只使用 camelCase。 */
+function mapProductImageTemplate(raw: BackendProductImageTemplateResponse): ProductImageTemplate {
+  return {
+    id: raw.id || '', code: raw.code || '', name: raw.name || '', category: raw.category || '',
+    description: raw.description || '', coverUrl: raw.cover_url || '', styleName: raw.style_name || '电商质感',
+    aspectRatio: raw.aspect_ratio || '1:1', isFeatured: Boolean(raw.is_featured), sortOrder: Number(raw.sort_order || 100)
+  }
+}
+
 function buildProductImagePayload(payload: ProductImageGeneratePayload) {
   // 商品图请求统一在这里转成后端 snake_case，页面组件只维护 camelCase。
   return {
     prompt: payload.prompt,
     model: payload.model || '',
+    template_id: payload.templateId || '',
     count: payload.count,
     split_selling_points: payload.splitSellingPoints,
     aspect_ratio: payload.aspectRatio,
@@ -1003,6 +1319,71 @@ function buildProductImagePayload(payload: ProductImageGeneratePayload) {
       name: item.name,
       data_url: item.dataUrl
     }))
+  }
+}
+
+/** 把后端 snake_case 的商品视频模板快照转换为页面使用的 camelCase。 */
+function mapProductVideoTemplate(raw: any): ProductVideoTemplate {
+  return {
+    id: String(raw?.id || ''),
+    code: String(raw?.code || ''),
+    name: String(raw?.name || ''),
+    category: String(raw?.category || '热门推荐'),
+    description: String(raw?.description || ''),
+    coverUrl: String(raw?.cover_url || ''),
+    previewUrl: String(raw?.preview_url || ''),
+    durationSec: Number(raw?.duration_sec || 10),
+    aspectRatio: String(raw?.aspect_ratio || '9:16'),
+    styleTags: Array.isArray(raw?.style_tags) ? raw.style_tags.map(String) : [],
+    requiredCredits: Number(raw?.required_credits || 0),
+    isFeatured: Boolean(raw?.is_featured),
+    sortOrder: Number(raw?.sort_order || 100)
+  }
+}
+
+/** 商品视频任务包含结果版本与进度，统一映射后才能在刷新时可靠恢复任务面板。 */
+function mapProductVideoTask(raw: any): ProductVideoTask {
+  return {
+    id: String(raw?.id || ''),
+    template: raw?.template ? mapProductVideoTemplate(raw.template) : null,
+    creationType: ['product', 'model', 'image_to_video', 'digital_human'].includes(String(raw?.creation_type)) ? raw.creation_type : 'product',
+    prompt: String(raw?.prompt || ''),
+    sourceImages: Array.isArray(raw?.source_images) ? raw.source_images.map(String) : [],
+    status: ['queued', 'running', 'succeeded', 'failed'].includes(String(raw?.status)) ? raw.status : 'queued',
+    progress: Number(raw?.progress || 0),
+    currentStep: String(raw?.current_step || ''),
+    errorMessage: String(raw?.error_message || ''),
+    durationSec: Number(raw?.duration_sec || 10),
+    aspectRatio: String(raw?.aspect_ratio || '9:16'),
+    resolution: String(raw?.resolution || '720p'),
+    requiredCredits: Number(raw?.required_credits || 0),
+    currentBalance: Number(raw?.current_balance || 0),
+    balanceAfter: Number(raw?.balance_after || 0),
+    selectedResultId: String(raw?.selected_result_id || ''),
+    results: (Array.isArray(raw?.results) ? raw.results : []).map((item: any): ProductVideoResult => ({
+      id: String(item?.id || ''),
+      index: Number(item?.index || 1),
+      videoUrl: String(item?.video_url || ''),
+      coverUrl: String(item?.cover_url || ''),
+      status: ['queued', 'running', 'succeeded', 'failed'].includes(String(item?.status)) ? item.status : 'queued',
+      durationSec: Number(item?.duration_sec || raw?.duration_sec || 10)
+    })),
+    createdAt: String(raw?.created_at || ''),
+    updatedAt: String(raw?.updated_at || '')
+  }
+}
+
+function buildProductVideoPayload(payload: ProductVideoCreatePayload) {
+  return {
+    template_id: payload.templateId,
+    creation_type: payload.creationType,
+    prompt: payload.prompt,
+    source_images: payload.sourceImages,
+    duration_sec: payload.durationSec,
+    aspect_ratio: payload.aspectRatio,
+    resolution: payload.resolution,
+    result_count: payload.resultCount,
+    model: payload.model || ''
   }
 }
 
@@ -1701,6 +2082,73 @@ function createEmptyGraph(): CanvasGraph {
   }
 }
 
+function mapEpisodeCut(raw: BackendEpisodeCut): EpisodeCutDraft {
+  return {
+    id: raw.id,
+    episodeNo: raw.episode_no,
+    versionNo: raw.version_no,
+    status: raw.status,
+    clips: (raw.clips || []).map(clip => ({
+      storyboardRowId: clip.storyboard_row_id,
+      takeId: clip.take_id || '',
+      sortIndex: clip.sort_index,
+      trimInMs: clip.trim_in_ms,
+      trimOutMs: clip.trim_out_ms,
+      nativeAudioGain: clip.native_audio_gain,
+      nativeAudioMuted: clip.native_audio_muted
+    })),
+    captions: (raw.captions || []).map(cue => ({
+      sortIndex: cue.sort_index,
+      startMs: cue.start_ms,
+      endMs: cue.end_ms,
+      text: cue.text
+    })),
+    bgmUrl: raw.bgm_url || '',
+    bgmGain: raw.bgm_gain,
+    bgmFadeInMs: raw.bgm_fade_in_ms,
+    bgmFadeOutMs: raw.bgm_fade_out_ms,
+    subtitleStyle: raw.subtitle_style || {},
+    exportSettings: raw.export_settings || {}
+  }
+}
+
+function mapEpisodeCutTask(raw: BackendEpisodeCutTask): EpisodeCutTask {
+  return {
+    id: raw.id,
+    taskType: raw.task_type,
+    status: raw.status,
+    progress: raw.progress || 0,
+    outputUrl: raw.output_url || '',
+    errorMessage: raw.error_message || ''
+  }
+}
+
+function buildEpisodeCutPayload(payload: EpisodeCutSavePayload) {
+  return {
+    clips: payload.clips.map(clip => ({
+      storyboard_row_id: clip.storyboardRowId,
+      take_id: clip.takeId,
+      sort_index: clip.sortIndex,
+      trim_in_ms: clip.trimInMs,
+      trim_out_ms: clip.trimOutMs,
+      native_audio_gain: clip.nativeAudioGain,
+      native_audio_muted: clip.nativeAudioMuted
+    })),
+    captions: payload.captions.map(cue => ({
+      sort_index: cue.sortIndex,
+      start_ms: cue.startMs,
+      end_ms: cue.endMs,
+      text: cue.text
+    })),
+    bgm_url: payload.bgmUrl,
+    bgm_gain: payload.bgmGain,
+    bgm_fade_in_ms: payload.bgmFadeInMs,
+    bgm_fade_out_ms: payload.bgmFadeOutMs,
+    subtitle_style: payload.subtitleStyle,
+    export_settings: payload.exportSettings
+  }
+}
+
 async function request<T>(path: string, options?: Parameters<typeof $fetch<T>>[1]): Promise<T> {
   const config = useRuntimeConfig()
   const baseUrl = config.public.apiBase as string
@@ -1812,6 +2260,54 @@ export const httpAdapter: ApiAdapter = {
     return ok(mapAccountProfile(response))
   },
 
+  async updateAccountProfile(payload) {
+    const response = await request<BackendAccountProfileResponse>('/account/profile', {
+      method: 'PATCH',
+      body: { nickname: payload.nickname }
+    })
+    return ok(mapAccountProfile(response))
+  },
+
+  async uploadAccountAvatar(file) {
+    const formData = new FormData()
+    // 头像二进制仅经受鉴权的 multipart 接口上传，浏览器不直接写媒体存储。
+    formData.append('file', file)
+    const response = await request<BackendAccountProfileResponse>('/account/profile/avatar', {
+      method: 'POST',
+      body: formData
+    })
+    return ok(mapAccountProfile(response))
+  },
+
+  async getAccountSecurity() {
+    const response = await request<BackendAccountSecuritySummaryResponse>('/account/security')
+    return ok(mapAccountSecuritySummary(response))
+  },
+
+  async sendAccountSecurityCode(payload) {
+    const response = await request<{ status: string; retry_after_seconds: number }>('/account/security/verification-code', {
+      method: 'POST',
+      body: { target: payload.target, new_phone: payload.newPhone || '' }
+    })
+    return ok({ status: response.status, retryAfterSeconds: Number(response.retry_after_seconds || 0) })
+  },
+
+  async rebindAccountPhone(payload) {
+    const response = await request<BackendAccountSecuritySummaryResponse>('/account/security/phone-rebind', {
+      method: 'POST',
+      body: { new_phone: payload.newPhone, old_phone_code: payload.oldPhoneCode, new_phone_code: payload.newPhoneCode }
+    })
+    return ok(mapAccountSecuritySummary(response))
+  },
+
+  async changeAccountPassword(payload) {
+    const response = await request<{ status: string }>('/account/security/password', {
+      method: 'POST',
+      body: { current_password: payload.currentPassword, new_password: payload.newPassword, verification_code: payload.verificationCode }
+    })
+    return ok(response)
+  },
+
   async getAccountCreditPackages() {
     const response = await request<BackendCreditPackageResponse[]>('/account/credit-packages')
     return ok((response || []).map(mapCreditPackage))
@@ -1820,6 +2316,69 @@ export const httpAdapter: ApiAdapter = {
   async getAccountCreditLedgers(page = 1, pageSize = 10) {
     const response = await request<BackendCreditLedgerPageResponse>(`/account/credit-ledgers?page=${page}&page_size=${pageSize}`)
     return ok(mapCreditLedgerPage(response))
+  },
+
+  async createPaymentOrder(payload) {
+    const response = await request<BackendPaymentOrderResponse>('/account/payment-orders', {
+      method: 'POST',
+      body: { package_id: payload.packageId, channel: payload.channel, idempotency_key: payload.idempotencyKey }
+    })
+    return ok(mapPaymentOrder(response))
+  },
+
+  async retryPaymentCheckout(orderNo) {
+    const response = await request<BackendPaymentOrderResponse>(`/account/payment-orders/${encodeURIComponent(orderNo)}/checkout`, { method: 'POST' })
+    return ok(mapPaymentOrder(response))
+  },
+
+  async getPaymentOrders(page = 1, pageSize = 20) {
+    const response = await request<BackendPaymentOrderPageResponse>(`/account/payment-orders?page=${page}&page_size=${pageSize}`)
+    return ok(mapPaymentOrderPage(response))
+  },
+
+  async redeemCode(code: string) {
+    const response = await request<BackendRedeemCodeResponse>('/account/redeem-code', {
+      method: 'POST',
+      body: { code }
+    })
+    const result: RedeemCodeResult = {
+      rewardLabel: response.reward_label || '',
+      rewardCredits: Number(response.reward_credits || 0),
+      balanceAfter: Number(response.balance_after || 0),
+      redeemedAt: response.redeemed_at || ''
+    }
+    return ok(result)
+  },
+
+  async getSupportCenter() {
+    const response = await request<BackendSupportCenterResponse>('/support-center')
+    return ok(mapSupportCenter(response))
+  },
+
+  async getLoginAppearance() {
+    const response = await request<BackendLoginAppearanceResponse>('/login-appearance')
+    return ok(mapLoginAppearance(response))
+  },
+
+  async getLegalDocuments() {
+    const response = await request<BackendLegalDocumentListResponse>('/legal-documents')
+    return ok(mapLegalDocuments(response))
+  },
+
+  async submitFeedback(payload: FeedbackSubmitPayload) {
+    const body = new FormData()
+    body.append('category', payload.category)
+    body.append('content', payload.content)
+    body.append('contact_email', payload.contactEmail || '')
+    body.append('page_path', payload.pagePath || '')
+    for (const file of payload.files || []) body.append('files', file)
+    const response = await request<BackendFeedbackResponse>('/feedback', { method: 'POST', body })
+    return ok(mapFeedback(response))
+  },
+
+  async getMyFeedback(page = 1, pageSize = 20) {
+    const response = await request<BackendFeedbackPageResponse>(`/feedback/mine?page=${page}&page_size=${pageSize}`)
+    return ok(mapFeedbackPage(response))
   },
 
   async getActiveAnnouncements(placement = 'global') {
@@ -1833,11 +2392,20 @@ export const httpAdapter: ApiAdapter = {
       body: {
         prompt: payload.prompt,
         model: payload.model || '',
+        template_id: payload.templateId || '',
         count: payload.count,
         split_selling_points: payload.splitSellingPoints
       }
     })
     return ok(mapProductImageCreditPreview(response))
+  },
+
+  async listProductImageTemplates(params) {
+    const query = new URLSearchParams()
+    if (params?.category) query.set('category', params.category)
+    if (params?.featured) query.set('featured', 'true')
+    const response = await request<BackendProductImageTemplateResponse[]>(`/product-image/templates${query.size ? `?${query.toString()}` : ''}`)
+    return ok((response || []).map(mapProductImageTemplate))
   },
 
   async splitProductSellingPoints(payload) {
@@ -1856,10 +2424,61 @@ export const httpAdapter: ApiAdapter = {
     return ok(mapProductImageGenerateResult(response))
   },
 
-  async accountLogin(account: string, password: string) {
+  async getProductVideoHome() {
+    const response = await request<any>('/product-video/home')
+    const result: ProductVideoHome = {
+      featuredTemplates: (response?.featured_templates || []).map(mapProductVideoTemplate),
+      recentTasks: (response?.recent_tasks || []).map(mapProductVideoTask)
+    }
+    return ok(result)
+  },
+
+  async listProductVideoTemplates(params) {
+    const query = new URLSearchParams()
+    if (params?.category) query.set('category', params.category)
+    if (params?.featured) query.set('featured', 'true')
+    const response = await request<any[]>(`/product-video/templates${query.size ? `?${query.toString()}` : ''}`)
+    return ok((response || []).map(mapProductVideoTemplate))
+  },
+
+  async previewProductVideoCredits(payload) {
+    const response = await request<any>('/product-video/credit-preview', { method: 'POST', body: buildProductVideoPayload({ ...payload, creationType: 'product', prompt: '', sourceImages: [], aspectRatio: '9:16', resolution: '720p' }) })
+    const result: ProductVideoCreditPreview = {
+      provider: String(response?.provider || ''),
+      model: String(response?.model || ''),
+      requiredCredits: Number(response?.required_credits || 0),
+      currentBalance: Number(response?.current_balance || 0),
+      balanceAfter: Number(response?.balance_after || 0),
+      sufficient: Boolean(response?.sufficient),
+      message: String(response?.message || '')
+    }
+    return ok(result)
+  },
+
+  async createProductVideoTask(payload) {
+    const response = await request<any>('/product-video/tasks', { method: 'POST', body: buildProductVideoPayload(payload) })
+    return ok(mapProductVideoTask(response))
+  },
+
+  async getProductVideoTask(taskId) {
+    const response = await request<any>(`/product-video/tasks/${encodeURIComponent(taskId)}`)
+    return ok(mapProductVideoTask(response))
+  },
+
+  async listProductVideoTasks() {
+    const response = await request<any[]>('/product-video/tasks')
+    return ok((response || []).map(mapProductVideoTask))
+  },
+
+  async selectProductVideoResult(taskId, resultId) {
+    const response = await request<any>(`/product-video/tasks/${encodeURIComponent(taskId)}/results/${encodeURIComponent(resultId)}/select`, { method: 'POST' })
+    return ok(mapProductVideoTask(response))
+  },
+
+  async accountLogin(account: string, password: string, acceptedDocumentCodes: string[] = []) {
     const res = await request<any>('/auth/account/login', {
       method: 'POST',
-      body: { account, password }
+      body: { account, password, accepted_document_codes: acceptedDocumentCodes }
     })
     return ok({
       loggedIn: true,
@@ -1873,10 +2492,10 @@ export const httpAdapter: ApiAdapter = {
     } as AuthSession)
   },
 
-  async accountRegister(payload: { account: string; password: string; code: string; nickname?: string }) {
+  async accountRegister(payload: { account: string; password: string; code: string; nickname?: string; acceptedDocumentCodes?: string[] }) {
     const res = await request<any>('/auth/account/register', {
       method: 'POST',
-      body: payload
+      body: { ...payload, accepted_document_codes: payload.acceptedDocumentCodes || [] }
     })
     return ok({
       loggedIn: true,
@@ -1890,23 +2509,23 @@ export const httpAdapter: ApiAdapter = {
     } as AuthSession)
   },
 
-  async sendSmsCode(phone: string) {
+  async sendSmsCode(phone: string, purpose: 'login' | 'register' = 'register') {
     const res = await request<any>('/auth/sms/send', {
       method: 'POST',
-      body: { phone }
+      body: { phone, purpose }
     })
     return ok({
       status: res.status || 'ok',
-      message: res.message || '验证码已生成',
-      code: res.code
+      message: res.message || '验证码已发送',
+      retryAfterSeconds: res.retry_after_seconds
     })
   },
 
-  async phoneLogin(phone: string, code: string) {
-    // 兼容旧组件调用：后端已关闭验证码登录，这里把第二参数按密码透传到兼容接口。
+  async phoneLogin(phone: string, code: string, acceptedDocumentCodes: string[] = []) {
+    // 验证码仅用于一次性登录，服务端校验成功后立即消费，不会降级为固定密码。
     const res = await request<any>('/auth/phone/login', {
       method: 'POST',
-      body: { phone, password: code }
+      body: { phone, code, accepted_document_codes: acceptedDocumentCodes }
     })
     return ok({
       loggedIn: true,
@@ -1923,13 +2542,21 @@ export const httpAdapter: ApiAdapter = {
   async getRuntimeConfig() {
     const response = await request<BackendRuntimeConfigResponse>('/config/runtime')
     
-    const mapRuntimeModelOption = (raw: any) => ({
-      provider: raw.provider as 'alibaba' | 'bytedance',
+    const mapRuntimeModelOption = (raw: BackendRuntimeModelOption) => ({
+      provider: raw.provider,
       model: raw.model,
       label: raw.label,
       description: raw.description,
       baseCredits: raw.base_credits ?? 1,
-      billingMode: raw.billing_mode ?? 'per_call'
+      billingMode: raw.billing_mode ?? 'per_call',
+      // 清晰度统一转为小写，和项目、分镜接口现有的 720p/1080p 字段保持一致。
+      limits: {
+        minDurationSec: raw.limits?.min_duration_sec,
+        maxDurationSec: raw.limits?.max_duration_sec,
+        resolutions: (raw.limits?.resolutions || []).map((item) => String(item).toLowerCase()),
+        maxReferenceCount: raw.limits?.max_reference_count,
+        supportsSilent: raw.limits?.supports_silent,
+      },
     })
 
     const data: DramaRuntimeConfig = {
@@ -2786,5 +3413,54 @@ export const httpAdapter: ApiAdapter = {
       body: buildStoryboardVideoBatchPayload(payload)
     })
     return ok(mapStoryboardVideoBatch(response))
+  },
+
+  async getEpisodeCut(projectId: string, episodeNo: number) {
+    const response = await request<BackendEpisodeCut>(`/drama/projects/${projectId}/episodes/${episodeNo}/cut`)
+    return ok(mapEpisodeCut(response))
+  },
+
+  async saveEpisodeCut(projectId: string, episodeNo: number, payload: EpisodeCutSavePayload) {
+    const response = await request<BackendEpisodeCut>(`/drama/projects/${projectId}/episodes/${episodeNo}/cut`, {
+      method: 'PUT',
+      body: buildEpisodeCutPayload(payload)
+    })
+    return ok(mapEpisodeCut(response))
+  },
+
+  async uploadEpisodeBgm(projectId: string, episodeNo: number, file: File) {
+    const body = new FormData()
+    body.append('file', file)
+    const response = await request<BackendEpisodeCut>(`/drama/projects/${projectId}/episodes/${episodeNo}/cut/bgm`, {
+      method: 'POST',
+      body
+    })
+    return ok(mapEpisodeCut(response))
+  },
+
+  async generateEpisodeCaptions(projectId: string, episodeNo: number) {
+    const response = await request<BackendEpisodeCutTask>(`/drama/projects/${projectId}/episodes/${episodeNo}/cut/captions/generate`, {
+      method: 'POST'
+    })
+    return ok(mapEpisodeCutTask(response))
+  },
+
+  async renderEpisodeCut(projectId: string, episodeNo: number) {
+    const response = await request<BackendEpisodeCutTask>(`/drama/projects/${projectId}/episodes/${episodeNo}/cut/render`, {
+      method: 'POST'
+    })
+    return ok(mapEpisodeCutTask(response))
+  },
+
+  async exportEpisodeEditorPackage(projectId: string, episodeNo: number) {
+    const response = await request<BackendEpisodeCutTask>(`/drama/projects/${projectId}/episodes/${episodeNo}/cut/editor-package`, {
+      method: 'POST'
+    })
+    return ok(mapEpisodeCutTask(response))
+  },
+
+  async getEpisodeCutTask(projectId: string, episodeNo: number, taskId: string) {
+    const response = await request<BackendEpisodeCutTask>(`/drama/projects/${projectId}/episodes/${episodeNo}/cut/tasks/${taskId}`)
+    return ok(mapEpisodeCutTask(response))
   }
 }

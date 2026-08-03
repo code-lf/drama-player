@@ -4,18 +4,24 @@ import AnnouncementWorkspacePanel from '~/features/dashboard/components/Announce
 import BillingWorkspacePanel from '~/features/billing/components/BillingWorkspacePanel.vue'
 import CreditAmount from '~/components/ui/CreditAmount.vue'
 import CreditAccountPopover from '~/features/billing/components/CreditAccountPopover.vue'
+import AccountProfileDialog from '~/features/account/components/AccountProfileDialog.vue'
+import AccountSecurityDialog from '~/features/account/components/AccountSecurityDialog.vue'
 import DashboardAnnouncementCenter from '~/features/dashboard/components/DashboardAnnouncementCenter.vue'
 import DashboardSidebar from '~/features/dashboard/components/DashboardSidebar.vue'
+import FeedbackDrawer from '~/features/support/components/FeedbackDrawer.vue'
+import HelpCenterPanel from '~/features/support/components/HelpCenterPanel.vue'
+import RedeemCodeDialog from '~/features/support/components/RedeemCodeDialog.vue'
 import PlaceholderWorkspacePanel from '~/features/dashboard/components/PlaceholderWorkspacePanel.vue'
 import ProjectDirectoryPanel from '~/features/projects/components/ProjectDirectoryPanel.vue'
 import ProductImageWorkspacePanel from '~/features/product-image/components/ProductImageWorkspacePanel.vue'
+import ProductVideoWorkspacePanel from '~/features/product-video/components/ProductVideoWorkspacePanel.vue'
 import { useAccountStore } from '~/features/billing/store/useAccountStore'
 import { useThemeStore } from '~/features/ui/store/useThemeStore'
 import { useAuthStore } from '~/features/auth/store/useAuthStore'
 import { dramaService } from '~/shared/api/services/dramaService'
 
-type DashboardMenuKey = 'drama' | 'product' | 'canvas' | 'billing' | 'none'
-type DashboardWorkspaceView = 'console' | 'projects' | 'billing' | 'announcements'
+type DashboardMenuKey = 'drama' | 'product' | 'product-video' | 'billing' | 'none'
+type DashboardWorkspaceView = 'console' | 'projects' | 'billing' | 'announcements' | 'help'
 type CreativeIntent = 'drama' | 'ad' | 'general'
 type ScriptInputMode = 'text' | 'file'
 type DashboardOption = {
@@ -87,7 +93,7 @@ const projectPageSize = 10
 const selectedTextModel = ref(fallbackTextModelCatalog[0]?.value || '')
 const selectedImageModel = ref('')
 const selectedVideoModel = ref('')
-const selectedVideoProvider = ref<'alibaba' | 'bytedance'>('bytedance')
+const selectedVideoProvider = ref<'alibaba' | 'bytedance' | 'huoshan'>('bytedance')
 const selectedAspectRatio = ref('16:9')
 const selectedResolution = ref('720p')
 const selectedVisualStyle = ref('东方玄幻 · 电影写实')
@@ -95,6 +101,10 @@ const selectedCreativeIntent = ref<CreativeIntent>('drama')
 const isUserMenuOpen = ref(false)
 // 顶部积分入口使用独立 Popover，不再点击后直接跳充值页；这样用户可以先查看余额和最近流水。
 const isCreditPopoverOpen = ref(false)
+const isRedeemDialogOpen = ref(false)
+const isFeedbackDrawerOpen = ref(false)
+const isProfileDialogOpen = ref(false)
+const isAccountSecurityDialogOpen = ref(false)
 const isCreativeIntentMenuOpen = ref(false)
 const isVisualStyleMenuOpen = ref(false)
 const activeProjectMenuId = ref('')
@@ -224,7 +234,10 @@ const videoModelOptions = computed<DashboardOption[]>(() => {
   }))
 })
 const resolutionOptions = computed<DashboardOption[]>(() => {
-  const runtimeResolutions = runtimeConfig.value?.videoResolutions || []
+  // 首页使用当前默认视频模型的能力边界；后台切换默认模型后，清晰度下拉无需再改代码。
+  const activeModel = (runtimeConfig.value?.videoModels || [])
+    .find((item) => item.model === selectedVideoModel.value)
+  const runtimeResolutions = activeModel?.limits.resolutions || runtimeConfig.value?.videoResolutions || []
   const availableResolutions = runtimeResolutions.length > 0 ? runtimeResolutions : fallbackResolutionCatalog
 
   return availableResolutions.map((item) => ({
@@ -324,7 +337,13 @@ const entryCreditPreviewToneClass = computed(() => {
   return 'bg-[#edf5ff] text-[#72a0dd]'
 })
 const recentProjectCards = computed(() => projectItems.value.slice(0, 4))
-const userAvatarUrl = computed(() => authStore.session.user?.avatar || 'https://api.dicebear.com/7.x/avataaars/svg?seed=livliv-admin')
+// 兼容历史空头像：注册用户会写入 DiceBear 头像，旧用户则按稳定 user id 生成同风格兜底头像。
+const userAvatarUrl = computed(() => {
+  const avatar = authStore.session.user?.avatar
+  if (avatar) return avatar
+  const seed = authStore.session.user?.id || 'livliv-creator'
+  return `https://api.dicebear.com/9.x/notionists/svg?seed=${encodeURIComponent(seed)}&backgroundColor=b6e3f4,c0aede,d1d4f9`
+})
 const userNickname = computed(() => authStore.session.user?.nickname || '管理员开发者')
 
 function formatProjectUpdatedAt(value: string): string {
@@ -504,13 +523,19 @@ function applyRuntimeDefaults(config: DramaRuntimeConfig): void {
   const availableTextModels = config.textModels.length > 0 ? config.textModels.map((model) => model.model) : fallbackTextModelCatalog.map((model) => model.value)
   const availableImageModels = config.imageModels.map((model) => model.model)
   const availableVideoModels = config.videoModels.map((model) => model.model)
-  const availableResolutions = config.videoResolutions.length > 0 ? config.videoResolutions : fallbackResolutionCatalog
+  const configuredDefaultVideoModel = config.videoModels.find((item) => item.model === config.defaults.video_model)
+  const availableResolutions = configuredDefaultVideoModel?.limits.resolutions?.length
+    ? configuredDefaultVideoModel.limits.resolutions
+    : (config.videoResolutions.length > 0 ? config.videoResolutions : fallbackResolutionCatalog)
 
   selectedTextModel.value = config.defaults.text_model || availableTextModels[0] || ''
   selectedImageModel.value = config.defaults.image_model || config.imageModels[0]?.model || ''
   selectedVideoModel.value = config.defaults.video_model || availableVideoModels[0] || ''
-  selectedVideoProvider.value = (config.defaults.video_provider as 'alibaba' | 'bytedance') || 'bytedance'
-  selectedResolution.value = config.defaults.video_resolution || availableResolutions[0] || '720p'
+  selectedVideoProvider.value = (config.defaults.video_provider as 'alibaba' | 'bytedance' | 'huoshan') || 'bytedance'
+  const defaultResolution = String(config.defaults.video_resolution || '').toLowerCase()
+  selectedResolution.value = availableResolutions.includes(defaultResolution)
+    ? defaultResolution
+    : (availableResolutions[0] || '720p')
 
   // 这个日志是给连续排查问题用的：一旦配置中心缺项，前端会明确告诉我们当前用了哪些兜底值。
   if (config.textModels.length === 0 || config.videoResolutions.length === 0) {
@@ -531,6 +556,11 @@ async function loadBillingData(): Promise<void> {
     // eslint-disable-next-line no-console
     console.error('[livliv] 点数数据加载失败', error)
   }
+}
+
+/** 兑换成功后刷新顶部余额和积分流水，避免用户误以为积分未到账。 */
+async function refreshAfterRedeem(): Promise<void> {
+  await loadBillingData()
 }
 
 async function loadProjectDirectory(): Promise<void> {
@@ -667,12 +697,19 @@ async function bootstrapDashboard(): Promise<void> {
     const config = await dramaService.getRuntimeConfig()
     runtimeConfig.value = config
     applyRuntimeDefaults(config)
-    await Promise.all([
+    const bootstrapResults = await Promise.allSettled([
       loadProjectDirectory(),
       accountStore.refreshProfile(),
       // 顶部积分 Popover 需要最近几条流水，因此控制台启动时先加载轻量账户流水。
       accountStore.refreshLedgers(1, 6)
     ])
+    // 项目、账户、流水互不依赖：某个局部接口暂不可用时，商品创作等独立工具仍可进入，
+    // 不再用全页红色错误条遮挡工作区；具体动作仍会在所属组件里反馈失败原因。
+    const failedTaskCount = bootstrapResults.filter(item => item.status === 'rejected').length
+    if (failedTaskCount > 0) {
+      // eslint-disable-next-line no-console
+      console.warn('[livliv] 控制台局部数据初始化未完成', { failedTaskCount })
+    }
     if (activeWorkspaceView.value === 'billing') {
       await loadBillingData()
     }
@@ -949,8 +986,8 @@ function syncWorkspaceRouteState(path: string): void {
     return
   }
 
-  if (path === '/dashboard-canvas') {
-    activeMenu.value = 'canvas'
+  if (path === '/dashboard-product-video') {
+    activeMenu.value = 'product-video'
     activeWorkspaceView.value = 'console'
     return
   }
@@ -967,6 +1004,12 @@ function syncWorkspaceRouteState(path: string): void {
     return
   }
 
+  if (path === '/dashboard-help') {
+    activeMenu.value = 'none'
+    activeWorkspaceView.value = 'help'
+    return
+  }
+
   activeMenu.value = 'drama'
   activeWorkspaceView.value = 'console'
 }
@@ -975,6 +1018,14 @@ watch(videoModelOptions, (options) => {
   // 供应商切换后，自动把模型值拉回到当前可选集合，避免出现“显示 A、提交 B”的错位状态。
   if (options.some((option) => option.value === selectedVideoModel.value)) return
   selectedVideoModel.value = options[0]?.value || ''
+}, { immediate: true })
+
+watch([() => selectedVideoModel.value, resolutionOptions], () => {
+  // 切换模型后保留仍兼容的清晰度；不兼容时回退到该模型第一个可用值。
+  const values = resolutionOptions.value.map((item) => item.value)
+  if (!values.includes(selectedResolution.value)) {
+    selectedResolution.value = values[0] || '720p'
+  }
 }, { immediate: true })
 
 watch(
@@ -1061,7 +1112,7 @@ onBeforeUnmount(() => {
 <template>
   <main
     class="dashboard-shell min-h-screen bg-[#f5f9ff] text-[#0f172a]"
-    :class="themeStore.mode === 'dark' ? 'dashboard-shell--dark' : 'dashboard-shell--light'"
+    :class="[themeStore.mode === 'dark' ? 'dashboard-shell--dark' : 'dashboard-shell--light', 'dashboard-shell--compact']"
   >
     <div class="flex min-h-screen">
       <DashboardSidebar
@@ -1075,6 +1126,7 @@ onBeforeUnmount(() => {
         :theme-mode="themeStore.mode"
         @logout="handleLogout"
         @toggle-theme="themeStore.toggleMode()"
+        @request-feedback="isFeedbackDrawerOpen = true"
       />
 
       <section class="min-w-0 flex-1">
@@ -1101,6 +1153,15 @@ onBeforeUnmount(() => {
                 />
               </div>
             </div>
+
+            <button
+              class="flex h-9 items-center gap-2 rounded-full border border-[#dbe7f7] bg-white px-3.5 text-[13px] font-black text-[#2563eb] shadow-[0_10px_28px_rgba(15,23,42,0.05)] transition hover:border-[#2563eb]/40 hover:bg-[#eff6ff]"
+              type="button"
+              @click="isRedeemDialogOpen = true"
+            >
+              <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 8.5h16v7H4zM8 8.5V6.8a2 2 0 0 1 4 0v1.7M12 8.5V6.8a2 2 0 0 1 4 0v1.7M9 12h.01M15 12h.01" stroke-linecap="round" stroke-linejoin="round" /></svg>
+              兑换码
+            </button>
 
             <button
               class="dashboard-theme-toggle flex h-7 items-center gap-1 rounded-full border border-[#d7e1ef] bg-white px-1.5 shadow-[0_10px_28px_rgba(15,23,42,0.06)] transition hover:border-[#005FFE]/40"
@@ -1144,18 +1205,18 @@ onBeforeUnmount(() => {
                   <img :src="userAvatarUrl" alt="avatar" class="h-12 w-12 rounded-full object-cover" />
                   <div class="min-w-0">
                     <p class="truncate text-[16px] font-black text-[#111827]">{{ userNickname }}</p>
-                    <p class="mt-1 text-[13px] font-semibold text-[#7a879d]">管理员账号</p>
+                    <p class="mt-1 text-[13px] font-semibold text-[#7a879d]">创作账号</p>
                   </div>
                 </div>
                 <div class="h-px bg-[#edf2f7]"></div>
-                <button class="flex h-[52px] w-full items-center gap-4 px-6 text-left text-[15px] font-bold text-[#53627c] hover:bg-[#f7faff]" type="button">
+                <button class="flex h-[52px] w-full items-center gap-4 px-6 text-left text-[15px] font-bold text-[#53627c] hover:bg-[#f7faff]" type="button" @click="isProfileDialogOpen = true; isUserMenuOpen = false">
                   <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M20 21a8 8 0 0 0-16 0" stroke-linecap="round" />
                     <circle cx="12" cy="7" r="4" />
                   </svg>
                   个人资料
                 </button>
-                <button class="flex h-[52px] w-full items-center gap-4 px-6 text-left text-[15px] font-bold text-[#53627c] hover:bg-[#f7faff]" type="button">
+                <button class="flex h-[52px] w-full items-center gap-4 px-6 text-left text-[15px] font-bold text-[#53627c] hover:bg-[#f7faff]" type="button" @click="isAccountSecurityDialogOpen = true; isUserMenuOpen = false">
                   <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M12 15.5A3.5 3.5 0 1 0 12 8a3.5 3.5 0 0 0 0 7.5Z" />
                     <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21a2 2 0 0 1-4 0v-.09A1.7 1.7 0 0 0 8.6 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3a2 2 0 0 1 0-4h.09A1.7 1.7 0 0 0 4.6 8.6a1.7 1.7 0 0 0-.34-1.88l-.06-.06A2 2 0 1 1 7.03 3.8l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3a2 2 0 0 1 4 0v.09A1.7 1.7 0 0 0 15.4 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9c.2.4.6.8 1 .6h.6a2 2 0 0 1 0 4h-.09A1.7 1.7 0 0 0 19.4 15Z" stroke-linecap="round" stroke-linejoin="round" />
@@ -1174,7 +1235,7 @@ onBeforeUnmount(() => {
           </div>
         </header>
 
-        <div class="px-8 py-9">
+        <div class="dashboard-main-content px-8 py-9">
         <div v-if="isBooting" class="rounded-3xl border border-borderSoft bg-panel p-8 text-textMuted">
           {{ loadingText }}
         </div>
@@ -1217,11 +1278,10 @@ onBeforeUnmount(() => {
             :image-model-options="imageModelOptions"
           />
 
-          <PlaceholderWorkspacePanel
-            v-else-if="activeMenu === 'canvas'"
-            eyebrow="无限画布"
-            title="当前入口暂停使用"
-            description="这一页先单独保留为路由占位，方便刷新后仍停留在当前模块。后续恢复无限画布时，我们会直接在这里接回完整工作流。"
+          <ProductVideoWorkspacePanel
+            v-else-if="activeMenu === 'product-video'"
+            :current-credit-balance="currentCreditBalance"
+            :default-video-model="selectedVideoModel"
           />
 
           <BillingWorkspacePanel
@@ -1235,6 +1295,8 @@ onBeforeUnmount(() => {
           <AnnouncementWorkspacePanel
             v-else-if="activeWorkspaceView === 'announcements'"
           />
+
+          <HelpCenterPanel v-else-if="activeWorkspaceView === 'help'" />
 
           <div v-else class="space-y-8">
             <section class="mx-auto max-w-[1235px]">
@@ -1421,9 +1483,9 @@ onBeforeUnmount(() => {
                     </div>
                   </div>
 
-                  <!-- 入口参数与内容类型、作品风格使用同一组大号选择控件，保证视觉层级一致。 -->
-                  <UiBaseSelect v-model="selectedAspectRatio" :options="aspectRatioOptions" label="画面比例" placeholder="画面比例" tone="dashboard" size="sm" class="min-w-0" />
-                  <UiBaseSelect v-model="selectedResolution" :options="resolutionOptions" label="清晰度" placeholder="清晰度" tone="dashboard" size="sm" class="min-w-0" />
+                  <!-- 比例与清晰度的图标独占左侧一列，标题和值保持与前两个入口参数一致的纵向层级。 -->
+                  <UiBaseSelect v-model="selectedAspectRatio" :options="aspectRatioOptions" label="画面比例" placeholder="画面比例" leading-icon="aspect-ratio" tone="dashboard" size="sm" class="min-w-0" />
+                  <UiBaseSelect v-model="selectedResolution" :options="resolutionOptions" label="清晰度" placeholder="清晰度" leading-icon="resolution" tone="dashboard" size="sm" class="min-w-0" />
                 </div>
               </div>
 
@@ -1809,6 +1871,11 @@ onBeforeUnmount(() => {
       </section>
     </div>
 
+    <RedeemCodeDialog :open="isRedeemDialogOpen" @close="isRedeemDialogOpen = false" @redeemed="refreshAfterRedeem" />
+    <FeedbackDrawer :open="isFeedbackDrawerOpen" @close="isFeedbackDrawerOpen = false" @submitted="infoMessage = '反馈已提交，可在帮助中心查看处理进度。'" />
+    <AccountProfileDialog :open="isProfileDialogOpen" @close="isProfileDialogOpen = false" @updated="accountStore.refreshProfile()" />
+    <AccountSecurityDialog :open="isAccountSecurityDialogOpen" @close="isAccountSecurityDialogOpen = false" />
+
     <div
       v-if="deleteDialogVisible"
       class="fixed inset-0 z-[120] flex items-center justify-center bg-[#0f172a]/48 px-4 backdrop-blur-sm"
@@ -1852,6 +1919,24 @@ onBeforeUnmount(() => {
   background: #f5f9ff;
   color: #0f172a;
   transition: background var(--motion-normal), color var(--motion-normal);
+}
+
+/* 紧凑密度针对 100% 浏览器缩放收紧固定尺寸，避免使用 zoom 导致弹层和可访问性失真。 */
+.dashboard-shell--compact :deep(.dashboard-topbar) {
+  height: 52px;
+  padding-inline: 20px;
+}
+
+.dashboard-shell--compact :deep(.dashboard-input-card) {
+  padding: 20px;
+}
+
+.dashboard-shell--compact :deep(.dashboard-project-card) {
+  min-height: 110px;
+}
+
+.dashboard-shell--compact :deep(.dashboard-main-content) {
+  padding: 24px 20px;
 }
 
 /* 控制台设计稿使用了大量固定色，这里用语义层统一接入明暗主题。 */

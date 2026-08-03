@@ -52,6 +52,8 @@ const showEstimate = ref(false)
 const estimate = ref<DramaAssetGenerationEstimate | null>(null)
 // 生成确认必须冻结本次估价对应的目标，避免用户在弹窗开启后改变勾选导致错生成或不生成。
 const estimatedGenerationTargets = ref<string[]>([])
+// 记录本次估价的操作范围，让“生成全部资产”和“生成选中资产”在确认弹窗中可被清楚区分。
+const generationScopeLabel = ref('选中资产')
 const generationMode = ref<'generate' | 'repair'>('generate')
 const repairMode = ref<'system_repair' | 'creative_variant'>('creative_variant')
 const repairTarget = ref<DramaAssetProfile | null>(null)
@@ -70,6 +72,9 @@ const removeConfirmTarget = ref<DramaAssetProfile | null>(null)
 // 大图预览单独使用全局遮罩，不嵌在抽屉滚动区内，避免图片被三栏布局裁切。
 const previewImageUrl = ref('')
 const previewImageAlt = ref('')
+// 首次进入资产阶段的轻量引导按“用户 + 项目”保存，不影响同一用户的其他项目首次体验。
+const showAssetGuide = ref(false)
+const hideAssetGuideNextTime = ref(false)
 const uploadTarget = ref<DramaAssetProfile | null>(null)
 const menuUploadInput = ref<HTMLInputElement | null>(null)
 const voiceUploadInput = ref<HTMLInputElement | null>(null)
@@ -103,7 +108,7 @@ const typeMeta: Record<DramaWorkspaceAssetType, { label: string; icon: any; empt
 const allAssets = computed(() => workspace.value?.assets || [])
 const currentAssets = computed(() => {
   const keyword = searchKeyword.value.trim().toLowerCase()
-  return allAssets.value.filter((item) => {
+  const visible = allAssets.value.filter((item) => {
     if (item.asset_type !== activeType.value) return false
     // 页面状态筛选是业务分组，不要求与后端枚举一一相等。
     if (statusFilter.value === 'candidate' && !['candidate', 'planned'].includes(item.production_status)) return false
@@ -112,6 +117,12 @@ const currentAssets = computed(() => {
     if (!['all', 'candidate', 'generating', 'failed'].includes(statusFilter.value) && item.production_status !== statusFilter.value) return false
     if (!keyword) return true
     return `${item.name} ${JSON.stringify(item.data)}`.toLowerCase().includes(keyword)
+  })
+  // 必需资产是进入分镜的前置条件，因此无论当前卡片原始返回顺序如何，都优先摆在当前分类的前面。
+  const generationPriority: Record<string, number> = { candidate: 0, planned: 0, failed: 1, stale: 1, to_confirm: 2, queued: 3, generating: 3, locked: 4 }
+  return [...visible].sort((left, right) => {
+    if (left.is_required !== right.is_required) return left.is_required ? -1 : 1
+    return (generationPriority[left.production_status] ?? 9) - (generationPriority[right.production_status] ?? 9)
   })
 })
 
@@ -135,6 +146,10 @@ const selectedProfiles = computed(() => allAssets.value.filter(item => selectedK
 const selectionTargets = computed(() => selectedProfiles.value
   .filter(item => ['candidate', 'planned', 'failed', 'stale'].includes(item.production_status))
   .map(profileTarget))
+// “生成全部”不依赖当前分类、搜索或筛选，覆盖项目内全部尚可生成的资产；已锁定和生成中的资产不会被重复提交。
+const allGenerationTargets = computed(() => allAssets.value
+  .filter(item => ['candidate', 'planned', 'failed', 'stale'].includes(item.production_status))
+  .map(profileTarget))
 const lockableSelectedProfiles = computed(() => selectedProfiles.value.filter(item =>
   Boolean(item.selected_asset_id)
   && item.production_status !== 'locked'
@@ -149,6 +164,12 @@ const hasRunningAssets = computed(() => allAssets.value.some(item =>
   ['queued', 'generating'].includes(item.production_status)
   || ['queued', 'running'].includes(item.consistency?.status),
 ))
+const readinessReason = computed(() => {
+  if (!workspace.value || workspace.value.readiness.ready) return ''
+  const blockers = workspace.value.readiness.blockers.filter(Boolean)
+  if (blockers.length) return blockers.join('；')
+  return `仍有 ${Math.max(workspace.value.readiness.required_total - workspace.value.readiness.locked_total, 0)} 项必需资产未生成并锁定。`
+})
 const failedTargets = computed(() => allAssets.value
   .filter(item => item.asset_type === activeType.value && ['failed', 'stale'].includes(item.production_status))
   .map(profileTarget))
@@ -523,12 +544,38 @@ function toggleSelect(profile: DramaAssetProfile): void {
 }
 
 function toggleSelectAll(): void {
+  // “当前页”对应当前分类、状态筛选和搜索结果，避免全项目误选造成用户误以为会立即批量扣点。
   const visibleTargets = currentAssets.value.map(profileTarget)
   if (allCurrentSelected.value) {
     selectedKeys.value = selectedKeys.value.filter(item => !visibleTargets.includes(item))
     return
   }
   selectedKeys.value = Array.from(new Set([...selectedKeys.value, ...visibleTargets]))
+}
+
+function requestAllAssetGeneration(): void {
+  if (!allGenerationTargets.value.length) {
+    showGlobalNotice('当前没有可生成的资产；已锁定或正在生成的资产不会重复提交。', 'error')
+    return
+  }
+  void requestEstimate(allGenerationTargets.value, '全部待生成资产')
+}
+
+function assetGuideStorageKey(): string {
+  // 项目切换时各自保留一次引导；匿名态用 guest 兜底，避免拼出空键。
+  return `livliv:drama:asset-guide:${authStore.user?.id || 'guest'}:${props.projectId}`
+}
+
+function openAssetGuide(): void {
+  hideAssetGuideNextTime.value = false
+  showAssetGuide.value = true
+}
+
+function finishAssetGuide(): void {
+  if (import.meta.client && hideAssetGuideNextTime.value) {
+    window.localStorage.setItem(assetGuideStorageKey(), '1')
+  }
+  showAssetGuide.value = false
 }
 
 function setStatusFilter(status: string): void {
@@ -554,6 +601,10 @@ async function loadWorkspace(silent = false): Promise<void> {
   errorMessage.value = ''
   try {
     workspace.value = await dramaService.getAssetWorkspace(props.projectId)
+    // 首次成功拿到结构化资产后再显示引导，避免空数据或网络错误时弹出无法完成的操作说明。
+    if (!silent && import.meta.client && !window.localStorage.getItem(assetGuideStorageKey())) {
+      showAssetGuide.value = true
+    }
     if (selectedProfile.value) {
       const fresh = workspace.value.assets.find(item => item.id === selectedProfile.value?.id)
       selectedProfile.value = fresh || null
@@ -703,7 +754,7 @@ async function chooseVersion(versionId: string): Promise<void> {
   selectedProfile.value = fresh || null
 }
 
-async function requestEstimate(targets = selectionTargets.value): Promise<void> {
+async function requestEstimate(targets = selectionTargets.value, scopeLabel = '选中资产'): Promise<void> {
   if (!targets.length) return
   actionBusy.value = 'estimate'
   generationErrorMessage.value = ''
@@ -711,8 +762,12 @@ async function requestEstimate(targets = selectionTargets.value): Promise<void> 
     generationMode.value = 'generate'
     repairTarget.value = null
     estimatedGenerationTargets.value = [...targets]
+    generationScopeLabel.value = scopeLabel
     estimate.value = await dramaService.estimateAssetGeneration(props.projectId, targets)
     showEstimate.value = true
+  } catch (error: any) {
+    // 估价失败时不能静默吞掉，否则用户会误认为“生成全部资产”无响应。
+    showGlobalNotice(error?.message || '资产积分预估失败，请稍后重试。', 'error')
   } finally {
     actionBusy.value = ''
   }
@@ -1795,6 +1850,26 @@ onBeforeUnmount(() => {
 .asset-editor-body .field-grid{margin-top:14px}
 .asset-editor-body .issue-list{display:flex;flex-direction:column;gap:8px;margin:12px 0;color:#59677c;list-style:none}
 .asset-editor-body .issue-list li{border:1px solid #eef1f6;border-radius:8px;background:#fafbfe;padding:9px 10px;font-size:10px;line-height:17px}
+
+/*
+ * 资产弹窗右侧质检报告承担“是否可以锁定”的决策说明，不能沿用列表卡片的 10px 紧凑字号。
+ * 仅放大报告内的文字与行距；右栏继续独立滚动，避免增加正文区或底部操作栏的布局压力。
+ */
+.asset-editor-body .consistency-report .report-heading h3{font-size:16px}
+.asset-editor-body .consistency-report .report-heading span{font-size:11px}
+.asset-editor-body .asset-quality-head strong{font-size:13px}
+.asset-editor-body .asset-quality-head span{font-size:10px;line-height:16px}
+.asset-editor-body .asset-quality-primary-issue>div span{font-size:10px;line-height:16px}
+.asset-editor-body .asset-quality-primary-issue>div strong{font-size:12px}
+.asset-editor-body .asset-quality-primary-issue p{font-size:11px;line-height:19px}
+.asset-editor-body .asset-quality-primary-issue small{font-size:10px;line-height:18px}
+.asset-editor-body .asset-quality-responsibility span{font-size:10px}
+.asset-editor-body .asset-quality-responsibility p{font-size:10px;line-height:18px}
+.asset-editor-body .score-summary strong{font-size:14px}
+.asset-editor-body .score-summary p{font-size:11px;line-height:17px}
+.asset-editor-body .dimension{font-size:11px;line-height:17px}
+.asset-editor-body .issue-list li{font-size:11px;line-height:19px}
+.asset-editor-body .issue-list small{font-size:10px;line-height:18px}
 
 @media(max-width:1200px){
   .asset-editor-body{height:min(720px,calc(100vh - 170px));grid-template-columns:minmax(260px,32%) minmax(380px,1fr);overflow:auto}

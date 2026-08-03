@@ -1,8 +1,11 @@
-import type { AccountProfile, CreditLedgerPage, CreditPackage } from '~/entities/account/types'
+import type { AccountProfile, AccountSecuritySummary, CreditLedgerPage, CreditPackage, PaymentOrder, PaymentOrderPage } from '~/entities/account/types'
 import type { SystemAnnouncement } from '~/entities/announcement/types'
 import type { AuthSession } from '~/entities/auth/types'
 import type { DramaCreditPreview, DramaProjectCard, DramaProjectDetail, DramaRuntimeConfig } from '~/entities/drama/types'
-import type { ProductImageGeneratePayload, ProductSellingPoint } from '~/entities/product-image/types'
+import type { EpisodeCutDraft, EpisodeCutSavePayload, EpisodeCutTask } from '~/entities/drama/episodeCutTypes'
+import { defaultWebsiteInfo, type FeedbackPage, type FeedbackSubmitPayload, type RedeemCodeResult, type SupportCenter, type UserFeedback } from '~/entities/support/types'
+import type { ProductImageGeneratePayload, ProductImageTemplate, ProductSellingPoint } from '~/entities/product-image/types'
+import type { ProductVideoCreatePayload, ProductVideoTask, ProductVideoTemplate } from '~/entities/product-video/types'
 import type { StoryboardClipContract, StoryboardContinuationPolicy, StoryboardContinuityState, StoryboardReferenceBinding, StoryboardWorkspace } from '~/entities/storyboard/types'
 import { defaultNodes } from '~/shared/constants/canvas'
 import { mockProjects } from '~/shared/constants/landing'
@@ -29,6 +32,83 @@ import type {
 
 const mockTicketState = new Map<string, { startTime: number; done: boolean }>()
 const mockDramaProjectMap = new Map<string, DramaProjectDetail>()
+const mockEpisodeCutMap = new Map<string, EpisodeCutDraft>()
+const mockFeedbackItems: UserFeedback[] = []
+let mockCreditBalance = 12500
+const mockProductVideoTasks = new Map<string, ProductVideoTask>()
+
+// Mock 仅用于无后端时走通页面交互；正式环境所有模板和任务都由 product-video 接口返回。
+const mockProductVideoTemplates: ProductVideoTemplate[] = [
+  ['look-natural', '自然试穿', '服装试穿', 10, 30],
+  ['look-closeup', '细节走秀', '服装试穿', 8, 28],
+  ['beauty-glow', '高光质感', '美妆个护', 8, 24],
+  ['product-hero', '主图动效', '商品展示', 8, 22],
+  ['product-unbox', '开箱测评', '开箱测评', 12, 30],
+  ['campaign-sale', '夏日促销', '节日营销', 10, 26],
+  ['social-hook', '三秒种草', '社交媒体', 8, 24],
+  ['digital-explain', '专业口播', '商品展示', 15, 36],
+].map(([code, name, category, durationSec, requiredCredits], index) => ({
+  id: `mock-template-${code}`,
+  code: String(code),
+  name: String(name),
+  category: String(category),
+  description: '默认商品视频模板，支持在运营后台替换提示词与封面。',
+  coverUrl: '/landing/tool-product.png',
+  previewUrl: '',
+  durationSec: Number(durationSec),
+  aspectRatio: '9:16',
+  styleTags: [String(category), index % 2 ? '高级质感' : '自然光影'],
+  requiredCredits: Number(requiredCredits),
+  isFeatured: index < 6,
+  sortOrder: index + 1,
+}))
+
+function refreshMockProductVideoTask(task: ProductVideoTask): ProductVideoTask {
+  if (task.status !== 'queued' && task.status !== 'running') return task
+  const elapsed = Date.now() - new Date(task.createdAt).getTime()
+  const progress = Math.min(100, Math.max(task.progress, Math.floor(elapsed / 70)))
+  task.progress = progress
+  task.status = progress >= 100 ? 'succeeded' : 'running'
+  task.currentStep = progress >= 100 ? '生成完成' : progress > 75 ? '正在合成视频' : progress > 35 ? '正在生成动态效果' : '正在匹配创作模板'
+  if (task.status === 'succeeded') task.results.forEach((item) => { item.status = 'succeeded' })
+  task.updatedAt = new Date().toISOString()
+  return task
+}
+
+function episodeCutKey(projectId: string, episodeNo: number): string {
+  return `${projectId}:${episodeNo}`
+}
+
+function getOrCreateMockEpisodeCut(projectId: string, episodeNo: number): EpisodeCutDraft {
+  const key = episodeCutKey(projectId, episodeNo)
+  const existing = mockEpisodeCutMap.get(key)
+  if (existing) return existing
+  const rows = mockDramaProjectMap.get(projectId)?.storyboards?.filter(row => row.episodeNo === episodeNo) || []
+  const created: EpisodeCutDraft = {
+    id: `mock-cut-${key}`,
+    episodeNo,
+    versionNo: 1,
+    status: 'draft',
+    clips: rows.filter(row => row.videoUrl).map((row, index) => ({
+      storyboardRowId: row.id,
+      takeId: row.selectedTakeId || '',
+      sortIndex: index + 1,
+      trimInMs: 0,
+      trimOutMs: Number(row.videoDurationSec || row.durationSec || 5) * 1000,
+      nativeAudioGain: 100,
+      nativeAudioMuted: false
+    })),
+    captions: [],
+    bgmUrl: '',
+    bgmGain: 35,
+    bgmFadeInMs: 600,
+    bgmFadeOutMs: 800,
+    subtitleStyle: { fontSize: 30, color: '#ffffff', position: 'bottom' },
+    exportSettings: { resolution: '720p', burnSubtitles: true, watermark: false, duckBgm: true }
+  }
+  mockEpisodeCutMap.set(key, created)
+  return created
+}
 const mockAnnouncements: SystemAnnouncement[] = [
   {
     id: 'mock-announcement-1',
@@ -47,6 +127,30 @@ const mockAnnouncements: SystemAnnouncement[] = [
     updatedAt: new Date().toISOString()
   }
 ]
+
+// 开发环境也保留与服务端同维度的模板选择，避免页面只能靠写死风格进行演示。
+const mockProductImageTemplates: ProductImageTemplate[] = [
+  ['ecom-hero', '电商主图', '商品展示', '突出商品主体，适合首图与详情页', '电商质感', '1:1'],
+  ['detail-closeup', '品质特写', '商品展示', '放大材质、纹理与工艺细节', '高级质感', '1:1'],
+  ['beauty-glow', '柔光美妆', '美妆个护', '适合护肤、彩妆与香水', '柔和光线', '1:1'],
+  ['fashion-lookbook', '时尚画册', '服饰配件', '适合服装、鞋包与配饰种草', '摄影写实', '3:4'],
+  ['food-steam', '热气美食', '食品饮料', '用热气、纹理和近景增强食欲', '美食摄影', '3:4'],
+  ['home-life', '居家生活', '家居日用', '自然生活场景下的真实展示', '自然家居', '4:3'],
+  ['summer-poster', '夏日上新', '营销海报', '适合新品发布与季节活动', '清新花香', '3:4'],
+  ['festival-sale', '节日促销', '营销海报', '强调活动节奏和购买转化', '节日氛围', '3:4'],
+  ['xiaohongshu-note', '种草笔记', '社交媒体', '适合小红书等内容平台封面', '生活方式', '3:4'],
+].map(([code, name, category, description, styleName, aspectRatio], index) => ({
+  id: `mock-image-template-${code}`,
+  code,
+  name,
+  category,
+  description,
+  coverUrl: '/landing/tool-product.png',
+  styleName,
+  aspectRatio,
+  isFeatured: index < 6,
+  sortOrder: index + 1
+}))
 
 function splitMockProductSellingPoints(prompt: string, count: number): ProductSellingPoint[] {
   const parts = (prompt || '')
@@ -213,7 +317,7 @@ function createMockAccountProfile(): AccountProfile {
     id: '00000000-0000-0000-0000-000000000001',
     nickname: '创作导演',
     avatarUrl: 'https://placehold.co/120x120/png',
-    creditBalance: 12500
+    creditBalance: mockCreditBalance
   }
 }
 
@@ -450,6 +554,37 @@ export const mockAdapter: ApiAdapter = {
     return ok(createMockAccountProfile())
   },
 
+  async updateAccountProfile(payload) {
+    await sleep(180)
+    return ok({ ...createMockAccountProfile(), nickname: payload.nickname })
+  },
+
+  async uploadAccountAvatar() {
+    await sleep(220)
+    return ok({ ...createMockAccountProfile(), avatarUrl: 'https://api.dicebear.com/9.x/notionists/svg?seed=mock-avatar' })
+  },
+
+  async getAccountSecurity() {
+    await sleep(120)
+    const summary: AccountSecuritySummary = { maskedPhone: '138****8053', phoneBound: true, passwordEnabled: true }
+    return ok(summary)
+  },
+
+  async sendAccountSecurityCode() {
+    await sleep(160)
+    return ok({ status: 'ok', retryAfterSeconds: 60 })
+  },
+
+  async rebindAccountPhone() {
+    await sleep(240)
+    return ok({ maskedPhone: '139****0000', phoneBound: true, passwordEnabled: true })
+  },
+
+  async changeAccountPassword() {
+    await sleep(220)
+    return ok({ status: 'ok' })
+  },
+
   async getAccountCreditPackages() {
     await sleep(120)
     const packages: CreditPackage[] = [
@@ -555,9 +690,144 @@ export const mockAdapter: ApiAdapter = {
     return ok(ledgerPage)
   },
 
+  async createPaymentOrder(payload) {
+    await sleep(120)
+    const order: PaymentOrder = {
+      id: `mock-payment-${payload.idempotencyKey}`,
+      orderNo: `LVP-MOCK-${Date.now()}`,
+      channel: payload.channel,
+      status: 'channel_unavailable',
+      packageNameSnapshot: '模拟套餐',
+      creditsSnapshot: 0,
+      amount: 0,
+      currency: 'CNY',
+      checkoutUrl: '',
+      expiresAt: '',
+      paidAt: '',
+      failureCode: 'PAYMENT_CHANNEL_NOT_READY',
+      failureMessage: '模拟环境不生成真实收款二维码。',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    }
+    return ok(order)
+  },
+
+  async retryPaymentCheckout(orderNo) {
+    await sleep(80)
+    return ok({
+      id: `mock-payment-${orderNo}`,
+      orderNo,
+      channel: 'wechat',
+      status: 'channel_unavailable',
+      packageNameSnapshot: '模拟套餐',
+      creditsSnapshot: 0,
+      amount: 0,
+      currency: 'CNY',
+      checkoutUrl: '',
+      expiresAt: '',
+      paidAt: '',
+      failureCode: 'PAYMENT_CHANNEL_NOT_READY',
+      failureMessage: '模拟环境不生成真实收款二维码。',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    } satisfies PaymentOrder)
+  },
+
+  async getPaymentOrders(page = 1, pageSize = 20) {
+    await sleep(80)
+    return ok({ items: [], total: 0, page, pageSize } satisfies PaymentOrderPage)
+  },
+
+  async redeemCode(code: string) {
+    await sleep(220)
+    if (!code.trim() || code.trim().length < 8) throw new Error('兑换码格式不正确')
+    const rewardCredits = 1000
+    mockCreditBalance += rewardCredits
+    const result: RedeemCodeResult = {
+      rewardLabel: '基础体验包',
+      rewardCredits,
+      balanceAfter: mockCreditBalance,
+      redeemedAt: new Date().toISOString()
+    }
+    return ok(result)
+  },
+
+  async getSupportCenter() {
+    await sleep(120)
+    const result: SupportCenter = {
+      supportEmail: '',
+      articles: [
+        {
+          id: 'mock-help-1', category: '使用指南', title: '如何开始创建短剧？',
+          content: '在 AI 创作页上传剧本或直接输入文本，确认参数后即可开始解析。',
+          sortOrder: 1, isPublished: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString()
+        }
+      ]
+    }
+    return ok(result)
+  },
+
+  async getLoginAppearance() {
+    await sleep(50)
+    // Mock 环境保持与真实后端一致的默认字号，便于登录页独立开发与验收。
+    return ok({ ...defaultWebsiteInfo })
+  },
+
+  async getLegalDocuments() {
+    // Mock 默认不发布强制协议，避免前端独立演示时把空白条款误当成真实法律文本。
+    return ok([])
+  },
+
+  async submitFeedback(payload: FeedbackSubmitPayload) {
+    await sleep(180)
+    const item: UserFeedback = {
+      id: `mock-feedback-${Date.now()}`,
+      userId: '00000000-0000-0000-0000-000000000001',
+      category: payload.category,
+      content: payload.content,
+      contactEmail: payload.contactEmail || '',
+      pagePath: payload.pagePath || '',
+      status: 'submitted',
+      adminReply: '',
+      repliedAt: '',
+      resolvedAt: '',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      attachments: (payload.files || []).map((file, index) => ({
+        id: `mock-attachment-${index}`,
+        fileUrl: URL.createObjectURL(file),
+        fileName: file.name,
+        mimeType: file.type,
+        sizeBytes: file.size
+      }))
+    }
+    mockFeedbackItems.unshift(item)
+    return ok(item)
+  },
+
+  async getMyFeedback(page = 1, pageSize = 20) {
+    await sleep(100)
+    const result: FeedbackPage = {
+      items: mockFeedbackItems.slice((page - 1) * pageSize, page * pageSize),
+      total: mockFeedbackItems.length,
+      page,
+      pageSize
+    }
+    return ok(result)
+  },
+
   async getActiveAnnouncements(placement = 'global') {
     await sleep(80)
     return ok(mockAnnouncements.filter((item) => item.placement === placement))
+  },
+
+  async listProductImageTemplates(params) {
+    await sleep(80)
+    return ok(mockProductImageTemplates.filter((item) => {
+      if (params?.category && item.category !== params.category) return false
+      if (params?.featured && !item.isFeatured) return false
+      return true
+    }))
   },
 
   async previewProductImageCredits(payload) {
@@ -611,6 +881,64 @@ export const mockAdapter: ApiAdapter = {
     })
   },
 
+  async getProductVideoHome() {
+    await sleep(120)
+    return ok({
+      featuredTemplates: mockProductVideoTemplates.filter(item => item.isFeatured),
+      recentTasks: Array.from(mockProductVideoTasks.values()).map(refreshMockProductVideoTask).slice(0, 8)
+    })
+  },
+
+  async listProductVideoTemplates(params) {
+    await sleep(100)
+    return ok(params?.category ? mockProductVideoTemplates.filter(item => item.category === params.category) : mockProductVideoTemplates)
+  },
+
+  async previewProductVideoCredits(payload) {
+    await sleep(80)
+    const template = mockProductVideoTemplates.find(item => item.id === payload.templateId)
+    const requiredCredits = (template?.requiredCredits || 30) * Math.max(1, payload.resultCount || 1)
+    return ok({ provider: 'mock', model: payload.model || 'mock-video', requiredCredits, currentBalance: mockCreditBalance, balanceAfter: mockCreditBalance - requiredCredits, sufficient: mockCreditBalance >= requiredCredits, message: '点数充足，可开始生成' })
+  },
+
+  async createProductVideoTask(payload: ProductVideoCreatePayload) {
+    await sleep(180)
+    const template = mockProductVideoTemplates.find(item => item.id === payload.templateId) || mockProductVideoTemplates[0]
+    const requiredCredits = template.requiredCredits * Math.max(1, payload.resultCount)
+    mockCreditBalance -= requiredCredits
+    const taskId = `mock-product-video-${Date.now()}`
+    const now = new Date().toISOString()
+    const task: ProductVideoTask = {
+      id: taskId, template, creationType: payload.creationType, prompt: payload.prompt, sourceImages: payload.sourceImages,
+      status: 'queued', progress: 8, currentStep: '正在识别商品素材', errorMessage: '', durationSec: payload.durationSec,
+      aspectRatio: payload.aspectRatio, resolution: payload.resolution, requiredCredits, currentBalance: mockCreditBalance + requiredCredits,
+      balanceAfter: mockCreditBalance, selectedResultId: `${taskId}-1`, createdAt: now, updatedAt: now,
+      results: Array.from({ length: payload.resultCount }, (_, index) => ({ id: `${taskId}-${index + 1}`, index: index + 1, videoUrl: '', coverUrl: payload.sourceImages[0] || template.coverUrl, status: 'queued', durationSec: payload.durationSec }))
+    }
+    mockProductVideoTasks.set(taskId, task)
+    return ok(task)
+  },
+
+  async getProductVideoTask(taskId) {
+    await sleep(100)
+    const task = mockProductVideoTasks.get(taskId)
+    if (!task) throw new Error('视频任务不存在')
+    return ok(refreshMockProductVideoTask(task))
+  },
+
+  async listProductVideoTasks() {
+    await sleep(100)
+    return ok(Array.from(mockProductVideoTasks.values()).map(refreshMockProductVideoTask))
+  },
+
+  async selectProductVideoResult(taskId, resultId) {
+    const task = mockProductVideoTasks.get(taskId)
+    if (!task || !task.results.some(item => item.id === resultId)) throw new Error('视频版本不存在')
+    task.selectedResultId = resultId
+    task.updatedAt = new Date().toISOString()
+    return ok(task)
+  },
+
   async accountLogin(account: string, _password: string) {
     return ok({
       loggedIn: true,
@@ -638,12 +966,13 @@ export const mockAdapter: ApiAdapter = {
     } as AuthSession)
   },
 
-  async sendSmsCode(_phone: string) {
-    return ok({ status: 'ok', message: 'Mock 固定验证码已生成', code: '123456' })
+  async sendSmsCode(_phone: string, _purpose: 'login' | 'register' = 'register') {
+    // Mock 环境同样不回传验证码，避免前端依赖不安全的调试行为。
+    return ok({ status: 'ok', message: 'Mock 短信已受理', retryAfterSeconds: 60 })
   },
 
-  async phoneLogin(phone: string, code: string) {
-    // 兼容旧方法签名，Mock 环境同样按账号密码登录态返回。
+  async phoneLogin(phone: string, _code: string) {
+    // Mock 环境保持相同契约，但不泄露或模拟固定验证码。
     return ok({
       loggedIn: true,
       token: 'mock-token-123',
@@ -1806,7 +2135,78 @@ export const mockAdapter: ApiAdapter = {
           storyboardRowId: row.id,
           runId: `${projectId}-${row.id}-video-run`,
           status: 'pending'
-        }))
+      }))
     })
+  },
+
+  async getEpisodeCut(projectId: string, episodeNo: number) {
+    await sleep(80)
+    return ok(getOrCreateMockEpisodeCut(projectId, episodeNo))
+  },
+
+  async saveEpisodeCut(projectId: string, episodeNo: number, payload: EpisodeCutSavePayload) {
+    await sleep(80)
+    const current = getOrCreateMockEpisodeCut(projectId, episodeNo)
+    const next = { ...current, ...payload }
+    mockEpisodeCutMap.set(episodeCutKey(projectId, episodeNo), next)
+    return ok(next)
+  },
+
+  async uploadEpisodeBgm(projectId: string, episodeNo: number, file: File) {
+    await sleep(80)
+    const current = getOrCreateMockEpisodeCut(projectId, episodeNo)
+    const next = { ...current, bgmUrl: URL.createObjectURL(file) }
+    mockEpisodeCutMap.set(episodeCutKey(projectId, episodeNo), next)
+    return ok(next)
+  },
+
+  async generateEpisodeCaptions(projectId: string, episodeNo: number) {
+    await sleep(80)
+    const task: EpisodeCutTask = {
+      id: `mock-caption-${Date.now()}`,
+      taskType: 'captions',
+      status: 'blocked',
+      progress: 0,
+      outputUrl: '',
+      errorMessage: 'Mock 环境未配置语音识别服务。'
+    }
+    return ok(task)
+  },
+
+  async renderEpisodeCut(projectId: string, episodeNo: number) {
+    await sleep(80)
+    const task: EpisodeCutTask = {
+      id: `mock-render-${Date.now()}`,
+      taskType: 'render',
+      status: 'blocked',
+      progress: 0,
+      outputUrl: '',
+      errorMessage: 'Mock 环境不执行正式 MP4 渲染。'
+    }
+    return ok(task)
+  },
+
+  async exportEpisodeEditorPackage(projectId: string, episodeNo: number) {
+    await sleep(80)
+    return ok({
+      id: `mock-editor-package-${Date.now()}`,
+      taskType: 'editor_package',
+      status: 'blocked',
+      progress: 0,
+      outputUrl: '',
+      errorMessage: 'Mock 环境不下载真实镜头素材。'
+    } as EpisodeCutTask)
+  },
+
+  async getEpisodeCutTask(_projectId: string, _episodeNo: number, taskId: string) {
+    await sleep(50)
+    return ok({
+      id: taskId,
+      taskType: taskId.includes('caption') ? 'captions' : taskId.includes('editor-package') ? 'editor_package' : 'render',
+      status: 'blocked',
+      progress: 0,
+      outputUrl: '',
+      errorMessage: 'Mock 环境未连接异步 Worker。'
+    } as EpisodeCutTask)
   }
 }

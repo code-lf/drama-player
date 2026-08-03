@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
-import type { CreditLedgerItem, CreditPackage } from '~/entities/account/types'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import QRCode from 'qrcode'
+import type { CreditLedgerItem, CreditPackage, PaymentOrder } from '~/entities/account/types'
 import CreditAmount from '~/components/ui/CreditAmount.vue'
 import CreditIcon from '~/components/ui/CreditIcon.vue'
+import { accountService } from '~/shared/api/services/accountService'
 
 interface Props {
   currentCreditBalance: number
@@ -17,7 +19,7 @@ const router = useRouter()
 
 type BillingView = 'recharge' | 'orders'
 type LedgerFilter = 'all' | 'consume' | 'recharge' | 'grant'
-type PaymentMethod = 'wechat' | 'alipay' | 'unionpay' | 'apple'
+type PaymentMethod = 'wechat' | 'alipay'
 
 const activeBillingView = ref<BillingView>('recharge')
 const selectedBillingPackageId = ref('')
@@ -26,6 +28,13 @@ const paymentSuccessPackageId = ref('')
 const selectedLedgerFilter = ref<LedgerFilter>('all')
 const selectedPaymentMethod = ref<PaymentMethod>('wechat')
 const isLedgerDrawerOpen = ref(false)
+const purchaseNotice = ref('')
+const paymentOrders = ref<PaymentOrder[]>([])
+const pendingPaymentOrder = ref<PaymentOrder | null>(null)
+const paymentQrDataUrl = ref('')
+const isCreatingPayment = ref(false)
+const isLoadingOrders = ref(false)
+let paymentPollTimer: ReturnType<typeof setInterval> | undefined
 
 const selectedBillingPackage = computed(() => props.billingPackages.find((pkg) => pkg.id === selectedBillingPackageId.value) || props.billingPackages[0] || null)
 const purchaseDialogPackage = computed(() => props.billingPackages.find((pkg) => pkg.id === purchaseDialogPackageId.value) || null)
@@ -49,8 +58,8 @@ const filteredLedgers = computed(() => props.billingLedgers.filter((ledger) => {
   return ['system_grant', 'system_deduct', 'refund'].includes(ledger.transactionType)
 }))
 
-/** 充值订单页面先复用充值流水，支付订单接口接入后可直接替换成 orderService 数据。 */
-const orderRows = computed(() => props.billingLedgers.filter((ledger) => ledger.transactionType === 'recharge'))
+/** 订单记录以支付订单为准，不能再用积分到账流水反推支付是否成功。 */
+const orderRows = computed(() => paymentOrders.value)
 
 watch(
   () => props.billingPackages,
@@ -60,6 +69,14 @@ watch(
   },
   { immediate: true, deep: true }
 )
+
+watch(activeBillingView, (view) => {
+  if (view === 'orders') void loadPaymentOrders()
+})
+
+onBeforeUnmount(() => {
+  if (paymentPollTimer) clearInterval(paymentPollTimer)
+})
 
 // 顶部 Popover 的“查看全部流水”通过 URL 参数打开，刷新页面后仍能恢复对应状态。
 watch(
@@ -144,6 +161,7 @@ function openPurchaseDialog(packageId?: string): void {
   const target = props.billingPackages.find((pkg) => pkg.id === packageId) || selectedBillingPackage.value || props.billingPackages[0]
   purchaseDialogPackageId.value = target?.id || ''
   paymentSuccessPackageId.value = ''
+  purchaseNotice.value = ''
 }
 
 function closePurchaseDialog(): void {
@@ -167,14 +185,85 @@ function openBillingView(view: BillingView): void {
 }
 
 /**
- * 当前支付接口还没有接入，因此这里先完成“确认支付 → 成功页”的 UI 状态闭环。
- * 后端支付订单接口接入后，只需要在这里调用 orderService.createPaymentOrder，
- * 成功后再刷新账户 profile 和 ledger，不需要重做确认弹窗与成功页。
+ * 禁止在未创建真实支付订单时展示“支付成功”。
+ * 后续仅允许在服务端验签回调或主动查单确认 paid 后，才会打开到账成功页。
  */
-function confirmPurchase(): void {
+async function confirmPurchase(): Promise<void> {
   if (!purchaseDialogPackage.value) return
-  paymentSuccessPackageId.value = purchaseDialogPackage.value.id
+  isCreatingPayment.value = true
+  purchaseNotice.value = ''
+  try {
+    // 幂等键只标识本次点击；同一请求网络重放时后端会返回同一笔订单，避免重复扣款。
+    const order = await accountService.createPaymentOrder({
+      packageId: purchaseDialogPackage.value.id,
+      channel: selectedPaymentMethod.value,
+      idempotencyKey: globalThis.crypto?.randomUUID?.() || `payment-${Date.now()}-${Math.random().toString(16).slice(2)}`
+    })
+    await applyPaymentOrder(order)
+    await loadPaymentOrders()
+  } catch (error) {
+    purchaseNotice.value = error instanceof Error ? error.message : '支付订单创建失败，请稍后重试。'
+  } finally {
+    isCreatingPayment.value = false
+  }
+}
+
+async function applyPaymentOrder(order: PaymentOrder): Promise<void> {
+  if (!order.checkoutUrl) {
+    purchaseNotice.value = order.failureMessage || '支付渠道暂未就绪，尚未生成收款二维码。'
+    return
+  }
+  // 二维码在浏览器本地生成，不把支付链接发送给第三方二维码服务。
+  paymentQrDataUrl.value = await QRCode.toDataURL(order.checkoutUrl, { width: 280, margin: 1, errorCorrectionLevel: 'M' })
+  pendingPaymentOrder.value = order
   purchaseDialogPackageId.value = ''
+  startPaymentPolling(order.orderNo)
+}
+
+async function loadPaymentOrders(): Promise<void> {
+  isLoadingOrders.value = true
+  try {
+    paymentOrders.value = (await accountService.getPaymentOrders()).items
+  } finally {
+    isLoadingOrders.value = false
+  }
+}
+
+function startPaymentPolling(orderNo: string): void {
+  if (paymentPollTimer) clearInterval(paymentPollTimer)
+  // 前端轮询只读取订单状态；支付成功的唯一事实来源仍然是服务端验签回调。
+  paymentPollTimer = setInterval(() => { void refreshPendingPayment(orderNo) }, 3000)
+}
+
+async function refreshPendingPayment(orderNo: string): Promise<void> {
+  try {
+    const page = await accountService.getPaymentOrders(1, 50)
+    paymentOrders.value = page.items
+    const latest = page.items.find(order => order.orderNo === orderNo)
+    if (!latest) return
+    pendingPaymentOrder.value = latest
+    if (latest.status === 'paid') {
+      if (paymentPollTimer) clearInterval(paymentPollTimer)
+      paymentPollTimer = undefined
+      paymentQrDataUrl.value = ''
+      paymentSuccessPackageId.value = purchaseDialogPackage.value?.id || selectedBillingPackage.value?.id || ''
+    }
+  } catch (error) {
+    // 轮询短暂失败不清空二维码，用户可手动刷新状态；连续失败会由 API 客户端输出诊断日志。
+    console.warn('[livliv] 支付订单状态刷新失败', error)
+  }
+}
+
+function closePaymentQr(): void {
+  if (paymentPollTimer) clearInterval(paymentPollTimer)
+  paymentPollTimer = undefined
+  pendingPaymentOrder.value = null
+  paymentQrDataUrl.value = ''
+}
+
+function paymentStatusLabel(status: string): string {
+  const labels: Record<string, string> = { created: '待创建收款', pending: '待支付', paid: '已支付', checkout_failed: '收款创建失败', channel_unavailable: '渠道未就绪', closed: '已关闭', refunded: '已退款' }
+  return labels[status] || status
 }
 
 function closeSuccessPage(): void {
@@ -304,15 +393,15 @@ function closeSuccessPage(): void {
           <thead class="bg-[#f8faff] text-[11px] font-black text-[#7f8da3]"><tr><th class="px-4 py-3">订单号</th><th class="px-4 py-3">套餐内容</th><th class="px-4 py-3">金额</th><th class="px-4 py-3">状态</th><th class="px-4 py-3">支付时间</th><th class="px-4 py-3">操作</th></tr></thead>
           <tbody v-if="orderRows.length > 0" class="divide-y divide-[#eef3f8]">
             <tr v-for="order in orderRows" :key="order.id" class="font-semibold text-[#52617a]">
-              <td class="px-4 py-4">{{ order.referenceId || order.id }}</td>
-              <td class="px-4 py-4">{{ order.description || '积分充值' }}</td>
-              <td class="px-4 py-4">--</td>
-              <td class="px-4 py-4"><span class="rounded-full bg-[#e9fbf1] px-2 py-1 text-[10px] font-black text-[#16a866]">已完成</span></td>
-              <td class="px-4 py-4">{{ formatTime(order.createdAt) }}</td>
-              <td class="px-4 py-4 text-[#075fff]">查看</td>
+              <td class="px-4 py-4">{{ order.orderNo }}</td>
+              <td class="px-4 py-4">{{ order.packageNameSnapshot }} · {{ formatNumber(order.creditsSnapshot) }} 积分</td>
+              <td class="px-4 py-4">¥ {{ formatMoney(order.amount) }}</td>
+              <td class="px-4 py-4"><span class="rounded-full px-2 py-1 text-[10px] font-black" :class="order.status === 'paid' ? 'bg-[#e9fbf1] text-[#16a866]' : 'bg-[#fff4df] text-[#b26b00]'">{{ paymentStatusLabel(order.status) }}</span></td>
+              <td class="px-4 py-4">{{ formatTime(order.paidAt || order.createdAt) }}</td>
+              <td class="px-4 py-4"><button v-if="order.status !== 'paid'" class="text-[#075fff]" type="button" @click="refreshPendingPayment(order.orderNo)">刷新状态</button><span v-else class="text-[#8a99ad]">已到账</span></td>
             </tr>
           </tbody>
-          <tbody v-else><tr><td colspan="6" class="px-4 py-14 text-center font-semibold text-[#95a2b4]">暂无充值订单，购买积分后会显示在这里。</td></tr></tbody>
+          <tbody v-else><tr><td colspan="6" class="px-4 py-14 text-center font-semibold text-[#95a2b4]">{{ isLoadingOrders ? '正在加载订单…' : '暂无充值订单，购买积分后会显示在这里。' }}</td></tr></tbody>
         </table>
       </div>
     </section>
@@ -358,10 +447,23 @@ function closeSuccessPage(): void {
           <p class="mt-5 text-[11px] font-black text-[#7d8ba0]">应付金额</p><p class="mt-1 text-[22px] font-black">¥ {{ formatMoney(purchaseDialogPackage.priceAmount) }}</p>
           <p class="mt-5 text-[11px] font-black text-[#7d8ba0]">支付方式</p>
           <div class="mt-2 space-y-2">
-            <button v-for="method in ([['wechat', '微信支付'], ['alipay', '支付宝支付'], ['unionpay', '银联支付'], ['apple', 'Apple Pay']] as const)" :key="method[0]" class="flex h-10 w-full items-center justify-between rounded-[9px] border px-3 text-left text-[12px] font-bold transition" :class="selectedPaymentMethod === method[0] ? 'border-[#0d63ff] bg-[#f5f9ff] text-[#26344b]' : 'border-[#e2eaf5] text-[#66758c] hover:border-[#b8d0ff]'" type="button" @click="selectedPaymentMethod = method[0]"><span>{{ method[1] }}</span><span class="h-4 w-4 rounded-full border-2" :class="selectedPaymentMethod === method[0] ? 'border-[#0d63ff] bg-[#0d63ff] shadow-[inset_0_0_0_3px_white]' : 'border-[#c4d0df]'" /></button>
+            <button v-for="method in ([['wechat', '微信支付'], ['alipay', '支付宝支付']] as const)" :key="method[0]" class="flex h-10 w-full items-center justify-between rounded-[9px] border px-3 text-left text-[12px] font-bold transition" :class="selectedPaymentMethod === method[0] ? 'border-[#0d63ff] bg-[#f5f9ff] text-[#26344b]' : 'border-[#e2eaf5] text-[#66758c] hover:border-[#b8d0ff]'" type="button" @click="selectedPaymentMethod = method[0]"><span>{{ method[1] }}</span><span class="h-4 w-4 rounded-full border-2" :class="selectedPaymentMethod === method[0] ? 'border-[#0d63ff] bg-[#0d63ff] shadow-[inset_0_0_0_3px_white]' : 'border-[#c4d0df]'" /></button>
           </div>
-          <div class="mt-5 flex gap-3"><button class="h-10 flex-1 rounded-[9px] border border-[#e0e8f3] text-[12px] font-black text-[#6b7a90]" type="button" @click="closePurchaseDialog">取消</button><button class="h-10 flex-1 rounded-[9px] bg-[#075fff] text-[12px] font-black text-white shadow-[0_10px_20px_rgba(0,95,254,0.2)]" type="button" @click="confirmPurchase">确认支付 ¥ {{ formatMoney(purchaseDialogPackage.priceAmount) }}</button></div>
-          <p class="mt-3 text-center text-[10px] font-semibold text-[#a0adbc]">支付功能接入后，这里将拉起真实支付渠道。</p>
+          <p v-if="purchaseNotice" class="mt-3 rounded-[9px] bg-[#fff6e8] px-3 py-2 text-[11px] font-semibold leading-5 text-[#b26b00]">{{ purchaseNotice }}</p>
+          <div class="mt-5 flex gap-3"><button class="h-10 flex-1 rounded-[9px] border border-[#e0e8f3] text-[12px] font-black text-[#6b7a90]" type="button" @click="closePurchaseDialog">取消</button><button class="h-10 flex-1 rounded-[9px] bg-[#075fff] text-[12px] font-black text-white shadow-[0_10px_20px_rgba(0,95,254,0.2)] disabled:cursor-not-allowed disabled:bg-[#9abbf5]" type="button" :disabled="isCreatingPayment" @click="confirmPurchase">{{ isCreatingPayment ? '正在创建订单…' : '生成支付二维码' }}</button></div>
+          <p class="mt-3 text-center text-[10px] font-semibold text-[#a0adbc]">付款成功仅以服务端验签回调或主动查单结果为准。</p>
+        </div>
+      </div>
+    </Teleport>
+
+    <Teleport to="body">
+      <div v-if="pendingPaymentOrder" class="fixed inset-0 z-[140] flex items-center justify-center bg-slate-950/40 px-4 backdrop-blur-[2px]" @click.self="closePaymentQr">
+        <div class="w-full max-w-[390px] rounded-[18px] bg-white px-7 py-6 text-center shadow-[0_30px_90px_rgba(15,23,42,0.25)]">
+          <div class="flex items-center justify-between"><div class="text-left"><h3 class="text-[19px] font-black">请扫码支付</h3><p class="mt-1 text-[11px] font-semibold text-[#7c8ba0]">订单 {{ pendingPaymentOrder.orderNo }}</p></div><button class="text-[#7d8ba0]" type="button" aria-label="关闭支付二维码" @click="closePaymentQr">×</button></div>
+          <img v-if="paymentQrDataUrl" :src="paymentQrDataUrl" class="mx-auto mt-5 h-[250px] w-[250px] rounded-[12px] border border-[#e6edf6] p-2" alt="支付二维码">
+          <p class="mt-4 text-[13px] font-black text-[#26344b]">¥ {{ formatMoney(pendingPaymentOrder.amount) }}</p>
+          <p class="mt-2 text-[11px] font-semibold text-[#8998ac]">付款后系统会自动验签到账，请勿手动上传支付截图。</p>
+          <button class="mt-4 h-10 w-full rounded-[9px] border border-[#d8e5f8] text-[12px] font-black text-[#075fff]" type="button" @click="refreshPendingPayment(pendingPaymentOrder.orderNo)">我已支付，刷新状态</button>
         </div>
       </div>
     </Teleport>

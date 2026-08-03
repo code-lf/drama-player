@@ -3,6 +3,20 @@ export interface ProductImageReference {
   dataUrl: string
 }
 
+/** 后台统一维护的商品图模板，前台不再写死可选风格。 */
+export interface ProductImageTemplate {
+  id: string
+  code: string
+  name: string
+  category: string
+  description: string
+  coverUrl: string
+  styleName: string
+  aspectRatio: string
+  isFeatured: boolean
+  sortOrder: number
+}
+
 export interface ProductSellingPoint {
   index: number
   title: string
@@ -34,6 +48,7 @@ export interface ProductImageResult {
 export interface ProductImageGeneratePayload {
   prompt: string
   model?: string
+  templateId?: string
   count: number
   splitSellingPoints: boolean
   aspectRatio: string

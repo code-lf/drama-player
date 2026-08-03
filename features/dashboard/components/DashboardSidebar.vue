@@ -2,8 +2,8 @@
 import CreditIcon from '~/components/ui/CreditIcon.vue'
 
 interface Props {
-  activeMenu: 'drama' | 'product' | 'canvas' | 'none'
-  activeWorkspaceView: 'console' | 'projects' | 'billing' | 'announcements'
+  activeMenu: 'drama' | 'product' | 'product-video' | 'none'
+  activeWorkspaceView: 'console' | 'projects' | 'billing' | 'announcements' | 'help'
   billingView: 'recharge' | 'orders'
   currentCreditBalance: number | string
   loggedIn: boolean
@@ -16,25 +16,33 @@ withDefaults(defineProps<Props>(), {
   avatarUrl: ''
 })
 
+const emit = defineEmits<{ requestFeedback: [] }>()
+
 const createMenuItems = [
   {
     key: 'drama',
-    label: 'AI创作',
+    label: '剧本成片',
     to: '/dashboard',
-    icon: 'script'
-  },
+    icon: 'script',
+    tag: 'AI'
+  }
+] as const
+
+// 工具区与短剧主工作流分组展示，避免商品创作能力被误认为短剧项目的附属步骤。
+const toolMenuItems = [
   {
     key: 'product',
-    label: '商品图生成',
+    label: '商品图',
     to: '/dashboard-product',
-    icon: 'image'
+    icon: 'image',
+    tag: 'AI'
   },
   {
-    key: 'canvas',
-    label: '无限画布',
-    to: '/dashboard-canvas',
-    icon: 'grid',
-    badge: 'Beta'
+    key: 'product-video',
+    label: '商品视频',
+    to: '/dashboard-product-video',
+    icon: 'video',
+    tag: 'AI'
   }
 ] as const
 </script>
@@ -42,7 +50,7 @@ const createMenuItems = [
 <template>
   <aside
     class="dashboard-sidebar flex h-screen w-[282px] shrink-0 flex-col border-r border-[#e2e8f2] bg-white px-6 py-7 text-[#0f172a]"
-    :class="themeMode === 'dark' ? 'dashboard-sidebar--dark' : 'dashboard-sidebar--light'"
+    :class="[themeMode === 'dark' ? 'dashboard-sidebar--dark' : 'dashboard-sidebar--light', 'dashboard-sidebar--compact']"
   >
     <NuxtLink to="/dashboard" class="flex items-center gap-3">
       <div class="flex h-12 w-12 items-center justify-center overflow-hidden rounded-[12px] bg-[#005FFE] shadow-[0_14px_28px_rgba(0,95,254,0.24)]">
@@ -78,14 +86,44 @@ const createMenuItems = [
             <path d="m14 14 1.2-1.2a2 2 0 0 1 2.8 0L20 15" stroke-linecap="round" stroke-linejoin="round" />
             <path d="M8 9.2h.01" stroke-linecap="round" />
           </svg>
-          <svg v-else viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2">
-            <rect x="4" y="4" width="7" height="7" rx="1.5" />
-            <rect x="13" y="4" width="7" height="7" rx="1.5" />
-            <rect x="4" y="13" width="7" height="7" rx="1.5" />
-            <rect x="13" y="13" width="7" height="7" rx="1.5" />
+          <svg v-else-if="item.icon === 'video'" viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3.5" y="6" width="12.5" height="12" rx="2" />
+            <path d="m16 10 4.5-2.5v9L16 14" stroke-linejoin="round" />
+            <path d="m8.5 10.2 3.2 1.8-3.2 1.8v-3.6Z" stroke-linejoin="round" />
           </svg>
           <span>{{ item.label }}</span>
-          <span v-if="'badge' in item" class="ml-auto text-[11px] font-black text-[#64748b]">{{ item.badge }}</span>
+          <!-- 统一的 AI 发光胶囊，比在每个菜单名称前重复 AI 更清爽。 -->
+          <span class="ml-auto rounded-full bg-gradient-to-r from-[#0d6efd] via-[#4f7cff] to-[#9a63ff] px-2 py-0.5 text-[10px] font-black tracking-[0.08em] text-white shadow-[0_3px_9px_rgba(73,105,255,0.34)]">{{ item.tag }}</span>
+        </NuxtLink>
+      </nav>
+    </div>
+
+    <div class="mt-9">
+      <p class="mb-4 px-1 text-[16px] font-black text-[#0f172a]">工具</p>
+      <nav class="space-y-3">
+        <NuxtLink
+          v-for="item in toolMenuItems"
+          :key="item.key"
+          :to="item.to"
+          class="group flex h-[48px] items-center gap-3 rounded-[13px] px-5 text-[15px] font-bold transition"
+          :class="item.key === activeMenu
+            ? 'bg-[#f0f4ff] text-[#005FFE]'
+            : 'text-[#53627c] hover:bg-[#f6f8fc] hover:text-[#005FFE]'"
+        >
+          <svg v-if="item.icon === 'image'" viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="4" y="5" width="16" height="14" rx="2.5" />
+            <path d="m5 16 4.2-4.2a2 2 0 0 1 2.8 0L16 16" stroke-linecap="round" stroke-linejoin="round" />
+            <path d="m14 14 1.2-1.2a2 2 0 0 1 2.8 0L20 15" stroke-linecap="round" stroke-linejoin="round" />
+            <path d="M8 9.2h.01" stroke-linecap="round" />
+          </svg>
+          <svg v-else viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3.5" y="6" width="12.5" height="12" rx="2" />
+            <path d="m16 10 4.5-2.5v9L16 14" stroke-linejoin="round" />
+            <path d="m8.5 10.2 3.2 1.8-3.2 1.8v-3.6Z" stroke-linejoin="round" />
+          </svg>
+          <span>{{ item.label }}</span>
+          <!-- 工具区沿用同一 AI 标签，确保入口语义在侧栏中一眼可辨。 -->
+          <span class="ml-auto rounded-full bg-gradient-to-r from-[#0d6efd] via-[#4f7cff] to-[#9a63ff] px-2 py-0.5 text-[10px] font-black tracking-[0.08em] text-white shadow-[0_3px_9px_rgba(73,105,255,0.34)]">{{ item.tag }}</span>
         </NuxtLink>
       </nav>
     </div>
@@ -133,8 +171,9 @@ const createMenuItems = [
 
     <div v-if="activeWorkspaceView !== 'billing'" class="mt-auto space-y-4">
       <NuxtLink
-        to="/dashboard-announcements"
-        class="group flex h-[48px] items-center gap-3 rounded-[13px] px-2 text-[15px] font-bold text-[#53627c] transition hover:bg-[#f6f8fc] hover:text-[#005FFE]"
+        to="/dashboard-help"
+        class="group flex h-[48px] items-center gap-3 rounded-[13px] px-2 text-[15px] font-bold transition hover:bg-[#f6f8fc] hover:text-[#005FFE]"
+        :class="activeWorkspaceView === 'help' ? 'bg-[#f0f4ff] text-[#005FFE]' : 'text-[#53627c]'"
       >
         <svg viewBox="0 0 24 24" class="h-6 w-6" fill="none" stroke="currentColor" stroke-width="2">
           <circle cx="12" cy="12" r="9.2" />
@@ -145,6 +184,7 @@ const createMenuItems = [
       <button
         class="group flex h-[48px] w-full items-center gap-3 rounded-[13px] px-2 text-left text-[15px] font-bold text-[#53627c] transition hover:bg-[#f6f8fc] hover:text-[#005FFE]"
         type="button"
+        @click="emit('requestFeedback')"
       >
         <svg viewBox="0 0 24 24" class="h-6 w-6" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M4.5 6.8A2.8 2.8 0 0 1 7.3 4h9.4a2.8 2.8 0 0 1 2.8 2.8v6.4a2.8 2.8 0 0 1-2.8 2.8H10l-4.2 3.4V16H7.3a2.8 2.8 0 0 1-2.8-2.8V6.8Z" stroke-linejoin="round" />
@@ -160,6 +200,21 @@ const createMenuItems = [
 <style scoped>
 .dashboard-sidebar {
   transition: background var(--motion-normal), border-color var(--motion-normal), color var(--motion-normal);
+}
+
+/* 默认紧凑密度只压缩桌面端控件与留白，不使用全局缩放以保证弹窗和坐标稳定。 */
+.dashboard-sidebar--compact {
+  width: 244px;
+  padding: 18px;
+}
+
+.dashboard-sidebar--compact .dashboard-brand-title {
+  font-size: 19px;
+}
+
+.dashboard-sidebar--compact .dashboard-brand-subtitle {
+  margin-top: 5px;
+  font-size: 12px;
 }
 
 /* 侧边栏之前按设计稿写死浅色，这里集中接回主题 token，避免深色模式下仍是白底黑字。 */

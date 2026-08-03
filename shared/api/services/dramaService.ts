@@ -32,6 +32,7 @@ import type {
   StoryboardVideoGeneratePayload,
   StoryboardVideoPromptGeneratePayload,
 } from '~/shared/api/types'
+import type { EpisodeCutSavePayload } from '~/entities/drama/episodeCutTypes'
 
 export const dramaService = {
   async getRuntimeConfig() {
@@ -308,5 +309,33 @@ export const dramaService = {
 
   async batchGenerateStoryboardVideos(projectId: string, payload: StoryboardVideoBatchPayload) {
     return callApi('drama/batchGenerateStoryboardVideos', (adapter) => adapter.batchGenerateStoryboardVideos(projectId, payload))
+  },
+
+  async getEpisodeCut(projectId: string, episodeNo: number) {
+    return callApi('drama/getEpisodeCut', adapter => adapter.getEpisodeCut(projectId, episodeNo))
+  },
+
+  async saveEpisodeCut(projectId: string, episodeNo: number, payload: EpisodeCutSavePayload) {
+    return callApi('drama/saveEpisodeCut', adapter => adapter.saveEpisodeCut(projectId, episodeNo, payload))
+  },
+
+  async uploadEpisodeBgm(projectId: string, episodeNo: number, file: File) {
+    return callApi('drama/uploadEpisodeBgm', adapter => adapter.uploadEpisodeBgm(projectId, episodeNo, file))
+  },
+
+  async generateEpisodeCaptions(projectId: string, episodeNo: number) {
+    return callApi('drama/generateEpisodeCaptions', adapter => adapter.generateEpisodeCaptions(projectId, episodeNo))
+  },
+
+  async renderEpisodeCut(projectId: string, episodeNo: number) {
+    return callApi('drama/renderEpisodeCut', adapter => adapter.renderEpisodeCut(projectId, episodeNo))
+  },
+
+  async exportEpisodeEditorPackage(projectId: string, episodeNo: number) {
+    return callApi('drama/exportEpisodeEditorPackage', adapter => adapter.exportEpisodeEditorPackage(projectId, episodeNo))
+  },
+
+  async getEpisodeCutTask(projectId: string, episodeNo: number, taskId: string) {
+    return callApi('drama/getEpisodeCutTask', adapter => adapter.getEpisodeCutTask(projectId, episodeNo, taskId))
   }
 }

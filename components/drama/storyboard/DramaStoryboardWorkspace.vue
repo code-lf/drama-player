@@ -115,6 +115,8 @@ const segmentDraft = ref<StoryboardDirectorSegment[]>([])
 const advancedSegmentId = ref('')
 const batchEstimate = ref<StoryboardBatchEstimate | null>(null)
 const batchConfirmVisible = ref(false)
+/** 失败镜头重试的二次确认气泡开关。 */
+const retryFailedPopoverOpen = ref(false)
 const pendingGenerationIds = ref<string[]>([])
 const overviewEstimate = ref<StoryboardBatchEstimate | null>(null)
 const overviewEstimateSignature = ref('')
@@ -365,6 +367,10 @@ const allSelectableSelected = computed(() => (
 ))
 const currentRowEstimate = computed(() => selectedRow.value ? rowEstimateCache.value[selectedRow.value.id] || null : null)
 const failedBatchCount = computed(() => Number(workspace.value?.latestBatch.counts.failed || 0))
+/** 当前工作区里可定位到具体镜头的失败项，用于在重试气泡中展示问题上下文。 */
+const failedStoryboardRows = computed(() => (workspace.value?.rows || []).filter(row => (
+  row.videoStatus === 'failed' || row.generationStatus === 'failed'
+)))
 const managedAssets = computed(() => (assetWorkspace.value?.assets || []).filter(profile => profile.asset_type === assetManagerType.value))
 
 const durationOptions: BaseSelectOption[] = Array.from({ length: 9 }, (_, index) => ({
@@ -504,6 +510,30 @@ function thumbnailFor(row: StoryboardRow): string {
   return selectedTakePoster
     || row.previsualizationUrl
     || String(extra.thumbnail_url || extra.thumbnailUrl || assetReference?.selected_url || assetReference?.selectedUrl || '')
+}
+
+/** 将后端返回的失败原因统一整理成用户能直接理解的问题描述。 */
+function failedRowIssueText(row: StoryboardRow): string {
+  return row.videoErrorMessage || row.generationErrorMessage || '视频生成失败，当前没有更具体的错误说明。'
+}
+
+/**
+ * 优先使用自动质检抽取的帧作为失败证据，其次使用镜头封面、首帧预演或资产参考图。
+ * 这些地址都来自当前镜头已有数据，不额外发起上传或生成请求。
+ */
+function failedRowEvidence(row: StoryboardRow): { url: string; label: string } | null {
+  const selectedTake = row.takes.find(take => take.id === row.selectedTakeId)
+    || row.takes.find(take => take.isSelected)
+    || row.takes.at(-1)
+  const qc = selectedTake?.qc || {}
+  const frameUrls = qc.frame_urls || qc.frameUrls
+  if (Array.isArray(frameUrls)) {
+    const frameUrl = frameUrls.find(item => typeof item === 'string' && item.trim())
+    if (frameUrl) return { url: frameUrl, label: '质检截图' }
+  }
+
+  const thumbnail = thumbnailFor(row)
+  return thumbnail ? { url: thumbnail, label: row.previsualizationUrl ? '首帧预演' : '方案参考图' } : null
 }
 
 function boundAssets(row: StoryboardRow): BoundStoryboardAsset[] {
@@ -925,6 +955,29 @@ function toggleSelection(rowId: string): void {
     : [...selectedIds.value, rowId]
 }
 
+/** 判断镜头是否已有可供人工审核的视频版本。 */
+function hasReviewableVideo(row: StoryboardRow): boolean {
+  return Boolean(row.videoUrl || (row.takes || []).some(take => Boolean(take.videoUrl)))
+}
+
+/**
+ * 总览卡片按实际状态分流：
+ * 已有视频优先进入快速审核；尚未生成的视频镜头进入工作台完善方案或发起生成。
+ */
+function handleOverviewCardClick(row: StoryboardRow): void {
+  if (selectionMode.value) {
+    toggleSelection(row.id)
+    return
+  }
+
+  if (hasReviewableVideo(row)) {
+    openQuickReview(row)
+    return
+  }
+
+  openWorkbench(row)
+}
+
 async function prepareGeneration(rowIds: string[]): Promise<void> {
   if (!rowIds.length) return
   actionBusy.value = 'estimate-batch'
@@ -984,13 +1037,19 @@ async function startGeneration(): Promise<void> {
   }
 }
 
+/** 只重试最近批次中失败的镜头，避免重复提交已成功或仍在执行的任务。 */
 async function retryFailedBatch(): Promise<void> {
   const batchId = workspace.value?.latestBatch.batchId
-  if (!batchId || failedBatchCount.value <= 0) return
+  const failedCount = failedBatchCount.value
+  if (!batchId || failedCount <= 0) {
+    retryFailedPopoverOpen.value = false
+    return
+  }
   actionBusy.value = 'retry-failed-batch'
   try {
     await dramaService.retryFailedStoryboardVideoBatch(props.projectId, batchId)
-    showNotice(`已重新提交 ${failedBatchCount.value} 个失败镜头，成功镜头不会重复生成。`)
+    retryFailedPopoverOpen.value = false
+    showNotice(`已重新提交 ${failedCount} 个失败镜头，成功镜头不会重复生成。`)
     await loadWorkspace(true)
   } catch (error) {
     showNotice(actionErrorMessage(error, '失败镜头重试提交失败，请稍后再试。'), 'error')
@@ -1656,7 +1715,78 @@ onBeforeUnmount(stopRealtimeTracking)
             <div class="summary-item summary-item--accepted"><ShieldCheck :size="15" /><strong>{{ workspace.summary.accepted }}</strong><span>已验收</span></div>
             <div class="summary-item summary-item--running"><LoaderCircle :size="15" :class="{ spin: workspace.summary.videoRunning > 0 }" /><strong>{{ workspace.summary.videoRunning + workspace.summary.videoQueued }}</strong><span>制作中</span></div>
             <div class="summary-item summary-item--review"><Clock3 :size="15" /><strong>{{ workspace.summary.reviewRequired }}</strong><span>待审核</span></div>
-            <div class="summary-item summary-item--failed"><AlertTriangle :size="15" /><strong>{{ workspace.summary.videoFailed }}</strong><span>失败</span></div>
+            <div class="summary-item summary-item--failed" :class="{ 'summary-item--retryable': failedBatchCount > 0 }">
+              <AlertTriangle :size="15" />
+              <strong>{{ workspace.summary.videoFailed }}</strong>
+              <div class="summary-item__footer">
+                <span>失败</span>
+                <UPopover
+                  v-if="failedBatchCount > 0"
+                  v-model:open="retryFailedPopoverOpen"
+                  :content="{ side: 'bottom', align: 'center', sideOffset: 10 }"
+                >
+                  <UButton
+                    class="summary-retry-trigger"
+                    color="error"
+                    variant="ghost"
+                    size="xs"
+                    square
+                    :loading="actionBusy === 'retry-failed-batch'"
+                    aria-label="查看失败原因并重试"
+                  >
+                    <RotateCcw v-if="actionBusy !== 'retry-failed-batch'" :size="14" />
+                  </UButton>
+                  <template #content>
+                    <div class="retry-failed-popover">
+                      <div class="retry-failed-popover__title-row">
+                        <strong>仅重试失败镜头</strong>
+                        <span>{{ failedBatchCount }} 项</span>
+                      </div>
+                      <p class="retry-failed-popover__hint">已成功、生成中和待审核镜头不会重复生成。</p>
+
+                      <div v-if="failedStoryboardRows.length" class="failed-shot-list">
+                        <article v-for="row in failedStoryboardRows" :key="row.id" class="failed-shot-item">
+                          <div class="failed-shot-item__heading">
+                            <strong>镜头 {{ String(row.shotNo).padStart(2, '0') }}</strong>
+                            <span>{{ titleFor(row) }}</span>
+                          </div>
+                          <p>{{ failedRowIssueText(row) }}</p>
+                          <div v-if="failedRowEvidence(row)" class="failed-shot-item__evidence">
+                            <img :src="failedRowEvidence(row)?.url" :alt="`镜头 ${row.shotNo} ${failedRowEvidence(row)?.label}`" />
+                            <span>{{ failedRowEvidence(row)?.label }}</span>
+                          </div>
+                          <div v-else class="failed-shot-item__no-evidence">暂无可附带截图</div>
+                        </article>
+                      </div>
+                      <p v-else class="retry-failed-popover__empty">
+                        {{ workspace.latestBatch.errorMessage || '失败镜头详情暂未返回，点击重试即可重新提交本批失败项。' }}
+                      </p>
+
+                      <div class="retry-failed-popover__actions">
+                        <UButton color="neutral" variant="ghost" size="sm" label="取消" @click="retryFailedPopoverOpen = false" />
+                        <UButton color="error" size="sm" :loading="actionBusy === 'retry-failed-batch'" @click="retryFailedBatch">
+                          <RotateCcw v-if="actionBusy !== 'retry-failed-batch'" :size="14" />
+                          重试失败项
+                        </UButton>
+                      </div>
+                    </div>
+                  </template>
+                </UPopover>
+                <UTooltip v-else text="当前没有可重试的失败镜头">
+                  <UButton
+                    class="summary-retry-trigger"
+                    color="error"
+                    variant="ghost"
+                    size="xs"
+                    square
+                    disabled
+                    aria-label="当前没有可重试的失败镜头"
+                  >
+                    <RotateCcw :size="14" />
+                  </UButton>
+                </UTooltip>
+              </div>
+            </div>
           </div>
 
           <div class="batch-panel">
@@ -1665,30 +1795,19 @@ onBeforeUnmount(stopRealtimeTracking)
               <div><strong>批量生成任务</strong><small>使用系统智能匹配的原生音画模型</small></div>
             </div>
             <div class="batch-metrics">
-      <span><b>{{ selectionMode ? selectedIds.length : activeRows.filter(row => row.videoStatus === 'idle').length }}</b> 个镜头</span>
-              <span><b>{{ formatDuration(workspace.summary.estimatedDurationSec) }}</b> 预计时长</span>
+              <span class="batch-metric">
+                <b>{{ selectionMode ? selectedIds.length : activeRows.filter(row => row.videoStatus === 'idle').length }}</b>
+                <em>个镜头</em>
+              </span>
+              <span class="batch-metric">
+                <b>{{ formatDuration(workspace.summary.estimatedDurationSec) }}</b>
+                <em>预计时长</em>
+              </span>
               <span class="batch-credit">
-                <b>预计消耗</b>
-                <CreditAmount v-if="(overviewEstimate?.estimatedCredits || workspace.latestBatch.estimatedCredits) > 0" :value="overviewEstimate?.estimatedCredits || workspace.latestBatch.estimatedCredits" size="xs" tone="inherit" show-unit />
+                <em>预计消耗</em>
+                <CreditAmount v-if="(overviewEstimate?.estimatedCredits || workspace.latestBatch.estimatedCredits) > 0" :value="overviewEstimate?.estimatedCredits || workspace.latestBatch.estimatedCredits" size="sm" tone="inherit" show-unit />
                 <em v-else>确认方案后估算</em>
               </span>
-            </div>
-            <div class="batch-actions">
-    <button
-      class="button button--primary"
-      type="button"
-      :disabled="isStoryboardPlanning || !workspace.rows.length"
-      @click="enterSelectionMode"
-    >
-      <CheckCircle2 :size="17" />
-      批量操作
-    </button>
-              <button
-                class="button button--secondary"
-                type="button"
-                :disabled="failedBatchCount <= 0 || actionBusy === 'retry-failed-batch'"
-                @click="retryFailedBatch"
-              ><RotateCcw :size="15" />仅重试失败{{ failedBatchCount ? ` (${failedBatchCount})` : '' }}</button>
             </div>
           </div>
         </header>
@@ -1740,6 +1859,16 @@ onBeforeUnmount(stopRealtimeTracking)
             </label>
           </div>
           <div class="toolbar__actions">
+            <UButton
+              color="neutral"
+              :variant="selectionMode ? 'soft' : 'outline'"
+              size="sm"
+              :disabled="isStoryboardPlanning || !workspace.rows.length"
+              @click="selectionMode ? exitSelectionMode() : enterSelectionMode()"
+            >
+              <CheckCircle2 :size="16" />
+              {{ selectionMode ? '退出选择' : '批量选择' }}
+            </UButton>
             <UTooltip text="网格视图"><UButton color="neutral" :variant="displayMode === 'grid' ? 'soft' : 'outline'" size="sm" square aria-label="网格视图" @click="displayMode = 'grid'"><LayoutGrid :size="16" /></UButton></UTooltip>
             <UTooltip text="列表视图"><UButton color="neutral" :variant="displayMode === 'list' ? 'soft' : 'outline'" size="sm" square aria-label="列表视图" @click="displayMode = 'list'"><List :size="16" /></UButton></UTooltip>
             <UButton color="neutral" variant="outline" size="sm" @click="tuningVisible = true"><SlidersHorizontal :size="16" />整集统调</UButton>
@@ -1767,7 +1896,7 @@ onBeforeUnmount(stopRealtimeTracking)
             :key="row.id"
             class="shot-card"
     :class="[`risk-${row.riskLevel}`, { selected: selectedIds.includes(row.id), 'shot-card--selection-mode': selectionMode }]"
-    @click="selectionMode ? toggleSelection(row.id) : openQuickReview(row)"
+            @click="handleOverviewCardClick(row)"
           >
             <div class="shot-card__media">
               <img v-if="thumbnailFor(row)" :src="thumbnailFor(row)" :alt="`${titleFor(row)}方案参考`" />
@@ -1958,7 +2087,7 @@ onBeforeUnmount(stopRealtimeTracking)
             </section>
 
             <section class="detail-section">
-              <div class="section-heading"><div><strong>连续性检查</strong><span>根据前后镜头状态、锁定资产与生成视频检查</span></div><span class="qc-status" :class="`qc-status--${String(selectedTakeQc.status || 'pending')}`">{{ qcStatusText(selectedTakeQc.status) }}</span></div>
+        <div class="section-heading"><div><div class="section-heading__title-row"><strong>连续性检查</strong><span v-if="selectedRow.riskReasons.includes('包含原生对白')" class="native-dialogue-badge"><Volume2 :size="13" />包含原生对白</span></div><span>根据前后镜头状态、锁定资产与生成视频检查</span></div><span class="qc-status" :class="`qc-status--${String(selectedTakeQc.status || 'pending')}`">{{ qcStatusText(selectedTakeQc.status) }}</span></div>
               <div class="continuity-grid">
                 <div class="continuity-check" :class="`continuity-check--${continuityCheckState('role')}`">
                   <AlertTriangle v-if="continuityCheckState('role') === 'warning'" :size="16" />
@@ -2000,7 +2129,7 @@ onBeforeUnmount(stopRealtimeTracking)
                   <small>{{ continuityCheckEvidence('frame') }}</small>
                 </div>
               </div>
-              <ul v-if="selectedRow.riskReasons.filter(reason => reason !== '包含关键道具').length" class="risk-list"><li v-for="reason in selectedRow.riskReasons.filter(item => item !== '包含关键道具')" :key="reason">{{ reason }}</li></ul>
+        <ul v-if="selectedRow.riskReasons.filter(reason => reason !== '包含关键道具' && reason !== '包含原生对白').length" class="risk-list"><li v-for="reason in selectedRow.riskReasons.filter(item => item !== '包含关键道具' && item !== '包含原生对白')" :key="reason">{{ reason }}</li></ul>
               <ul v-if="selectedTakeQcIssues.length" class="qc-issues"><li v-for="issue in selectedTakeQcIssues" :key="issue">{{ issue }}</li></ul>
             </section>
 
@@ -2421,29 +2550,45 @@ onBeforeUnmount(stopRealtimeTracking)
 .context-tags span, .asset-tags span { padding: 3px 7px; border: 1px solid var(--sb-line); border-radius: 4px; background: #fafcff; color: #667085; font-size: 11px; }
 .context-tags .warning { border-color: #f8c98e; color: #b45309; background: #fff8eb; }
 .production-summary { display: grid; grid-template-columns: repeat(5, minmax(66px, 1fr)); gap: 8px; align-content: center; }
-.production-summary div { min-height: 86px; display: grid; grid-template-columns: auto auto; grid-template-rows: auto auto; column-gap: 6px; align-content: center; justify-content: center; border: 1px solid var(--sb-line); border-radius: 8px; background: var(--sb-soft); }
-.production-summary svg { grid-row: 1; align-self: center; }
-.production-summary strong { font-size: 25px; line-height: 1; }
-.production-summary span { grid-column: 1 / -1; margin-top: 8px; text-align: center; color: var(--sb-muted); font-size: 12px; }
+.production-summary > .summary-item { min-height: 86px; display: grid; grid-template-columns: auto auto; grid-template-rows: auto auto; column-gap: 6px; align-content: center; justify-content: center; border: 1px solid var(--sb-line); border-radius: 8px; background: var(--sb-soft); }
+.production-summary > .summary-item > svg { grid-row: 1; align-self: center; }
+.production-summary > .summary-item > strong { font-size: 25px; line-height: 1; }
+.production-summary > .summary-item > span { grid-column: 1 / -1; margin-top: 8px; text-align: center; color: var(--sb-muted); font-size: 12px; }
+.summary-item__footer { display: inline-flex; grid-column: 1 / -1; align-items: center; justify-content: center; gap: 2px; margin-top: 8px; color: var(--sb-muted); font-size: 12px; }
+.summary-item__footer > span { line-height: 24px; }
+.summary-retry-trigger { min-width: 24px; min-height: 24px; padding: 0; border-radius: 4px; }
+.summary-item--retryable { border-color: #f0b6b6 !important; }
+.retry-failed-popover { width: min(360px, calc(100vw - 32px)); padding: 12px; color: #344054; }
+.retry-failed-popover__title-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.retry-failed-popover__title-row strong { color: #1d2939; font-size: 14px; line-height: 20px; }
+.retry-failed-popover__title-row span { flex: 0 0 auto; color: #d14343; font-size: 12px; font-weight: 700; }
+.retry-failed-popover__hint, .retry-failed-popover__empty { margin: 5px 0 0; color: #667085; font-size: 12px; line-height: 18px; }
+.failed-shot-list { display: grid; max-height: 272px; gap: 8px; margin-top: 10px; overflow-y: auto; padding-right: 3px; }
+.failed-shot-item { padding: 8px; border: 1px solid #f2d7d7; border-radius: 7px; background: #fffafa; }
+.failed-shot-item__heading { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.failed-shot-item__heading strong { flex: 0 0 auto; color: #b42318; font-size: 12px; }
+.failed-shot-item__heading span { overflow: hidden; color: #475467; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.failed-shot-item p { display: -webkit-box; margin: 4px 0 0; overflow: hidden; color: #667085; font-size: 12px; line-height: 17px; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
+.failed-shot-item__evidence { position: relative; height: 76px; margin-top: 7px; overflow: hidden; border-radius: 5px; background: #f2f4f7; }
+.failed-shot-item__evidence img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.failed-shot-item__evidence span { position: absolute; right: 5px; bottom: 5px; padding: 2px 5px; border-radius: 3px; background: rgb(16 24 40 / 68%); color: #fff; font-size: 10px; line-height: 14px; }
+.failed-shot-item__no-evidence { margin-top: 7px; color: #98a2b3; font-size: 11px; }
+.retry-failed-popover__actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
 .summary-item--total { background: linear-gradient(145deg, #f8fbff, #eef4ff) !important; color: #245fae; }
 .summary-item--accepted { border-color: #cdebd7 !important; background: linear-gradient(145deg, #f8fcf9, #eaf8ef) !important; color: #16844b; }
 .summary-item--running { border-color: #cfdef8 !important; background: linear-gradient(145deg, #fafcff, #edf4ff) !important; color: #1468ff; }
 .summary-item--review { border-color: #f3dfc4 !important; background: linear-gradient(145deg, #fffcf7, #fff5e7) !important; color: #bd6a06; }
 .summary-item--failed { border-color: #f2d2d2 !important; background: linear-gradient(145deg, #fffafa, #fff0f0) !important; color: #d14343; }
-.batch-panel { padding: 14px; border: 1px solid #c9d8f0; border-radius: 8px; background: linear-gradient(145deg, #fafdff 0%, #eef5ff 100%); }
-.batch-panel__heading { display: flex; gap: 10px; align-items: center; }
+.batch-panel { align-self: center; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px 12px; padding: 14px 16px; border: 1px solid #c9d8f0; border-radius: 8px; background: linear-gradient(145deg, #fafdff 0%, #eef5ff 100%); }
+.batch-panel__heading { display: flex; grid-column: 1 / -1; gap: 10px; align-items: center; }
 .batch-panel__heading div { display: flex; flex-direction: column; }
 .batch-panel__heading small, .section-heading span { margin-top: 3px; color: var(--sb-muted); font-size: 11px; }
 .icon-box, .dialog-icon { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 8px; background: var(--sb-blue-soft); color: var(--sb-blue); }
-.batch-metrics { display: flex; flex-wrap: wrap; gap: 8px 20px; margin: 13px 0; color: var(--sb-muted); font-size: 12px; }
-.batch-metrics b { color: var(--sb-ink); }
-.batch-credit { display: inline-flex; align-items: center; gap: 5px; }
-.batch-credit em { color: #6f7c91; font-size: 11px; font-style: normal; font-weight: 600; }
-.batch-actions { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
-/* 批量操作属于高频控件，文字保持紧凑，品牌积分图标在按钮中保持清晰可见。 */
-.batch-actions .button { min-height: 36px; padding-inline: 12px; font-size: 12px; font-weight: 650; }
-.batch-actions .button--secondary { padding-inline: 11px; }
-.batch-credit-icon { width: 28px; height: 28px; flex: 0 0 auto; color: currentColor; }
+.batch-metrics { display: grid; grid-column: 1 / -1; grid-template-columns: repeat(3, max-content); align-items: center; justify-content: space-between; column-gap: 18px; margin: 0; padding-top: 10px; border-top: 1px solid #dbe7f8; color: var(--sb-muted); font-size: 13px; }
+.batch-metric, .batch-credit { display: inline-flex; align-items: center; gap: 4px; min-height: 20px; white-space: nowrap; }
+.batch-metric b { color: var(--sb-ink); font-size: 15px; font-weight: 800; line-height: 20px; letter-spacing: -0.01em; }
+.batch-metric em, .batch-credit > em { color: #6f7c91; font-size: 13px; font-style: normal; font-weight: 600; line-height: 20px; }
+.batch-credit { color: var(--sb-blue); }
 .strategy-control { display: inline-flex; padding: 2px; border: 1px solid var(--sb-line); border-radius: 6px; background: white; }
 .strategy-control button, .review-mode button, .option-row button { min-height: 30px; border: 0; border-radius: 4px; background: transparent; color: var(--sb-muted); font-size: 12px; cursor: pointer; }
 .strategy-control button { padding: 0 8px; }
@@ -2848,10 +2993,8 @@ onBeforeUnmount(stopRealtimeTracking)
 }
 @media (max-width: 1380px) {
   .production-header { grid-template-columns: minmax(340px, 1.2fr) minmax(350px, 1fr); }
-  .batch-panel { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr auto auto auto; gap: 12px; align-items: center; }
-  .batch-panel .button--block { width: auto; margin: 0; }
-  .batch-panel .strategy-control { margin: 0; }
-  .batch-metrics { margin: 0; }
+  .batch-panel { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; gap: 18px; }
+  .batch-metrics { margin: 0; padding: 0; border: 0; }
   .workbench-layout { grid-template-columns: minmax(400px, .84fr) minmax(520px, 1.16fr); }
   .shot-grid:not(.shot-grid--list) { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .asset-choice-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }

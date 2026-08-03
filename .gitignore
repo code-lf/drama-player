@@ -14,6 +14,10 @@ node_modules
 !.env.example
 .nuxt-app
 .nuxt-build
+# 本机 pnpm 缓存和 Codex 视觉验收产物，不属于应用源代码。
+.pnpm-store/
+.codex/
+/artifacts/design-qa/
 # 日志
 logs
 *.log

@@ -1,6 +1,6 @@
 import type { AuthSession } from '~/entities/auth/types'
 import type { SystemAnnouncement } from '~/entities/announcement/types'
-import type { AccountProfile, CreditLedgerPage, CreditPackage } from '~/entities/account/types'
+import type { AccountProfile, AccountSecuritySummary, CreditLedgerPage, CreditPackage, PaymentOrder, PaymentOrderPage } from '~/entities/account/types'
 import type { CanvasGraph } from '~/entities/canvas/types'
 import type {
   DramaCreditPreview,
@@ -10,13 +10,17 @@ import type {
   DramaProjectPage,
   DramaRuntimeConfig
 } from '~/entities/drama/types'
+import type { EpisodeCutDraft, EpisodeCutSavePayload, EpisodeCutTask } from '~/entities/drama/episodeCutTypes'
 import type { Project } from '~/entities/project/types'
+import type { FeedbackPage, FeedbackSubmitPayload, RedeemCodeResult, SupportCenter, UserFeedback, WebsiteInfo } from '~/entities/support/types'
 import type {
   ProductImageCreditPreview,
   ProductImageGeneratePayload,
   ProductImageGenerateResult,
+  ProductImageTemplate,
   ProductSellingPoint
 } from '~/entities/product-image/types'
+import type { ProductVideoCreatePayload, ProductVideoCreditPreview, ProductVideoHome, ProductVideoTask, ProductVideoTemplate } from '~/entities/product-video/types'
 import type {
   StoryboardClipContract,
   StoryboardContinuationPolicy,
@@ -581,13 +585,29 @@ export interface ApiAdapter {
   createProject(payload: { title?: string; category?: string }): Promise<ApiResponse<Project>>
   getWechatLoginTicket(): Promise<ApiResponse<WechatLoginTicket>>
   checkWechatLogin(ticketId: string): Promise<ApiResponse<AuthSession>>
-  accountLogin?(account: string, password: string): Promise<ApiResponse<AuthSession>>
-  accountRegister?(payload: { account: string; password: string; code: string; nickname?: string }): Promise<ApiResponse<AuthSession>>
-  sendSmsCode?(phone: string): Promise<ApiResponse<{ status: string; message: string; code?: string }>>
-  phoneLogin?(phone: string, code: string): Promise<ApiResponse<AuthSession>>
+  accountLogin?(account: string, password: string, acceptedDocumentCodes?: string[]): Promise<ApiResponse<AuthSession>>
+  accountRegister?(payload: { account: string; password: string; code: string; nickname?: string; acceptedDocumentCodes?: string[] }): Promise<ApiResponse<AuthSession>>
+  // 短信验证码永不回传给客户端，只返回服务端建议的重试等待时间。
+  sendSmsCode?(phone: string, purpose?: 'login' | 'register'): Promise<ApiResponse<{ status: string; message: string; retryAfterSeconds?: number }>>
+  phoneLogin?(phone: string, code: string, acceptedDocumentCodes?: string[]): Promise<ApiResponse<AuthSession>>
   getAccountProfile(): Promise<ApiResponse<AccountProfile>>
+  updateAccountProfile?(payload: { nickname: string }): Promise<ApiResponse<AccountProfile>>
+  uploadAccountAvatar?(file: File): Promise<ApiResponse<AccountProfile>>
+  getAccountSecurity?(): Promise<ApiResponse<AccountSecuritySummary>>
+  sendAccountSecurityCode?(payload: { target: 'old_phone' | 'new_phone' | 'password'; newPhone?: string }): Promise<ApiResponse<{ status: string; retryAfterSeconds: number }>>
+  rebindAccountPhone?(payload: { newPhone: string; oldPhoneCode: string; newPhoneCode: string }): Promise<ApiResponse<AccountSecuritySummary>>
+  changeAccountPassword?(payload: { currentPassword: string; newPassword: string; verificationCode: string }): Promise<ApiResponse<{ status: string }>>
   getAccountCreditPackages(): Promise<ApiResponse<CreditPackage[]>>
   getAccountCreditLedgers(page?: number, pageSize?: number): Promise<ApiResponse<CreditLedgerPage>>
+  createPaymentOrder?(payload: { packageId: string; channel: 'wechat' | 'alipay'; idempotencyKey: string }): Promise<ApiResponse<PaymentOrder>>
+  retryPaymentCheckout?(orderNo: string): Promise<ApiResponse<PaymentOrder>>
+  getPaymentOrders?(page?: number, pageSize?: number): Promise<ApiResponse<PaymentOrderPage>>
+  redeemCode(code: string): Promise<ApiResponse<RedeemCodeResult>>
+  getSupportCenter(): Promise<ApiResponse<SupportCenter>>
+  getLoginAppearance(): Promise<ApiResponse<WebsiteInfo>>
+  getLegalDocuments?(): Promise<ApiResponse<import('~/entities/support/types').LegalDocument[]>>
+  submitFeedback(payload: FeedbackSubmitPayload): Promise<ApiResponse<UserFeedback>>
+  getMyFeedback(page?: number, pageSize?: number): Promise<ApiResponse<FeedbackPage>>
   getActiveAnnouncements(placement?: string): Promise<ApiResponse<SystemAnnouncement[]>>
   getRuntimeConfig(): Promise<ApiResponse<DramaRuntimeConfig>>
   getCanvasGraph(projectId: string): Promise<ApiResponse<CanvasGraph>>
@@ -665,7 +685,23 @@ export interface ApiAdapter {
   generateStoryboardVideoPrompt(projectId: string, rowId: string, payload?: StoryboardVideoPromptGeneratePayload): Promise<ApiResponse<StoryboardVideoPromptInfo>>
   generateStoryboardVideo(projectId: string, rowId: string, payload?: StoryboardVideoGeneratePayload): Promise<ApiResponse<StoryboardVideoRunInfo>>
   batchGenerateStoryboardVideos(projectId: string, payload: StoryboardVideoBatchPayload): Promise<ApiResponse<StoryboardVideoBatchResult>>
-  previewProductImageCredits(payload: Pick<ProductImageGeneratePayload, 'count' | 'model' | 'prompt' | 'splitSellingPoints'>): Promise<ApiResponse<ProductImageCreditPreview>>
+  getEpisodeCut(projectId: string, episodeNo: number): Promise<ApiResponse<EpisodeCutDraft>>
+  saveEpisodeCut(projectId: string, episodeNo: number, payload: EpisodeCutSavePayload): Promise<ApiResponse<EpisodeCutDraft>>
+  uploadEpisodeBgm(projectId: string, episodeNo: number, file: File): Promise<ApiResponse<EpisodeCutDraft>>
+  generateEpisodeCaptions(projectId: string, episodeNo: number): Promise<ApiResponse<EpisodeCutTask>>
+  renderEpisodeCut(projectId: string, episodeNo: number): Promise<ApiResponse<EpisodeCutTask>>
+  exportEpisodeEditorPackage(projectId: string, episodeNo: number): Promise<ApiResponse<EpisodeCutTask>>
+  getEpisodeCutTask(projectId: string, episodeNo: number, taskId: string): Promise<ApiResponse<EpisodeCutTask>>
+  listProductImageTemplates(params?: { category?: string; featured?: boolean }): Promise<ApiResponse<ProductImageTemplate[]>>
+  previewProductImageCredits(payload: Pick<ProductImageGeneratePayload, 'count' | 'model' | 'prompt' | 'splitSellingPoints' | 'templateId'>): Promise<ApiResponse<ProductImageCreditPreview>>
   splitProductSellingPoints(payload: { prompt: string; count: number }): Promise<ApiResponse<ProductSellingPoint[]>>
   generateProductImages(payload: ProductImageGeneratePayload): Promise<ApiResponse<ProductImageGenerateResult>>
+  /** 商品视频前台与模板中心共用的运营快照。 */
+  getProductVideoHome(): Promise<ApiResponse<ProductVideoHome>>
+  listProductVideoTemplates(params?: { category?: string; featured?: boolean }): Promise<ApiResponse<ProductVideoTemplate[]>>
+  previewProductVideoCredits(payload: Pick<ProductVideoCreatePayload, 'templateId' | 'durationSec' | 'resultCount' | 'model'>): Promise<ApiResponse<ProductVideoCreditPreview>>
+  createProductVideoTask(payload: ProductVideoCreatePayload): Promise<ApiResponse<ProductVideoTask>>
+  getProductVideoTask(taskId: string): Promise<ApiResponse<ProductVideoTask>>
+  listProductVideoTasks(): Promise<ApiResponse<ProductVideoTask[]>>
+  selectProductVideoResult(taskId: string, resultId: string): Promise<ApiResponse<ProductVideoTask>>
 }

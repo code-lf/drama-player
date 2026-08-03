@@ -34,6 +34,7 @@ import type {
 } from '~/shared/api/types'
 import CreditAmount from '~/components/ui/CreditAmount.vue'
 import DramaAssetWorkspace from '~/components/drama/assets/DramaAssetWorkspace.vue'
+import DramaEpisodeCutWorkspace from '~/components/drama/video/DramaEpisodeCutWorkspace.vue'
 import DramaStoryboardWorkspace from '~/components/drama/storyboard/DramaStoryboardWorkspace.vue'
 import DramaScriptWorkspace from '~/features/drama/components/script/DramaScriptWorkspace.vue'
 import { Copy, Ellipsis, Plus, Trash2 } from '@lucide/vue'
@@ -358,8 +359,8 @@ const rolePreviewTarget = ref<{ name: string; imageUrl: string; prompt: string }
 const selectedTextModel = ref(fallbackTextModelCatalog[0]?.value || '')
 const selectedImageModel = ref('')
 const selectedVideoModel = ref('')
-// 视频默认供应商已切到阿里参考生视频，避免新项目仍然回落到旧的字节默认。
-const selectedVideoProvider = ref<'alibaba' | 'bytedance'>('alibaba')
+// 供应商标识与运行时配置保持一致；huoshan 是字节火山引擎的实际配置代码。
+const selectedVideoProvider = ref<'alibaba' | 'bytedance' | 'huoshan'>('alibaba')
 const selectedResolution = ref('720p')
 const selectedAspectRatio = ref('16:9')
 const selectedVisualStyle = ref('写实通用')
@@ -593,7 +594,7 @@ const resolutionOptions = computed<PageOption[]>(() => {
 const aspectRatioOptions = computed<PageOption[]>(() => fallbackAspectRatioCatalog)
 const videoProviderOptions = computed<PageOption[]>(() => [
   { label: '阿里引擎', value: 'alibaba', description: '当前默认参考生视频链路' },
-  { label: '字节引擎', value: 'bytedance', description: '视频备选供应商' }
+  { label: '字节引擎', value: 'huoshan', description: '视频备选供应商' }
 ])
 const roleCountSummary = computed(() => {
   const roles = projectDetail.value?.analysis.roles || []
@@ -912,9 +913,9 @@ const refreshCurrentSettingButtonLabel = computed(() => {
   return busyKey.value === 'props' ? '刷新中...' : '刷新道具'
 })
 const selectedStoryboardVideoDurationOptions = computed(() => {
-  const maxDuration = maxStoryboardVideoDuration(selectedVideoModel.value || runtimeConfig.value?.defaults.video_model || '')
-  return Array.from({ length: maxDuration - 1 }).map((_, index) => {
-    const seconds = index + 2
+  const limits = getStoryboardVideoLimits(selectedVideoModel.value || runtimeConfig.value?.defaults.video_model || '')
+  return Array.from({ length: limits.maxDuration - limits.minDuration + 1 }).map((_, index) => {
+    const seconds = index + limits.minDuration
     return {
       label: `${seconds}s`,
       value: String(seconds)
@@ -1042,7 +1043,7 @@ function applyRuntimeDefaults(config: DramaRuntimeConfig): void {
   // 优先读取入口页带过来的参数，保证流程页头部配置和创建入口保持一致。
   selectedTextModel.value = getQueryValue('textModel') || config.defaults.text_model || config.textModels[0]?.model || fallbackTextModelCatalog[0]?.value || ''
   selectedImageModel.value = getQueryValue('imageModel') || config.defaults.image_model || config.imageModels[0]?.model || ''
-  selectedVideoProvider.value = (getQueryValue('videoProvider') as 'alibaba' | 'bytedance') || (config.defaults.video_provider as 'alibaba' | 'bytedance') || 'alibaba'
+  selectedVideoProvider.value = (getQueryValue('videoProvider') as 'alibaba' | 'bytedance' | 'huoshan') || (config.defaults.video_provider as 'alibaba' | 'bytedance' | 'huoshan') || 'alibaba'
   selectedVideoModel.value = getQueryValue('videoModel') || config.defaults.video_model || config.videoModels[0]?.model || ''
   selectedResolution.value = normalizeStoryboardVideoResolution(
     getQueryValue('resolution') || config.defaults.video_resolution || config.videoResolutions[0] || fallbackResolutionCatalog[0],
@@ -2686,22 +2687,38 @@ function isAlibabaReferenceVideoModel(model: string): boolean {
   return alibabaReferenceVideoModelCatalog.includes(model)
 }
 
+function getStoryboardVideoLimits(model: string) {
+  // 所有镜头限制都直接读取运行时模型配置，不能再在页面里按供应商写死。
+  const runtimeModel = (runtimeConfig.value?.videoModels || []).find((item) => item.model === model)
+  const limits = runtimeModel?.limits || {}
+  const minDuration = Math.max(1, Number(limits.minDurationSec || 2))
+  const maxDuration = Math.max(minDuration, Number(limits.maxDurationSec || 10))
+  const resolutions = (limits.resolutions || runtimeConfig.value?.videoResolutions || fallbackResolutionCatalog)
+    .map((item) => String(item).toLowerCase())
+  return {
+    minDuration,
+    maxDuration,
+    resolutions: resolutions.length > 0 ? resolutions : fallbackResolutionCatalog,
+    supportsSilent: Boolean(limits.supportsSilent),
+  }
+}
+
 function maxStoryboardVideoDuration(model: string): number {
-  return isAlibabaReferenceVideoModel(model) ? 10 : 15
+  return getStoryboardVideoLimits(model).maxDuration
 }
 
 function isSilentCapableStoryboardVideoModel(model: string): boolean {
-  return model === 'wan2.6-r2v-flash'
+  return getStoryboardVideoLimits(model).supportsSilent
 }
 
 function normalizeStoryboardVideoDuration(duration: number, model: string): number {
-  const safeDuration = Number.isFinite(duration) ? duration : 5
-  return Math.max(2, Math.min(maxStoryboardVideoDuration(model), Math.round(safeDuration)))
+  const { minDuration, maxDuration } = getStoryboardVideoLimits(model)
+  const safeDuration = Number.isFinite(duration) ? duration : minDuration
+  return Math.max(minDuration, Math.min(maxDuration, Math.round(safeDuration)))
 }
 
 function getSupportedVideoResolutions(model: string): string[] {
-  if (isAlibabaReferenceVideoModel(model)) return ['720p', '1080p']
-  return runtimeConfig.value?.videoResolutions?.length ? runtimeConfig.value.videoResolutions : fallbackResolutionCatalog
+  return getStoryboardVideoLimits(model).resolutions
 }
 
 function normalizeStoryboardVideoResolution(resolution: string, model: string): string {
@@ -2716,8 +2733,9 @@ function resolvedStoryboardVideoDuration(row: StoryboardRow): number {
 
 function storyboardVideoDurationOptions(row: StoryboardRow): PageOption[] {
   const activeModel = row.videoModel || selectedVideoModel.value || runtimeConfig.value?.defaults.video_model || ''
-  return Array.from({ length: maxStoryboardVideoDuration(activeModel) - 1 }).map((_, index) => {
-    const seconds = index + 2
+  const { minDuration, maxDuration } = getStoryboardVideoLimits(activeModel)
+  return Array.from({ length: maxDuration - minDuration + 1 }).map((_, index) => {
+    const seconds = index + minDuration
     return {
       label: `${seconds}s`,
       value: String(seconds)
@@ -3269,6 +3287,15 @@ function jumpToStoryboardEditor(): void {
   selectedStoryboardId.value = selectedStoryboard.value.id
   activeStep.value = 'storyboard'
   persistActiveStep()
+}
+
+function editCutStoryboard(rowId: string): void {
+  // 成片质检定位到具体镜头时，只切换编辑阶段与选中项，不修改分镜原始顺序。
+  selectedStoryboardId.value = rowId
+  const row = storyboardRows.value.find(item => item.id === rowId)
+  if (row) selectedEpisodeNo.value = Number(row.episodeNo || selectedEpisodeNo.value || 1)
+  stopSequentialReview()
+  activeStep.value = 'storyboard'
 }
 
 function handleReviewTimeUpdate(): void {
@@ -4039,7 +4066,8 @@ onBeforeUnmount(() => {
       </div>
     </header>
 
-    <section class="mx-auto w-full px-4 py-6 pb-28">
+    <!-- 成片页已有自身固定操作栏，不能继续沿用其它流程为悬浮确认按钮预留的 7rem 尾部空白。 -->
+    <section class="mx-auto w-full px-4 py-6" :class="activeStep === 'video' ? 'pb-6' : 'pb-28'">
       <div v-if="errorMessage" class="mb-4 rounded-[24px] border border-[#fecaca] bg-[#fff1f2] px-5 py-4 text-[#991b1b] shadow-[0_10px_30px_rgba(239,68,68,0.08)]">
         <p class="text-sm font-semibold">{{ buildErrorCardTitle(errorMessage) }}</p>
         <p class="mt-1 text-sm leading-7 text-[#b91c1c]">{{ errorMessage }}</p>
@@ -5457,7 +5485,7 @@ onBeforeUnmount(() => {
         </section>
 
         <section
-          v-else
+          v-else-if="false"
           class="rounded-[32px] border border-[#e8edf5] bg-panel p-8 shadow-[0_18px_60px_rgba(15,23,42,0.06)]"
         >
           <div class="flex flex-wrap items-center justify-between gap-4">
@@ -5594,6 +5622,15 @@ onBeforeUnmount(() => {
             </section>
           </div>
         </section>
+
+        <DramaEpisodeCutWorkspace
+          v-else
+          :project-id="currentProjectId"
+          :episode-no="selectedEpisodeNo"
+          :rows="storyboardRowsForCurrentEpisode"
+          :aspect-ratio="projectDetail?.analysis.displayMeta.aspectRatio || selectedAspectRatio"
+          @edit-storyboard="editCutStoryboard"
+        />
       </template>
     </section>
 
