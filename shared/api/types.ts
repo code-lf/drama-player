@@ -8,7 +8,8 @@ import type {
   DramaProjectCard,
   DramaProjectDetail,
   DramaProjectPage,
-  DramaRuntimeConfig
+  DramaRuntimeConfig,
+  PublicVideoCapabilities
 } from '~/entities/drama/types'
 import type { EpisodeCutDraft, EpisodeCutSavePayload, EpisodeCutTask } from '~/entities/drama/episodeCutTypes'
 import type { Project } from '~/entities/project/types'
@@ -298,7 +299,11 @@ export interface StoryboardVideoGeneratePayload {
   continuationFromRowId?: string
   continuationPolicy?: StoryboardContinuationPolicy
   retryReason?: StoryboardRetryReason
-  audioMode?: 'sound' | 'silent'
+  audioMode?: 'preserve_original' | 'drive_video' | 'none' | 'sound' | 'silent'
+  audioAssetId?: string
+  audioTrimStartMs?: number
+  audioTrimEndMs?: number | null
+  audioMixMode?: 'replace' | 'mix'
   qualityPolicy?: StoryboardQualityPolicy
 }
 
@@ -338,7 +343,11 @@ export interface StoryboardVideoBatchPayload {
   model?: string
   durationSec?: number
   resolution?: string
-  audioMode?: 'sound' | 'silent'
+  audioMode?: 'preserve_original' | 'drive_video' | 'none' | 'sound' | 'silent'
+  audioAssetId?: string
+  audioTrimStartMs?: number
+  audioTrimEndMs?: number | null
+  audioMixMode?: 'replace' | 'mix'
   qualityPolicy?: StoryboardQualityPolicy
   rowIds?: string[]
   idempotencyKey?: string
@@ -387,6 +396,8 @@ export interface StoryboardBatchEstimate {
   blocked: Array<{ row_id?: string; rowId?: string; reason: string }>
   totalDurationSec: number
   estimatedCredits: number
+  totalCredits: number
+  costItems: Array<{ type: string; rowId?: string; label: string; credits: number }>
   currentBalance: number
   sufficient: boolean
 }
@@ -460,6 +471,7 @@ export interface DramaAssetConsistencyReport {
 
 export interface DramaAssetConsistencyEstimate {
   required_credits: number
+  cost_items: Array<{ type: string; label: string; credits: number; model_code?: string }>
   current_balance: number
   sufficient: boolean
   billing_status: string
@@ -596,7 +608,7 @@ export interface ApiAdapter {
   getAccountSecurity?(): Promise<ApiResponse<AccountSecuritySummary>>
   sendAccountSecurityCode?(payload: { target: 'old_phone' | 'new_phone' | 'password'; newPhone?: string }): Promise<ApiResponse<{ status: string; retryAfterSeconds: number }>>
   rebindAccountPhone?(payload: { newPhone: string; oldPhoneCode: string; newPhoneCode: string }): Promise<ApiResponse<AccountSecuritySummary>>
-  changeAccountPassword?(payload: { currentPassword: string; newPassword: string; verificationCode: string }): Promise<ApiResponse<{ status: string }>>
+  changeAccountPassword?(payload: { newPassword: string; newPasswordConfirmation: string; verificationCode: string }): Promise<ApiResponse<{ status: string }>>
   getAccountCreditPackages(): Promise<ApiResponse<CreditPackage[]>>
   getAccountCreditLedgers(page?: number, pageSize?: number): Promise<ApiResponse<CreditLedgerPage>>
   createPaymentOrder?(payload: { packageId: string; channel: 'wechat' | 'alipay'; idempotencyKey: string }): Promise<ApiResponse<PaymentOrder>>
@@ -610,6 +622,7 @@ export interface ApiAdapter {
   getMyFeedback(page?: number, pageSize?: number): Promise<ApiResponse<FeedbackPage>>
   getActiveAnnouncements(placement?: string): Promise<ApiResponse<SystemAnnouncement[]>>
   getRuntimeConfig(): Promise<ApiResponse<DramaRuntimeConfig>>
+  getPublicVideoCapabilities(): Promise<ApiResponse<PublicVideoCapabilities>>
   getCanvasGraph(projectId: string): Promise<ApiResponse<CanvasGraph>>
   saveCanvasGraph(projectId: string, graph: CanvasGraph): Promise<ApiResponse<boolean>>
   getStoryboardRows(projectId: string): Promise<ApiResponse<StoryboardRow[]>>
@@ -646,6 +659,7 @@ export interface ApiAdapter {
   resolveDramaScriptSuggestionSource(projectId: string, suggestionId: string): Promise<ApiResponse<DramaProjectDetail>>
   updateDramaScriptSuggestionSourceRange(projectId: string, suggestionId: string, payload: DramaSuggestionSourceRangePayload): Promise<ApiResponse<DramaProjectDetail>>
   confirmDramaScriptVersion(projectId: string): Promise<ApiResponse<DramaProjectDetail>>
+  skipDramaScriptReviews(projectId: string): Promise<ApiResponse<DramaProjectDetail>>
   updateDramaScriptScene(projectId: string, payload: DramaScriptSceneUpdatePayload): Promise<ApiResponse<DramaProjectDetail>>
   previewDramaCredits(projectId: string, payload: DramaCreditPreviewPayload): Promise<ApiResponse<DramaCreditPreview>>
   analyzeDrama(projectId: string, payload?: DramaAnalyzePayload): Promise<ApiResponse<DramaProjectDetail>>

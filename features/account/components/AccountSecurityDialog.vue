@@ -7,12 +7,15 @@ const emit = defineEmits<{ close: [] }>()
 
 const activeTab = ref<'phone' | 'password'>('phone')
 const securitySummary = ref<AccountSecuritySummary | null>(null)
+const toast = useToast()
 const loading = ref(false)
 const saving = ref(false)
 const message = ref('')
 const errorMessage = ref('')
 const phoneForm = reactive({ newPhone: '', oldPhoneCode: '', newPhoneCode: '' })
-const passwordForm = reactive({ currentPassword: '', newPassword: '', verificationCode: '' })
+const passwordForm = reactive({ newPassword: '', newPasswordConfirmation: '', verificationCode: '' })
+// 字段级错误优先在本地展示，避免空表单直接请求接口后出现无意义的“接口返回失败”。
+const passwordFieldErrors = reactive({ verificationCode: '', newPassword: '', newPasswordConfirmation: '' })
 const countdowns = reactive<Record<'old_phone' | 'new_phone' | 'password', number>>({ old_phone: 0, new_phone: 0, password: 0 })
 let countdownTimer: ReturnType<typeof setInterval> | null = null
 
@@ -21,9 +24,12 @@ function resetForms() {
   phoneForm.newPhone = ''
   phoneForm.oldPhoneCode = ''
   phoneForm.newPhoneCode = ''
-  passwordForm.currentPassword = ''
   passwordForm.newPassword = ''
+  passwordForm.newPasswordConfirmation = ''
   passwordForm.verificationCode = ''
+  passwordFieldErrors.verificationCode = ''
+  passwordFieldErrors.newPassword = ''
+  passwordFieldErrors.newPasswordConfirmation = ''
   message.value = ''
   errorMessage.value = ''
 }
@@ -64,6 +70,13 @@ function startCountdown(target: 'old_phone' | 'new_phone' | 'password', seconds:
   }, 1000)
 }
 
+function getCooldownSeconds(error: unknown): number {
+  const message = error instanceof Error ? error.message : ''
+  // 后端短信限流会返回“请 N 秒后再获取验证码”，前端据此恢复准确倒计时，避免用户连续点击。
+  const matched = message.match(/请\s*(\d+)\s*秒后再获取验证码/)
+  return matched ? Number(matched[1]) : 0
+}
+
 async function sendCode(target: 'old_phone' | 'new_phone' | 'password') {
   if (countdowns[target]) return
   if (target === 'new_phone' && !/^1\d{10}$/.test(phoneForm.newPhone.trim())) {
@@ -78,6 +91,8 @@ async function sendCode(target: 'old_phone' | 'new_phone' | 'password') {
     message.value = target === 'new_phone' ? '验证码已发送至新手机号。' : '验证码已发送至当前绑定手机号。'
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : '验证码发送失败，请稍后重试。'
+    const cooldownSeconds = getCooldownSeconds(error)
+    if (cooldownSeconds > 0) startCountdown(target, cooldownSeconds)
   }
 }
 
@@ -98,15 +113,46 @@ async function submitPhoneRebind() {
 }
 
 async function submitPasswordChange() {
+  // 先完成本地字段校验，再调用接口；接口只负责短信有效性、账户状态等服务端规则。
+  passwordFieldErrors.verificationCode = ''
+  passwordFieldErrors.newPassword = ''
+  passwordFieldErrors.newPasswordConfirmation = ''
+  errorMessage.value = ''
+
+  if (!/^\d{6}$/.test(passwordForm.verificationCode.trim())) {
+    passwordFieldErrors.verificationCode = '请输入 6 位手机验证码。'
+  }
+  if (!passwordForm.newPassword.trim()) {
+    passwordFieldErrors.newPassword = '请输入新密码。'
+  } else if (passwordForm.newPassword.length < 8 || !/[A-Za-z]/.test(passwordForm.newPassword) || !/\d/.test(passwordForm.newPassword)) {
+    passwordFieldErrors.newPassword = '密码至少 8 位，并同时包含字母与数字。'
+  }
+  if (!passwordForm.newPasswordConfirmation) {
+    passwordFieldErrors.newPasswordConfirmation = '请再次输入新密码。'
+  } else if (passwordForm.newPassword !== passwordForm.newPasswordConfirmation) {
+    passwordFieldErrors.newPasswordConfirmation = '两次输入的新密码不一致。'
+  }
+
+  if (Object.values(passwordFieldErrors).some(Boolean)) {
+    errorMessage.value = '请先完善标红的输入项。'
+    return
+  }
   saving.value = true
   message.value = ''
   errorMessage.value = ''
   try {
     await accountService.changePassword({ ...passwordForm })
-    passwordForm.currentPassword = ''
     passwordForm.newPassword = ''
+    passwordForm.newPasswordConfirmation = ''
     passwordForm.verificationCode = ''
-    message.value = '密码已修改，请妥善保管新密码。'
+    // 成功后用全局提示反馈并关闭弹窗，避免用户误以为还需要重复提交一次。
+    toast.add({
+      title: '密码已修改',
+      description: '新密码已生效，请使用新密码登录。',
+      color: 'success',
+      icon: 'i-lucide-circle-check',
+    })
+    emit('close')
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : '密码修改失败，请稍后重试。'
   } finally {
@@ -150,10 +196,10 @@ onBeforeUnmount(() => {
       </form>
 
       <form v-else class="mt-6 space-y-4" @submit.prevent="submitPasswordChange">
-        <p class="rounded-xl bg-[#fff8ea] px-3 py-2 text-[12px] leading-5 text-[#a26708]">修改密码需要验证当前密码和已绑定手机号，密码至少 8 位并同时包含字母与数字。</p>
-        <label class="block text-[13px] font-bold text-[#455571]">当前密码<input v-model="passwordForm.currentPassword" type="password" autocomplete="current-password" class="mt-2 h-11 w-full rounded-xl border border-[#d7e1ef] px-3 outline-none focus:border-[#2f76ff]" placeholder="请输入当前密码" /></label>
-        <label class="block text-[13px] font-bold text-[#455571]">新密码<input v-model="passwordForm.newPassword" type="password" autocomplete="new-password" class="mt-2 h-11 w-full rounded-xl border border-[#d7e1ef] px-3 outline-none focus:border-[#2f76ff]" placeholder="至少 8 位，含字母与数字" /></label>
-        <label class="block text-[13px] font-bold text-[#455571]">手机验证码<div class="mt-2 flex gap-2"><input v-model.trim="passwordForm.verificationCode" inputmode="numeric" maxlength="6" class="h-11 min-w-0 flex-1 rounded-xl border border-[#d7e1ef] px-3 outline-none focus:border-[#2f76ff]" placeholder="6 位验证码" /><button type="button" class="h-11 shrink-0 rounded-xl border border-[#a8c7ff] px-3 text-[12px] font-bold text-[#1769ff] disabled:border-[#e0e7f1] disabled:text-[#9ba8b9]" :disabled="!!countdowns.password" @click="sendCode('password')">{{ countdowns.password ? `${countdowns.password}s` : '获取验证码' }}</button></div></label>
+        <p class="rounded-xl bg-[#fff8ea] px-3 py-2 text-[12px] leading-5 text-[#a26708]">验证已绑定手机号后即可设置新密码；密码至少 8 位并同时包含字母与数字。</p>
+        <label class="block text-[13px] font-bold text-[#455571]">手机验证码<div class="mt-2 flex gap-2"><input v-model.trim="passwordForm.verificationCode" inputmode="numeric" maxlength="6" class="h-11 min-w-0 flex-1 rounded-xl border px-3 outline-none focus:border-[#2f76ff]" :class="passwordFieldErrors.verificationCode ? 'border-[#ef6a70] bg-[#fffafb]' : 'border-[#d7e1ef]'" placeholder="6 位验证码" @input="passwordFieldErrors.verificationCode = ''" /><button type="button" class="h-11 shrink-0 rounded-xl border border-[#a8c7ff] px-3 text-[12px] font-bold text-[#1769ff] disabled:border-[#e0e7f1] disabled:text-[#9ba8b9]" :disabled="!!countdowns.password" @click="sendCode('password')">{{ countdowns.password ? `${countdowns.password}s` : '获取验证码' }}</button></div><span v-if="passwordFieldErrors.verificationCode" class="mt-1 block text-[12px] font-medium text-[#df3d45]">{{ passwordFieldErrors.verificationCode }}</span></label>
+        <label class="block text-[13px] font-bold text-[#455571]">新密码<input v-model="passwordForm.newPassword" type="password" autocomplete="new-password" class="mt-2 h-11 w-full rounded-xl border px-3 outline-none focus:border-[#2f76ff]" :class="passwordFieldErrors.newPassword ? 'border-[#ef6a70] bg-[#fffafb]' : 'border-[#d7e1ef]'" placeholder="至少 8 位，含字母与数字" @input="passwordFieldErrors.newPassword = ''" /><span v-if="passwordFieldErrors.newPassword" class="mt-1 block text-[12px] font-medium text-[#df3d45]">{{ passwordFieldErrors.newPassword }}</span></label>
+        <label class="block text-[13px] font-bold text-[#455571]">确认新密码<input v-model="passwordForm.newPasswordConfirmation" type="password" autocomplete="new-password" class="mt-2 h-11 w-full rounded-xl border px-3 outline-none focus:border-[#2f76ff]" :class="passwordFieldErrors.newPasswordConfirmation ? 'border-[#ef6a70] bg-[#fffafb]' : 'border-[#d7e1ef]'" placeholder="请再次输入新密码" @input="passwordFieldErrors.newPasswordConfirmation = ''" /><span v-if="passwordFieldErrors.newPasswordConfirmation" class="mt-1 block text-[12px] font-medium text-[#df3d45]">{{ passwordFieldErrors.newPasswordConfirmation }}</span></label>
         <button type="submit" class="h-11 w-full rounded-xl bg-[#1769ff] text-[14px] font-bold text-white disabled:opacity-60" :disabled="saving">{{ saving ? '修改中...' : '确认修改密码' }}</button>
       </form>
 

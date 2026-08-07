@@ -6,7 +6,8 @@ import type {
   DramaIntentMode,
   DramaProjectCard,
   DramaProjectDetail,
-  DramaRuntimeConfig
+  DramaRuntimeConfig,
+  PublicVideoCapabilities
 } from '~/entities/drama/types'
 import type { EpisodeCutDraft, EpisodeCutSavePayload, EpisodeCutTask } from '~/entities/drama/episodeCutTypes'
 import type { Project } from '~/entities/project/types'
@@ -264,6 +265,16 @@ interface BackendRuntimeConfigResponse {
   text_models: BackendRuntimeModelOption[]
   image_models: BackendRuntimeModelOption[]
   video_models: BackendRuntimeModelOption[]
+}
+
+interface BackendPublicVideoCapabilitiesResponse {
+  resolutions: string[]
+  default_resolution: string
+  min_duration_sec: number
+  max_duration_sec: number
+  supports_audio_upload?: boolean
+  supports_audio_driven_video?: boolean
+  audio_mix_modes?: string[]
 }
 
 interface BackendAccountProfileResponse {
@@ -774,6 +785,7 @@ interface BackendDramaDetailResponse {
     finished_at: string
     error_message: string
     structure_ready?: boolean
+    asset_candidates_ready?: boolean
     reviews_ready?: boolean
     production_ready?: boolean
     pipeline_version?: string
@@ -792,6 +804,7 @@ interface BackendDramaDetailResponse {
       status?: string
       attempt?: number
       progress?: number
+      auto_backfill?: boolean
       error_code?: string
       error_message?: string
       started_at?: string
@@ -1639,12 +1652,23 @@ function mapStoryboardTuningPreview(raw: Record<string, unknown>): StoryboardTun
 }
 
 function buildStoryboardVideoBatchPayload(payload: StoryboardVideoBatchPayload) {
+  // 兼容旧页面的 sound/silent，同时把新声音策略和裁切配置原样交给 API。
+  const audioMode = payload.audioMode === 'sound'
+    ? 'preserve_original'
+    : payload.audioMode === 'silent'
+      ? 'none'
+      : payload.audioMode || 'preserve_original'
   return {
     episode_no: payload.episodeNo,
     model: payload.model || '',
     duration_sec: payload.durationSec,
     resolution: payload.resolution || '720p',
-    audio: payload.audioMode !== 'silent',
+    audio: audioMode !== 'none',
+    audio_mode: audioMode,
+    audio_asset_id: payload.audioAssetId || '',
+    audio_trim_start_ms: payload.audioTrimStartMs || 0,
+    audio_trim_end_ms: payload.audioTrimEndMs ?? null,
+    audio_mix_mode: payload.audioMixMode || 'replace',
     quality_policy: payload.qualityPolicy || 'smart',
     row_ids: payload.rowIds || [],
     idempotency_key: payload.idempotencyKey || ''
@@ -1657,6 +1681,13 @@ function mapStoryboardBatchEstimate(raw: Record<string, unknown>): StoryboardBat
     blocked: (raw.blocked || []) as StoryboardBatchEstimate['blocked'],
     totalDurationSec: Number(raw.total_duration_sec || 0),
     estimatedCredits: Number(raw.estimated_credits || 0),
+    totalCredits: Number(raw.total_credits || raw.estimated_credits || 0),
+    costItems: ((raw.cost_items || []) as Array<Record<string, unknown>>).map(item => ({
+      type: String(item.type || 'video_generation'),
+      rowId: item.row_id ? String(item.row_id) : undefined,
+      label: String(item.label || '视频生成'),
+      credits: Number(item.credits || 0)
+    })),
     currentBalance: Number(raw.current_balance || 0),
     sufficient: Boolean(raw.sufficient)
   }
@@ -2011,6 +2042,7 @@ function mapDramaDetail(raw: BackendDramaDetailResponse): DramaProjectDetail {
       finishedAt: raw.analysis_run?.finished_at || '',
       errorMessage: raw.analysis_run?.error_message || '',
       structureReady: Boolean(raw.analysis_run?.structure_ready),
+      assetCandidatesReady: Boolean(raw.analysis_run?.asset_candidates_ready),
       reviewsReady: Boolean(raw.analysis_run?.reviews_ready),
       productionReady: Boolean(raw.analysis_run?.production_ready),
       pipelineVersion: raw.analysis_run?.pipeline_version || 'v2',
@@ -2029,6 +2061,7 @@ function mapDramaDetail(raw: BackendDramaDetailResponse): DramaProjectDetail {
         status: node.status || 'queued',
         attempt: Number(node.attempt || 0),
         progress: Number(node.progress || 0),
+        autoBackfill: Boolean(node.auto_backfill),
         errorCode: node.error_code || '',
         errorMessage: node.error_message || '',
         startedAt: node.started_at || '',
@@ -2303,7 +2336,8 @@ export const httpAdapter: ApiAdapter = {
   async changeAccountPassword(payload) {
     const response = await request<{ status: string }>('/account/security/password', {
       method: 'POST',
-      body: { current_password: payload.currentPassword, new_password: payload.newPassword, verification_code: payload.verificationCode }
+      // 改密采用绑定手机验证码验证身份，确认密码仍交由服务端再次校验，防止绕过前端提交不一致数据。
+      body: { new_password: payload.newPassword, new_password_confirmation: payload.newPasswordConfirmation, verification_code: payload.verificationCode }
     })
     return ok(response)
   },
@@ -2566,6 +2600,20 @@ export const httpAdapter: ApiAdapter = {
       textModels: response.text_models.map(mapRuntimeModelOption) as any,
       imageModels: response.image_models.map(mapRuntimeModelOption) as any,
       videoModels: response.video_models.map(mapRuntimeModelOption) as any
+    }
+    return ok(data)
+  },
+
+  async getPublicVideoCapabilities() {
+    const response = await request<BackendPublicVideoCapabilitiesResponse>('/config/video-capabilities')
+    const data: PublicVideoCapabilities = {
+      resolutions: response.resolutions.map(item => String(item).toLowerCase()),
+      defaultResolution: String(response.default_resolution).toLowerCase(),
+      minDurationSec: response.min_duration_sec,
+      maxDurationSec: response.max_duration_sec,
+      supportsAudioUpload: response.supports_audio_upload !== false,
+      supportsAudioDrivenVideo: response.supports_audio_driven_video === true,
+      audioMixModes: (response.audio_mix_modes || ['replace', 'mix']).filter((item): item is 'replace' | 'mix' => item === 'replace' || item === 'mix'),
     }
     return ok(data)
   },
@@ -2894,6 +2942,14 @@ export const httpAdapter: ApiAdapter = {
   async confirmDramaScriptVersion(projectId: string) {
     const response = await request<BackendDramaDetailResponse>(
       `/drama/projects/${projectId}/script-versions/current/confirm`,
+      { method: 'POST' }
+    )
+    return ok(mapDramaDetail(response))
+  },
+
+  async skipDramaScriptReviews(projectId: string) {
+    const response = await request<BackendDramaDetailResponse>(
+      `/drama/projects/${projectId}/analysis/reviews/skip`,
       { method: 'POST' }
     )
     return ok(mapDramaDetail(response))
@@ -3396,7 +3452,12 @@ export const httpAdapter: ApiAdapter = {
         continuation_from_row_id: payload?.continuationFromRowId || '',
         continuation_policy: payload?.continuationPolicy || 'auto',
         retry_reason: payload?.retryReason || '',
-        audio: payload?.audioMode !== 'silent',
+        audio: !['silent', 'none'].includes(payload?.audioMode || ''),
+        audio_mode: payload?.audioMode === 'sound' ? 'preserve_original' : payload?.audioMode || 'preserve_original',
+        audio_asset_id: payload?.audioAssetId || '',
+        audio_trim_start_ms: payload?.audioTrimStartMs || 0,
+        audio_trim_end_ms: payload?.audioTrimEndMs ?? null,
+        audio_mix_mode: payload?.audioMixMode || 'replace',
         quality_policy: payload?.qualityPolicy || 'smart'
       }
     })

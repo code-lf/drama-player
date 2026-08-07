@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { DramaCreditPreview, DramaProjectCard, DramaProjectDetail, DramaRuntimeConfig } from '~/entities/drama/types'
+import type { DramaCreditPreview, DramaProjectCard, DramaProjectDetail, DramaRuntimeConfig, PublicVideoCapabilities } from '~/entities/drama/types'
 import AnnouncementWorkspacePanel from '~/features/dashboard/components/AnnouncementWorkspacePanel.vue'
 import BillingWorkspacePanel from '~/features/billing/components/BillingWorkspacePanel.vue'
 import CreditAmount from '~/components/ui/CreditAmount.vue'
@@ -45,7 +45,8 @@ const fallbackTextModelCatalog: Array<{ label: string; value: string; descriptio
     description: '适合长篇剧本梳理、多角色关系与扩写'
   }
 ]
-const fallbackResolutionCatalog = ['720p', '1080p', '480p']
+// 公共能力接口失败时只兜住当前默认视频能力明确支持的清晰度，不擅自向用户开放 1080P。
+const fallbackResolutionCatalog = ['480p', '720p']
 const fallbackAspectRatioCatalog: DashboardOption[] = [
   { label: '16:9', value: '16:9', description: '横屏短剧、桌面预览与常规镜头设计' },
   { label: '4:3', value: '4:3', description: '复古画幅与剧情特写更有氛围' },
@@ -63,6 +64,7 @@ const authStore = useAuthStore()
 const activeMenu = ref<DashboardMenuKey>('drama')
 const activeWorkspaceView = ref<DashboardWorkspaceView>('console')
 const runtimeConfig = ref<DramaRuntimeConfig | null>(null)
+const publicVideoCapabilities = ref<PublicVideoCapabilities | null>(null)
 const currentDramaProject = ref<DramaProjectDetail | null>(null)
 const scriptDraft = ref('')
 const scriptFileName = ref('')
@@ -234,11 +236,10 @@ const videoModelOptions = computed<DashboardOption[]>(() => {
   }))
 })
 const resolutionOptions = computed<DashboardOption[]>(() => {
-  // 首页使用当前默认视频模型的能力边界；后台切换默认模型后，清晰度下拉无需再改代码。
-  const activeModel = (runtimeConfig.value?.videoModels || [])
-    .find((item) => item.model === selectedVideoModel.value)
-  const runtimeResolutions = activeModel?.limits.resolutions || runtimeConfig.value?.videoResolutions || []
-  const availableResolutions = runtimeResolutions.length > 0 ? runtimeResolutions : fallbackResolutionCatalog
+  // 普通用户只读取最小能力契约，供应商和模型配置不会进入项目创建界面。
+  const availableResolutions = publicVideoCapabilities.value?.resolutions.length
+    ? publicVideoCapabilities.value.resolutions
+    : fallbackResolutionCatalog
 
   return availableResolutions.map((item) => ({
     label: item,
@@ -486,10 +487,9 @@ function scheduleEntryCreditPreview(): void {
 async function refreshEntryCreditPreview(requestSequence: number): Promise<void> {
   try {
     const preview = scriptInputMode.value === 'file' && selectedScriptFile.value
-      ? await dramaService.previewEntryFileCredits(selectedScriptFile.value, { model: selectedTextModel.value })
+      ? await dramaService.previewEntryFileCredits(selectedScriptFile.value)
       : await dramaService.previewEntryCredits({
-          content: scriptDraft.value.trim(),
-          model: selectedTextModel.value
+          content: scriptDraft.value.trim()
         })
 
     if (requestSequence !== entryCreditPreviewSequence) return
@@ -523,19 +523,11 @@ function applyRuntimeDefaults(config: DramaRuntimeConfig): void {
   const availableTextModels = config.textModels.length > 0 ? config.textModels.map((model) => model.model) : fallbackTextModelCatalog.map((model) => model.value)
   const availableImageModels = config.imageModels.map((model) => model.model)
   const availableVideoModels = config.videoModels.map((model) => model.model)
-  const configuredDefaultVideoModel = config.videoModels.find((item) => item.model === config.defaults.video_model)
-  const availableResolutions = configuredDefaultVideoModel?.limits.resolutions?.length
-    ? configuredDefaultVideoModel.limits.resolutions
-    : (config.videoResolutions.length > 0 ? config.videoResolutions : fallbackResolutionCatalog)
 
   selectedTextModel.value = config.defaults.text_model || availableTextModels[0] || ''
   selectedImageModel.value = config.defaults.image_model || config.imageModels[0]?.model || ''
   selectedVideoModel.value = config.defaults.video_model || availableVideoModels[0] || ''
   selectedVideoProvider.value = (config.defaults.video_provider as 'alibaba' | 'bytedance' | 'huoshan') || 'bytedance'
-  const defaultResolution = String(config.defaults.video_resolution || '').toLowerCase()
-  selectedResolution.value = availableResolutions.includes(defaultResolution)
-    ? defaultResolution
-    : (availableResolutions[0] || '720p')
 
   // 这个日志是给连续排查问题用的：一旦配置中心缺项，前端会明确告诉我们当前用了哪些兜底值。
   if (config.textModels.length === 0 || config.videoResolutions.length === 0) {
@@ -544,9 +536,17 @@ function applyRuntimeDefaults(config: DramaRuntimeConfig): void {
       textModels: availableTextModels,
       imageModels: availableImageModels,
       videoModels: availableVideoModels,
-      videoResolutions: availableResolutions
+      videoResolutions: config.videoResolutions
     })
   }
+}
+
+function applyPublicVideoCapabilities(capabilities: PublicVideoCapabilities): void {
+  publicVideoCapabilities.value = capabilities
+  const available = capabilities.resolutions.length > 0 ? capabilities.resolutions : fallbackResolutionCatalog
+  selectedResolution.value = available.includes(capabilities.defaultResolution)
+    ? capabilities.defaultResolution
+    : (available[0] || '720p')
 }
 
 async function loadBillingData(): Promise<void> {
@@ -694,9 +694,13 @@ async function bootstrapDashboard(): Promise<void> {
   loadingText.value = '正在准备控制台...'
 
   try {
-    const config = await dramaService.getRuntimeConfig()
+    const [config, capabilities] = await Promise.all([
+      dramaService.getRuntimeConfig(),
+      dramaService.getPublicVideoCapabilities(),
+    ])
     runtimeConfig.value = config
     applyRuntimeDefaults(config)
+    applyPublicVideoCapabilities(capabilities)
     const bootstrapResults = await Promise.allSettled([
       loadProjectDirectory(),
       accountStore.refreshProfile(),
@@ -800,7 +804,6 @@ async function ingestAndAnalyze(): Promise<void> {
     'analyze',
     () =>
       dramaService.analyze(created.projectId, {
-        model: selectedTextModel.value,
         aspectRatio: selectedAspectRatio.value,
         resolution: selectedResolution.value,
         style: effectiveVisualStyle.value
@@ -813,11 +816,6 @@ async function ingestAndAnalyze(): Promise<void> {
   await router.push({
     path: `/drama/${created.projectId}`,
     query: {
-      textModel: selectedTextModel.value,
-      imageModel: selectedImageModel.value,
-      videoModel: selectedVideoModel.value,
-      videoProvider: selectedVideoProvider.value,
-      resolution: selectedResolution.value,
       aspectRatio: selectedAspectRatio.value,
       style: effectiveVisualStyle.value,
       entryIntent: selectedCreativeIntent.value
@@ -948,7 +946,9 @@ async function createWorkspaceProject(): Promise<void> {
     const project = await dramaService.createProject({
       title: '未命名短剧项目',
       themeMode: themeStore.mode,
-      entryIntent: 'drama'
+      entryIntent: 'drama',
+      // 快速新建没有单独表单，仍必须固化公共能力接口返回的默认清晰度。
+      resolution: publicVideoCapabilities.value?.defaultResolution || selectedResolution.value
     })
 
     await loadProjectDirectory()
@@ -1020,8 +1020,8 @@ watch(videoModelOptions, (options) => {
   selectedVideoModel.value = options[0]?.value || ''
 }, { immediate: true })
 
-watch([() => selectedVideoModel.value, resolutionOptions], () => {
-  // 切换模型后保留仍兼容的清晰度；不兼容时回退到该模型第一个可用值。
+watch(resolutionOptions, () => {
+  // 普通用户只依据公开视频能力选择项目清晰度，不再与后台供应商或模型选择联动。
   const values = resolutionOptions.value.map((item) => item.value)
   if (!values.includes(selectedResolution.value)) {
     selectedResolution.value = values[0] || '720p'
@@ -1512,6 +1512,9 @@ onBeforeUnmount(() => {
                 >
                   {{ entryCreditPreviewLabel }}
                 </span>
+                <p v-if="entryCreditPreview?.message" class="mt-2 max-w-[720px] text-center text-xs leading-5 text-[#64748b]">
+                  {{ entryCreditPreview.message }}
+                </p>
                 <button class="mt-5 text-[17px] font-black text-[#005FFE]" type="button">
                   没有剧本？AI 帮我创作
                   <span class="ml-2">→</span>

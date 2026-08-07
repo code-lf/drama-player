@@ -115,6 +115,7 @@ type DramaAnalysisEventPayload = {
     finished_at: string
     error_message: string
     structure_ready?: boolean
+    asset_candidates_ready?: boolean
     reviews_ready?: boolean
     production_ready?: boolean
     pipeline_version?: string
@@ -133,6 +134,7 @@ type DramaAnalysisEventPayload = {
       status?: string
       attempt?: number
       progress?: number
+      auto_backfill?: boolean
       error_code?: string
       error_message?: string
       started_at?: string
@@ -306,8 +308,7 @@ const workflowSteps: Array<{ key: WorkflowStepKey; label: string; hint: string }
 const scriptProgressStages: Array<{ key: AnalysisStageKey; label: string }> = [
   { key: 'global_understanding', label: '剧情全局理解' },
   { key: 'episode_split', label: '分集结构整理' },
-  { key: 'outline_refine', label: '人物场景识别' },
-  { key: 'role_scene_identify', label: '体检建议生成' }
+  { key: 'role_scene_identify', label: '专业体检建议（后台）' }
 ]
 const tagToneCatalog = [
   'border-[#ddd6fe] bg-[#f5f3ff] text-[#7c3aed]',
@@ -468,13 +469,11 @@ const currentAnalysisRun = computed<DramaAnalysisRunState>(() => {
     stageStatuses: {
       global_understanding: 'pending',
       episode_split: 'pending',
-      outline_refine: 'pending',
       role_scene_identify: 'pending'
     },
     stageProgresses: {
       global_understanding: 0,
       episode_split: 0,
-      outline_refine: 0,
       role_scene_identify: 0
     },
     coverStatus: 'idle',
@@ -483,6 +482,7 @@ const currentAnalysisRun = computed<DramaAnalysisRunState>(() => {
     finishedAt: '',
     errorMessage: '',
     structureReady: false,
+    assetCandidatesReady: false,
     reviewsReady: false,
     productionReady: false,
     pipelineVersion: 'v3',
@@ -515,7 +515,12 @@ const isScriptAnalysisReady = computed(() => {
   return currentAnalysisRun.value.structureReady
     || (currentAnalysisRun.value.status === 'completed' && Boolean(projectDetail.value?.analysis.title || projectDetail.value?.analysis.outline))
 })
-const areScriptReviewsReady = computed(() => currentAnalysisRun.value.reviewsReady)
+const hasConfirmedScriptVersion = computed(() => {
+  // 资产阶段只允许读取“已确认剧本快照”。基础结构完成不等于可以直接生产资产，
+  // 否则用户点击顶部第 2 步会让工作台拿到未冻结的数据并触发后端异常。
+  const analysis = projectDetail.value?.analysis
+  return Boolean(analysis?.confirmedScriptVersionId && analysis?.analysisSnapshotId)
+})
 const hasAnalysis = computed(() => isScriptAnalysisReady.value)
 const hasRoleAssets = computed(() => {
   const roles = projectDetail.value?.analysis.roles || []
@@ -667,6 +672,8 @@ const headerInfoItems = computed(() => [
   projectDetail.value?.analysis.displayMeta.aspectRatio || selectedAspectRatio.value,
   projectDetail.value?.analysis.displayMeta.resolution || selectedResolution.value
 ])
+// 项目清晰度在创建时确定，后续分镜和视频生成阶段只读继承该值。
+const projectResolution = computed(() => projectDetail.value?.analysis.displayMeta.resolution || selectedResolution.value)
 const headerStyleTag = computed(() => projectDetail.value?.analysis.displayMeta.style || resolvedVisualStyle.value)
 const confirmedStepIndex = ref(0)
 const scriptCoverUrl = computed(() => projectDetail.value?.analysis.coverImageUrl || '')
@@ -969,7 +976,8 @@ function getDataDrivenConfirmedStepIndex(): number {
   if (workflowRunInfo.value?.status === 'success') return 3
   if (hasStoryboards.value) return 3
   if (areSettingsReady.value) return 2
-  if (isScriptAnalysisReady.value) return 1
+  // 第 2 步不是“解析完成”就能进入，必须先确认当前剧本版本以创建资产快照。
+  if (hasConfirmedScriptVersion.value) return 1
   return 0
 }
 
@@ -983,7 +991,8 @@ function syncConfirmedStepIndex(): void {
   const storageKey = getWorkflowProgressStorageKey()
   const rawIndex = window.localStorage.getItem(storageKey)
   const parsedIndex = Number.parseInt(rawIndex || '', 10)
-  const persistedIndex = Number.isFinite(parsedIndex) ? parsedIndex : 0
+  // 未确认剧本时忽略旧版页面遗留的本地步骤记录，避免它绕过资产快照门禁。
+  const persistedIndex = hasConfirmedScriptVersion.value && Number.isFinite(parsedIndex) ? parsedIndex : 0
 
   // 已完成步骤始终可回看，因此这里不能取更小值，否则重新进入项目会把已完成步骤重新锁死。
   confirmedStepIndex.value = Math.max(0, Math.min(Math.max(persistedIndex, dataDrivenIndex), workflowSteps.length - 1))
@@ -1378,6 +1387,7 @@ function patchAnalysisRunFromEvent(payload: DramaAnalysisEventPayload): void {
       finishedAt: payload.analysis_run?.finished_at || '',
       errorMessage: payload.analysis_run?.error_message || '',
       structureReady: Boolean(payload.analysis_run?.structure_ready),
+      assetCandidatesReady: Boolean(payload.analysis_run?.asset_candidates_ready),
       reviewsReady: Boolean(payload.analysis_run?.reviews_ready),
       productionReady: Boolean(payload.analysis_run?.production_ready),
       pipelineVersion: payload.analysis_run?.pipeline_version || currentAnalysisRun.value.pipelineVersion || 'v2',
@@ -1396,6 +1406,7 @@ function patchAnalysisRunFromEvent(payload: DramaAnalysisEventPayload): void {
         status: node.status || 'queued',
         attempt: Number(node.attempt || 0),
         progress: Number(node.progress || 0),
+        autoBackfill: Boolean(node.auto_backfill),
         errorCode: node.error_code || '',
         errorMessage: node.error_message || '',
         startedAt: node.started_at || '',
@@ -3429,7 +3440,12 @@ function goBack(): void {
 
 function selectStep(step: WorkflowStepKey): void {
   // 流程页按步骤推进：只能回看已确认步骤，未来步骤必须通过底部确认按钮逐步进入。
-  if (!canVisitStep(step)) return
+  if (!canVisitStep(step)) {
+    if (step === 'setting' && isScriptAnalysisReady.value && !hasConfirmedScriptVersion.value) {
+      infoMessage.value = '请先在剧本页确认当前剧本版本，系统会冻结资产制作所需的结构化快照。'
+    }
+    return
+  }
   activeStep.value = step
   persistActiveStep()
 }
@@ -3452,20 +3468,22 @@ async function enterStoryboardFromAssetWorkspace(): Promise<void> {
   }
 }
 
-async function goNextStep(): Promise<void> {
+async function goNextStep(confirmedDetail?: DramaProjectDetail): Promise<void> {
   const stepOrder: WorkflowStepKey[] = ['script', 'setting', 'storyboard', 'video']
   const currentStep = activeStep.value
   const currentIndex = stepOrder.indexOf(currentStep)
   const nextStep = stepOrder[currentIndex + 1]
   if (!nextStep) return
 
-  if (currentStep === 'script' && !isScriptAnalysisReady.value) {
-    infoMessage.value = '请先完成剧本解析，再进入设定步骤。'
-    return
+  if (confirmedDetail) {
+    // 剧本确认接口返回的是已经冻结快照的完整详情，先写入本地状态再切步，
+    // 保证资产工作台首帧就能拿到角色、场景和道具候选。
+    projectDetail.value = confirmedDetail
+    syncSelectionsFromAnalysis(confirmedDetail)
   }
 
-  if (currentStep === 'script' && !areScriptReviewsReady.value) {
-    infoMessage.value = '四项核心剧本体检尚未全部完成，请等待完成或重试失败节点。'
+  if (currentStep === 'script' && !isScriptAnalysisReady.value) {
+    infoMessage.value = '请先完成剧本解析，再进入设定步骤。'
     return
   }
 
@@ -3481,7 +3499,14 @@ async function goNextStep(): Promise<void> {
 
   confirmedStepIndex.value = Math.max(confirmedStepIndex.value, currentIndex + 1)
   persistConfirmedStepIndex()
-  selectStep(nextStep)
+  // 剧本确认接口已经原子完成候选整理和快照冻结，接口成功后直接切入资产，
+  // 不再等待父级轮询先更新 hasConfirmedScriptVersion 才允许导航。
+  if (currentStep === 'script' && nextStep === 'setting') {
+    activeStep.value = nextStep
+    persistActiveStep()
+  } else {
+    selectStep(nextStep)
+  }
 
   // 新资产工作台会先展示剧本编译出的候选，并由用户确认生成范围和点数。
   // 这里不再调用旧版“进入页面就自动批量生图”的角色/场景/道具接口：
@@ -4066,8 +4091,11 @@ onBeforeUnmount(() => {
       </div>
     </header>
 
-    <!-- 成片页已有自身固定操作栏，不能继续沿用其它流程为悬浮确认按钮预留的 7rem 尾部空白。 -->
-    <section class="mx-auto w-full px-4 py-6" :class="activeStep === 'video' ? 'pb-6' : 'pb-28'">
+    <!--
+      资产页与成片页各自拥有固定的底部操作栏；外层不再额外预留 7rem，
+      避免出现大面积尾部空白并让“确认资产并进入分镜”脱离浏览器底部。
+    -->
+    <section class="mx-auto w-full px-4 py-6" :class="activeStep === 'setting' ? 'pb-0' : activeStep === 'video' ? 'pb-6' : 'pb-28'">
       <div v-if="errorMessage" class="mb-4 rounded-[24px] border border-[#fecaca] bg-[#fff1f2] px-5 py-4 text-[#991b1b] shadow-[0_10px_30px_rgba(239,68,68,0.08)]">
         <p class="text-sm font-semibold">{{ buildErrorCardTitle(errorMessage) }}</p>
         <p class="mt-1 text-sm leading-7 text-[#b91c1c]">{{ errorMessage }}</p>
@@ -4793,6 +4821,7 @@ onBeforeUnmount(() => {
           :episode-count="storyboardEpisodeItems.length"
           :run-status="currentStoryboardRun.status"
           :cover-url="scriptCoverUrl"
+          :resolution="projectResolution"
           @update:episode-no="selectedEpisodeNo = $event"
           @generate="generateStoryboards"
           @continue="goNextStep"

@@ -72,9 +72,55 @@ const removeConfirmTarget = ref<DramaAssetProfile | null>(null)
 // 大图预览单独使用全局遮罩，不嵌在抽屉滚动区内，避免图片被三栏布局裁切。
 const previewImageUrl = ref('')
 const previewImageAlt = ref('')
-// 首次进入资产阶段的轻量引导按“用户 + 项目”保存，不影响同一用户的其他项目首次体验。
-const showAssetGuide = ref(false)
-const hideAssetGuideNextTime = ref(false)
+// 资产工作台首次进入仅展示一次操作引导；不提供常驻入口，避免工具栏文案堆叠。
+const assetGuideSteps = [
+  { target: '#asset-guide-select-current', title: '勾选当前资产', description: '可逐项勾选，也可全选当前分类、筛选与搜索结果。', side: 'bottom' },
+  { target: '#asset-guide-generate-all', title: '生成全部待生成资产', description: '生成前会汇总全部待生成项，并在确认弹窗中展示积分消耗。', side: 'bottom' },
+  { target: '#asset-guide-tabs', title: '切换资产分类', description: '角色、场景、道具需分别检查；必需资产优先完成并确认锁定。', side: 'bottom' },
+  { target: '#asset-guide-enter-storyboard', title: '确认进入分镜', description: '全部必需资产锁定后即可进入分镜；按钮不可用时悬停可查看原因。', side: 'top' },
+]
+const assetGuideTour = useTour(assetGuideSteps, {
+  // 引导切换至底部确认操作时保持目标可见，避免气泡脱离控件。
+  scrollIntoView: { behavior: 'smooth', block: 'center', inline: 'nearest' },
+})
+const assetGuideStep = computed(() => assetGuideTour.current.value)
+type AssetGuideTargetRect = { top: number; left: number; width: number; height: number }
+const assetGuideTargetRect = ref<AssetGuideTargetRect | null>(null)
+const assetGuidePopoverStyle = computed<Record<string, string>>(() => {
+  const rect = assetGuideTargetRect.value
+  if (!rect || !import.meta.client) return {}
+  const panelWidth = Math.min(340, window.innerWidth - 32)
+  const panelHeight = 220
+  const edge = 16
+  const gap = 14
+  let top = assetGuideStep.value?.side === 'top' ? rect.top - panelHeight - gap : rect.top + rect.height + gap
+  if (top + panelHeight > window.innerHeight - edge) top = rect.top - panelHeight - gap
+  if (top < edge) top = Math.min(window.innerHeight - panelHeight - edge, rect.top + rect.height + gap)
+  return {
+    left: `${Math.max(edge, Math.min(rect.left + rect.width / 2 - panelWidth / 2, window.innerWidth - panelWidth - edge))}px`,
+    top: `${Math.max(edge, top)}px`,
+  }
+})
+// 遮罩分为四块，保证引导期间目标外区域以及目标自身均不会误触业务按钮。
+const assetGuideMaskPanels = computed<Array<Record<string, string>>>(() => {
+  const rect = assetGuideTargetRect.value
+  if (!rect || !import.meta.client) return [{ inset: '0' }]
+  const edge = 8
+  const top = Math.max(0, rect.top - edge)
+  const left = Math.max(0, rect.left - edge)
+  const right = Math.min(window.innerWidth, rect.left + rect.width + edge)
+  const bottom = Math.min(window.innerHeight, rect.top + rect.height + edge)
+  return [
+    { top: '0', left: '0', width: '100vw', height: `${top}px` },
+    { top: `${bottom}px`, left: '0', width: '100vw', bottom: '0' },
+    { top: `${top}px`, left: '0', width: `${left}px`, height: `${Math.max(0, bottom - top)}px` },
+    { top: `${top}px`, left: `${right}px`, right: '0', height: `${Math.max(0, bottom - top)}px` },
+  ]
+})
+const assetGuideFocusStyle = computed<Record<string, string>>(() => {
+  const rect = assetGuideTargetRect.value
+  return rect ? { top: `${Math.max(0, rect.top - 8)}px`, left: `${Math.max(0, rect.left - 8)}px`, width: `${rect.width + 16}px`, height: `${rect.height + 16}px` } : {}
+})
 const uploadTarget = ref<DramaAssetProfile | null>(null)
 const menuUploadInput = ref<HTMLInputElement | null>(null)
 const voiceUploadInput = ref<HTMLInputElement | null>(null)
@@ -562,21 +608,29 @@ function requestAllAssetGeneration(): void {
 }
 
 function assetGuideStorageKey(): string {
-  // 项目切换时各自保留一次引导；匿名态用 guest 兜底，避免拼出空键。
+  // 引导完成记录按用户和项目隔离，避免切换项目时错误跳过新项目的首次说明。
   return `livliv:drama:asset-guide:${authStore.user?.id || 'guest'}:${props.projectId}`
 }
 
-function openAssetGuide(): void {
-  hideAssetGuideNextTime.value = false
-  showAssetGuide.value = true
+function finishAssetGuide(): void {
+  if (import.meta.client) window.localStorage.setItem(assetGuideStorageKey(), '1')
+  assetGuideTour.finish()
 }
 
-function finishAssetGuide(): void {
-  if (import.meta.client && hideAssetGuideNextTime.value) {
-    window.localStorage.setItem(assetGuideStorageKey(), '1')
-  }
-  showAssetGuide.value = false
+function updateAssetGuidePosition(): void {
+  if (!import.meta.client || !assetGuideTour.open.value) return
+  const target = assetGuideStep.value?.target
+  if (typeof target !== 'string') return
+  const element = document.querySelector<HTMLElement>(target)
+  if (!element) return
+  const rect = element.getBoundingClientRect()
+  assetGuideTargetRect.value = { top: rect.top, left: rect.left, width: rect.width, height: rect.height }
 }
+
+watch([() => assetGuideTour.open.value, () => assetGuideTour.index.value], () => {
+  // 目标随分页、筛选和滚动而变化，DOM 提交后测量避免高亮与气泡错位。
+  void nextTick(updateAssetGuidePosition)
+}, { flush: 'post' })
 
 function setStatusFilter(status: string): void {
   statusFilter.value = status
@@ -601,9 +655,10 @@ async function loadWorkspace(silent = false): Promise<void> {
   errorMessage.value = ''
   try {
     workspace.value = await dramaService.getAssetWorkspace(props.projectId)
-    // 首次成功拿到结构化资产后再显示引导，避免空数据或网络错误时弹出无法完成的操作说明。
+    // 仅首次进入且成功获取资产资料后自动显示；页面不再保留重复打开的“操作引导”入口。
     if (!silent && import.meta.client && !window.localStorage.getItem(assetGuideStorageKey())) {
-      showAssetGuide.value = true
+      await nextTick()
+      assetGuideTour.start(0)
     }
     if (selectedProfile.value) {
       const fresh = workspace.value.assets.find(item => item.id === selectedProfile.value?.id)
@@ -1091,10 +1146,15 @@ onMounted(() => {
   loadWorkspace()
   // Esc 是桌面端大图预览的标准退出方式，监听只在当前工作台生命周期内存在。
   window.addEventListener('keydown', handlePreviewKeydown)
+  // 引导打开期间窗口缩放或页面滚动都需要重新锚定气泡，避免说明与目标脱节。
+  window.addEventListener('resize', updateAssetGuidePosition)
+  window.addEventListener('scroll', updateAssetGuidePosition, true)
 })
 onBeforeUnmount(() => {
   stopRealtimeTracking()
   window.removeEventListener('keydown', handlePreviewKeydown)
+  window.removeEventListener('resize', updateAssetGuidePosition)
+  window.removeEventListener('scroll', updateAssetGuidePosition, true)
 })
 </script>
 
@@ -1167,7 +1227,7 @@ onBeforeUnmount(() => {
         </header>
 
         <div class="workspace-toolbar">
-          <div class="asset-tabs">
+          <div id="asset-guide-tabs" class="asset-tabs">
             <button v-for="(meta, key) in typeMeta" :key="key" :class="{ active: activeType === key }" @click="switchType(key as DramaWorkspaceAssetType)">
               <component :is="meta.icon" :size="18" /> {{ meta.label }}
               <span>{{ allAssets.filter(item => item.asset_type === key).length }}</span>
@@ -1180,24 +1240,41 @@ onBeforeUnmount(() => {
               避免一个选择状态同时承担两套互相冲突的业务规则。
             -->
             <UButton
-              class="select-all-button"
+              id="asset-guide-select-current"
+              class="asset-toolbar-control select-all-button"
               icon="i-lucide-check"
-              :label="allCurrentSelected ? '取消全选' : '全选'"
+              :label="allCurrentSelected ? '取消当前页全选' : '全选当前页'"
               color="neutral"
               :variant="allCurrentSelected ? 'soft' : 'outline'"
-              size="sm"
+              size="md"
               :disabled="!currentAssets.length"
               @click="toggleSelectAll"
             />
-            <UInput v-model="searchKeyword" class="asset-search-input" icon="i-lucide-search" placeholder="搜索资产名称" size="md" />
-            <BaseSelect v-model="statusFilter" class="status-select" tone="light" size="sm" :options="statusOptions" />
+            <!-- 顶部只保留全量生成；已勾选资产的生成操作放在底部汇总栏，贴近选择数量。 -->
+            <div class="toolbar-generation-actions">
+              <UButton
+                id="asset-guide-generate-all"
+                class="asset-toolbar-control toolbar-generation-action"
+                color="primary"
+                variant="soft"
+                size="md"
+                :disabled="!allGenerationTargets.length"
+                :loading="Boolean(actionBusy)"
+                @click="requestAllAssetGeneration"
+              >
+                <CreditIcon size="md" class="asset-generation-credit-icon" />
+                <span>生成全部资产{{ allGenerationTargets.length ? ` (${allGenerationTargets.length})` : '' }}</span>
+              </UButton>
+            </div>
+            <UInput v-model="searchKeyword" class="asset-toolbar-control asset-search-input" icon="i-lucide-search" placeholder="搜索资产名称" size="md" />
+            <BaseSelect v-model="statusFilter" class="asset-toolbar-control status-select" tone="light" size="md" :options="statusOptions" />
             <UButton
-              class="primary-small"
+              class="asset-toolbar-control toolbar-create-action"
               icon="i-lucide-plus"
               :label="`新增${typeMeta[activeType].label}`"
               color="primary"
               variant="solid"
-              size="sm"
+              size="md"
             />
           </div>
         </div>
@@ -1258,8 +1335,18 @@ onBeforeUnmount(() => {
 
         <footer class="asset-footer">
           <div><strong>已选择 {{ selectedKeys.length }} 项</strong><button class="readiness-link" :title="workspace.readiness.blockers.join('\n')"><ShieldCheck :size="14" /> 已锁定 {{ workspace.readiness.locked_total }}/{{ workspace.readiness.required_total }} 项必需资产</button></div>
-          <!-- 资产批量生成属于主操作，使用更清晰的中号积分图标。 -->
-          <UButton v-if="selectionTargets.length" class="secondary-action" color="primary" variant="outline" size="md" :loading="Boolean(actionBusy)" @click="requestEstimate()"><CreditIcon size="sm" /> 生成选中资产</UButton>
+          <UButton
+            class="asset-footer-action"
+            color="primary"
+            variant="solid"
+            size="md"
+            :disabled="!selectionTargets.length"
+            :loading="Boolean(actionBusy)"
+            @click="requestEstimate()"
+          >
+            <CreditIcon size="md" class="asset-generation-credit-icon" />
+            <span>生成选中资产</span>
+          </UButton>
           <UButton
             v-if="lockableSelectedProfiles.length"
             class="secondary-action batch-lock-action"
@@ -1271,18 +1358,65 @@ onBeforeUnmount(() => {
             :loading="Boolean(actionBusy)"
             @click="requestBatchLock"
           />
-          <UButton
-            class="main-action"
-            icon="i-lucide-check"
-            label="确认资产并进入分镜"
-            color="primary"
-            variant="solid"
-            size="md"
-            :disabled="!workspace.readiness.ready"
-            @click="enterStoryboard"
-          />
+          <!-- 禁用按钮外包一层提示容器，保证鼠标悬停时仍能读到具体阻塞原因。 -->
+          <BaseTooltip :text="readinessReason || '全部必需资产已锁定，可以进入分镜设计。'" align="right">
+            <span id="asset-guide-enter-storyboard" class="asset-footer-action-wrap">
+              <UButton
+                class="asset-footer-action"
+                icon="i-lucide-check"
+                label="确认资产并进入分镜"
+                color="primary"
+                variant="solid"
+                size="md"
+                :disabled="!workspace.readiness.ready"
+                @click="enterStoryboard"
+              />
+            </span>
+          </BaseTooltip>
         </footer>
       </div>
+
+      <!--
+        引导遮罩必须覆盖整个视窗并拦截其它操作；当前 data-asset-guide 目标通过更高层级突出显示，
+        用户只能跟随本步操作或使用气泡的上一步、下一步与跳过，避免误点其它资产导致状态改变。
+      -->
+      <!-- 传送到 body 避开工作台局部层叠上下文，确保遮罩永远覆盖导航、卡片和底部栏。 -->
+      <Teleport to="body">
+        <template v-if="assetGuideTour.open.value">
+          <div
+            v-for="(panelStyle, panelIndex) in assetGuideMaskPanels"
+            :key="panelIndex"
+            class="asset-guide-mask-panel"
+            :style="panelStyle"
+            aria-hidden="true"
+            @click.prevent.stop
+            @wheel.prevent
+            @touchmove.prevent
+          />
+          <!-- 聚焦框本身是透明点击拦截层：目标仍清晰可见，但引导期间不会意外触发业务操作。 -->
+          <div class="asset-guide-focus-blocker" :style="assetGuideFocusStyle" aria-hidden="true" @click.prevent.stop @wheel.prevent @touchmove.prevent />
+          <section
+            class="asset-guide-popover"
+            :style="assetGuidePopoverStyle"
+            role="dialog"
+            aria-modal="true"
+            aria-live="polite"
+            aria-label="资产准备操作引导"
+          >
+            <div class="asset-guide-popover__head">
+              <span>资产准备引导 · {{ assetGuideTour.index.value + 1 }}/{{ assetGuideTour.total.value }}</span>
+              <UButton color="neutral" variant="link" size="xs" label="跳过" @click="finishAssetGuide" />
+            </div>
+            <h3>{{ assetGuideStep?.title }}</h3>
+            <p>{{ assetGuideStep?.description }}</p>
+            <div class="asset-guide-popover__actions">
+              <UButton v-if="assetGuideTour.hasPrev.value" color="neutral" variant="outline" size="sm" label="上一步" @click="assetGuideTour.prev" />
+              <span v-else />
+              <UButton color="primary" variant="solid" size="sm" :label="assetGuideTour.hasNext.value ? '下一步' : '完成引导'" @click="assetGuideTour.hasNext.value ? assetGuideTour.next() : finishAssetGuide()" />
+            </div>
+          </section>
+        </template>
+      </Teleport>
 
       <LivDialog
         :open="Boolean(selectedProfile)"
@@ -1511,7 +1645,7 @@ onBeforeUnmount(() => {
       <template #footer><LivButton variant="secondary" :disabled="actionBusy === 'batch-lock'" @click="showLockConfirm = false">取消</LivButton><LivButton variant="primary" :loading="Boolean(actionBusy)" @click="applyProfileLocks(pendingLockProfiles, true)"><template #icon><LockKeyhole :size="16" /></template>{{ riskyPendingLockProfiles.length ? '确认风险并锁定' : '确认全部锁定' }}</LivButton></template>
     </LivDialog>
 
-    <LivDialog v-if="estimate" :open="showEstimate" :title="generationMode === 'repair' ? (repairMode === 'system_repair' ? '确认系统修正' : '确认生成优化版本') : '确认生成资产'" :description="generationMode === 'repair' ? '系统会创建一个新图片版本，原图、原始生成要求与旧报告都会保留。' : `本次将生成 ${estimate.target_count} 项资产，生成后自动进行一次质量检测。`" width="sm" @update:open="showEstimate = $event">
+    <LivDialog v-if="estimate" :open="showEstimate" :title="generationMode === 'repair' ? (repairMode === 'system_repair' ? '确认系统修正' : '确认生成优化版本') : `确认生成${generationScopeLabel}`" :description="generationMode === 'repair' ? '系统会创建一个新图片版本，原图、原始生成要求与旧报告都会保留。' : `本次将生成 ${estimate.target_count} 项资产，生成后自动进行一次质量检测。`" width="sm" @update:open="showEstimate = $event">
       <div class="cost-box"><div><span>预计消耗</span><CreditAmount :value="estimate.required_credits" size="md" tone="accent" :show-unit="true" /></div><div><span>当前余额</span><CreditAmount :value="estimate.current_balance" size="md" tone="default" :show-unit="true" /></div></div>
       <ul v-if="estimate.warnings.length" class="liv-modal-warning-list"><li v-for="item in estimate.warnings" :key="item">{{ item }}</li></ul>
       <div v-if="blockedAuditDetails.length" class="prompt-audit-blocked"><div class="prompt-audit-title"><AlertTriangle :size="16" /><strong>以下资产的生成资料需要先确认</strong></div><div v-for="item in blockedAuditDetails" :key="item.target" class="prompt-audit-item"><b>{{ item.name }}</b><span>{{ item.reasons.join('；') || '存在硬性生成要求冲突' }}</span></div></div>
@@ -1521,6 +1655,7 @@ onBeforeUnmount(() => {
 
     <LivDialog v-if="consistencyEstimate" :open="showConsistencyEstimate" title="确认图片质量检测" :description="consistencyEstimate.free_retry ? '本次属于检测服务异常后的0积分重新检测。' : '检测将使用真实图片理解模型，并返回可核验的预期、实际差异与修正方向。'" width="sm" @update:open="showConsistencyEstimate = $event">
       <div class="cost-box"><div><span>预计消耗</span><CreditAmount :value="consistencyEstimate.required_credits" size="md" tone="accent" :show-unit="true" /></div><div><span>当前余额</span><CreditAmount :value="consistencyEstimate.current_balance" size="md" tone="default" :show-unit="true" /></div></div>
+      <details v-if="consistencyEstimate.cost_items?.length" class="generation-cost-details"><summary>查看费用明细</summary><div v-for="item in consistencyEstimate.cost_items" :key="`${item.type}-${item.label}`" class="generation-cost-item"><span>{{ item.label }}</span><b>{{ item.credits }} 点</b></div></details>
       <template #footer><LivButton variant="secondary" @click="showConsistencyEstimate = false">取消</LivButton><LivButton variant="primary" :loading="actionBusy.startsWith('check:')" :disabled="!consistencyEstimate.sufficient" @click="confirmConsistency"><template #icon><CreditIcon size="md" class="button-credit-icon" /></template>{{ consistencyEstimate.sufficient ? `消耗 ${consistencyEstimate.required_credits} 点积分 · 开始检测` : '点数不足' }}</LivButton></template>
     </LivDialog>
 
@@ -1538,7 +1673,19 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .asset-workspace{--blue:#1768ff;--line:#e7edf6;--muted:#738096;--ink:#172033;position:relative;color:var(--ink);font-family:Inter,"PingFang SC","Microsoft YaHei",sans-serif}.asset-loading,.asset-error{min-height:420px;display:flex;align-items:center;justify-content:center;gap:12px;border:1px solid var(--line);border-radius:20px;background:#fff;color:var(--muted)}.asset-error{flex-direction:column;text-align:center}.asset-error p{margin:6px 0}.asset-error button,.outline-button{border:1px solid #cbd8ec;background:#fff;border-radius:10px;padding:10px 16px;color:#245fc7}.spin{animation:spin 1s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}.notice-bar{display:flex;align-items:center;gap:8px;margin-bottom:14px;padding:11px 14px;border:1px solid #cfe0ff;border-radius:10px;background:#f4f8ff;color:#3674de;font-size:13px}.notice-bar button{margin-left:auto}.visual-bible-card{display:flex;align-items:center;gap:22px;padding:20px;border:1px solid var(--line);border-radius:16px;background:#fff;box-shadow:0 8px 28px rgba(20,45,90,.035)}.bible-reference{width:176px;height:104px;display:flex;align-items:center;justify-content:center;overflow:hidden;border-radius:12px;background:linear-gradient(135deg,#eaf2ff,#f4f7fb);color:var(--blue)}.bible-reference img{width:100%;height:100%;object-fit:cover}.bible-main{min-width:0;flex:1}.eyebrow{font-size:12px;color:#5270a4}.bible-main h2{margin:5px 0 12px;font-size:20px}.bible-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:20px}.bible-grid div{display:flex;flex-direction:column;gap:4px}.bible-grid span{font-size:12px;color:var(--muted)}.bible-grid b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;font-weight:600}.outline-button{display:inline-flex;align-items:center;justify-content:center;gap:7px;font-weight:600}.workspace-toolbar{display:flex;align-items:center;justify-content:space-between;margin-top:18px;border-bottom:1px solid var(--line)}.asset-tabs{display:flex}.asset-tabs button{display:flex;align-items:center;gap:8px;padding:16px 20px;border-bottom:2px solid transparent;color:#69768b;font-weight:600}.asset-tabs button.active{border-color:var(--blue);color:var(--blue)}.asset-tabs span{font-size:11px}.toolbar-actions{display:flex;align-items:center;gap:10px;padding-bottom:10px}.search-box,.filter-box{height:38px;display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:10px;padding:0 11px;background:#fff;color:#8792a5}.search-box input{width:160px;border:0;outline:0}.filter-box select{appearance:none;border:0;outline:0;background:transparent}.primary-small,.main-action{display:inline-flex;align-items:center;justify-content:center;gap:7px;border-radius:10px;background:var(--blue);padding:10px 16px;color:#fff;font-weight:700}.status-row{display:flex;gap:9px;padding:14px 0}.status-row button{border:1px solid var(--line);border-radius:99px;padding:7px 13px;background:#fff;color:var(--muted);font-size:12px}.status-row button.active{border-color:#bfd3ff;background:#f2f6ff;color:var(--blue)}.workspace-body{display:grid;grid-template-columns:minmax(0,1fr) 246px;gap:16px}.asset-grid-wrap{min-height:450px}.asset-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}.asset-card{min-width:0;border:1px solid var(--line);border-radius:15px;background:#fff;overflow:visible;transition:.2s}.asset-card:hover,.asset-card.selected{border-color:#86adff;box-shadow:0 10px 25px rgba(28,92,210,.08)}.asset-card.stale{border-color:#ffc7c7}.card-image{position:relative;height:190px;margin:9px;overflow:visible;border-radius:11px;background:#f3f6fa;cursor:pointer}.card-image>img{width:100%;height:100%;border-radius:11px;object-fit:cover}.image-empty{width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;border-radius:11px;background:linear-gradient(145deg,#f3f6fb,#eaf0f8);color:#9aa8ba}.select-check,.more-button,.image-lock{position:absolute;top:9px;width:28px;height:28px;display:flex;align-items:center;justify-content:center;border-radius:8px;background:rgba(255,255,255,.92);box-shadow:0 2px 10px rgba(0,0,0,.08)}.select-check{left:9px;color:transparent}.select-check.checked{background:var(--blue);color:#fff}.more-button{right:9px}.image-lock{right:44px;color:#31476a}.more-button.static{position:static}.card-menu{position:absolute;z-index:30;right:8px;top:42px;width:160px;padding:6px;border:1px solid var(--line);border-radius:10px;background:#fff;box-shadow:0 15px 34px rgba(20,35,60,.16)}.card-menu button,.card-menu label{display:flex;width:100%;align-items:center;gap:9px;padding:9px;border-radius:7px;font-size:13px;cursor:pointer}.card-menu button:hover,.card-menu label:hover{background:#f4f7fb}.card-menu input{display:none}.card-menu .danger{color:#df384c}.card-content{padding:5px 14px 14px}.card-title{display:flex;justify-content:space-between;gap:8px}.card-title h3{font-size:16px;font-weight:750}.card-title p{margin-top:4px;color:var(--muted);font-size:12px}.card-title>span{height:21px;border-radius:6px;background:#edf4ff;padding:3px 7px;color:var(--blue);font-size:10px}.card-description{display:-webkit-box;overflow:hidden;-webkit-box-orient:vertical;-webkit-line-clamp:2;min-height:42px;margin:10px 0 8px;color:#606d80;font-size:12px;line-height:21px}.tag-row{display:flex;flex-wrap:wrap;gap:5px;min-height:23px}.tag-row span{border-radius:5px;background:#f2f5f9;padding:4px 7px;color:#6d7889;font-size:10px}.tag-row .ai-tag{background:#fff6e6;color:#b06a00}.card-status{display:flex;align-items:center;justify-content:space-between;margin:11px 0;font-size:11px}.card-status button{color:#4779cc}.status-locked{color:#237957}.status-to_confirm{color:#b66c00}.status-failed,.status-stale{color:#df4054}.status-generating,.status-queued{color:var(--blue)}.card-actions{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}.card-actions button{border:1px solid var(--line);border-radius:8px;padding:8px 5px;font-size:11px;font-weight:600}.card-actions .primary{border-color:var(--blue);background:var(--blue);color:#fff}.card-actions button:disabled{opacity:.45}.consistency-panel{align-self:start;padding:16px;border:1px solid var(--line);border-radius:15px;background:#fff}.panel-title{display:flex;align-items:flex-start;justify-content:space-between}.panel-title h3{font-size:15px}.panel-title p{margin-top:4px;color:var(--muted);font-size:10px}.score-ring{width:118px;height:118px;display:flex;flex-direction:column;align-items:center;justify-content:center;margin:24px auto;border:9px solid #dbe7ff;border-top-color:var(--blue);border-radius:50%}.score-ring strong{font-size:25px;color:var(--blue)}.score-ring span{font-size:10px;color:var(--muted)}.score-list>div{display:flex;justify-content:space-between;padding:9px 0;border-bottom:1px solid #f0f3f7;font-size:12px}.panel-empty{display:flex;flex-direction:column;align-items:center;padding:38px 10px;text-align:center;color:#8190a5}.panel-empty h4{margin:10px 0 5px;color:var(--ink)}.panel-empty p{font-size:11px;line-height:19px}.panel-empty.compact{padding:24px 8px}.readiness-box{margin-top:14px;padding:13px;border-radius:10px;background:#f6f8fc}.readiness-box h4{font-size:13px}.readiness-box p,.readiness-box li{margin-top:7px;color:var(--muted);font-size:10px;line-height:17px}.ready-text{display:flex;align-items:center;gap:6px;margin-top:9px;color:#25805d;font-size:11px}.empty-state{min-height:420px;display:flex;flex-direction:column;align-items:center;justify-content:center;border:1px dashed #d6dfed;border-radius:15px;color:#8996a9}.empty-state h3{margin:12px 0 5px;color:var(--ink)}.empty-state p{font-size:12px}.asset-footer{position:sticky;z-index:20;bottom:0;display:flex;align-items:center;justify-content:flex-end;gap:12px;margin-top:18px;padding:13px 18px;border:1px solid var(--line);border-radius:13px;background:rgba(255,255,255,.96);box-shadow:0 -8px 25px rgba(21,43,80,.07);backdrop-filter:blur(12px)}.asset-footer>div{display:flex;flex-direction:column;margin-right:auto}.asset-footer span{margin-top:3px;color:var(--muted);font-size:11px}.secondary-action{display:flex;align-items:center;gap:7px;border:1px solid #b7ceff;border-radius:10px;padding:10px 16px;color:var(--blue);font-weight:700}.main-action:disabled{cursor:not-allowed;background:#aebbd0}.detail-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:15px}.detail-head>button:first-child{display:flex;align-items:center;gap:6px;color:#5c6d84;font-size:13px}.detail-head>div{display:flex;align-items:center;gap:10px}.detail-head h2{font-size:20px}.detail-layout{display:grid;grid-template-columns:220px minmax(0,1fr) 290px;gap:14px}.detail-list,.detail-editor,.detail-advice section{border:1px solid var(--line);border-radius:15px;background:#fff}.detail-list{padding:10px}.detail-list-title{padding:8px 8px 12px;font-weight:700}.detail-list>button{width:100%;display:flex;align-items:center;gap:10px;margin-bottom:7px;padding:8px;border:1px solid transparent;border-radius:10px;text-align:left}.detail-list>button.active{border-color:#a5c1ff;background:#f3f7ff}.detail-list img,.detail-list>button>span{width:48px;height:48px;display:flex;align-items:center;justify-content:center;border-radius:8px;background:#eef2f7;object-fit:cover}.detail-list strong,.detail-list small{display:block}.detail-list small{margin-top:5px;color:var(--muted);font-size:10px}.detail-editor{padding:18px}.editor-top{display:grid;grid-template-columns:330px 1fr;gap:20px}.hero-image{position:relative;height:270px;overflow:hidden;border-radius:13px;background:#f2f5f9}.hero-image>img{width:100%;height:100%;object-fit:contain}.hero-image>label{position:absolute;bottom:10px;left:10px;display:flex;align-items:center;gap:6px;border-radius:8px;background:rgba(26,38,58,.72);padding:8px 10px;color:#fff;font-size:11px}.hero-image input{display:none}.base-fields,.field-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.base-fields label,.field-grid label{display:flex;flex-direction:column;gap:6px;color:#536177;font-size:11px}.base-fields input,.base-fields select,.field-grid input,.field-grid textarea{width:100%;border:1px solid var(--line);border-radius:8px;padding:10px 11px;outline:none;color:var(--ink);resize:vertical}.check-line{grid-column:1/-1;display:flex!important;flex-direction:row!important;align-items:center}.check-line input{width:auto}.field-grid{margin-top:18px}.field-grid .wide{grid-column:1/-1}.evidence-box{display:flex;justify-content:space-between;gap:15px;margin-top:15px;padding:13px;border:1px solid #e2e9f4;border-radius:10px;background:#f8faff}.evidence-box h4{font-size:12px}.evidence-box p{margin-top:6px;color:var(--muted);font-size:11px;line-height:19px}.evidence-box>span{align-self:flex-start;white-space:nowrap;border-radius:6px;padding:4px 7px;font-size:10px}.source-script{background:#e9f8f1;color:#237957}.source-ai{background:#fff4df;color:#a66a00}.version-strip{margin-top:16px}.version-strip h4{margin-bottom:9px}.version-strip button{position:relative;width:92px;height:74px;margin-right:8px;border:2px solid transparent;border-radius:9px;overflow:hidden}.version-strip button.active{border-color:var(--blue)}.version-strip img{width:100%;height:100%;object-fit:cover}.version-strip span{position:absolute;bottom:0;left:0;right:0;background:rgba(18,31,51,.62);padding:3px;color:#fff;font-size:9px}.editor-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:18px}.detail-advice{display:flex;flex-direction:column;gap:12px}.detail-advice section{padding:16px}.suggestion-copy{margin-top:12px;border-radius:10px;background:#f3f7ff;padding:12px;color:#53647d;font-size:12px;line-height:21px}.detail-advice section>h3{font-size:14px}.detail-advice section>p{margin:8px 0 13px;color:var(--muted);font-size:11px;line-height:19px}.big-score{margin:12px 0;font-size:30px;font-weight:800;color:var(--blue)}.dimension{display:grid;grid-template-columns:64px 1fr 30px;align-items:center;gap:7px;margin:9px 0;font-size:10px}.dimension>div{height:5px;border-radius:5px;background:#edf1f6;overflow:hidden}.dimension i{display:block;height:100%;background:var(--blue)}.issue-list{margin:10px 0;color:#b94b57;font-size:10px;line-height:18px}.full{width:100%}.modal-mask{position:fixed;z-index:120;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(14,25,44,.42);backdrop-filter:blur(3px)}.confirm-modal,.bible-modal{position:relative;width:min(460px,calc(100vw - 32px));border-radius:18px;background:#fff;padding:26px;box-shadow:0 30px 80px rgba(7,20,43,.24)}.bible-modal{width:min(720px,calc(100vw - 32px))}.modal-close{position:absolute;top:15px;right:15px}.modal-icon{color:var(--blue)}.confirm-modal h3,.bible-modal h3{margin:10px 0 6px;font-size:20px}.confirm-modal>p,.bible-modal>p{color:var(--muted);font-size:12px}.cost-box{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:18px 0}.cost-box>div{display:flex;flex-direction:column;gap:5px;border-radius:10px;background:#f5f8fd;padding:13px}.cost-box span{font-size:11px;color:var(--muted)}.cost-box strong{font-size:18px}.confirm-modal ul{margin:0 0 14px;color:#bd4656;font-size:11px}.bible-modal .field-grid{margin:20px 0}.bible-modal .main-action{margin-top:4px}
+/*
+  useTour 只管理步骤状态，不接管遮罩层。这里用全视窗遮罩锁住非当前目标区域，
+  并将当前目标和说明卡片提升到遮罩之上，保证引导期间不会误触其它业务操作。
+*/
+.asset-guide-mask-panel{position:fixed;z-index:10000;background:rgba(29,106,190,.42);backdrop-filter:blur(2px);cursor:default}
+.asset-guide-highlight{position:relative!important;z-index:1!important;border-radius:12px;box-shadow:0 0 0 4px rgba(255,255,255,.9),0 0 0 8px rgba(23,104,255,.48),0 14px 32px rgba(13,65,138,.3);transition:box-shadow .2s ease}
+.asset-guide-focus-blocker{position:fixed;z-index:10001;border:2px solid #fff;border-radius:12px;box-shadow:0 0 0 4px rgba(23,104,255,.58),0 14px 32px rgba(13,65,138,.3);cursor:default}
+.asset-guide-popover{position:fixed;z-index:10002;width:min(340px,calc(100vw - 32px));padding:15px 16px 14px;border:1px solid #bfd5ff;border-radius:16px;background:#fff;box-shadow:0 22px 60px rgba(12,48,100,.25)}
+.asset-guide-popover__head{display:flex;align-items:center;justify-content:space-between;gap:12px;color:#1768ff;font-size:12px;font-weight:700}.asset-guide-popover h3{margin:12px 0 7px;color:#172033;font-size:17px;font-weight:750}.asset-guide-popover p{margin:0;color:#62728a;font-size:13px;line-height:21px}.asset-guide-popover__actions{display:flex;align-items:center;justify-content:space-between;margin-top:15px}
 @media(max-width:1350px){.asset-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.bible-grid{grid-template-columns:1fr 1fr}.detail-layout{grid-template-columns:190px minmax(0,1fr)}.detail-advice{grid-column:1/-1;display:grid;grid-template-columns:repeat(3,1fr)}}@media(max-width:980px){.visual-bible-card{align-items:flex-start;flex-wrap:wrap}.bible-reference{width:140px}.workspace-toolbar{align-items:flex-start;flex-direction:column}.toolbar-actions{width:100%;flex-wrap:wrap}.workspace-body{grid-template-columns:1fr}.consistency-panel{order:-1}.asset-grid{grid-template-columns:1fr}.detail-layout{grid-template-columns:1fr}.detail-list{display:none}.detail-advice{display:flex;grid-column:auto}.editor-top{grid-template-columns:1fr}.asset-footer{flex-wrap:wrap}}
+
+/* 顶部批量操作与底部选中项操作使用相同的 Nuxt 按钮规格，仅通过位置表达范围差异。 */
+.toolbar-generation-actions{display:flex;align-items:center;gap:8px}.toolbar-generation-action{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
 
 /*
  * 资产工作台第二轮视觉收敛：
@@ -1870,6 +2017,25 @@ onBeforeUnmount(() => {
 .asset-editor-body .dimension{font-size:11px;line-height:17px}
 .asset-editor-body .issue-list li{font-size:11px;line-height:19px}
 .asset-editor-body .issue-list small{font-size:10px;line-height:18px}
+
+/*
+ * 批量操作统一规格：顶部工具栏均为 38px，底部主操作均为 44px。
+ * UButton、UInput 与 BaseSelect 的内部元素分别校正，避免组件尺寸参数一致但渲染高度不同。
+ */
+.asset-toolbar-control{height:38px;min-height:38px;border-radius:10px;font-size:12px;font-weight:700;white-space:nowrap}
+.asset-search-input{height:38px}
+.asset-search-input :deep(input){height:38px;min-height:38px;border-radius:10px;font-size:12px}
+.status-select{height:38px}
+.status-select :deep(button){height:38px;min-height:38px;border-radius:10px;font-size:12px}
+.toolbar-generation-actions{height:38px}
+.toolbar-generation-action,.toolbar-create-action,.select-all-button{height:38px;min-height:38px;padding:0 14px}
+.toolbar-generation-action,.asset-footer-action{gap:8px}
+.asset-generation-credit-icon{flex:0 0 auto;color:inherit}
+
+.asset-footer-action,.asset-footer .secondary-action{height:44px;min-height:44px;min-width:168px;justify-content:center;border-radius:10px;padding:0 18px;font-size:13px;font-weight:700}
+.asset-footer .asset-footer-action-wrap{display:inline-flex;margin-top:0;color:inherit;font-size:inherit}
+.asset-footer .asset-footer-action span{margin-top:0;color:inherit;font-size:13px}
+.asset-footer-action:disabled{cursor:not-allowed;border-color:#aebbd0!important;background:#aebbd0!important;color:#fff!important;opacity:1!important}
 
 @media(max-width:1200px){
   .asset-editor-body{height:min(720px,calc(100vh - 170px));grid-template-columns:minmax(260px,32%) minmax(380px,1fr);overflow:auto}

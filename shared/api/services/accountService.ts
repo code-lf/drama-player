@@ -40,7 +40,7 @@ export const accountService = {
     })
   },
 
-  async changePassword(payload: { currentPassword: string; newPassword: string; verificationCode: string }) {
+  async changePassword(payload: { newPassword: string; newPasswordConfirmation: string; verificationCode: string }) {
     return callApi('account/security/password', async (adapter) => {
       if (!adapter.changeAccountPassword) throw new Error('当前接口适配器未实现密码修改。')
       return adapter.changeAccountPassword(payload)

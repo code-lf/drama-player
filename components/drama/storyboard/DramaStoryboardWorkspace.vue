@@ -44,6 +44,7 @@ import type {
   StoryboardTake,
   StoryboardWorkspace
 } from '~/entities/storyboard/types'
+import type { PublicVideoCapabilities } from '~/entities/drama/types'
 import type {
   DramaAssetProfile,
   DramaAssetWorkspace,
@@ -70,6 +71,8 @@ const props = defineProps<{
   episodeCount?: number
   runStatus?: string
   coverUrl?: string
+  /** 项目创建时锁定的清晰度；分镜阶段只读继承，不允许用户再次选择。 */
+  resolution?: string
 }>()
 
 const emit = defineEmits<{
@@ -91,6 +94,7 @@ const continuityTooltipUi = {
 }
 
 const workspace = ref<StoryboardWorkspace | null>(null)
+const publicVideoCapabilities = ref<PublicVideoCapabilities | null>(null)
 const loading = ref(true)
 const refreshing = ref(false)
 const errorMessage = ref('')
@@ -115,6 +119,12 @@ const segmentDraft = ref<StoryboardDirectorSegment[]>([])
 const advancedSegmentId = ref('')
 const batchEstimate = ref<StoryboardBatchEstimate | null>(null)
 const batchConfirmVisible = ref(false)
+// 声音策略由普通用户选择业务意图，供应商和模型仍由后端黑盒路由。
+const audioMode = ref<'preserve_original' | 'drive_video' | 'none'>('preserve_original')
+const audioAssetId = ref('')
+const audioTrimStartMs = ref(0)
+const audioTrimEndMs = ref<number | null>(null)
+const audioMixMode = ref<'replace' | 'mix'>('replace')
 /** 失败镜头重试的二次确认气泡开关。 */
 const retryFailedPopoverOpen = ref(false)
 const pendingGenerationIds = ref<string[]>([])
@@ -373,10 +383,28 @@ const failedStoryboardRows = computed(() => (workspace.value?.rows || []).filter
 )))
 const managedAssets = computed(() => (assetWorkspace.value?.assets || []).filter(profile => profile.asset_type === assetManagerType.value))
 
-const durationOptions: BaseSelectOption[] = Array.from({ length: 9 }, (_, index) => ({
-  label: `${index + 2} 秒`,
-  value: String(index + 2)
-}))
+const projectResolution = computed(() => String(props.resolution || '720p').toLowerCase())
+const durationOptions = computed<BaseSelectOption[]>(() => {
+  const minDuration = publicVideoCapabilities.value?.minDurationSec ?? 4
+  const maxDuration = publicVideoCapabilities.value?.maxDurationSec ?? 15
+  return Array.from({ length: Math.max(1, maxDuration - minDuration + 1) }, (_, index) => ({
+    label: `${minDuration + index} 秒`,
+    value: String(minDuration + index)
+  }))
+})
+
+async function loadPublicVideoCapabilities(): Promise<void> {
+  try {
+    publicVideoCapabilities.value = await dramaService.getPublicVideoCapabilities()
+    const values = durationOptions.value.map(item => item.value)
+    if (!values.includes(shotTuningDuration.value)) {
+      shotTuningDuration.value = values[0] || '4'
+    }
+  } catch (error) {
+    // 能力接口失败时保留 4～15 秒安全边界；服务端仍会做最终兼容性校验。
+    console.warn('[livliv] 分镜视频能力加载失败，已使用安全时长范围', error)
+  }
+}
 
 // 导演段落使用固定的专业词表，既方便用户手工调整，也避免向模型传入含义模糊的自由文本。
 const shotSizeOptions: BaseSelectOption[] = [
@@ -763,8 +791,12 @@ async function ensureOverviewEstimate(force = false): Promise<void> {
       episodeNo: currentEpisodeNo.value,
       rowIds: rows.map(row => row.id),
       qualityPolicy: 'smart',
-      audioMode: 'sound',
-      resolution: '720p'
+      audioMode: audioMode.value,
+      audioAssetId: audioAssetId.value,
+      audioTrimStartMs: audioTrimStartMs.value,
+      audioTrimEndMs: audioTrimEndMs.value,
+      audioMixMode: audioMixMode.value,
+      resolution: projectResolution.value
     })
   } catch {
     // 被动估价失败不阻断工作台；用户点击生成时仍会再次执行正式估价并展示错误。
@@ -779,8 +811,12 @@ async function ensureRowEstimate(row: StoryboardRow): Promise<void> {
       episodeNo: currentEpisodeNo.value,
       rowIds: [row.id],
       qualityPolicy: 'smart',
-      audioMode: 'sound',
-      resolution: '720p'
+      audioMode: audioMode.value,
+      audioAssetId: audioAssetId.value,
+      audioTrimStartMs: audioTrimStartMs.value,
+      audioTrimEndMs: audioTrimEndMs.value,
+      audioMixMode: audioMixMode.value,
+      resolution: projectResolution.value
     })
     rowEstimateCache.value = { ...rowEstimateCache.value, [row.id]: estimate }
   } catch {
@@ -987,8 +1023,12 @@ async function prepareGeneration(rowIds: string[]): Promise<void> {
       episodeNo: currentEpisodeNo.value,
       rowIds,
       qualityPolicy: qualityPolicy.value,
-      audioMode: 'sound',
-      resolution: '720p'
+      audioMode: audioMode.value,
+      audioAssetId: audioAssetId.value,
+      audioTrimStartMs: audioTrimStartMs.value,
+      audioTrimEndMs: audioTrimEndMs.value,
+      audioMixMode: audioMixMode.value,
+      resolution: projectResolution.value
     })
     batchConfirmVisible.value = true
   } catch (error) {
@@ -1022,8 +1062,12 @@ async function startGeneration(): Promise<void> {
       episodeNo: currentEpisodeNo.value,
       rowIds: pendingGenerationIds.value,
       qualityPolicy: qualityPolicy.value,
-      audioMode: 'sound',
-      resolution: '720p',
+      audioMode: audioMode.value,
+      audioAssetId: audioAssetId.value,
+      audioTrimStartMs: audioTrimStartMs.value,
+      audioTrimEndMs: audioTrimEndMs.value,
+      audioMixMode: audioMixMode.value,
+      resolution: projectResolution.value,
       idempotencyKey: `${props.projectId}:${currentEpisodeNo.value}:${Date.now()}`
     })
     batchConfirmVisible.value = false
@@ -1360,6 +1404,8 @@ function startEditAsset(profile: DramaAssetProfile): void {
   assetManagerType.value = profile.asset_type
   assetManagerMode.value = 'edit'
   assetEditorProfile.value = profile
+  // 最近编辑的角色声音可直接作为本次生成的候选素材；后端仍会按项目归属再次校验。
+  if (profile.voice?.audio_asset?.id) audioAssetId.value = profile.voice.audio_asset.id
   assetDraft.value = {
     ...profile.data,
     name: profile.name,
@@ -1419,7 +1465,10 @@ async function chooseManagedVersion(profile: DramaAssetProfile, versionId: strin
   try {
     assetWorkspace.value = await dramaService.updateAssetProfile(props.projectId, profile, { selected_asset_id: versionId })
     const refreshed = assetWorkspace.value.assets.find(item => item.id === profile.id)
-    if (refreshed) startEditAsset(refreshed)
+    if (refreshed) {
+      startEditAsset(refreshed)
+      audioAssetId.value = refreshed.voice?.audio_asset?.id || audioAssetId.value
+    }
     showNotice('资产图片版本已切换。')
   } catch (error) {
     showNotice(actionErrorMessage(error, '资产图片版本切换失败。'), 'error')
@@ -1655,7 +1704,7 @@ watch(currentView, async () => {
 })
 
 onMounted(async () => {
-  await loadWorkspace()
+  await Promise.all([loadPublicVideoCapabilities(), loadWorkspace()])
   // 浏览器刷新带 `view=workbench` 的地址时可能恢复上次滚动位置，这里统一归零。
   await nextTick()
   window.scrollTo({ top: 0, behavior: 'auto' })
@@ -2387,6 +2436,36 @@ onBeforeUnmount(stopRealtimeTracking)
             <div class="generation-credit-summary">
               <div><span>预计消耗</span><CreditAmount :value="batchEstimate.estimatedCredits" size="md" tone="inherit" /></div>
               <div><span>当前余额</span><CreditAmount :value="batchEstimate.currentBalance" size="md" tone="inherit" /></div>
+            </div>
+
+            <div class="generation-audio-options">
+              <div class="generation-audio-options__title"><Volume2 :size="16" /><strong>声音处理方式</strong><span>不展示供应商和模型</span></div>
+              <label>声音策略
+                <select v-model="audioMode">
+                  <option value="preserve_original">保留我的原声（生成后混音）</option>
+                  <option value="drive_video" :disabled="!publicVideoCapabilities?.supportsAudioDrivenVideo">让画面跟随声音（需验证通过）</option>
+                  <option value="none">不使用上传声音</option>
+                </select>
+              </label>
+              <label v-if="audioMode !== 'none'">音频素材 ID
+                <input v-model="audioAssetId" type="text" placeholder="先在角色资产中上传参考音频" />
+              </label>
+              <div v-if="audioMode !== 'none'" class="generation-audio-options__row">
+                <label>开始毫秒<input v-model.number="audioTrimStartMs" type="number" min="0" /></label>
+                <label>结束毫秒<input v-model.number="audioTrimEndMs" type="number" min="0" placeholder="默认到素材末尾" /></label>
+                <label>混音方式
+                  <select v-model="audioMixMode">
+                    <option value="replace">替换模型音轨</option>
+                    <option value="mix">与模型音轨混合</option>
+                  </select>
+                </label>
+              </div>
+              <p v-if="audioMode === 'drive_video' && !publicVideoCapabilities?.supportsAudioDrivenVideo" class="generation-audio-options__warning">当前没有通过真实音频输入验证的模型，不能提交声音驱动画面任务。</p>
+              <p v-else-if="audioMode === 'preserve_original'">生成完成后由平台 FFmpeg 按当前镜头时长裁切，短音频自动静音补齐。</p>
+            </div>
+            <div v-if="batchEstimate.costItems.length" class="generation-cost-items">
+              <span>费用明细</span>
+              <p v-for="item in batchEstimate.costItems" :key="`${item.rowId || item.type}-${item.label}`"><span>{{ item.label }}</span><b>{{ item.credits }} 点</b></p>
             </div>
           </div>
           <div v-if="batchEstimate.blocked.length" class="blocked-list"><AlertTriangle :size="18" /><div><strong>{{ batchEstimate.blocked.length }} 个镜头暂不可生成</strong><p v-for="item in blockedSummary" :key="item.reason">{{ item.count }} 个镜头：{{ item.reason }}</p></div></div>

@@ -101,6 +101,7 @@ export interface DramaAnalysisRunState {
   finishedAt: string
   errorMessage: string
   structureReady: boolean
+  assetCandidatesReady: boolean
   reviewsReady: boolean
   productionReady: boolean
   pipelineVersion: string
@@ -122,6 +123,8 @@ export interface DramaAnalysisNodeState {
   status: 'queued' | 'running' | 'succeeded' | 'retryable_failed' | 'failed' | 'stale' | 'canceled' | string
   attempt: number
   progress: number
+  /** 综合体检格式不完整后，系统正在免费补全当前维度。 */
+  autoBackfill?: boolean
   errorCode: string
   errorMessage: string
   startedAt: string
@@ -480,6 +483,20 @@ export interface DramaRuntimeConfig {
   textModels: RuntimeModelOption[]
   imageModels: RuntimeModelOption[]
   videoModels: RuntimeModelOption[]
+}
+
+/**
+ * 普通用户可见的视频能力边界。
+ * 这里只暴露项目创建和分镜编辑需要的参数，不泄露供应商及模型名称。
+ */
+export interface PublicVideoCapabilities {
+  resolutions: string[]
+  defaultResolution: string
+  minDurationSec: number
+  maxDurationSec: number
+  supportsAudioUpload: boolean
+  supportsAudioDrivenVideo: boolean
+  audioMixModes: Array<'replace' | 'mix'>
 }
 
 export interface DramaCreditPreview {

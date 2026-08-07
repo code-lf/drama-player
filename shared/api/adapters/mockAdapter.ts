@@ -1,7 +1,7 @@
 import type { AccountProfile, AccountSecuritySummary, CreditLedgerPage, CreditPackage, PaymentOrder, PaymentOrderPage } from '~/entities/account/types'
 import type { SystemAnnouncement } from '~/entities/announcement/types'
 import type { AuthSession } from '~/entities/auth/types'
-import type { DramaCreditPreview, DramaProjectCard, DramaProjectDetail, DramaRuntimeConfig } from '~/entities/drama/types'
+import type { DramaCreditPreview, DramaProjectCard, DramaProjectDetail, DramaRuntimeConfig, PublicVideoCapabilities } from '~/entities/drama/types'
 import type { EpisodeCutDraft, EpisodeCutSavePayload, EpisodeCutTask } from '~/entities/drama/episodeCutTypes'
 import { defaultWebsiteInfo, type FeedbackPage, type FeedbackSubmitPayload, type RedeemCodeResult, type SupportCenter, type UserFeedback } from '~/entities/support/types'
 import type { ProductImageGeneratePayload, ProductImageTemplate, ProductSellingPoint } from '~/entities/product-image/types'
@@ -276,6 +276,7 @@ function createIdleAnalysisRun() {
     finishedAt: '',
     errorMessage: '',
     structureReady: false,
+    assetCandidatesReady: false,
     reviewsReady: false,
     productionReady: false,
     pipelineVersion: 'v3',
@@ -1010,6 +1011,20 @@ export const mockAdapter: ApiAdapter = {
     return ok(data)
   },
 
+  async getPublicVideoCapabilities() {
+    await sleep(80)
+    const data: PublicVideoCapabilities = {
+      resolutions: ['480p', '720p'],
+      defaultResolution: '720p',
+      minDurationSec: 4,
+      maxDurationSec: 15,
+      supportsAudioUpload: true,
+      supportsAudioDrivenVideo: false,
+      audioMixModes: ['replace', 'mix'],
+    }
+    return ok(data)
+  },
+
   async getCanvasGraph() {
     await sleep(220)
 
@@ -1280,7 +1295,8 @@ export const mockAdapter: ApiAdapter = {
   async confirmDramaScriptVersion(projectId: string) {
     await sleep(80)
     const current = mockDramaProjectMap.get(projectId)!
-    const snapshotId = `mock-snapshot-${Date.now()}`
+    // 模拟后端的幂等确认：重复点击复用同一快照 ID，不制造第二份生产版本。
+    const snapshotId = current.analysis.analysisSnapshotId || `mock-snapshot-${Date.now()}`
     const next = {
       ...current,
       currentStage: 'roles',
@@ -1288,6 +1304,44 @@ export const mockAdapter: ApiAdapter = {
         ...current.analysis,
         confirmedScriptVersionId: current.analysis.currentScriptVersion || 'v1.2',
         analysisSnapshotId: snapshotId
+      },
+      analysisRun: {
+        ...current.analysisRun,
+        assetCandidatesReady: true,
+        productionReady: true
+      }
+    }
+    mockDramaProjectMap.set(projectId, next)
+    return ok(next)
+  },
+
+  async skipDramaScriptReviews(projectId: string) {
+    await sleep(80)
+    const current = mockDramaProjectMap.get(projectId)!
+    const coreNodeKeys = ['OVERVIEW_REVIEW', 'CHARACTER_REVIEW', 'EPISODE_REVIEW', 'FULLTEXT_REVIEW']
+    const nodes = { ...current.analysisRun.nodes }
+    for (const nodeKey of coreNodeKeys) {
+      if (nodes[nodeKey]?.status === 'succeeded') continue
+      nodes[nodeKey] = {
+        key: nodeKey,
+        status: 'skipped',
+        attempt: Number(nodes[nodeKey]?.attempt || 0),
+        progress: 100,
+        errorCode: 'USER_SKIPPED',
+        errorMessage: '用户选择跳过此非必需剧本体检',
+        startedAt: nodes[nodeKey]?.startedAt || '',
+        finishedAt: new Date().toISOString()
+      }
+    }
+    const next = {
+      ...current,
+      analysisRun: {
+        ...current.analysisRun,
+        status: 'completed',
+        assetCandidatesReady: true,
+        reviewsReady: true,
+        globalReviewStatus: 'skipped',
+        nodes
       }
     }
     mockDramaProjectMap.set(projectId, next)
@@ -1411,6 +1465,7 @@ export const mockAdapter: ApiAdapter = {
         runId: `mock-${projectId}`,
         status: 'completed',
         structureReady: true,
+        assetCandidatesReady: true,
         reviewsReady: true,
         productionReady: false,
         pipelineVersion: 'v3',
@@ -1900,6 +1955,8 @@ export const mockAdapter: ApiAdapter = {
       blocked: [],
       totalDurationSec: eligible.reduce((total, row) => total + row.durationSec, 0),
       estimatedCredits: eligible.length * 300,
+      totalCredits: eligible.length * 300,
+      costItems: eligible.map(row => ({ type: 'video_generation', rowId: row.id, label: `镜头 ${row.shotNo} 视频生成`, credits: 300 })),
       currentBalance: 3600,
       sufficient: true
     })

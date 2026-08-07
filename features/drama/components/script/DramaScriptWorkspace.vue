@@ -12,7 +12,6 @@ import type {
 import { useAccountStore } from '~/features/billing/store/useAccountStore'
 import { dramaService } from '~/shared/api/services/dramaService'
 import { ApiClientError } from '~/shared/api/errors'
-import CreditIcon from '~/components/ui/CreditIcon.vue'
 import LivButton from '~/components/liv-ui/LivButton.vue'
 import LivDialog from '~/components/liv-ui/LivDialog.vue'
 import LivDrawer from '~/components/liv-ui/LivDrawer.vue'
@@ -210,7 +209,8 @@ const props = defineProps<{
   retryAnalysisNodeAction: (nodeKey: string) => Promise<void> | void
   regenerateCoverAction: () => Promise<void> | void
   changeIntentModeAction: (mode: DramaIntentMode) => Promise<void> | void
-  confirmScriptAction: () => void
+  // 当前确认接口会同步准备资产候选并冻结生产快照；专业体检继续由后台独立运行。
+  confirmScriptAction: (confirmedDetail?: DramaProjectDetail) => Promise<void> | void
 }>()
 
 const emit = defineEmits<{
@@ -842,30 +842,37 @@ async function saveCurrentScene(snapshot = buildCurrentSceneSaveSnapshot()): Pro
 async function confirmCurrentScriptVersion() {
   // 网络响应期间禁止重复确认，并为用户提供明确的处理中状态。
   if (confirmScriptBusy.value) return
-  if (sceneAutoSaveTimer.value) {
-    window.clearTimeout(sceneAutoSaveTimer.value)
-    sceneAutoSaveTimer.value = null
-  }
-
-  // 进入资产制作前先落下最后一份正文草稿，避免后续阶段读取到旧版本。
-  if (hasPendingSceneDrafts.value) {
-    const saved = await saveCurrentScene()
-    if (!saved) return
-  }
+  confirmScriptBusy.value = true
   try {
-    confirmScriptBusy.value = true
+    if (sceneAutoSaveTimer.value) {
+      window.clearTimeout(sceneAutoSaveTimer.value)
+      sceneAutoSaveTimer.value = null
+    }
+
+    // 从保存草稿开始就锁定确认按钮，避免慢网络下重复点击产生两次确认请求。
+    assetTransitionPhase.value = hasPendingSceneDrafts.value ? 'saving' : 'preparing'
+    if (hasPendingSceneDrafts.value) {
+      const saved = await saveCurrentScene()
+      if (!saved) return
+    }
+    assetTransitionPhase.value = 'preparing'
     // 进入资产前由后端锁定正式版本与分析快照，后续角色、场景、道具和分镜只读这份快照。
     serverOptimizedDetail.value = await dramaService.confirmScriptVersion(projectId.value)
+    assetTransitionPhase.value = 'entering'
     toast.add({
       title: '剧本版本已确认',
-      description: '已冻结当前剧本与分析快照，正在进入资产制作。',
+      description: props.currentAnalysisRun.reviewsReady
+        ? '已冻结当前剧本与分析快照，正在进入资产制作。'
+        : '已冻结当前剧本与分析快照，体检将继续在后台运行。',
       color: 'success',
       icon: 'i-lucide-circle-check',
       close: true,
       duration: 4200,
     })
     emit('refresh')
-    await props.confirmScriptAction()
+    // 把确认接口返回的最新详情直接交给父级，避免父级刷新请求尚未完成时先切入资产页，
+    // 导致资产工作台短暂读取旧的未冻结快照。
+    await props.confirmScriptAction(serverOptimizedDetail.value || undefined)
   } catch (error) {
     console.error('[script-stage] 确认剧本版本失败：', error)
     toast.add({
@@ -878,6 +885,7 @@ async function confirmCurrentScriptVersion() {
     })
   } finally {
     confirmScriptBusy.value = false
+    assetTransitionPhase.value = 'idle'
   }
 }
 
@@ -1950,19 +1958,38 @@ const isCurrentReviewReady = computed(() => {
   if (currentReviewNode.value) return currentReviewNode.value.status === 'succeeded'
   return reviewModel.value.dimensions.length > 0
 })
+const isCurrentReviewSkipped = computed(() => currentReviewNode.value?.status === 'skipped')
 const isCurrentReviewFailed = computed(() => {
   return ['failed', 'retryable_failed', 'stale', 'canceled'].includes(currentReviewNode.value?.status || '')
 })
-const isCurrentReviewPending = computed(() => !isCurrentReviewReady.value && !isCurrentReviewFailed.value)
-const canConfirmScriptVersion = computed(() => props.currentAnalysisRun.reviewsReady)
+const isCurrentReviewPending = computed(() => !isCurrentReviewReady.value && !isCurrentReviewFailed.value && !isCurrentReviewSkipped.value)
+const isCurrentReviewAutoBackfilling = computed(() => (
+  currentReviewNode.value?.autoBackfill === true
+  && ['queued', 'running'].includes(currentReviewNode.value?.status || '')
+))
+// 基础结构完成即可进入资产；候选整理和快照冻结由点击确认接口同步完成。
+const canConfirmScriptVersion = computed(() => props.currentAnalysisRun.structureReady)
 const confirmScriptBusy = ref(false)
+type AssetTransitionPhase = 'idle' | 'saving' | 'preparing' | 'entering'
+const assetTransitionPhase = ref<AssetTransitionPhase>('idle')
+const assetTransitionSteps = computed(() => {
+  const phaseOrder: Record<Exclude<AssetTransitionPhase, 'idle'>, number> = { saving: 0, preparing: 1, entering: 3 }
+  const currentIndex = assetTransitionPhase.value === 'idle' ? -1 : phaseOrder[assetTransitionPhase.value]
+  return [
+    { label: '保存当前编辑', state: currentIndex > 0 ? 'done' : currentIndex === 0 ? 'running' : 'pending' },
+    // 候选整理与快照冻结由同一个后端事务完成，因此在等待确认接口时同时展示为进行中。
+    { label: '整理角色/场景/道具候选', state: currentIndex > 1 ? 'done' : currentIndex === 1 ? 'running' : 'pending' },
+    { label: '冻结当前剧本版本', state: currentIndex > 1 ? 'done' : currentIndex === 1 ? 'running' : 'pending' },
+    { label: '进入资产制作', state: currentIndex === 3 ? 'running' : 'pending' },
+  ]
+})
 const confirmScriptButtonLabel = computed(() => {
-  if (confirmScriptBusy.value) return '正在确认剧本版本并准备资产…'
-  if (canConfirmScriptVersion.value) return '确认当前剧本版本，进入资产制作'
-  const failedCount = Object.values(props.currentAnalysisRun.nodes || {}).filter((node) =>
-    ['failed', 'retryable_failed', 'stale', 'canceled'].includes(node.status)
-  ).length
-  return failedCount > 0 ? `请先处理 ${failedCount} 个失败体检节点` : '核心剧本体检完成后可进入资产制作'
+  if (assetTransitionPhase.value === 'saving') return '正在保存当前编辑…'
+  if (assetTransitionPhase.value === 'preparing') return '正在整理资产候选并冻结版本…'
+  if (assetTransitionPhase.value === 'entering') return '正在进入资产制作…'
+  if (!canConfirmScriptVersion.value) return '正在解析剧本结构…'
+  if (!props.currentAnalysisRun.reviewsReady) return '进入资产制作（体检将在后台继续）'
+  return '确认当前剧本版本，进入资产制作'
 })
 
 async function retryCurrentReviewNode() {
@@ -3321,6 +3348,9 @@ defineExpose({ openAllSuggestions })
     </div>
 
     <template v-else>
+      <div v-if="currentAnalysisRun.structureReady && !currentAnalysisRun.reviewsReady" class="rounded-[16px] border border-[#bfdbfe] bg-[#eff6ff] px-4 py-3 text-sm leading-6 text-[#315173]">
+        基础解析已完成，专业体检后台进行中；体检结论不会阻塞资产制作，也不会修改已冻结的生产快照。
+      </div>
       <div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_520px]">
         <main class="min-w-0">
           <div class="rounded-[28px] border border-[#dfe8f6] bg-white p-6 shadow-[0_18px_60px_rgba(15,23,42,0.05)]">
@@ -3721,8 +3751,8 @@ defineExpose({ openAllSuggestions })
             </div>
             <div v-if="isCurrentReviewPending" class="mt-6 rounded-[16px] border border-[#dbe7f7] bg-[#f8fbff] px-5 py-8 text-center">
               <RefreshCw class="mx-auto h-7 w-7 animate-spin text-[#0f67ff]" />
-              <p class="mt-3 font-semibold text-[#0f172a]">{{ reviewPanelTitle }}正在生成</p>
-              <p class="mt-2 text-sm leading-6 text-[#64748b]">基础剧本结构已经可用，本项专业体检会在后台独立完成。</p>
+              <p class="mt-3 font-semibold text-[#0f172a]">{{ isCurrentReviewAutoBackfilling ? '自动补全中' : `${reviewPanelTitle}正在生成` }}</p>
+              <p class="mt-2 text-sm leading-6 text-[#64748b]">{{ isCurrentReviewAutoBackfilling ? '综合体检返回内容不完整，系统正在免费补全当前维度，不影响进入资产制作。' : '基础剧本结构已经可用，本项专业体检会在后台独立完成。' }}</p>
             </div>
             <div v-else-if="isCurrentReviewFailed" class="mt-6 rounded-[16px] border border-[#fecaca] bg-[#fff7f7] px-5 py-6">
               <div class="flex items-start gap-3">
@@ -3738,6 +3768,15 @@ defineExpose({ openAllSuggestions })
                   >
                     {{ busyKey === `analysis-node:${reviewNodeKey}` ? '重新加入队列中...' : '重试当前体检' }}
                   </button>
+                </div>
+              </div>
+            </div>
+            <div v-else-if="isCurrentReviewSkipped" class="mt-6 rounded-[16px] border border-[#bfdbfe] bg-[#f8fbff] px-5 py-6">
+              <div class="flex items-start gap-3">
+                <CheckCircle2 class="mt-0.5 h-5 w-5 shrink-0 text-[#0f67ff]" />
+                <div>
+                  <p class="font-semibold text-[#0f172a]">本项体检已跳过</p>
+                  <p class="mt-2 text-sm leading-6 text-[#64748b]">剧本基础结构与资产候选已保留。你可以先进入资产制作，后续随时回到此处补做体检。</p>
                 </div>
               </div>
             </div>
@@ -3824,15 +3863,26 @@ defineExpose({ openAllSuggestions })
 
       <div class="fixed inset-x-0 bottom-0 z-20 border-t border-[#dfe8f6] bg-white/90 px-5 py-2.5 shadow-[0_-8px_28px_rgba(15,23,42,0.05)] backdrop-blur-md">
         <div class="mx-auto flex max-w-[1920px] flex-col items-center justify-center gap-2">
-          <button
-            type="button"
-            class="flex h-11 w-[min(460px,calc(100vw-40px))] items-center justify-center gap-2 rounded-[10px] bg-[#0f67ff] px-5 text-sm font-semibold text-white shadow-[0_8px_22px_rgba(15,103,255,0.18)] disabled:cursor-not-allowed disabled:bg-[#94a3b8] disabled:shadow-none"
-            :disabled="sceneSaveBusy || confirmScriptBusy || !canConfirmScriptVersion"
-            @click="confirmCurrentScriptVersion"
-          >
-            <!-- 积分/AI 操作统一复用全站 CreditIcon，主按钮颜色由 currentColor 继承。 -->
-            <CreditIcon size="md" /> {{ confirmScriptButtonLabel }} <ArrowRight v-if="canConfirmScriptVersion && !confirmScriptBusy" class="h-4 w-4" />
-          </button>
+          <ol v-if="confirmScriptBusy" class="flex w-full max-w-[760px] flex-wrap items-center justify-center gap-x-4 gap-y-1 text-xs text-[#64748b]" aria-label="进入资产制作进度">
+            <li v-for="(step, index) in assetTransitionSteps" :key="step.label" class="flex items-center gap-1.5" :class="step.state === 'running' ? 'font-semibold text-[#0f67ff]' : step.state === 'done' ? 'text-[#059669]' : ''">
+              <span class="flex h-5 w-5 items-center justify-center rounded-full border text-[10px]" :class="step.state === 'running' ? 'border-[#0f67ff] bg-[#e8f1ff]' : step.state === 'done' ? 'border-[#10b981] bg-[#ecfdf5]' : 'border-[#cbd5e1]'">{{ step.state === 'done' ? '✓' : index + 1 }}</span>
+              <span>{{ step.label }}</span>
+            </li>
+          </ol>
+          <p v-else class="text-xs font-medium text-[#64748b]">
+            角色、场景、道具识别费用已包含在剧本解析中；本步骤仅整理并冻结候选：<b class="text-[#059669]">0 点</b>
+          </p>
+          <span :title="canConfirmScriptVersion ? '将整理角色、场景、道具候选并冻结当前剧本版本。' : '基础剧本结构完成后即可进入资产制作。'">
+            <button
+              type="button"
+              class="flex h-11 w-[min(460px,calc(100vw-40px))] items-center justify-center gap-2 rounded-[10px] bg-[#0f67ff] px-5 text-sm font-semibold text-white shadow-[0_8px_22px_rgba(15,103,255,0.18)] disabled:cursor-not-allowed disabled:bg-[#94a3b8] disabled:shadow-none"
+              :disabled="sceneSaveBusy || confirmScriptBusy || !canConfirmScriptVersion"
+              @click="confirmCurrentScriptVersion"
+            >
+              <!-- 该确认只做本地候选整理和快照冻结，不调用模型、不扣积分。 -->
+              {{ confirmScriptButtonLabel }} <ArrowRight v-if="canConfirmScriptVersion && !confirmScriptBusy" class="h-4 w-4" />
+            </button>
+          </span>
         </div>
       </div>
     </template>

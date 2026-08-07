@@ -39,6 +39,10 @@ export const dramaService = {
     return callApi('config/runtime', (adapter) => adapter.getRuntimeConfig())
   },
 
+  async getPublicVideoCapabilities() {
+    return callApi('config/video-capabilities', (adapter) => adapter.getPublicVideoCapabilities())
+  },
+
   async createProject(payload?: DramaProjectCreatePayload) {
     return callApi('drama/createProject', (adapter) => adapter.createDramaProject(payload ?? {}))
   },
@@ -153,6 +157,11 @@ export const dramaService = {
 
   async confirmScriptVersion(projectId: string) {
     return callApi('drama/confirmScriptVersion', (adapter) => adapter.confirmDramaScriptVersion(projectId))
+  },
+
+  async skipScriptReviews(projectId: string) {
+    // 仅跳过非必需体检节点；基础结构和资产候选仍由后端强制校验。
+    return callApi('drama/skipScriptReviews', (adapter) => adapter.skipDramaScriptReviews(projectId))
   },
 
   async updateScriptScene(projectId: string, payload: DramaScriptSceneUpdatePayload) {
