@@ -569,6 +569,15 @@ const blockedSummary = computed(() => {
   return [...counts.entries()].map(([reason, count]) => ({ reason, count }))
 })
 
+/** 将可继续生成的风险按原因汇总，确认弹窗只提示一次，不把预演变成硬门禁。 */
+const warningSummary = computed(() => {
+  const counts = new Map<string, number>()
+  for (const item of batchEstimate.value?.warnings || []) {
+    counts.set(item.reason, (counts.get(item.reason) || 0) + 1)
+  }
+  return [...counts.entries()].map(([reason, count]) => ({ reason, count }))
+})
+
 function titleFor(row: StoryboardRow): string {
   const extra = row.extra as Record<string, unknown>
   const explicitTitle = String(extra.shot_title || extra.shotTitle || '').trim()
@@ -737,6 +746,38 @@ function directorSegmentExtra(segment: StoryboardDirectorSegment, key: string, i
   return ''
 }
 
+/**
+ * 台词必须落在实际说话的导演时间段内。新数据优先使用服务端按对白 ID 回填的逐段原文；
+ * 历史数据则按全镜头对白 ID 顺序与 audioIntent 对齐，避免为了展示再次请求模型。
+ */
+function directorSegmentDialogueLines(row: StoryboardRow, segment: StoryboardDirectorSegment): Array<{ speaker: string; text: string; delivery?: string }> {
+  const structured = segment.extra?.dialogue_lines
+  if (Array.isArray(structured)) {
+    return structured
+      .filter((line): line is Record<string, unknown> => Boolean(line) && typeof line === 'object')
+      .map(line => ({
+        speaker: String(line.speaker || '角色'),
+        text: String(line.text || ''),
+        delivery: String(line.delivery || ''),
+      }))
+      .filter(line => Boolean(line.text.trim()))
+  }
+
+  const segmentIds = Array.isArray(segment.extra?.dialogue_unit_ids)
+    ? segment.extra.dialogue_unit_ids.map(value => String(value))
+    : []
+  if (!segmentIds.length) return []
+  const allIds = row.directorSegments.flatMap(item => (
+    Array.isArray(item.extra?.dialogue_unit_ids)
+      ? item.extra.dialogue_unit_ids.map(value => String(value))
+      : []
+  ))
+  return segmentIds.map((unitId) => {
+    const line = row.audioIntent.dialogueLines[allIds.indexOf(unitId)]
+    return line ? { speaker: line.speaker || '角色', text: line.text } : null
+  }).filter((line): line is { speaker: string; text: string } => Boolean(line?.text))
+}
+
 // 编辑器只更新 extra 中的结构化导演字段，保留服务端返回的其他扩展数据。
 function updateDirectorSegmentExtra(segment: StoryboardDirectorSegment, key: string, value: string): void {
   segment.extra = { ...(segment.extra || {}), [key]: value }
@@ -855,6 +896,7 @@ function previsualizationActionText(row: StoryboardRow): string {
 }
 
 function qcStatusText(status: unknown): string {
+  if (status === 'manual_required') return '待手动检查'
   if (status === 'passed') return '自动质检通过'
   if (status === 'needs_review') return '质检建议复核'
   if (status === 'queued') return '等待自动质检'
@@ -876,7 +918,7 @@ function estimateSignature(rows: StoryboardRow[]): string {
 
 function generationPlanHint(row: StoryboardRow): string {
   if (row.planStatus === 'stale') return '时长已变更，导演节奏需要重新编排'
-  if (row.previsualizationStatus !== 'not_required' && row.previsualizationStatus !== 'succeeded') return '该镜头需要先完成首帧预演'
+  if (row.previsualizationStatus !== 'not_required' && row.previsualizationStatus !== 'succeeded') return '可直接生成；建议先做首帧预演以提高资产一致性'
   if (['queued', 'running', 'pending'].includes(row.videoStatus)) return '生成任务已提交，完成后会自动刷新视频版本'
   if (row.planStatus === 'confirmed') return row.videoUrl ? '当前方案已确认，可生成新版本' : '当前方案已确认，可以生成视频'
   return '点击后将先确认当前方案，再核算点数并进入生成'
@@ -884,13 +926,14 @@ function generationPlanHint(row: StoryboardRow): string {
 
 /**
  * 深度工作台只保留一个主要生成动作。
- * 方案未确认时允许自动确认；方案过期、预演未完成或已有任务运行时必须阻断。
+ * 方案未确认时允许自动确认；只有方案过期或已有任务运行时阻断。
+ * 首帧预演是准确性建议，用户确认风险后仍可直接生成视频。
  */
 function canPrepareWorkbenchGeneration(row: StoryboardRow): boolean {
   if (actionBusy.value) return false
   if (row.planStatus === 'stale') return false
   if (['queued', 'running', 'pending'].includes(row.videoStatus)) return false
-  return row.previsualizationStatus === 'not_required' || row.previsualizationStatus === 'succeeded'
+  return true
 }
 
 async function ensureOverviewEstimate(force = false): Promise<void> {
@@ -2251,7 +2294,9 @@ onBeforeUnmount(stopRealtimeTracking)
                       <span v-if="segment.emotionDesc">情绪：{{ segment.emotionDesc }}</span>
                     </div>
                     <p v-if="segment.visualFocus"><b>画面重点</b>{{ normalizeVisibleTimelineText(segment.visualFocus) }}</p>
+                    <p v-for="(line, lineIndex) in directorSegmentDialogueLines(selectedRow, segment)" :key="`${segment.id}-dialogue-${lineIndex}`" class="director-dialogue-line"><b>原文台词</b><strong>{{ line.speaker }}</strong>“{{ line.text }}”<em v-if="line.delivery">{{ line.delivery }}</em></p>
                     <p><b>动作与表演</b>{{ normalizeVisibleTimelineText(segment.actionDesc || segment.visualFocus || '待补充导演动作') }}</p>
+                    <p v-if="segment.emotionDesc || selectedRow.moodDesc"><b>情绪表演</b>{{ normalizeVisibleTimelineText(segment.emotionDesc || selectedRow.moodDesc) }}</p>
                     <p v-if="directorSegmentExtra(segment, 'turn', segmentIndex, selectedRow.directorSegments.length)"><b>段落变化</b>{{ normalizeVisibleTimelineText(directorSegmentExtra(segment, 'turn', segmentIndex, selectedRow.directorSegments.length)) }}</p>
                     <p v-if="directorSegmentExtra(segment, 'endpoint', segmentIndex, selectedRow.directorSegments.length)"><b>结束状态</b>{{ normalizeVisibleTimelineText(directorSegmentExtra(segment, 'endpoint', segmentIndex, selectedRow.directorSegments.length)) }}</p>
                     <small v-if="segment.audioCue"><Volume2 :size="13" />{{ normalizeVisibleTimelineText(segment.audioCue) }}</small>
@@ -2608,6 +2653,7 @@ onBeforeUnmount(stopRealtimeTracking)
               <span>费用明细</span>
               <p v-for="item in batchEstimate.costItems" :key="`${item.rowId || item.type}-${item.label}`"><span>{{ item.label }}</span><b>{{ item.credits }} 点</b></p>
             </div>
+            <div v-if="batchEstimate.warnings.length" class="generation-warning-list"><AlertTriangle :size="18" /><div><strong>可以继续生成，但请确认以下风险</strong><p v-for="item in warningSummary" :key="item.reason">{{ item.count }} 个镜头：{{ item.reason }}</p></div></div>
           </div>
           <div v-if="batchEstimate.blocked.length" class="blocked-list"><AlertTriangle :size="18" /><div><strong>{{ batchEstimate.blocked.length }} 个镜头暂不可生成</strong><p v-for="item in blockedSummary" :key="item.reason">{{ item.count }} 个镜头：{{ item.reason }}</p></div></div>
           <div class="confirm-note"><ShieldCheck :size="17" /><span>任务使用已冻结的剧本、导演方案、资产版本与声音设计；每次生成都会创建独立版本。</span></div>
@@ -2989,6 +3035,9 @@ onBeforeUnmount(stopRealtimeTracking)
 .director-content__meta span { padding: 2px 6px; border-radius: 4px; background: #f7f8fb; color: #667085; font-size: 11px; }
 .director-content p { margin: 5px 0 0; color: #475467; font-size: 12px; line-height: 1.55; }
 .director-content p b { display: inline-block; margin-right: 7px; color: #667085; font-size: 11px; font-weight: 700; }
+.director-content .director-dialogue-line { padding: 7px 9px; border-left: 3px solid #84adff; border-radius: 4px; background: #f2f6ff; color: #344054; }
+.director-dialogue-line strong { margin-right: 4px; color: #175cd3; }
+.director-dialogue-line em { margin-left: 7px; color: #667085; font-size: 11px; font-style: normal; }
 .director-content small { display: flex; align-items: center; gap: 5px; margin-top: 5px; color: #667085; font-size: 11px; line-height: 1.45; }
 .director-list article :deep(.base-menu-trigger), .bound-assets article :deep(.base-menu-trigger) { width: 28px; height: 28px; border: 0; border-radius: 5px; background: #f5f7fa; color: #667085; }
 .bound-assets { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
@@ -3162,9 +3211,10 @@ onBeforeUnmount(stopRealtimeTracking)
 .generation-credit-summary { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .generation-credit-summary > div { min-height: 46px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; border-radius: 7px; background: #f5f7fa; }
 .generation-credit-summary span { color: #475467; font-size: 13px; font-weight: 650; }
-.blocked-list, .confirm-note { display: flex; gap: 10px; margin-top: 12px; padding: 12px; border-radius: 6px; }
+.blocked-list, .generation-warning-list, .confirm-note { display: flex; gap: 10px; margin-top: 12px; padding: 12px; border-radius: 6px; }
 .blocked-list { background: #fff5e8; color: #a15c07; }
-.blocked-list p { margin: 5px 0 0; font-size: 12px; }
+.blocked-list p, .generation-warning-list p { margin: 5px 0 0; font-size: 12px; }
+.generation-warning-list { background: #fff8e8; color: #9a6700; }
 .confirm-note { background: #eef8f2; color: #16784a; font-size: 13px; line-height: 1.6; }
 .confirm-dialog--small { width: min(500px, 94vw); }
 .dialog-icon--danger { background: #fff0f0; color: #d14343; }

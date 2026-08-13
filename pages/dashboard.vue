@@ -24,6 +24,7 @@ type DashboardMenuKey = 'drama' | 'product' | 'product-video' | 'billing' | 'non
 type DashboardWorkspaceView = 'console' | 'projects' | 'billing' | 'announcements' | 'help'
 type CreativeIntent = 'drama' | 'ad' | 'general'
 type ScriptInputMode = 'text' | 'file'
+type DramaSubmissionStage = 'idle' | 'creating' | 'uploading' | 'starting' | 'navigating'
 type DashboardOption = {
   label: string
   value: string
@@ -76,6 +77,8 @@ const entryCreditPreviewLoading = ref(false)
 const entryCreditPreviewError = ref('')
 const loadingText = ref('正在准备控制台...')
 const busyKey = ref('')
+// 创建、上传和启动解析属于同一次不可分割的用户操作；独立锁避免阶段切换瞬间按钮重新可点。
+const dramaSubmissionStage = ref<DramaSubmissionStage>('idle')
 const errorMessage = ref('')
 const infoMessage = ref('')
 const isDraggingFile = ref(false)
@@ -156,6 +159,14 @@ const visualStyleOptions = [
 
 const isBooting = computed(() => busyKey.value === 'boot')
 const isBusy = computed(() => busyKey.value !== '')
+const isDramaSubmissionLocked = computed(() => dramaSubmissionStage.value !== 'idle')
+const dramaSubmissionCopy = computed(() => ({
+  creating: { title: '正在创建项目', description: '正在保存画幅、清晰度和作品风格。', step: 1 },
+  uploading: { title: '正在上传剧本', description: '项目已创建，正在保存本次剧本内容。', step: 2 },
+  starting: { title: '正在启动解析', description: '正在创建后台解析任务，请勿重复提交。', step: 3 },
+  navigating: { title: '正在进入解析进度页', description: '任务已经启动，即将自动进入项目流程页。', step: 4 },
+  idle: { title: '解析剧本并创建项目', description: '', step: 0 }
+} as const)[dramaSubmissionStage.value])
 const hasAnalysis = computed(() => Boolean(currentDramaProject.value?.analysis.title))
 const hasRoleAssets = computed(() => (currentDramaProject.value?.analysis.roles || []).some((role) => role.assets.length > 0))
 const hasSceneAssets = computed(() => (currentDramaProject.value?.analysis.scenes || []).some((scene) => Boolean(scene.asset)))
@@ -315,7 +326,7 @@ const heroCopy = computed(() => {
   return copyMap[selectedCreativeIntent.value]
 })
 const canSubmitCreativeInput = computed(() => {
-  if (isBusy.value) return false
+  if (isBusy.value || isDramaSubmissionLocked.value) return false
   if (scriptInputMode.value === 'file') return Boolean(selectedScriptFile.value)
   return Boolean(scriptDraft.value.trim()) && !scriptCharacterExceeded.value
 })
@@ -360,6 +371,10 @@ function recentProjectProgress(project: DramaProjectCard): number {
   // 每完成一个主阶段记 25%；进入分镜后，再把真实镜头完成率映射到 50%～75%。
   // 这样已经确认剧本、正在制作资产的项目不会再错误显示为 0%。
   const stage = String(project.currentStage || '').toLowerCase()
+  // 剧本解析中采用后端统一进度，避免首页卡片与项目详情显示不同百分比。
+  if (project.status === 'analyzing') {
+    return Math.max(0, Math.min(100, Number(project.analysisProgress || 0)))
+  }
   if (['video', 'videos', 'completed', 'success'].includes(stage) || project.status === 'completed') return 100
   if (stage === 'storyboards') {
     const storyboardProgress = project.totalStoryboards > 0
@@ -761,6 +776,8 @@ function buildDramaProjectTitle(): string {
 }
 
 async function ingestAndAnalyze(): Promise<void> {
+  // 锁必须在第一个 await 之前同步生效，才能拦截双击和快速连点产生的重复项目。
+  if (isDramaSubmissionLocked.value) return
   if (!canSubmitCreativeInput.value) {
     if (scriptCharacterExceeded.value) {
       errorMessage.value = `文本最多支持 ${maxScriptCharacterCount.toLocaleString()} 字，请删减后再提交。`
@@ -768,10 +785,12 @@ async function ingestAndAnalyze(): Promise<void> {
     return
   }
 
-  const created = await runAction(
-    'create-drama',
-    () =>
-      dramaService.createProject({
+  errorMessage.value = ''
+  infoMessage.value = ''
+  dramaSubmissionStage.value = 'creating'
+  busyKey.value = 'create-drama'
+  try {
+    const created = await dramaService.createProject({
         title: buildDramaProjectTitle(),
         themeMode: themeStore.mode,
         entryIntent: selectedCreativeIntent.value,
@@ -780,47 +799,48 @@ async function ingestAndAnalyze(): Promise<void> {
         resolution: selectedResolution.value,
         // 首页已移除集数选择，第一版统一按单项目解析；后端仍保留默认值兼容旧接口。
         episodeCount: 1
-      }),
-    '项目已创建。'
-  )
-  if (!created) return
+      })
 
-  const ingested = await runAction(
-    'ingest',
-    () => {
-      if (scriptInputMode.value === 'file' && selectedScriptFile.value) {
-        return dramaService.ingestScriptFile(created.projectId, selectedScriptFile.value)
-      }
-      return dramaService.ingestScript(created.projectId, {
+    dramaSubmissionStage.value = 'uploading'
+    busyKey.value = 'ingest'
+    if (scriptInputMode.value === 'file' && selectedScriptFile.value) {
+      await dramaService.ingestScriptFile(created.projectId, selectedScriptFile.value)
+    } else {
+      await dramaService.ingestScript(created.projectId, {
         content: scriptDraft.value.trim(),
         fileName: scriptFileName.value
       })
-    },
-    '内容已上传，正在进入流程页。'
-  )
-  if (!ingested) return
+    }
 
-  const analyzing = await runAction(
-    'analyze',
-    () =>
-      dramaService.analyze(created.projectId, {
+    dramaSubmissionStage.value = 'starting'
+    busyKey.value = 'analyze'
+    const analyzing = await dramaService.analyze(created.projectId, {
         aspectRatio: selectedAspectRatio.value,
         resolution: selectedResolution.value,
         style: effectiveVisualStyle.value
-      }),
-    '剧本解析已启动，正在进入流程页。'
-  )
-  if (!analyzing) return
+      })
 
-  currentDramaProject.value = analyzing
-  await router.push({
-    path: `/drama/${created.projectId}`,
-    query: {
-      aspectRatio: selectedAspectRatio.value,
-      style: effectiveVisualStyle.value,
-      entryIntent: selectedCreativeIntent.value
-    }
-  })
+    currentDramaProject.value = analyzing
+    dramaSubmissionStage.value = 'navigating'
+    busyKey.value = 'navigate-drama'
+    infoMessage.value = '剧本解析已启动，正在进入流程页。'
+    await router.push({
+      path: `/drama/${created.projectId}`,
+      query: {
+        aspectRatio: selectedAspectRatio.value,
+        style: effectiveVisualStyle.value,
+        entryIntent: selectedCreativeIntent.value
+      }
+    })
+  } catch (error) {
+    // 记录当前失败阶段，后续若再次出现可直接从浏览器日志判断卡在创建、上传还是启动解析。
+    // eslint-disable-next-line no-console
+    console.error('[livliv] 创建剧本项目流程失败', { stage: dramaSubmissionStage.value, error })
+    errorMessage.value = error instanceof Error ? error.message : '创建项目失败，请稍后重试'
+  } finally {
+    busyKey.value = ''
+    dramaSubmissionStage.value = 'idle'
+  }
 }
 
 async function generateRoleAssets(): Promise<void> {
@@ -1114,6 +1134,28 @@ onBeforeUnmount(() => {
     class="dashboard-shell min-h-screen bg-[#f5f9ff] text-[#0f172a]"
     :class="[themeStore.mode === 'dark' ? 'dashboard-shell--dark' : 'dashboard-shell--light', 'dashboard-shell--compact']"
   >
+    <Transition name="dashboard-submission-fade">
+      <div v-if="isDramaSubmissionLocked" class="fixed inset-0 z-[300] grid place-items-center bg-[#0f172a]/35 px-5 backdrop-blur-[3px]" aria-live="polite" aria-busy="true">
+        <div class="w-full max-w-[480px] rounded-[22px] border border-white/80 bg-white p-7 shadow-[0_28px_80px_rgba(15,23,42,0.24)]">
+          <div class="flex items-start gap-4">
+            <span class="grid h-12 w-12 shrink-0 place-items-center rounded-[14px] bg-[#edf5ff] text-[#005FFE]">
+              <svg class="h-6 w-6 animate-spin" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-opacity=".22" stroke-width="3"/><path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg>
+            </span>
+            <div class="min-w-0">
+              <h2 class="text-[18px] font-black text-[#0f172a]">{{ dramaSubmissionCopy.title }}</h2>
+              <p class="mt-1 text-[13px] font-semibold leading-6 text-[#64748b]">{{ dramaSubmissionCopy.description }}</p>
+            </div>
+          </div>
+          <div class="mt-6 grid grid-cols-4 gap-2">
+            <div v-for="(label, index) in ['创建项目', '上传剧本', '启动解析', '进入项目']" :key="label" class="min-w-0">
+              <div class="h-1.5 rounded-full" :class="index + 1 <= dramaSubmissionCopy.step ? 'bg-[#005FFE]' : 'bg-[#e2e8f0]'" />
+              <p class="mt-2 truncate text-center text-[11px] font-bold" :class="index + 1 <= dramaSubmissionCopy.step ? 'text-[#005FFE]' : 'text-[#94a3b8]'">{{ label }}</p>
+            </div>
+          </div>
+          <p class="mt-5 rounded-[12px] bg-[#f8fafc] px-4 py-3 text-center text-[12px] font-semibold text-[#64748b]">请勿重复点击，任务启动后会自动进入解析进度页。</p>
+        </div>
+      </div>
+    </Transition>
     <div class="flex min-h-screen">
       <DashboardSidebar
         :active-menu="activeMenu"
@@ -1495,7 +1537,7 @@ onBeforeUnmount(() => {
                   :disabled="!canSubmitCreativeInput"
                   @click="ingestAndAnalyze"
                 >
-                  <svg v-if="busyKey === 'ingest' || busyKey === 'analyze' || busyKey === 'create-drama'" class="h-5 w-5 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <svg v-if="isDramaSubmissionLocked" class="h-5 w-5 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                     <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                     <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 0 1 8-8V0C5.37 0 0 5.37 0 12h4Z"></path>
                   </svg>
@@ -1503,7 +1545,7 @@ onBeforeUnmount(() => {
                     <path d="M12 2.8 14.1 8 19.2 10.1 14.1 12.2 12 17.2 9.9 12.2 4.8 10.1 9.9 8 12 2.8Z" />
                     <path d="M18.2 14.2 19.1 16.3 21.2 17.2 19.1 18.1 18.2 20.2 17.3 18.1 15.2 17.2 17.3 16.3 18.2 14.2Z" opacity=".8" />
                   </svg>
-                  <span>{{ busyKey === 'ingest' || busyKey === 'analyze' || busyKey === 'create-drama' ? '解析中...' : heroCopy.cta }}</span>
+                  <span>{{ isDramaSubmissionLocked ? dramaSubmissionCopy.title : heroCopy.cta }}</span>
                 </button>
                 <span
                   v-if="entryCreditPreviewVisible"

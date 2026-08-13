@@ -79,6 +79,24 @@ function extractApiErrorDetail(error: unknown): unknown {
     ?? unwrapDetail(fetchError.response?.data)
 }
 
+function extractApiErrorStatus(error: unknown): number {
+  if (!error || typeof error !== 'object') return 0
+  const fetchError = error as {
+    status?: number
+    statusCode?: number
+    response?: { status?: number; statusCode?: number }
+  }
+
+  // ofetch 在客户端与服务端运行时的状态码字段不同，统一读取后再区分服务异常和断网。
+  return Number(
+    fetchError.statusCode
+    || fetchError.status
+    || fetchError.response?.statusCode
+    || fetchError.response?.status
+    || 0
+  )
+}
+
 export async function callApi<T>(endpoint: string, task: (adapter: ApiAdapter) => Promise<ApiResponse<T>>): Promise<T> {
   const adapter = pickAdapter()
 
@@ -105,6 +123,15 @@ export async function callApi<T>(endpoint: string, task: (adapter: ApiAdapter) =
         normalizeApiErrorMessage(detail),
         normalizeApiErrorCode(detail)
       )
+    }
+
+    // 后端未返回结构化错误体时仍保留 HTTP 语义，不能把明确的 500 误报成用户网络异常。
+    const status = extractApiErrorStatus(error)
+    if (status >= 500) {
+      throw new ApiClientError(`服务端处理异常（HTTP ${status}），请稍后重试`, 'SERVER_ERROR')
+    }
+    if (status >= 400) {
+      throw new ApiClientError(`请求未完成（HTTP ${status}），请检查参数后重试`, 'HTTP_ERROR')
     }
 
     throw new ApiClientError('网络异常，请稍后重试', 'NETWORK_ERROR')

@@ -66,6 +66,7 @@ const consistencyEstimateLoading = ref<Record<string, boolean>>({})
 // 单项与批量锁定统一使用产品内确认弹窗，避免浏览器原生 confirm 打断页面体验。
 const showLockConfirm = ref(false)
 const pendingLockProfiles = ref<DramaAssetProfile[]>([])
+const pendingLockState = ref(true)
 const lockConfirmError = ref('')
 // 删除资产属于不可逆业务动作，统一使用产品内弹窗确认，不调用浏览器原生 confirm。
 const removeConfirmTarget = ref<DramaAssetProfile | null>(null)
@@ -201,6 +202,31 @@ const lockableSelectedProfiles = computed(() => selectedProfiles.value.filter(it
   && item.production_status !== 'locked'
   && !['queued', 'generating'].includes(item.production_status)
 ))
+const unlockedProfiles = computed(() => allAssets.value.filter(item => item.production_status !== 'locked'))
+const lockedProfiles = computed(() => allAssets.value.filter(item => item.production_status === 'locked'))
+const allLockBlockers = computed(() => {
+  const candidates = unlockedProfiles.value
+  const missingImages = candidates.filter(item => !item.selected_asset_id).length
+  const running = candidates.filter(item => ['queued', 'generating'].includes(item.production_status)).length
+  const staleVisual = candidates.filter(item => workspace.value
+    && item.visual_bible_version_id !== workspace.value.visual_bible.id).length
+  const reasons: string[] = []
+  if (missingImages) reasons.push(`${missingImages} 项尚未生成或上传图片`)
+  if (running) reasons.push(`${running} 项仍在生成中`)
+  if (staleVisual) reasons.push(`${staleVisual} 项使用旧视觉基准`)
+  return reasons
+})
+const canLockAll = computed(() => unlockedProfiles.value.length > 0 && allLockBlockers.value.length === 0)
+const batchLockState = computed(() => unlockedProfiles.value.length > 0)
+const batchLockLabel = computed(() => batchLockState.value ? '一键锁定全部' : '一键取消锁定')
+const batchLockTooltip = computed(() => {
+  if (!batchLockState.value) {
+    return lockedProfiles.value.length ? `解除项目内全部 ${lockedProfiles.value.length} 项已锁定资产` : '当前没有可操作资产'
+  }
+  return canLockAll.value
+    ? `锁定项目内全部 ${unlockedProfiles.value.length} 项未锁定资产`
+    : (allLockBlockers.value.join('；') || '当前没有可锁定资产')
+})
 const riskyPendingLockProfiles = computed(() => pendingLockProfiles.value.filter(item =>
   item.consistency.status === 'succeeded'
   && (item.consistency.hard_fail || item.consistency.overall_score < 75)
@@ -899,26 +925,47 @@ async function lockProfile(profile: DramaAssetProfile, locked = true): Promise<v
 }
 
 function requestBatchLock(): void {
-  requestProfileLocks(lockableSelectedProfiles.value)
+  requestProfileLocks(lockableSelectedProfiles.value, true)
 }
 
-function requestProfileLocks(profiles: DramaAssetProfile[]): void {
-  const candidates = profiles.filter(profile => profile.production_status !== 'locked')
+function requestLockAll(): void {
+  if (!canLockAll.value) {
+    showGlobalNotice(allLockBlockers.value.join('；') || '全部资产均已锁定。', 'error')
+    return
+  }
+  requestProfileLocks(unlockedProfiles.value, true)
+}
+
+function requestUnlockAll(): void {
+  requestProfileLocks(lockedProfiles.value, false)
+}
+
+function requestBatchLockToggle(): void {
+  // 全部锁定后按钮自动切换为解除锁定；存在未锁定资产时只显示锁定动作，避免互斥按钮并排。
+  if (batchLockState.value) requestLockAll()
+  else requestUnlockAll()
+}
+
+function requestProfileLocks(profiles: DramaAssetProfile[], locked = true): void {
+  const candidates = profiles.filter(profile => locked
+    ? profile.production_status !== 'locked'
+    : profile.production_status === 'locked')
   const missingImageProfiles = candidates.filter(profile => !profile.selected_asset_id)
-  if (missingImageProfiles.length) {
+  if (locked && missingImageProfiles.length) {
     const message = '请先生成或上传一张资产图片，再确认并锁定。'
     if (candidates.length === 1 && selectedProfile.value?.id === candidates[0]?.id) showDrawerFeedback('error', message)
     else showGlobalNotice(message, 'error')
     return
   }
   if (!candidates.length) {
-    showGlobalNotice('当前选中资产均已锁定。')
+    showGlobalNotice(locked ? '当前资产均已锁定。' : '当前没有已锁定资产。')
     return
   }
 
   pendingLockProfiles.value = candidates
+  pendingLockState.value = locked
   lockConfirmError.value = ''
-  const hasQualityRisk = candidates.some(profile => profile.consistency.status === 'succeeded'
+  const hasQualityRisk = locked && candidates.some(profile => profile.consistency.status === 'succeeded'
     && (profile.consistency.hard_fail || profile.consistency.overall_score < 75))
   // 批量锁定始终二次确认；单项仅在存在质量偏差时确认，保留正常资产的高效操作。
   if (candidates.length > 1 || hasQualityRisk) {
@@ -935,19 +982,22 @@ async function applyProfileLocks(profiles: DramaAssetProfile[], locked = true): 
   const succeededIds: string[] = []
   const failures: string[] = []
   try {
-    // 复用单资产后端接口并串行执行，避免并发返回的旧 workspace 快照互相覆盖。
-    for (const profile of profiles) {
-      try {
-        workspace.value = await dramaService.lockWorkspaceAsset(
-          props.projectId,
-          profile.asset_type,
-          profile.asset_key,
-          locked,
-        )
-        succeededIds.push(profile.id)
-      } catch (error: any) {
-        failures.push(`${profile.name}：${error?.message || '操作失败'}`)
-      }
+    if (isBatch) {
+      // 多项操作统一交给后端单事务处理，任一资产校验失败时整批保持原状态。
+      workspace.value = await dramaService.batchLockWorkspaceAssets(
+        props.projectId,
+        profiles.map(profileTarget),
+        locked,
+      )
+      succeededIds.push(...profiles.map(profile => profile.id))
+    } else {
+      workspace.value = await dramaService.lockWorkspaceAsset(
+        props.projectId,
+        profiles[0]!.asset_type,
+        profiles[0]!.asset_key,
+        locked,
+      )
+      succeededIds.push(profiles[0]!.id)
     }
 
     if (workspace.value && selectedProfile.value) {
@@ -955,8 +1005,8 @@ async function applyProfileLocks(profiles: DramaAssetProfile[], locked = true): 
     }
     if (isBatch) {
       showGlobalNotice(failures.length
-        ? `已锁定 ${succeededIds.length} 项，${failures.length} 项失败：${failures.join('；')}`
-        : `已锁定 ${succeededIds.length} 项资产，可继续选择其他分类处理。`, failures.length ? 'error' : 'success')
+        ? `${locked ? '锁定' : '解除锁定'}失败：${failures.join('；')}`
+        : `已${locked ? '锁定' : '解除锁定'} ${succeededIds.length} 项资产。`, failures.length ? 'error' : 'success')
     } else if (failures.length) {
       const message = failures[0] || '锁定操作失败。'
       if (selectedProfile.value?.id === profiles[0]?.id) showDrawerFeedback('error', message)
@@ -972,6 +1022,10 @@ async function applyProfileLocks(profiles: DramaAssetProfile[], locked = true): 
     showLockConfirm.value = false
     pendingLockProfiles.value = []
     lockConfirmError.value = ''
+  } catch (error: any) {
+    const message = error?.message || (locked ? '批量锁定失败。' : '批量解除锁定失败。')
+    lockConfirmError.value = message
+    showGlobalNotice(message, 'error')
   } finally {
     actionBusy.value = ''
   }
@@ -1264,6 +1318,20 @@ onBeforeUnmount(() => {
             </button>
           </div>
           <div class="toolbar-actions">
+            <BaseTooltip :text="batchLockTooltip">
+              <UButton
+                class="asset-toolbar-control"
+                :color="batchLockState ? 'primary' : 'neutral'"
+                variant="outline"
+                size="md"
+                :disabled="(batchLockState ? !canLockAll : !lockedProfiles.length) || Boolean(actionBusy)"
+                @click="requestBatchLockToggle"
+              >
+                <LockKeyhole v-if="batchLockState" :size="16" />
+                <Unlock v-else :size="16" />
+                {{ batchLockLabel }}
+              </UButton>
+            </BaseTooltip>
             <!--
               全选必须是工具栏里的明确操作，不能藏在状态筛选行最右侧的小复选框中。
               全选覆盖当前筛选结果；后续“生成”和“锁定”按钮会各自筛选符合条件的资产，
@@ -1672,26 +1740,27 @@ onBeforeUnmount(() => {
     <!-- 单项风险确认与批量锁定共用 Reka 弹窗，焦点管理与遮罩行为和分镜阶段一致。 -->
     <LivDialog
       :open="showLockConfirm"
-      :title="pendingLockProfiles.length > 1 ? `确认锁定 ${pendingLockProfiles.length} 项资产` : '确认锁定当前版本'"
-      :description="riskyPendingLockProfiles.length ? `其中 ${riskyPendingLockProfiles.length} 项仍存在尚未解决的质量偏差，锁定后可能影响后续分镜一致性。` : '锁定后，当前图片与资产设定将作为后续分镜和视频生成的统一引用。'"
+      :title="pendingLockState ? (pendingLockProfiles.length > 1 ? `确认锁定 ${pendingLockProfiles.length} 项资产` : '确认锁定当前版本') : `确认取消 ${pendingLockProfiles.length} 项资产锁定`"
+      :description="pendingLockState ? (riskyPendingLockProfiles.length ? `其中 ${riskyPendingLockProfiles.length} 项仍存在尚未解决的质量偏差，锁定后可能影响后续分镜一致性。` : '锁定后，当前图片与资产设定将作为后续分镜和视频生成的统一引用。') : '取消后这些资产可重新编辑和生成，后续分镜将不再把它们视为已确认引用。'"
       width="sm"
       @update:open="showLockConfirm = $event"
     >
       <div class="lock-confirm-content">
         <div class="lock-confirm-icon" :class="{ warning: riskyPendingLockProfiles.length }">
-          <AlertTriangle v-if="riskyPendingLockProfiles.length" :size="24" />
-          <LockKeyhole v-else :size="23" />
+          <AlertTriangle v-if="pendingLockState && riskyPendingLockProfiles.length" :size="24" />
+          <LockKeyhole v-if="pendingLockState && !riskyPendingLockProfiles.length" :size="23" />
+          <Unlock v-else-if="!pendingLockState" :size="23" />
         </div>
         <div class="lock-confirm-summary">
-          <span><b>{{ pendingLockProfiles.length }}</b>待锁定</span>
-          <span :class="{ warning: riskyPendingLockProfiles.length }"><b>{{ riskyPendingLockProfiles.length }}</b>质量风险</span>
+          <span><b>{{ pendingLockProfiles.length }}</b>{{ pendingLockState ? '待锁定' : '待解除' }}</span>
+          <span v-if="pendingLockState" :class="{ warning: riskyPendingLockProfiles.length }"><b>{{ riskyPendingLockProfiles.length }}</b>质量风险</span>
         </div>
-        <div v-if="riskyPendingLockProfiles.length" class="lock-risk-list">
+        <div v-if="pendingLockState && riskyPendingLockProfiles.length" class="lock-risk-list">
           <span v-for="profile in riskyPendingLockProfiles" :key="profile.id"><AlertTriangle :size="13" />{{ profile.name }}<b>{{ profile.consistency.overall_score }} 分</b></span>
         </div>
         <div v-if="lockConfirmError" class="generation-submit-error"><AlertTriangle :size="15" />{{ lockConfirmError }}</div>
       </div>
-      <template #footer><LivButton variant="secondary" :disabled="actionBusy === 'batch-lock'" @click="showLockConfirm = false">取消</LivButton><LivButton variant="primary" :loading="Boolean(actionBusy)" @click="applyProfileLocks(pendingLockProfiles, true)"><template #icon><LockKeyhole :size="16" /></template>{{ riskyPendingLockProfiles.length ? '确认风险并锁定' : '确认全部锁定' }}</LivButton></template>
+      <template #footer><LivButton variant="secondary" :disabled="actionBusy === 'batch-lock'" @click="showLockConfirm = false">取消</LivButton><LivButton variant="primary" :loading="Boolean(actionBusy)" @click="applyProfileLocks(pendingLockProfiles, pendingLockState)"><template #icon><component :is="pendingLockState ? LockKeyhole : Unlock" :size="16" /></template>{{ pendingLockState ? (riskyPendingLockProfiles.length ? '确认风险并锁定' : '确认全部锁定') : '确认取消全部锁定' }}</LivButton></template>
     </LivDialog>
 
     <LivDialog v-if="estimate" :open="showEstimate" :title="generationMode === 'repair' ? (repairMode === 'system_repair' ? '确认系统修正' : '确认生成优化版本') : `确认生成${generationScopeLabel}`" :description="generationMode === 'repair' ? '系统会创建一个新图片版本，原图、原始生成要求与旧报告都会保留。' : `本次将生成 ${estimate.target_count} 项资产，生成后自动进行一次质量检测。`" width="sm" @update:open="showEstimate = $event">

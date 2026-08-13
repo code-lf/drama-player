@@ -398,6 +398,7 @@ export interface StoryboardShotTuningPayload {
 export interface StoryboardBatchEstimate {
   eligibleRowIds: string[]
   blocked: Array<{ row_id?: string; rowId?: string; reason: string }>
+  warnings: Array<{ row_id?: string; rowId?: string; reason: string }>
   totalDurationSec: number
   estimatedCredits: number
   totalCredits: number
@@ -649,6 +650,7 @@ export interface ApiAdapter {
   estimateDramaAssetGeneration?(projectId: string, targets: string[]): Promise<ApiResponse<DramaAssetGenerationEstimate>>
   generateDramaWorkspaceAssets?(projectId: string, targets: string[], overwrite?: boolean, compileHashes?: Record<string, string>, retryFailed?: boolean): Promise<ApiResponse<DramaAssetGenerationRun>>
   lockDramaWorkspaceAsset?(projectId: string, assetType: DramaWorkspaceAssetType, assetKey: string, locked: boolean): Promise<ApiResponse<DramaAssetWorkspace>>
+  batchLockDramaWorkspaceAssets?(projectId: string, targets: string[], locked: boolean): Promise<ApiResponse<DramaAssetWorkspace>>
   estimateDramaAssetConsistency?(projectId: string, assetType: DramaWorkspaceAssetType, assetKey: string): Promise<ApiResponse<DramaAssetConsistencyEstimate>>
   checkDramaAssetConsistency?(projectId: string, assetType: DramaWorkspaceAssetType, assetKey: string, manual?: boolean, force?: boolean): Promise<ApiResponse<DramaAssetConsistencyRun>>
   estimateDramaAssetConsistencyRepair?(projectId: string, assetType: DramaWorkspaceAssetType, assetKey: string, payload: DramaAssetRepairRequest): Promise<ApiResponse<DramaAssetRepairEstimate>>

@@ -77,7 +77,8 @@ function projectProgress(project: DramaProjectCard): number {
   // 否则已经进入第二阶段的项目会因为没有分镜数据而错误显示为 0%。
   const stage = String(project.currentStage || '').toLowerCase()
   if (project.status === 'published') return 100
-  if (project.status === 'analyzing') return 12
+  // 解析中不再使用写死的 12%，与详情页共同展示后端统一计算的真实进度。
+  if (project.status === 'analyzing') return Math.max(0, Math.min(100, Number(project.analysisProgress || 0)))
   if (['video', 'videos', 'completed'].includes(stage)) return 100
   if (['storyboard', 'storyboards'].includes(stage)) {
     const shotProgress = project.totalStoryboards > 0

@@ -99,6 +99,10 @@ export const dramaService = {
     return callApi('drama/lockWorkspaceAsset', (adapter) => adapter.lockDramaWorkspaceAsset!(projectId, assetType, assetKey, locked))
   },
 
+  async batchLockWorkspaceAssets(projectId: string, targets: string[], locked: boolean) {
+    return callApi('drama/batchLockWorkspaceAssets', (adapter) => adapter.batchLockDramaWorkspaceAssets!(projectId, targets, locked))
+  },
+
   async estimateAssetConsistency(projectId: string, assetType: DramaWorkspaceAssetType, assetKey: string) {
     return callApi('drama/estimateAssetConsistency', (adapter) => adapter.estimateDramaAssetConsistency!(projectId, assetType, assetKey))
   },

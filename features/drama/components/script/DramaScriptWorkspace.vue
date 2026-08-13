@@ -463,6 +463,11 @@ const healthScore = computed(() => analysis.value?.scriptReviews?.overview?.scor
 const projectTitle = computed(() => analysis.value?.title || effectiveProjectDetail.value?.title || '未命名项目')
 const projectGenre = computed(() => analysis.value?.genre || '待解析')
 const projectCover = computed(() => analysis.value?.coverImageUrl || '')
+// 路由切换和项目刷新时详情对象会短暂为空；模板只读取这些安全别名，避免抽屉仍挂载时触发整页白屏。
+const scriptReviewsStale = computed(() => Boolean(analysis.value?.scriptReviewsStale))
+const scriptReviewsSourceVersion = computed(() => analysis.value?.scriptReviewsSourceVersion || '')
+const analysisTags = computed(() => analysis.value?.tags || [])
+const currentAnalysisVersion = computed(() => analysis.value?.currentScriptVersion || '')
 const isProjectCoverGenerating = computed(() => ['queued', 'running'].includes(props.currentAnalysisRun.coverStatus))
 const hasRealProjectCover = computed(() => props.currentAnalysisRun.coverStatus === 'done' && Boolean(projectCover.value))
 const structureNode = computed(() => props.currentAnalysisRun.nodes?.STRUCTURE_ANALYSIS)
@@ -541,11 +546,8 @@ const analysisProgressStages = computed(() => {
 })
 
 const analysisOverallProgress = computed(() => {
-  if (!analysisProgressStages.value.length) return 0
-  return Math.round(
-    analysisProgressStages.value.reduce((total, stage) => total + stage.progress, 0)
-      / analysisProgressStages.value.length
-  )
+  // 总进度只采用服务端统一值，避免详情与项目列表因前端各自推算而出现 0%/12% 不一致。
+  return Math.max(0, Math.min(100, Number(props.currentAnalysisRun.overallProgress || 0)))
 })
 const isInitialAnalysisFailed = computed(() => {
   return props.currentAnalysisRun.status === 'failed' && !props.currentAnalysisRun.structureReady
@@ -3647,8 +3649,8 @@ defineExpose({ openAllSuggestions })
       <div v-if="currentAnalysisRun.structureReady && !currentAnalysisRun.reviewsReady" class="rounded-[16px] border border-[#bfdbfe] bg-[#eff6ff] px-4 py-3 text-sm leading-6 text-[#315173]">
         基础解析已完成，专业体检后台进行中；体检结论不会阻塞资产制作，也不会修改已冻结的生产快照。
       </div>
-      <div v-else-if="analysis.scriptReviewsStale" class="flex flex-wrap items-center justify-between gap-3 rounded-[16px] border border-[#fde68a] bg-[#fffbeb] px-4 py-3 text-sm leading-6 text-[#92400e]">
-        <span>当前评分来自 {{ analysis.scriptReviewsSourceVersion || '上一版本' }}，仅作历史参考；旧建议已归档，不能继续采纳。如需当前版本的新建议，请重新体检。</span>
+      <div v-else-if="scriptReviewsStale" class="flex flex-wrap items-center justify-between gap-3 rounded-[16px] border border-[#fde68a] bg-[#fffbeb] px-4 py-3 text-sm leading-6 text-[#92400e]">
+        <span>当前评分来自 {{ scriptReviewsSourceVersion || '上一版本' }}，仅作历史参考；旧建议已归档，不能继续采纳。如需当前版本的新建议，请重新体检。</span>
         <div class="flex flex-wrap gap-2">
           <button v-if="historicalSuggestionCount" type="button" class="rounded-[10px] border border-[#f59e0b] bg-white px-4 py-2 text-xs font-semibold text-[#b45309]" @click="openHistorySuggestions">查看历史优化记录</button>
           <button type="button" class="rounded-[10px] bg-[#f59e0b] px-4 py-2 text-xs font-semibold text-white" :disabled="reReviewQuoteBusy" @click="reReviewConfirmVisible = true">{{ reReviewButtonLabel }}</button>
@@ -3680,7 +3682,7 @@ defineExpose({ openAllSuggestions })
               </span>
               <button v-if="historicalSuggestionCount" type="button" class="rounded-[9px] border border-[#86efac] bg-white px-3 py-2 text-xs font-semibold text-[#15803d]" @click="openHistorySuggestions">查看优化记录</button>
             </div>
-            <div v-else-if="pendingDraftVersionItem && !analysis.scriptReviewsStale" class="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-[16px] border border-[#bfdbfe] bg-[#eff6ff] px-4 py-3 text-sm leading-6 text-[#1e40af]">
+            <div v-else-if="pendingDraftVersionItem && !scriptReviewsStale" class="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-[16px] border border-[#bfdbfe] bg-[#eff6ff] px-4 py-3 text-sm leading-6 text-[#1e40af]">
               <span><b>工作草稿 {{ pendingDraftVersionItem.version }} 已创建。</b> 发布前所有当前建议仍可继续生成、调整并累计采纳；发布后未处理建议会失效并归档。</span>
               <button type="button" class="rounded-[9px] bg-[#0f67ff] px-4 py-2 text-xs font-semibold text-white" @click="pendingOptimizedDetail = effectiveProjectDetail; globalResultVisible = true">预览并发布</button>
             </div>
@@ -3730,7 +3732,7 @@ defineExpose({ openAllSuggestions })
                   <div v-if="analysis?.tags?.length" class="mt-4">
                     <p class="mb-2 text-xs font-medium text-[#94a3b8]">识别出的标签</p>
                     <div class="flex flex-wrap gap-2">
-                      <span v-for="tag in analysis.tags" :key="tag" class="rounded-full border px-3 py-1 text-xs font-semibold" :class="identifiedTagClass(tag)">{{ tag }}</span>
+                      <span v-for="tag in analysisTags" :key="tag" class="rounded-full border px-3 py-1 text-xs font-semibold" :class="identifiedTagClass(tag)">{{ tag }}</span>
                     </div>
                   </div>
                 </div>
@@ -4254,9 +4256,9 @@ defineExpose({ openAllSuggestions })
         <template #footer><LivButton variant="primary" @click="reviewEvidenceIssue = null">知道了</LivButton></template>
       </LivDialog>
 
-      <LivDrawer :open="suggestionDrawerVisible" title="AI 优化建议中心" :description="analysis.scriptReviewsStale ? '当前版本已发布，以下为历史优化记录；重新体检后才会生成可操作的新建议' : '发布前可将建议累积采纳到同一份工作草稿'" width="lg" @update:open="suggestionDrawerVisible = $event">
+      <LivDrawer :open="suggestionDrawerVisible" title="AI 优化建议中心" :description="scriptReviewsStale ? '当前版本已发布，以下为历史优化记录；重新体检后才会生成可操作的新建议' : '发布前可将建议累积采纳到同一份工作草稿'" width="lg" @update:open="suggestionDrawerVisible = $event">
         <div class="mt-5 grid grid-cols-3 gap-3 rounded-[18px] border border-[#e2e8f0] p-4 text-center">
-          <div><p class="text-[#64748b]">{{ analysis.scriptReviewsStale ? '历史记录' : '待优化建议' }}</p><b class="text-2xl text-[#0f172a]">{{ filteredSuggestions.filter(item => item.actionable).length }}</b></div>
+          <div><p class="text-[#64748b]">{{ scriptReviewsStale ? '历史记录' : '待优化建议' }}</p><b class="text-2xl text-[#0f172a]">{{ filteredSuggestions.filter(item => item.actionable).length }}</b></div>
           <div><p class="text-[#64748b]">高优先级</p><b class="text-2xl text-[#ef4444]">{{ highPrioritySuggestionCount }}</b></div>
           <div><p class="text-[#64748b]">影响范围</p><b class="text-2xl">{{ affectedEpisodeCount }}集 / {{ affectedLocationCount }}处</b></div>
         </div>
@@ -4340,15 +4342,15 @@ defineExpose({ openAllSuggestions })
         <div class="sticky bottom-0 mt-6 grid grid-cols-3 gap-3 bg-white py-4">
           <button class="flex-1 rounded-[14px] border px-5 py-3" @click="suggestionDrawerVisible = false">稍后处理</button>
           <button
-            v-if="suggestionStatusFilter === 'pending' && !analysis.scriptReviewsStale"
+            v-if="suggestionStatusFilter === 'pending' && !scriptReviewsStale"
             class="flex-1 rounded-[14px] bg-[#0f67ff] px-5 py-3 font-semibold text-white disabled:cursor-not-allowed disabled:bg-[#94a3b8]"
             :disabled="!selectedSuggestionIds.length"
             @click="beginSuggestionBatchOptimize"
           >
             生成所选优化稿
           </button>
-          <button v-if="suggestionStatusFilter === 'pending' && !analysis.scriptReviewsStale" class="rounded-[14px] border border-[#0f67ff] px-4 py-3 font-semibold text-[#0f67ff]" @click="generateAllSuggestionDrafts">全部建议生成优化稿</button>
-          <button v-if="analysis.scriptReviewsStale" class="col-span-2 rounded-[14px] bg-[#f59e0b] px-5 py-3 font-semibold text-white" :disabled="reReviewQuoteBusy" @click="suggestionDrawerVisible = false; reReviewConfirmVisible = true">{{ reReviewButtonLabel }}</button>
+          <button v-if="suggestionStatusFilter === 'pending' && !scriptReviewsStale" class="rounded-[14px] border border-[#0f67ff] px-4 py-3 font-semibold text-[#0f67ff]" @click="generateAllSuggestionDrafts">全部建议生成优化稿</button>
+          <button v-if="scriptReviewsStale" class="col-span-2 rounded-[14px] bg-[#f59e0b] px-5 py-3 font-semibold text-white" :disabled="reReviewQuoteBusy" @click="suggestionDrawerVisible = false; reReviewConfirmVisible = true">{{ reReviewButtonLabel }}</button>
         </div>
       </LivDrawer>
 
@@ -4466,7 +4468,7 @@ defineExpose({ openAllSuggestions })
                 <h3 class="font-semibold">版本管理</h3>
                 <div v-if="selectedSuggestionIsHistory" class="mt-4 space-y-3">
                   <div class="rounded-[12px] border border-[#e2e8f0] bg-white p-4"><div class="flex items-center justify-between gap-2"><p class="text-sm font-semibold">体检来源 {{ selectedSuggestionReviewVersion }}</p><span class="rounded-[6px] bg-[#f1f5f9] px-2 py-1 text-[10px] font-semibold text-[#64748b]">历史快照</span></div><p class="mt-1 text-xs leading-5 text-[#64748b]">保留当时的原文、优化稿和扣费记录。</p></div>
-                  <div class="rounded-[12px] border border-[#fde68a] bg-[#fffbeb] p-4"><div class="flex items-center justify-between gap-2"><p class="text-sm font-semibold text-[#92400e]">发布版本 {{ selectedSuggestionArchivedVersion || analysis.currentScriptVersion }}</p><span class="rounded-[6px] bg-[#fef3c7] px-2 py-1 text-[10px] font-semibold text-[#b45309]">已归档</span></div><p class="mt-1 text-xs leading-5 text-[#64748b]">发布后不再重新计算行号，也不能重复采纳。</p></div>
+                  <div class="rounded-[12px] border border-[#fde68a] bg-[#fffbeb] p-4"><div class="flex items-center justify-between gap-2"><p class="text-sm font-semibold text-[#92400e]">发布版本 {{ selectedSuggestionArchivedVersion || currentAnalysisVersion }}</p><span class="rounded-[6px] bg-[#fef3c7] px-2 py-1 text-[10px] font-semibold text-[#b45309]">已归档</span></div><p class="mt-1 text-xs leading-5 text-[#64748b]">发布后不再重新计算行号，也不能重复采纳。</p></div>
                 </div>
                 <div v-else class="mt-4 space-y-3">
                   <div class="rounded-[12px] border border-[#e2e8f0] bg-white p-4"><div class="flex items-center justify-between gap-2"><p class="text-sm font-semibold">正式版本 {{ pendingOriginalVersion }}</p><span class="rounded-[6px] bg-[#f1f5f9] px-2 py-1 text-[10px] font-semibold text-[#64748b]">当前使用</span></div><p class="mt-1 text-xs leading-5 text-[#64748b]">本次采纳不会直接覆盖正式版本。</p></div>

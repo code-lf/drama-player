@@ -109,6 +109,7 @@ type DramaAnalysisEventPayload = {
     current_stage: string
     stage_statuses: Record<string, string>
     stage_progresses: Record<string, number>
+    overall_progress?: number
     cover_status: string
     started_at: string
     updated_at: string
@@ -492,6 +493,7 @@ const currentAnalysisRun = computed<DramaAnalysisRunState>(() => {
       episode_split: 0,
       role_scene_identify: 0
     },
+    overallProgress: 0,
     coverStatus: 'idle',
     startedAt: '',
     updatedAt: '',
@@ -1398,6 +1400,7 @@ function patchAnalysisRunFromEvent(payload: DramaAnalysisEventPayload): void {
       currentStage: payload.analysis_run?.current_stage || '',
       stageStatuses,
       stageProgresses,
+      overallProgress: Math.max(0, Math.min(100, Number(payload.analysis_run?.overall_progress || 0))),
       coverStatus: payload.analysis_run?.cover_status || 'idle',
       startedAt: payload.analysis_run?.started_at || '',
       updatedAt: payload.analysis_run?.updated_at || '',

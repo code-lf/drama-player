@@ -788,6 +788,7 @@ interface BackendDramaDetailResponse {
     current_stage: string
     stage_statuses: Record<string, string>
     stage_progresses: Record<string, number>
+    overall_progress?: number
     cover_status: string
     cover_error_message?: string
     started_at: string
@@ -1027,6 +1028,7 @@ interface BackendDramaProjectCardResponse {
   total_episodes: number
   completed_storyboards: number
   total_storyboards: number
+  analysis_progress?: number
   updated_at: string
   created_at: string
 }
@@ -1069,6 +1071,7 @@ function mapDramaProjectCard(raw: BackendDramaProjectCardResponse): DramaProject
     totalEpisodes: Number(raw.total_episodes || 1),
     completedStoryboards: Number(raw.completed_storyboards || 0),
     totalStoryboards: Number(raw.total_storyboards || 0),
+    analysisProgress: Math.max(0, Math.min(100, Number(raw.analysis_progress || 0))),
     updatedAt: raw.updated_at || '',
     createdAt: raw.created_at || ''
   }
@@ -1702,6 +1705,7 @@ function mapStoryboardBatchEstimate(raw: Record<string, unknown>): StoryboardBat
   return {
     eligibleRowIds: (raw.eligible_row_ids || []) as string[],
     blocked: (raw.blocked || []) as StoryboardBatchEstimate['blocked'],
+    warnings: (raw.warnings || []) as StoryboardBatchEstimate['warnings'],
     totalDurationSec: Number(raw.total_duration_sec || 0),
     estimatedCredits: Number(raw.estimated_credits || 0),
     totalCredits: Number(raw.total_credits || raw.estimated_credits || 0),
@@ -2063,6 +2067,7 @@ function mapDramaDetail(raw: BackendDramaDetailResponse): DramaProjectDetail {
       currentStage: raw.analysis_run?.current_stage || '',
       stageStatuses: raw.analysis_run?.stage_statuses || {},
       stageProgresses: raw.analysis_run?.stage_progresses || {},
+      overallProgress: Math.max(0, Math.min(100, Number(raw.analysis_run?.overall_progress || 0))),
       coverStatus: raw.analysis_run?.cover_status || 'idle',
       coverErrorMessage: raw.analysis_run?.cover_error_message || '',
       startedAt: raw.analysis_run?.started_at || '',
@@ -2828,6 +2833,13 @@ export const httpAdapter: ApiAdapter = {
   async lockDramaWorkspaceAsset(projectId: string, assetType: DramaWorkspaceAssetType, assetKey: string, locked: boolean) {
     const action = locked ? 'lock' : 'unlock'
     const response = await request<DramaAssetWorkspace>(`/drama/projects/${projectId}/assets/${assetType}/${assetKey}/${action}`, { method: 'POST' })
+    return ok(response)
+  },
+
+  async batchLockDramaWorkspaceAssets(projectId: string, targets: string[], locked: boolean) {
+    const response = await request<DramaAssetWorkspace>(`/drama/projects/${projectId}/assets/batch-lock`, {
+      method: 'POST', body: { targets, locked },
+    })
     return ok(response)
   },
 

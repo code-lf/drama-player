@@ -270,6 +270,8 @@ function createIdleAnalysisRun() {
       outline_refine: 0,
       role_scene_identify: 0
     },
+    // Mock 与真实接口保持同一契约，列表和详情都读取服务端总进度。
+    overallProgress: 0,
     coverStatus: 'idle',
     startedAt: '',
     updatedAt: '',
@@ -1154,6 +1156,7 @@ export const mockAdapter: ApiAdapter = {
       // Mock 模式暂未拆分真实分镜状态，按现有分镜行数量展示总量，完成量保守记为 0。
       completedStoryboards: 0,
       totalStoryboards: item.storyboards.length,
+      analysisProgress: item.analysisRun.overallProgress || 0,
       updatedAt: item.analysisRun.updatedAt || '',
       createdAt: item.analysisRun.startedAt || ''
     }))
@@ -1955,6 +1958,7 @@ export const mockAdapter: ApiAdapter = {
     return ok({
       eligibleRowIds: eligible.map(row => row.id),
       blocked: [],
+      warnings: [],
       totalDurationSec: eligible.reduce((total, row) => total + row.durationSec, 0),
       estimatedCredits: eligible.length * 300,
       totalCredits: eligible.length * 300,

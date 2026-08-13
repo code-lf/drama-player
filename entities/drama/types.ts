@@ -94,6 +94,7 @@ export interface DramaAnalysisRunState {
   currentStage: string
   stageStatuses: Record<string, string>
   stageProgresses: Record<string, number>
+  overallProgress: number
   coverStatus: string
   coverErrorMessage: string
   startedAt: string
@@ -467,6 +468,7 @@ export interface DramaProjectCard {
   totalEpisodes: number
   completedStoryboards: number
   totalStoryboards: number
+  analysisProgress: number
   updatedAt: string
   createdAt: string
 }
