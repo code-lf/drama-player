@@ -282,6 +282,12 @@ export interface DramaOptimizationSuggestion {
   affectedLocations: string[]
   confidence: number
   sourceVersion: string
+  /** 建议最初来自哪次体检；应用新版后仍保留用于历史说明。 */
+  reviewSourceVersion?: string
+  /** 发布新版本后，旧建议冻结为只读历史记录。 */
+  historyReadonly?: boolean
+  /** 该建议在哪个正式版本发布时被归档。 */
+  archivedInVersion?: string
   originalText: string
   suggestedText: string
   problemIdentification: string
@@ -369,6 +375,19 @@ export interface DramaStoryboardRunState {
   currentEpisodeNo: number
   episodeStatuses: Record<string, string>
   episodeProgresses: Record<string, number>
+  episodeStages: Record<string, {
+    stage: string
+    progress: number
+    totalBatches: number
+    completedBatches: number
+    totalScenes?: number
+    completedScenes?: number
+    currentNodeLabel?: string
+    errorCode?: string
+    validationIssues?: Array<Record<string, unknown>>
+    retryableNodes: string[]
+    errorMessage?: string
+  }>
   generatedCounts: Record<string, number>
   expectedCounts: Record<string, number>
   model: string
@@ -405,6 +424,9 @@ export interface DramaAnalysis {
   episodeStructures: DramaEpisodeStructure[]
   scriptScenes: DramaScriptScene[]
   scriptReviews: DramaScriptReviews
+  // 优化版本默认沿用上一版体检结论作历史参考，只有用户主动复检才刷新。
+  scriptReviewsSourceVersion: string
+  scriptReviewsStale: boolean
   productionEstimate: DramaProductionEstimate
   optimizationSuggestions: DramaOptimizationSuggestion[]
   scriptVersions: DramaScriptVersion[]

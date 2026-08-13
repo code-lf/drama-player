@@ -178,6 +178,19 @@ type DramaStoryboardEventPayload = {
     current_episode_no: number
     episode_statuses: Record<string, string>
     episode_progresses: Record<string, number>
+    episode_stages?: Record<string, {
+      stage?: string
+      progress?: number
+      total_batches?: number
+      completed_batches?: number
+      total_scenes?: number
+      completed_scenes?: number
+      current_node_label?: string
+      error_code?: string
+      validation_issues?: Array<Record<string, unknown>>
+      retryable_nodes?: string[]
+      error_message?: string
+    }>
     generated_counts: Record<string, number>
     expected_counts: Record<string, number>
     model: string
@@ -355,6 +368,9 @@ const sourceScriptPreviewVisible = ref(false)
 const coverPreviewVisible = ref(false)
 // 分镜步骤需要单独查看“当前集完整剧本”，这里用独立弹框避免和原始剧本预览混用。
 const storyboardEpisodePreviewVisible = ref(false)
+// 分镜策划必须先明确选择剧集，默认只勾选用户当前正在查看的那一集。
+const storyboardPlanningSelectionVisible = ref(false)
+const storyboardPlanningEpisodeNos = ref<number[]>([])
 const roleDialogVisible = ref(false)
 const rolePreviewTarget = ref<{ name: string; imageUrl: string; prompt: string } | null>(null)
 const selectedTextModel = ref(fallbackTextModelCatalog[0]?.value || '')
@@ -498,6 +514,7 @@ const currentStoryboardRun = computed(() => {
     currentEpisodeNo: 1,
     episodeStatuses: {},
     episodeProgresses: {},
+    episodeStages: {},
     generatedCounts: {},
     expectedCounts: {},
     model: '',
@@ -1785,6 +1802,27 @@ function patchStoryboardRunFromEvent(payload: any): void {
       currentEpisodeNo: Number(payload.storyboard_run?.current_episode_no || 1),
       episodeStatuses: payload.storyboard_run?.episode_statuses || {},
       episodeProgresses: payload.storyboard_run?.episode_progresses || {},
+      episodeStages: Object.fromEntries(Object.entries(payload.storyboard_run?.episode_stages || {}).map(([key, stage]) => [key, {
+        stage: stage.stage || 'idle',
+        progress: Number(stage.progress || 0),
+        totalBatches: Number(stage.total_batches || 0),
+        completedBatches: Number(stage.completed_batches || 0),
+        totalScenes: Number(stage.total_scenes || 0),
+        completedScenes: Number(stage.completed_scenes || 0),
+        currentNodeLabel: stage.current_node_label || '',
+        errorCode: stage.error_code || '',
+        validationIssues: stage.validation_issues || [],
+        retryableNodes: stage.retryable_nodes || [],
+        errorMessage: stage.error_message || '',
+        workspaceReady: Boolean(stage.workspace_ready),
+        publishedRows: Number(stage.published_rows || 0),
+        baseGenerationStatus: stage.base_generation_status || '',
+        qualityStatus: stage.quality_status || '',
+        qaTotal: Number(stage.qa_total || 0),
+        qaCompleted: Number(stage.qa_completed || 0),
+        qaWarning: Number(stage.qa_warning || 0),
+        qaFailed: Number(stage.qa_failed || 0)
+      }])),
       generatedCounts: payload.storyboard_run?.generated_counts || {},
       expectedCounts: payload.storyboard_run?.expected_counts || {},
       model: payload.storyboard_run?.model || '',
@@ -2052,6 +2090,7 @@ async function confirmCreditPreview(
 
   try {
     const preview = await dramaService.previewCredits(projectDetail.value.projectId, payload)
+    const isAnalysisPreview = payload.action === 'analysis'
     const detailSummary = `${actionLabel}预计消耗 ${preview.requiredCredits} 点，当前余额 ${preview.currentBalance} 点，执行后剩余 ${preview.balanceAfter} 点。`
     if (!preview.sufficient) {
       errorMessage.value = `${detailSummary} 余额不足，请先充值后再试。`
@@ -2059,7 +2098,8 @@ async function confirmCreditPreview(
     }
     if (import.meta.client) {
       const sections: AppConfirmDialogSection[] = []
-      if (preview.message) sections.push({ title: '扣点说明', lines: [preview.message] })
+      // 剧本解析的 Token 估算、内部体检节点和模型编码属于系统核价信息，普通用户只看总积分。
+      if (preview.message && !isAnalysisPreview) sections.push({ title: '扣点说明', lines: [preview.message] })
       if (preview.repairPatchSummary) sections.push({ title: '修复策略', lines: [preview.repairPatchSummary] })
       if (preview.warnings?.length) sections.push({ title: '生成前确认', lines: preview.warnings })
       if (options?.detailLines?.length) sections.push({ title: '镜头任务', lines: options.detailLines })
@@ -2071,7 +2111,7 @@ async function confirmCreditPreview(
         confirmText: '确认执行',
         cancelText: '暂不执行',
         preview,
-        details: [
+        details: isAnalysisPreview ? [] : [
           { label: '计费口径', value: formatPreviewQuantity(preview.quantity, preview.quantityUnit) },
           { label: '模型', value: preview.model },
           { label: '模式', value: dramaIntentModeLabel(preview.modeHint) },
@@ -2092,7 +2132,7 @@ async function confirmCreditPreview(
   }
 }
 
-async function analyzeScript(): Promise<void> {
+async function analyzeScript(options: { forceReanalyze?: boolean } = {}): Promise<void> {
   const project = projectDetail.value
   if (!project?.sourceScriptText.trim()) return
 
@@ -2103,7 +2143,9 @@ async function analyzeScript(): Promise<void> {
     model: selectedTextModel.value,
     aspectRatio: selectedAspectRatio.value,
     resolution: selectedResolution.value,
-    style: resolvedVisualStyle.value
+    style: resolvedVisualStyle.value,
+    // 只有用户在历史体检提示中明确确认后才强制创建新任务；普通重新进入页面仍复用原任务。
+    forceReanalyze: Boolean(options.forceReanalyze)
   }
 
   const confirmed = await confirmCreditPreview('剧本解析', {
@@ -2111,7 +2153,8 @@ async function analyzeScript(): Promise<void> {
     model: selectedTextModel.value,
     aspectRatio: selectedAspectRatio.value,
     resolution: selectedResolution.value,
-    style: resolvedVisualStyle.value
+    style: resolvedVisualStyle.value,
+    forceReanalyze: Boolean(options.forceReanalyze)
   })
   if (!confirmed) return
 
@@ -2328,14 +2371,50 @@ async function refreshCurrentSettingTab(): Promise<void> {
   await generatePropAssets()
 }
 
-async function generateStoryboards(): Promise<void> {
+function openStoryboardPlanningSelection(defaultEpisodeNos?: number[]): void {
+  const available = storyboardEpisodeItems.value.map(item => item.episodeNo)
+  const requested = (defaultEpisodeNos?.length ? defaultEpisodeNos : [selectedEpisodeNo.value])
+    .filter(value => available.includes(value))
+  storyboardPlanningEpisodeNos.value = requested.length ? [...new Set(requested)] : [available[0] || 1]
+  storyboardPlanningSelectionVisible.value = true
+}
+
+function toggleStoryboardPlanningEpisode(episodeNo: number): void {
+  storyboardPlanningEpisodeNos.value = storyboardPlanningEpisodeNos.value.includes(episodeNo)
+    ? storyboardPlanningEpisodeNos.value.filter(value => value !== episodeNo)
+    : [...storyboardPlanningEpisodeNos.value, episodeNo].sort((left, right) => left - right)
+}
+
+async function confirmStoryboardPlanningSelection(): Promise<void> {
+  if (!storyboardPlanningEpisodeNos.value.length) {
+    errorMessage.value = '请至少选择一集进行分镜规划。'
+    return
+  }
+  const selected = [...storyboardPlanningEpisodeNos.value]
+  storyboardPlanningSelectionVisible.value = false
+  await generateStoryboards(selected)
+}
+
+async function generateStoryboards(episodeNos?: number[]): Promise<void> {
   if (!projectDetail.value) return
-  const confirmed = await confirmCreditPreview('分镜策划', {
+  if (!episodeNos?.length) {
+    openStoryboardPlanningSelection()
+    return
+  }
+  const episodeLabel = episodeNos.map(value => `第 ${value} 集`).join('、')
+  const failedRetry = episodeNos.every(value => projectDetail.value?.storyboardRun.episodeStatuses?.[String(value)] === 'failed')
+  const confirmed = failedRetry || await confirmCreditPreview('分镜策划', {
     action: 'storyboards',
     model: selectedTextModel.value,
     shotCount: 12,
     provider: selectedVideoProvider.value,
-    resolution: selectedResolution.value
+    resolution: selectedResolution.value,
+    episodeNos
+  }, {
+    detailLines: [
+      `本次规划：${episodeLabel}`,
+      `共 ${episodeNos.length} 集；只会生成所选剧集，不会自动扩展到其他集。`
+    ]
   })
   if (!confirmed) return
   const result = await runPageAction(
@@ -2348,14 +2427,30 @@ async function generateStoryboards(): Promise<void> {
         style: resolvedVisualStyle.value,
         provider: selectedVideoProvider.value,
         resolution: selectedResolution.value,
-        qualityPolicy: 'smart'
+        qualityPolicy: 'smart',
+        episodeNos
       }),
-    '分镜规划任务已开始，镜头会逐个写入工作台。'
+    failedRetry
+      ? `${episodeLabel}已沿用原任务继续规划，本次不重复扣点。`
+      : `${episodeLabel}分镜规划任务已开始，通过导演质检后会一次写入正式工作台。`
   )
   if (result) {
     projectDetail.value = result
     syncConfirmedStepIndex()
-    selectedStoryboardId.value = result.storyboards[0]?.id || ''
+    // 用户明确选择第 2 集规划时，成功入队后应立即切到第 2 集，
+    // 避免仍停在第 1 集并把后台任务误解为“第 1 集重新规划”。
+    selectedEpisodeNo.value = episodeNos[0] || selectedEpisodeNo.value
+    await router.replace({
+      query: {
+        ...route.query,
+        step: 'storyboard',
+        episode: String(selectedEpisodeNo.value),
+        view: 'overview'
+      }
+    })
+    selectedStoryboardId.value = result.storyboards.find(
+      row => Number(row.episodeNo || 1) === selectedEpisodeNo.value
+    )?.id || ''
     activeStep.value = 'storyboard'
     persistActiveStep()
     await connectStoryboardEventStream()
@@ -2366,11 +2461,11 @@ async function regenerateAllStoryboards(): Promise<void> {
   if (!projectDetail.value || isBusy.value) return
   // 当前还没有任何分镜落库时，直接按首次生成处理，避免用户看得到按钮却无法操作。
   if (!hasStoryboards.value) {
-    await generateStoryboards()
+    openStoryboardPlanningSelection(storyboardEpisodeItems.value.map(item => item.episodeNo))
     return
   }
   if (!import.meta.client) {
-    await generateStoryboards()
+    openStoryboardPlanningSelection(storyboardEpisodeItems.value.map(item => item.episodeNo))
     return
   }
 
@@ -5837,6 +5932,53 @@ onBeforeUnmount(() => {
           </button>
         </div>
       </div>
+    </div>
+
+    <div
+      v-if="storyboardPlanningSelectionVisible"
+      class="fixed inset-0 z-[89] flex items-center justify-center bg-[rgba(8,15,35,0.62)] px-4 py-8 backdrop-blur-md"
+      @click.self="storyboardPlanningSelectionVisible = false"
+    >
+      <section class="w-full max-w-[720px] overflow-hidden rounded-[30px] border border-[#cbdcff] bg-[linear-gradient(145deg,#ffffff_0%,#f5f8ff_58%,#eef2ff_100%)] shadow-[0_34px_100px_rgba(30,64,175,0.24)]">
+        <div class="border-b border-[#dbe6ff] px-7 py-6">
+          <p class="text-xs font-bold uppercase tracking-[0.2em] text-[#526dff]">Storyboard Scope</p>
+          <h3 class="mt-2 text-[26px] font-semibold tracking-[-0.03em] text-[#111827]">选择本次要规划的剧集</h3>
+          <p class="mt-2 text-sm leading-6 text-[#667085]">默认只选择当前查看的剧集。下一步扣点确认会再次明确显示集数和总价。</p>
+        </div>
+        <div class="grid max-h-[52vh] gap-3 overflow-y-auto px-7 py-5 md:grid-cols-2">
+          <button
+            v-for="episode in storyboardEpisodeItems"
+            :key="episode.episodeNo"
+            type="button"
+            class="group relative overflow-hidden rounded-[20px] border px-4 py-4 text-left transition"
+            :class="storyboardPlanningEpisodeNos.includes(episode.episodeNo)
+              ? 'border-[#6d78ff] bg-white shadow-[0_10px_28px_rgba(64,86,255,0.14)]'
+              : 'border-[#dce4f3] bg-white/65 hover:border-[#aebdff]'"
+            @click="toggleStoryboardPlanningEpisode(episode.episodeNo)"
+          >
+            <span class="absolute inset-y-0 left-0 w-1 bg-gradient-to-b from-[#286cff] to-[#8b5cf6]" :class="storyboardPlanningEpisodeNos.includes(episode.episodeNo) ? 'opacity-100' : 'opacity-0'" />
+            <span class="flex items-start justify-between gap-3">
+              <span>
+                <strong class="block text-base text-[#172033]">第 {{ episode.episodeNo }} 集</strong>
+                <small class="mt-1 block text-xs text-[#7b879b]">{{ episode.title }}</small>
+              </span>
+              <span class="grid h-6 w-6 place-items-center rounded-full border" :class="storyboardPlanningEpisodeNos.includes(episode.episodeNo) ? 'border-[#526dff] bg-[#526dff] text-white' : 'border-[#cbd5e1] bg-white text-transparent'">
+                ✓
+              </span>
+            </span>
+            <span class="mt-3 flex items-center gap-2 text-xs text-[#667085]">
+              {{ episode.episodeNo === selectedEpisodeNo ? '当前正在查看' : episode.status === 'completed' ? '已有方案，选择后将重新规划' : '尚未规划' }}
+            </span>
+          </button>
+        </div>
+        <div class="flex flex-wrap items-center justify-between gap-3 border-t border-[#dbe6ff] bg-white/70 px-7 py-5">
+          <p class="text-sm text-[#667085]">已选择 <strong class="text-[#4058e8]">{{ storyboardPlanningEpisodeNos.length }}</strong> 集</p>
+          <div class="flex gap-3">
+            <button type="button" class="rounded-full border border-[#d5deec] bg-white px-5 py-2.5 text-sm font-semibold text-[#667085]" @click="storyboardPlanningSelectionVisible = false">取消</button>
+            <button type="button" class="rounded-full bg-gradient-to-r from-[#2463ff] to-[#7c3aed] px-6 py-2.5 text-sm font-semibold text-white shadow-[0_10px_24px_rgba(79,70,229,0.24)] disabled:opacity-50" :disabled="!storyboardPlanningEpisodeNos.length" @click="confirmStoryboardPlanningSelection">核价并继续</button>
+          </div>
+        </div>
+      </section>
     </div>
 
     <div

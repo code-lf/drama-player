@@ -1512,9 +1512,7 @@ onBeforeUnmount(() => {
                 >
                   {{ entryCreditPreviewLabel }}
                 </span>
-                <p v-if="entryCreditPreview?.message" class="mt-2 max-w-[720px] text-center text-xs leading-5 text-[#64748b]">
-                  {{ entryCreditPreview.message }}
-                </p>
+                <!-- 普通用户只需要确认总积分和余额，不展示内部 Token 估算与子任务拆分。 -->
                 <button class="mt-5 text-[17px] font-black text-[#005FFE]" type="button">
                   没有剧本？AI 帮我创作
                   <span class="ml-2">→</span>

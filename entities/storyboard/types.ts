@@ -91,6 +91,23 @@ export interface StoryboardContinuityState {
 }
 
 export interface StoryboardRuntimeExtra {
+  /** 分层导演管线使用的稳定镜头标识；镜头编号变化时仍用于合并质检补丁。 */
+  shotKey?: string
+  shot_key?: string
+  /** 独立镜头标题，禁止再从场景描述第一行推导。 */
+  shotTitle?: string
+  shot_title?: string
+  /** 导演层识别出的动作、情绪、信息、焦点或声音变化节点。 */
+  visibleChangePoints?: Array<Record<string, unknown> | string>
+  visible_change_points?: Array<Record<string, unknown> | string>
+  /** 用户编辑后递增；后台质检只能自动覆盖同一修订号。 */
+  revision?: number
+  userEdited?: boolean
+  user_edited?: boolean
+  qaStatus?: string
+  qa_status?: string
+  qaIssues?: Array<Record<string, unknown> | string>
+  qa_issues?: Array<Record<string, unknown> | string>
   clipContract?: StoryboardClipContract
   referenceBindings?: StoryboardReferenceBinding[]
   continuityState?: StoryboardContinuityState
@@ -200,6 +217,27 @@ export interface StoryboardWorkspace {
     currentEpisodeNo: number
     episodeStatuses: Record<string, string>
     episodeProgresses: Record<string, number>
+    episodeStages: Record<string, {
+      stage: string
+      progress: number
+      totalBatches: number
+      completedBatches: number
+      totalScenes?: number
+      completedScenes?: number
+      currentNodeLabel?: string
+      errorCode?: string
+      validationIssues?: Array<Record<string, unknown>>
+      retryableNodes: string[]
+      errorMessage?: string
+      workspaceReady?: boolean
+      publishedRows?: number
+      baseGenerationStatus?: string
+      qualityStatus?: string
+      qaTotal?: number
+      qaCompleted?: number
+      qaWarning?: number
+      qaFailed?: number
+    }>
     generatedCounts: Record<string, number>
     expectedCounts: Record<string, number>
     style: string

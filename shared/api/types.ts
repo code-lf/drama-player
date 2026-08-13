@@ -149,6 +149,8 @@ export interface DramaStoryboardGeneratePayload {
   provider?: 'bytedance' | 'alibaba'
   resolution?: string
   qualityPolicy?: StoryboardQualityPolicy
+  /** 明确指定本次规划集数；空数组仅用于兼容旧客户端的全剧模式。 */
+  episodeNos?: number[]
 }
 
 export interface DramaCreditPreviewPayload {
@@ -178,6 +180,8 @@ export interface DramaCreditPreviewPayload {
   audio?: boolean
   overwrite?: boolean
   shotCount?: number
+  /** 分镜报价范围必须和正式提交范围一致。 */
+  episodeNos?: number[]
   rowId?: string
   roleKeys?: string[]
   sceneKeys?: string[]
@@ -527,6 +531,7 @@ export interface DramaAssetProfile {
   data: Record<string, any>
   source_refs: Array<Record<string, any>>
   stale_reason: string
+  generation_error_message: string
   locked_at: string
   versions: DramaAssetVersion[]
   consistency: DramaAssetConsistencyReport
@@ -642,7 +647,7 @@ export interface ApiAdapter {
   deleteDramaAssetProfile?(projectId: string, assetType: DramaWorkspaceAssetType, assetKey: string): Promise<ApiResponse<DramaAssetWorkspace>>
   uploadDramaAssetReference?(projectId: string, assetType: DramaWorkspaceAssetType, assetKey: string, file: File): Promise<ApiResponse<DramaAssetWorkspace>>
   estimateDramaAssetGeneration?(projectId: string, targets: string[]): Promise<ApiResponse<DramaAssetGenerationEstimate>>
-  generateDramaWorkspaceAssets?(projectId: string, targets: string[], overwrite?: boolean, compileHashes?: Record<string, string>): Promise<ApiResponse<DramaAssetGenerationRun>>
+  generateDramaWorkspaceAssets?(projectId: string, targets: string[], overwrite?: boolean, compileHashes?: Record<string, string>, retryFailed?: boolean): Promise<ApiResponse<DramaAssetGenerationRun>>
   lockDramaWorkspaceAsset?(projectId: string, assetType: DramaWorkspaceAssetType, assetKey: string, locked: boolean): Promise<ApiResponse<DramaAssetWorkspace>>
   estimateDramaAssetConsistency?(projectId: string, assetType: DramaWorkspaceAssetType, assetKey: string): Promise<ApiResponse<DramaAssetConsistencyEstimate>>
   checkDramaAssetConsistency?(projectId: string, assetType: DramaWorkspaceAssetType, assetKey: string, manual?: boolean, force?: boolean): Promise<ApiResponse<DramaAssetConsistencyRun>>

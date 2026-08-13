@@ -327,6 +327,11 @@ function statusLabel(status: string): string {
   } as Record<string, string>)[status] || status
 }
 
+/** 后端只返回稳定业务文案；旧项目没有错误字段时使用统一兜底，不暴露 Python 或供应商异常。 */
+function generationFailureText(profile: DramaAssetProfile): string {
+  return profile.generation_error_message || '图片生成服务暂时异常，本次失败不会扣除积分，请稍后重试。'
+}
+
 function dataText(profile: DramaAssetProfile): string {
   const data = profile.data || {}
   if (profile.asset_type === 'role') return [data.identity, data.age, data.role_label].filter(Boolean).join(' · ')
@@ -638,10 +643,10 @@ function setStatusFilter(status: string): void {
 }
 
 function retryAllFailed(): void {
-  // 批量重试仍然先进入点数预估确认，避免失败任务被静默重复扣点。
+  // 已付费失败项走免费重试通道，不再弹出首次生成的扣点确认框。
   if (!failedTargets.value.length) return
   selectedKeys.value = [...failedTargets.value]
-  void requestEstimate(failedTargets.value)
+  void retryFailedAssets(failedTargets.value)
 }
 
 function switchType(type: DramaWorkspaceAssetType): void {
@@ -860,6 +865,31 @@ async function startGeneration(targets = selectionTargets.value, overwrite = fal
   }
 }
 
+async function retryFailedAssets(targets: string[]): Promise<void> {
+  if (!targets.length) return
+  actionBusy.value = 'retry-failed'
+  generationErrorMessage.value = ''
+  try {
+    // retry_failed 会在服务端校验每一项当前确为 failed，前端参数不能绕过首次生成计费。
+    await dramaService.generateWorkspaceAssets(props.projectId, targets, false, {}, true)
+    showEstimate.value = false
+    showGlobalNotice(`已提交 ${targets.length} 项失败资产免费重试，本次不重复扣点。`)
+    await loadWorkspace(true)
+  } catch (error: any) {
+    showGlobalNotice(error?.message || '失败资产重试提交失败，请稍后重试。', 'error')
+  } finally {
+    actionBusy.value = ''
+  }
+}
+
+function regenerateProfile(profile: DramaAssetProfile): void {
+  if (profile.production_status === 'failed') {
+    void retryFailedAssets([profileTarget(profile)])
+    return
+  }
+  void requestEstimate([profileTarget(profile)])
+}
+
 async function lockProfile(profile: DramaAssetProfile, locked = true): Promise<void> {
   if (!locked) {
     await applyProfileLocks([profile], false)
@@ -1050,7 +1080,7 @@ function handleAssetMenu(profile: DramaAssetProfile, item: BaseMenuItem): void {
   else if (item.key === 'upload') {
     uploadTarget.value = profile
     menuUploadInput.value?.click()
-  } else if (item.key === 'regenerate') void requestEstimate([profileTarget(profile)])
+  } else if (item.key === 'regenerate') regenerateProfile(profile)
   else if (item.key === 'lock') void lockProfile(profile, profile.production_status !== 'locked')
   else if (item.key === 'delete') void removeProfile(profile)
 }
@@ -1286,18 +1316,17 @@ onBeforeUnmount(() => {
           <button :class="{ active: statusFilter === 'locked' }" @click="setStatusFilter('locked')">已锁定 {{ currentStats.locked }}</button>
           <button :class="{ active: statusFilter === 'generating' }" @click="setStatusFilter('generating')">生成中 {{ currentStats.generating }}</button>
           <button v-if="currentStats.failed" class="failed-filter" :class="{ active: statusFilter === 'failed' }" @click="setStatusFilter('failed')">失败 {{ currentStats.failed }}</button>
-          <UButton
+          <button
             v-if="currentStats.failed"
             class="retry-failed"
-            icon="i-lucide-refresh-cw"
-            label="重试全部失败项"
-            color="error"
-            variant="soft"
-            size="sm"
-            :loading="Boolean(actionBusy)"
+            type="button"
+            :disabled="Boolean(actionBusy)"
             title="重试当前分类的全部失败项"
             @click="retryAllFailed"
-          />
+          >
+            <RefreshCw :size="14" :class="{ spin: Boolean(actionBusy) }" />
+            <span>重试全部失败项</span>
+          </button>
         </div>
 
         <div class="workspace-body">
@@ -1324,8 +1353,21 @@ onBeforeUnmount(() => {
                   <div class="card-title"><div><h3>{{ profile.name }}</h3><p :title="dataText(profile) || '制作资料待补充'">{{ dataText(profile) || '制作资料待补充' }}</p></div><span v-if="profile.is_required">必需</span></div>
                   <p class="card-description" :title="descriptionText(profile)">{{ descriptionText(profile) }}</p>
                   <div class="tag-row"><span v-for="tag in tags(profile)" :key="String(tag)">{{ tag }}</span><span v-if="profile.data.appearance_source === 'ai_completion'" class="ai-tag">AI 补全</span><span v-if="profile.asset_type === 'role'" class="voice-card-tag"><Volume2 :size="11" />{{ roleVoiceStatus(profile) }}</span></div>
-                  <div class="card-status"><span :class="`status-${profile.production_status}`">{{ statusLabel(profile.production_status) }}</span><button class="consistency-tag" :class="`tone-${consistencyTone(profile)}`" @click="openDetail(profile)">{{ consistencyLabel(profile) }}</button></div>
-                  <div class="card-actions"><UButton color="neutral" variant="outline" size="sm" label="编辑" @click="openDetail(profile)" /><UButton color="neutral" variant="outline" size="sm" label="重新生成" @click="requestEstimate([profileTarget(profile)])" /><BaseTooltip :text="!profile.selected_asset_id ? '请先生成或上传一张资产图片' : ''" align="right"><UButton class="primary" color="primary" variant="solid" size="sm" :label="profile.production_status === 'locked' ? '已锁定' : '确认并锁定'" :disabled="!profile.selected_asset_id" @click="lockProfile(profile, profile.production_status !== 'locked')" /></BaseTooltip></div>
+                  <div class="card-status">
+                    <button
+                      v-if="profile.production_status === 'failed'"
+                      class="asset-failure-detail"
+                      type="button"
+                      :title="generationFailureText(profile)"
+                      aria-label="查看生成失败原因"
+                      @click="openDetail(profile)"
+                    >
+                      <AlertTriangle :size="14" /><span>生成失败</span>
+                    </button>
+                    <span v-else :class="`status-${profile.production_status}`">{{ statusLabel(profile.production_status) }}</span>
+                    <button class="consistency-tag" :class="`tone-${consistencyTone(profile)}`" @click="openDetail(profile)">{{ consistencyLabel(profile) }}</button>
+                  </div>
+                  <div class="card-actions"><UButton color="neutral" variant="outline" size="sm" label="编辑" @click="openDetail(profile)" /><UButton color="neutral" variant="outline" size="sm" :label="profile.production_status === 'failed' ? '免费重试' : '重新生成'" @click="regenerateProfile(profile)" /><BaseTooltip :text="!profile.selected_asset_id ? '请先生成或上传一张资产图片' : ''" align="right"><UButton class="primary" color="primary" variant="solid" size="sm" :label="profile.production_status === 'locked' ? '已锁定' : '确认并锁定'" :disabled="!profile.selected_asset_id" @click="lockProfile(profile, profile.production_status !== 'locked')" /></BaseTooltip></div>
                 </div>
               </article>
             </div>
@@ -1350,27 +1392,29 @@ onBeforeUnmount(() => {
           <UButton
             v-if="lockableSelectedProfiles.length"
             class="secondary-action batch-lock-action"
-            icon="i-lucide-lock-keyhole"
-            :label="`${allCurrentSelected ? '全部锁定' : '锁定选中'} ${lockableSelectedProfiles.length} 项`"
             color="primary"
             variant="outline"
             size="md"
             :loading="Boolean(actionBusy)"
             @click="requestBatchLock"
-          />
+          >
+            <LockKeyhole v-if="!actionBusy" :size="16" />
+            <span>{{ `${allCurrentSelected ? '全部锁定' : '锁定选中'} ${lockableSelectedProfiles.length} 项` }}</span>
+          </UButton>
           <!-- 禁用按钮外包一层提示容器，保证鼠标悬停时仍能读到具体阻塞原因。 -->
           <BaseTooltip :text="readinessReason || '全部必需资产已锁定，可以进入分镜设计。'" align="right">
             <span id="asset-guide-enter-storyboard" class="asset-footer-action-wrap">
               <UButton
                 class="asset-footer-action"
-                icon="i-lucide-check"
-                label="确认资产并进入分镜"
                 color="primary"
                 variant="solid"
                 size="md"
                 :disabled="!workspace.readiness.ready"
                 @click="enterStoryboard"
-              />
+              >
+                <Check :size="16" />
+                <span>确认资产并进入分镜</span>
+              </UButton>
             </span>
           </BaseTooltip>
         </footer>
@@ -1463,6 +1507,11 @@ onBeforeUnmount(() => {
 
             <!-- 中栏承载可编辑资料；三种资产共享基础信息，再按类型渲染专有字段。 -->
             <main class="detail-editor">
+              <section v-if="selectedProfile.production_status === 'failed'" class="report-failed generation-failure-panel">
+                <AlertTriangle :size="20" />
+                <div><h4>本次生成失败</h4><p>{{ generationFailureText(selectedProfile) }}</p></div>
+                <button type="button" @click="retryFailedAssets([profileTarget(selectedProfile!)])"><RefreshCw :size="14" />免费重试</button>
+              </section>
               <section class="editor-section">
                 <h3>基础信息</h3>
                 <div class="base-fields"><label>资产名称<UInput v-model="editDraft.name" class="w-full" /></label><label v-if="selectedProfile.asset_type === 'role'">身份<UInput v-model="editDraft.identity" class="w-full" /></label><label v-if="selectedProfile.asset_type === 'role'">年龄<UInput v-model="editDraft.age" class="w-full" /></label><label>资产定位<BaseSelect v-if="selectedProfile.asset_type === 'role'" v-model="editDraft.role_label" tone="light" full :options="rolePositionOptions" /><UInput v-else v-model="editDraft.canonical_location" class="w-full" /></label><div class="check-line"><UCheckbox v-model="editDraft.is_required" label="分镜必需资产" /><BaseTooltip text="勾选后，该资产必须生成并锁定，项目才能进入分镜；分镜会优先引用当前图片与设定。只有不会在实际镜头中出现的候选资产才建议取消。"><CircleHelp :size="15" /></BaseTooltip></div></div>
@@ -1595,7 +1644,7 @@ onBeforeUnmount(() => {
         <template v-if="selectedProfile" #footer>
           <div class="asset-editor-footer liv-asset-editor-footer">
             <div class="footer-lock-tip"><LockKeyhole :size="16" /><span>{{ selectedProfile.production_status === 'locked' ? '当前资产已锁定；解除后才能调整设定与图片版本。' : '锁定后将作为后续分镜与成片生成的统一引用。' }}</span></div>
-            <LivButton variant="secondary" @click="requestEstimate([profileTarget(selectedProfile)])"><template #icon><RefreshCw :size="16" /></template>重新生成</LivButton>
+            <LivButton variant="secondary" @click="regenerateProfile(selectedProfile)"><template #icon><RefreshCw :size="16" /></template>{{ selectedProfile.production_status === 'failed' ? '免费重试' : '重新生成' }}</LivButton>
             <LivButton variant="secondary" :loading="actionBusy === 'save-profile'" @click="saveProfile"><template #icon><ShieldCheck :size="16" /></template>保存资产设定</LivButton>
             <BaseTooltip :text="!selectedProfile.selected_asset_id ? '请先生成或上传一张资产图片' : ''" align="right"><LivButton variant="primary" :disabled="!selectedProfile.selected_asset_id" @click="lockProfile(selectedProfile, selectedProfile.production_status !== 'locked')"><template #icon><component :is="selectedProfile.production_status === 'locked' ? Unlock : LockKeyhole" :size="16" /></template>{{ selectedProfile.production_status === 'locked' ? '解除锁定' : '确认并锁定' }}</LivButton></BaseTooltip>
           </div>
@@ -1694,7 +1743,7 @@ onBeforeUnmount(() => {
  * 3. 空图片统一复用 FluidImage 的动态占位，下面仅叠加业务状态文本。
  */
 .visual-bible-card{padding:18px 20px}.bible-reference{width:164px;height:96px;background:transparent}.bible-main h2{font-size:19px;line-height:1.35}.bible-grid span{font-size:12px}.bible-grid b{font-size:13px;line-height:20px}
-.status-row{align-items:center;flex-wrap:wrap}.status-row button{font-size:12px;font-weight:600}.status-row .failed-filter{border-color:#fecdd3;color:#dc3f54}.status-row .retry-failed{display:inline-flex;align-items:center;gap:6px;border-color:#f4b9c2;background:#fff7f8;color:#cf3148}.select-all-control{display:inline-flex;align-items:center;gap:8px;margin-left:auto;padding:0 4px;color:#42516a;font-size:13px;font-weight:600;cursor:pointer}.select-all-control input{width:16px;height:16px;accent-color:var(--blue)}
+.status-row{align-items:center;flex-wrap:wrap}.status-row button{font-size:12px;font-weight:600}.status-row .failed-filter{border-color:#fecdd3;color:#dc3f54}.status-row .retry-failed{display:inline-flex;align-items:center;gap:6px;border:1px solid #f4b9c2;border-radius:999px;background:#fff7f8;padding:7px 12px;color:#cf3148}.status-row .retry-failed:disabled{cursor:not-allowed;opacity:.55}.asset-failure-detail{display:inline-flex;align-items:center;gap:5px;border:0;background:transparent;padding:0;color:#dc3f54;font-size:12px;font-weight:700;cursor:pointer}.generation-failure-panel{display:flex;align-items:flex-start;gap:12px}.generation-failure-panel>div{min-width:0;flex:1}.generation-failure-panel button{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}.select-all-control{display:inline-flex;align-items:center;gap:8px;margin-left:auto;padding:0 4px;color:#42516a;font-size:13px;font-weight:600;cursor:pointer}.select-all-control input{width:16px;height:16px;accent-color:var(--blue)}
 .card-image{height:184px;overflow:hidden}.card-image>:deep(.relative){border-radius:11px}.image-placeholder-label{position:absolute;inset:0;z-index:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:9px;pointer-events:none;color:#72839b;font-size:12px;font-weight:650}.image-placeholder-label.large{font-size:13px}.select-check,.more-button,.image-lock{z-index:4}.card-menu{z-index:8}
 .card-content{padding:7px 16px 16px}.card-title h3{font-size:17px;line-height:24px}.card-title p{font-size:13px;line-height:20px}.card-title>span{height:auto;padding:4px 8px;font-size:11px}.card-description{min-height:44px;margin:10px 0 9px;font-size:13px;line-height:22px}.tag-row{gap:6px;min-height:26px}.tag-row span{padding:5px 8px;font-size:11px}.card-status{margin:12px 0;font-size:12px}.card-actions{gap:8px}.card-actions button{padding:9px 6px;font-size:12px}
 .consistency-panel{padding:18px}.panel-title h3{font-size:16px}.panel-title p{font-size:11px;line-height:18px}.panel-empty p{font-size:12px}.readiness-box h4{font-size:14px}.readiness-box p,.readiness-box li{font-size:11px;line-height:18px}
@@ -1816,6 +1865,13 @@ onBeforeUnmount(() => {
 .workspace-body{display:block}
 .status-select{width:132px}
 .card-status .consistency-tag{border:1px solid transparent;border-radius:999px;padding:3px 8px;font-size:10px;font-weight:700;line-height:16px}
+/* 生产状态使用独立语义色：待规划偏中性，生成中偏蓝紫，避免用户误认为是同一阶段。 */
+.card-status>span[class^="status-"]{display:inline-flex;align-items:center;border:1px solid transparent;border-radius:999px;padding:3px 8px;font-size:10px;font-weight:700;line-height:16px}
+.card-status .status-candidate,.card-status .status-planned{border-color:#dbe4f0;background:#f4f7fb;color:#64748b}
+.card-status .status-queued,.card-status .status-generating{border-color:#c9d7ff;background:#eef2ff;color:#4f46e5}
+.card-status .status-to_confirm{border-color:#fed7aa;background:#fff7ed;color:#c2410c}
+.card-status .status-locked{border-color:#bbf7d0;background:#f0fdf4;color:#15803d}
+.card-status .status-stale{border-color:#fde68a;background:#fffbeb;color:#b45309}
 .consistency-tag.tone-good{border-color:#bcebd6;background:#effbf5;color:#21805a}
 .consistency-tag.tone-warning{border-color:#f7db9d;background:#fff8e9;color:#a76a00}
 .consistency-tag.tone-danger{border-color:#ffc6ce;background:#fff2f4;color:#cf3349}

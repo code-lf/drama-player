@@ -47,7 +47,7 @@ import ScriptRelationGraph from './ScriptRelationGraph.vue'
 
 type ScriptTabKey = 'overview' | 'characters' | 'episodes' | 'full'
 type SuggestionScope = 'all' | 'story' | 'character' | 'episode' | 'text'
-type SuggestionStatusFilter = 'pending' | 'adopted' | 'ignored' | 'strength' | 'stale' | 'failed'
+type SuggestionStatusFilter = 'pending' | 'adopted' | 'archived' | 'ignored' | 'strength' | 'stale' | 'failed'
 type CharacterReviewMode = 'system' | 'person'
 type EpisodeListFilter = 'all' | 'pending'
 type EpisodeReviewScope = 'current' | 'season'
@@ -205,7 +205,7 @@ const props = defineProps<{
   scriptProgressSubtitle: string
   scriptProgressItems: ProgressItem[]
   selectedEpisodeNo: number
-  analyzeAction: () => Promise<void> | void
+  analyzeAction: (options?: { forceReanalyze?: boolean }) => Promise<void> | void
   retryAnalysisNodeAction: (nodeKey: string) => Promise<void> | void
   regenerateCoverAction: () => Promise<void> | void
   changeIntentModeAction: (mode: DramaIntentMode) => Promise<void> | void
@@ -294,6 +294,7 @@ const optimizationFailed = ref(false)
 const toast = useToast()
 const sourceResolveBusy = ref(false)
 const sourceResolveError = ref('')
+const reReviewConfirmVisible = ref(false)
 const suggestionAdjustmentInstruction = ref('')
 const resultAdjustmentInstruction = ref('')
 const sceneAdjustmentInstruction = ref('')
@@ -308,6 +309,11 @@ const selectedSourceEndOffset = ref<number | null>(null)
 const pendingSourceBindingSuggestionId = ref('')
 const sourceBindingBusy = ref(false)
 const sourceBindingMessage = ref('')
+// 重新体检入口直接展示服务端实时积分报价，不能写死价格，也不向用户展示“付费”字样。
+// forceReanalyze=true 可避免预估接口把当前历史 Run 当成可复用任务而返回 0 点。
+const reReviewEstimatedCredits = ref<number | null>(null)
+const reReviewQuoteBusy = ref(false)
+const reReviewQuoteError = ref('')
 // 完整剧本页的场次正文先进入本地草稿，再通过防抖自动保存写回后端：
 // - 用户手动修文不属于 AI 生成动作，不扣积分；
 // - 保存后会更新 analysis.script_scenes，让刷新页面、进入后续资产阶段都能读到最新剧本；
@@ -347,6 +353,48 @@ const analysis = computed<DramaAnalysis | null>(() => {
   return null
 })
 
+const reReviewButtonLabel = computed(() => {
+  if (reReviewQuoteBusy.value) return '重新体检当前版本 · 积分计算中'
+  if (reReviewEstimatedCredits.value !== null) return `重新体检当前版本 · ${reReviewEstimatedCredits.value} 积分`
+  return '重新体检当前版本'
+})
+
+async function refreshReReviewQuote() {
+  if (!analysis.value?.scriptReviewsStale || projectId.value === 'unknown') return
+  reReviewQuoteBusy.value = true
+  reReviewQuoteError.value = ''
+  try {
+    const meta = analysis.value.displayMeta
+    const quote = await dramaService.previewCredits(projectId.value, {
+      action: 'analysis',
+      aspectRatio: meta?.aspectRatio || '16:9',
+      resolution: meta?.resolution || '720p',
+      style: meta?.style || '',
+      forceReanalyze: true
+    })
+    reReviewEstimatedCredits.value = quote.requiredCredits
+  } catch (error) {
+    // 报价失败不阻塞用户进入现有确认流程；确认时父页面仍会重新请求一次权威报价。
+    console.error('[livliv] 重新体检积分预估加载失败', error)
+    reReviewEstimatedCredits.value = null
+    reReviewQuoteError.value = '积分暂未加载，点击后将重新计算'
+  } finally {
+    reReviewQuoteBusy.value = false
+  }
+}
+
+watch(
+  () => [projectId.value, analysis.value?.currentScriptVersion, analysis.value?.scriptReviewsStale] as const,
+  ([, , reviewsStale]) => {
+    if (reviewsStale) void refreshReReviewQuote()
+    else {
+      reReviewEstimatedCredits.value = null
+      reReviewQuoteError.value = ''
+    }
+  },
+  { immediate: true }
+)
+
 function extractTraitPhrases(text: string) {
   // 从原始人物介绍里截取几个短特征，避免本地草稿只显示“文本识别/待补全”，看起来比老版信息还少。
   return text
@@ -377,7 +425,8 @@ const suggestionFilterOptions: Array<{ key: SuggestionScope; label: string }> = 
 ]
 const suggestionStatusOptions: Array<{ key: SuggestionStatusFilter; label: string }> = [
   { key: 'pending', label: '待处理' },
-  { key: 'adopted', label: '已采用' },
+  { key: 'adopted', label: '已优化' },
+  { key: 'archived', label: '历史建议' },
   { key: 'ignored', label: '已忽略' },
   { key: 'strength', label: '无需处理' },
   { key: 'stale', label: '需更新' },
@@ -1141,6 +1190,9 @@ function mapBackendSuggestion(item: BackendOptimizationSuggestion): Optimization
       .filter(Boolean),
     confidence: item.confidence || 0,
     sourceVersion: item.sourceVersion,
+    reviewSourceVersion: item.reviewSourceVersion,
+    historyReadonly: Boolean(item.historyReadonly),
+    archivedInVersion: item.archivedInVersion || '',
     originalText: item.originalText,
     suggestedText: item.suggestedText,
     problemIdentification: sanitizeSuggestionDisplayText(item.problemIdentification),
@@ -1185,6 +1237,7 @@ const suggestions = computed<OptimizationSuggestion[]>(() => {
   const backendRows = analysis.value?.optimizationSuggestions || []
   // 建议中心必须以后端 optimization_suggestions 为唯一来源。
   // 没有建议时展示空状态，而不是前端编造“开场钩子/人物动机”等假建议。
+  // 发布后的历史建议继续展示审计快照，但不再针对当前正式正文自动重定位。
   return backendRows.map(mapBackendSuggestion)
 })
 
@@ -1261,6 +1314,9 @@ function compactEpisodeJudgementSummary(...candidates: Array<string | undefined>
 function suggestionDraftLabelById(id?: string) {
   const suggestion = suggestions.value.find(item => item.id === id)
   if (!suggestion) return '生成优化稿'
+  if (isSuggestionHistory(suggestion)) {
+    return getSuggestionOperationalStatus(suggestion) === 'adopted' ? '查看优化记录' : '查看历史建议'
+  }
   return hasCompleteSuggestionDraft(suggestion) ? '查看优化稿' : suggestionDraftActionLabel(suggestion)
 }
 
@@ -1273,7 +1329,7 @@ function hasCompleteSuggestionDraft(item: OptimizationSuggestion) {
   const original = String(item.sourceLocator?.sourceTextSnapshot || item.originalText || '').trim()
   const suggested = String(item.suggestedText || '').trim()
   const source = String(effectiveProjectDetail.value?.sourceScriptText || '')
-  if (!original || !suggested || (source && !source.includes(original))) return false
+  if (!original || !suggested || (!isSuggestionHistory(item) && source && !source.includes(original))) return false
   const ratio = suggested.length / Math.max(original.length, 1)
   if (ratio < 0.55 || ratio > 2.8) return false
   if (/^(建议|可以|应当|增加|强化|补充|调整|优化|需)/.test(suggested) && ratio < 0.9) return false
@@ -1286,7 +1342,14 @@ function hasCompleteSuggestionDraftById(id?: string) {
   return item ? hasCompleteSuggestionDraft(item) : false
 }
 
-type SuggestionOperationalStatus = 'pending' | 'adopted' | 'ignored' | 'strength'
+type SuggestionOperationalStatus = 'pending' | 'adopted' | 'archived' | 'ignored' | 'strength'
+
+/** 发布后的旧建议只用于审计，不能再次生成、定位或采纳。 */
+function isSuggestionHistory(item: OptimizationSuggestion) {
+  const currentVersion = String(analysis.value?.currentScriptVersion || '')
+  const reviewVersion = String(item.reviewSourceVersion || item.sourceVersion || item.sourceLocator?.sourceVersion || '')
+  return Boolean(item.historyReadonly || item.status === 'archived' || (analysis.value?.scriptReviewsStale && reviewVersion && currentVersion && reviewVersion !== currentVersion))
+}
 
 /**
  * 统一计算诊断建议自身状态。优化稿是否成功由 getSuggestionDraftStatus 独立判断，
@@ -1294,8 +1357,9 @@ type SuggestionOperationalStatus = 'pending' | 'adopted' | 'ignored' | 'strength
  */
 function getSuggestionOperationalStatus(item: OptimizationSuggestion): SuggestionOperationalStatus {
   if (!item.actionable || item.status === 'strength') return 'strength'
-  if (item.status === 'ignored') return 'ignored'
   if (['adopted', 'applied', 'drafted'].includes(item.status || '')) return 'adopted'
+  if (item.status === 'ignored') return 'ignored'
+  if (isSuggestionHistory(item)) return 'archived'
   return 'pending'
 }
 
@@ -1312,7 +1376,7 @@ function getSuggestionDraftStatus(item: OptimizationSuggestion): SuggestionDraft
   return 'not_generated'
 }
 
-type SuggestionPrimaryStatus = 'pending' | 'generating' | 'ready' | 'adopted' | 'ignored' | 'strength' | 'stale' | 'location_missing' | 'location_ambiguous' | 'failed'
+type SuggestionPrimaryStatus = 'pending' | 'generating' | 'ready' | 'adopted' | 'archived' | 'ignored' | 'strength' | 'stale' | 'location_missing' | 'location_ambiguous' | 'failed'
 
 /**
  * 建议卡片只展示一个主要状态，避免“待处理 + 优化稿已过期”等两个 Tag 互相冲突。
@@ -1321,6 +1385,7 @@ function getSuggestionPrimaryStatus(item: OptimizationSuggestion): SuggestionPri
   const operational = getSuggestionOperationalStatus(item)
   if (operational === 'strength') return 'strength'
   if (operational === 'adopted') return 'adopted'
+  if (operational === 'archived') return 'archived'
   if (operational === 'ignored') return 'ignored'
   if (item.sourceLocator?.status === 'ambiguous') return 'location_ambiguous'
   if (item.sourceLocator?.status !== 'resolved') return 'location_missing'
@@ -1337,7 +1402,8 @@ function suggestionPrimaryStatusLabel(item: OptimizationSuggestion) {
     pending: '待处理',
     generating: '生成中',
     ready: '待采纳',
-    adopted: '已采纳',
+    adopted: isSuggestionHistory(item) ? '已优化' : '已采纳到草稿',
+    archived: '历史建议',
     ignored: '已忽略',
     strength: '无需处理',
     stale: '需更新',
@@ -1350,6 +1416,7 @@ function suggestionPrimaryStatusLabel(item: OptimizationSuggestion) {
 function suggestionPrimaryStatusClass(item: OptimizationSuggestion) {
   const status = getSuggestionPrimaryStatus(item)
   if (status === 'ready' || status === 'adopted' || status === 'strength') return 'bg-[#ecfdf5] text-[#047857]'
+  if (status === 'archived') return 'bg-[#f1f5f9] text-[#64748b]'
   if (status === 'generating') return 'bg-[#eff6ff] text-[#1d4ed8]'
   if (status === 'stale' || status === 'location_ambiguous') return 'bg-[#f5f3ff] text-[#6d28d9]'
   if (status === 'failed' || status === 'location_missing') return 'bg-[#fff1f2] text-[#be123c]'
@@ -1379,7 +1446,8 @@ function suggestionDraftStatusClass(item: OptimizationSuggestion) {
 function suggestionOperationalStatusLabel(item: OptimizationSuggestion) {
   return ({
     pending: '待处理',
-    adopted: '已采用',
+    adopted: isSuggestionHistory(item) ? '已优化' : '已采纳到草稿',
+    archived: '历史建议',
     ignored: '已忽略',
     strength: '无需处理',
   } as const)[getSuggestionOperationalStatus(item)]
@@ -1389,6 +1457,7 @@ function suggestionOperationalStatusClass(item: OptimizationSuggestion) {
   const status = getSuggestionOperationalStatus(item)
   if (status === 'pending') return 'bg-[#fff7ed] text-[#c2410c]'
   if (status === 'adopted' || status === 'strength') return 'bg-[#ecfdf5] text-[#047857]'
+  if (status === 'archived') return 'bg-[#f1f5f9] text-[#64748b]'
   if (status === 'ignored') return 'bg-[#f1f5f9] text-[#64748b]'
   return 'bg-[#fff7ed] text-[#c2410c]'
 }
@@ -1400,6 +1469,7 @@ function matchesSuggestionStatus(item: OptimizationSuggestion, status: Suggestio
     return getSuggestionOperationalStatus(item) === 'pending'
       && !['stale', 'failed'].includes(getSuggestionDraftStatus(item))
   }
+  if (status === 'archived') return getSuggestionOperationalStatus(item) === 'archived'
   return getSuggestionOperationalStatus(item) === status
 }
 
@@ -1427,6 +1497,21 @@ const affectedLocationCount = computed(() => {
 const selectedSuggestion = computed(() => {
   return suggestions.value.find((item) => item.id === selectedSuggestionId.value) || null
 })
+const selectedSuggestionIsHistory = computed(() => Boolean(selectedSuggestion.value && isSuggestionHistory(selectedSuggestion.value)))
+const selectedSuggestionReviewVersion = computed(() => String(
+  selectedSuggestion.value?.reviewSourceVersion
+  || selectedSuggestion.value?.sourceVersion
+  || selectedSuggestion.value?.sourceLocator?.sourceVersion
+  || pendingOriginalVersion.value
+))
+const selectedSuggestionArchivedVersion = computed(() => String(
+  selectedSuggestion.value?.archivedInVersion
+  || analysis.value?.currentScriptVersion
+  || ''
+))
+const historicalSuggestionCount = computed(() => suggestions.value.filter(isSuggestionHistory).length)
+const historicalOptimizedCount = computed(() => suggestions.value.filter(item => isSuggestionHistory(item) && getSuggestionOperationalStatus(item) === 'adopted').length)
+const publishInvalidSuggestionCount = computed(() => suggestions.value.filter(item => item.actionable && getSuggestionOperationalStatus(item) === 'pending').length)
 
 const suggestionScopeLabel = computed(() => ({
   story: '故事结构',
@@ -1465,6 +1550,8 @@ function findRelevantSourceExcerpt(suggestion: OptimizationSuggestion) {
   const locator = suggestion.sourceLocator
   const explicit = String(locator?.sourceTextSnapshot || suggestion.originalText || '').trim()
   const source = String(effectiveProjectDetail.value?.sourceScriptText || '')
+  // 历史记录展示发布前保存的原文快照，不拿它与当前正式版本重新校验偏移。
+  if (isSuggestionHistory(suggestion)) return explicit
   if (!explicit || locator?.status !== 'resolved') return ''
   const start = Number(locator.startOffset || 0)
   const end = Number(locator.endOffset || 0)
@@ -1487,36 +1574,134 @@ function splitDiffText(value: string) {
     .replace(/([。！？；])/g, '$1\n')
     .split(/\n+/)
     .map(item => item.trim())
-    .filter(Boolean)
+    // 引号、逗号等孤立标点不构成可比较段落。旧逻辑会把单独的 `"` 标成“位置调整”，
+    // 既污染段号，也让用户误以为 AI 移动了真实剧情内容。
+    .filter(item => Boolean(item) && !/^[\s"'“”‘’.,，。！？!?；;：:、…—-]+$/.test(item))
+}
+
+function normalizeDiffComparableText(value: string) {
+  // 差异配对忽略空白和常见标点，只比较真正的正文内容；展示时仍保留原始文本。
+  return String(value || '').replace(/[\s"'“”‘’.,，。！？!?；;：:、…—-]+/g, '')
+}
+
+function diffTextSimilarity(source: string, target: string) {
+  const left = normalizeDiffComparableText(source)
+  const right = normalizeDiffComparableText(target)
+  if (!left || !right) return 0
+  if (left === right) return 1
+  // 一侧完整包含另一侧时通常是“在原句前后补写”，优先识别为修改而不是新增。
+  if (left.includes(right) || right.includes(left)) {
+    return Math.min(left.length, right.length) / Math.max(left.length, right.length)
+  }
+
+  const buildBigrams = (text: string) => {
+    if (text.length === 1) return [text]
+    return Array.from({ length: text.length - 1 }, (_, index) => text.slice(index, index + 2))
+  }
+  const leftBigrams = buildBigrams(left)
+  const rightCounts = new Map<string, number>()
+  buildBigrams(right).forEach((value) => rightCounts.set(value, (rightCounts.get(value) || 0) + 1))
+  let overlap = 0
+  leftBigrams.forEach((value) => {
+    const count = rightCounts.get(value) || 0
+    if (count <= 0) return
+    overlap += 1
+    rightCounts.set(value, count - 1)
+  })
+  return (2 * overlap) / (leftBigrams.length + Math.max(right.length - 1, 1))
 }
 
 function buildSuggestionDiffLines(originalValue: string, suggestedValue: string) {
   const originalLines = splitDiffText(originalValue)
   const suggestedLines = splitDiffText(suggestedValue)
-  const originalPositions = new Map(originalLines.map((text, index) => [text, index]))
-  const suggestedPositions = new Map(suggestedLines.map((text, index) => [text, index]))
+  // 先用最长公共子序列锁定“内容没变，只是被新增内容整体推后”的段落。
+  // 只有脱离原顺序、又在另一位置出现的完整相同文本才属于真正的位置移动。
+  const rows = originalLines.length + 1
+  const cols = suggestedLines.length + 1
+  const lcs = Array.from({ length: rows }, () => Array<number>(cols).fill(0))
+  for (let sourceIndex = originalLines.length - 1; sourceIndex >= 0; sourceIndex -= 1) {
+    for (let targetIndex = suggestedLines.length - 1; targetIndex >= 0; targetIndex -= 1) {
+      lcs[sourceIndex]![targetIndex] = originalLines[sourceIndex] === suggestedLines[targetIndex]
+        ? 1 + lcs[sourceIndex + 1]![targetIndex + 1]!
+        : Math.max(lcs[sourceIndex + 1]![targetIndex]!, lcs[sourceIndex]![targetIndex + 1]!)
+    }
+  }
+  const stableSourceToTarget = new Map<number, number>()
+  const stableTargetToSource = new Map<number, number>()
+  let sourceCursor = 0
+  let targetCursor = 0
+  while (sourceCursor < originalLines.length && targetCursor < suggestedLines.length) {
+    if (originalLines[sourceCursor] === suggestedLines[targetCursor]) {
+      stableSourceToTarget.set(sourceCursor, targetCursor)
+      stableTargetToSource.set(targetCursor, sourceCursor)
+      sourceCursor += 1
+      targetCursor += 1
+    }
+    else if (lcs[sourceCursor + 1]![targetCursor]! >= lcs[sourceCursor]![targetCursor + 1]!) sourceCursor += 1
+    else targetCursor += 1
+  }
+
+  const unmatchedSourcesByText = new Map<string, number[]>()
+  originalLines.forEach((text, index) => {
+    if (stableSourceToTarget.has(index)) return
+    const indexes = unmatchedSourcesByText.get(text) || []
+    indexes.push(index)
+    unmatchedSourcesByText.set(text, indexes)
+  })
+  const movedTargetToSource = new Map<number, number>()
+  suggestedLines.forEach((text, index) => {
+    if (stableTargetToSource.has(index)) return
+    const sourceIndex = unmatchedSourcesByText.get(text)?.shift()
+    if (sourceIndex !== undefined) movedTargetToSource.set(index, sourceIndex)
+  })
+
+  const movedSourceIndexes = new Set(movedTargetToSource.values())
+  const modifiedTargetToSource = new Map<number, number>()
+  const modifiedSourceIndexes = new Set<number>()
+  const modificationCandidates: Array<{ sourceIndex: number; targetIndex: number; similarity: number }> = []
+  originalLines.forEach((sourceText, sourceIndex) => {
+    if (stableSourceToTarget.has(sourceIndex) || movedSourceIndexes.has(sourceIndex)) return
+    suggestedLines.forEach((targetText, targetIndex) => {
+      if (stableTargetToSource.has(targetIndex) || movedTargetToSource.has(targetIndex)) return
+      const similarity = diffTextSimilarity(sourceText, targetText)
+      // 0.45 可以识别“原句前后补写”的真实改写，同时避免把主题无关的新剧情强行配成修改。
+      if (similarity >= 0.45) modificationCandidates.push({ sourceIndex, targetIndex, similarity })
+    })
+  })
+  modificationCandidates
+    .sort((left, right) => right.similarity - left.similarity)
+    .forEach(({ sourceIndex, targetIndex }) => {
+      if (modifiedSourceIndexes.has(sourceIndex) || modifiedTargetToSource.has(targetIndex)) return
+      modifiedSourceIndexes.add(sourceIndex)
+      modifiedTargetToSource.set(targetIndex, sourceIndex)
+    })
+
   const original: SuggestionDiffLine[] = originalLines.map((text, index) => {
-    const targetIndex = suggestedPositions.get(text)
-    if (targetIndex !== undefined) return { text, kind: targetIndex === index ? 'unchanged' : 'moved', sourceIndex: index, targetIndex }
-    return { text, kind: suggestedLines[index] ? 'modified' : 'deleted', sourceIndex: index, targetIndex: suggestedLines[index] ? index : undefined }
+    const stableTarget = stableSourceToTarget.get(index)
+    if (stableTarget !== undefined) return { text, kind: 'unchanged', sourceIndex: index, targetIndex: stableTarget }
+    const movedTarget = [...movedTargetToSource.entries()].find(([, source]) => source === index)?.[0]
+    if (movedTarget !== undefined) return { text, kind: 'moved', sourceIndex: index, targetIndex: movedTarget }
+    const modifiedTarget = [...modifiedTargetToSource.entries()].find(([, source]) => source === index)?.[0]
+    if (modifiedTarget !== undefined) return { text, kind: 'modified', sourceIndex: index, targetIndex: modifiedTarget }
+    return { text, kind: 'deleted', sourceIndex: index }
   })
   // 右侧 AI 优化稿是唯一的差异视图。删除项虽然不在优化后文本中，
   // 仍需插入右侧对应位置展示，避免把删除标记错误地绘制到左侧原文。
   const suggested: SuggestionDiffLine[] = []
   const lineCount = Math.max(originalLines.length, suggestedLines.length)
   for (let index = 0; index < lineCount; index += 1) {
-    const sourceText = originalLines[index]
     const targetText = suggestedLines[index]
     if (targetText) {
-      const sourceIndex = originalPositions.get(targetText)
-      if (sourceIndex !== undefined) {
-        suggested.push({ text: targetText, kind: sourceIndex === index ? 'unchanged' : 'moved', sourceIndex, targetIndex: index })
-      }
+      const stableSource = stableTargetToSource.get(index)
+      if (stableSource !== undefined) suggested.push({ text: targetText, kind: 'unchanged', sourceIndex: stableSource, targetIndex: index })
+      else if (movedTargetToSource.has(index)) suggested.push({ text: targetText, kind: 'moved', sourceIndex: movedTargetToSource.get(index), targetIndex: index })
+      else if (modifiedTargetToSource.has(index)) suggested.push({ text: targetText, kind: 'modified', sourceIndex: modifiedTargetToSource.get(index), targetIndex: index })
       else {
-        suggested.push({ text: targetText, kind: sourceText ? 'modified' : 'added', sourceIndex: sourceText ? index : undefined, targetIndex: index })
+        suggested.push({ text: targetText, kind: 'added', targetIndex: index })
       }
     }
-    else if (sourceText) {
+    else if (originalLines[index] && !stableSourceToTarget.has(index) && !movedSourceIndexes.has(index) && !modifiedSourceIndexes.has(index)) {
+      const sourceText = originalLines[index]!
       suggested.push({ text: sourceText, kind: 'deleted', sourceIndex: index })
     }
   }
@@ -1573,7 +1758,7 @@ function diffTagClass(kind: SuggestionDiffKind) {
 
 function diffMoveDescription(line: SuggestionDiffLine) {
   if (line.kind !== 'moved' || line.sourceIndex === undefined || line.targetIndex === undefined) return ''
-  return `由第${line.sourceIndex + 1}段移至第${line.targetIndex + 1}段`
+  return `原文第${line.sourceIndex + 1}段 → 优化稿第${line.targetIndex + 1}段`
 }
 
 const suggestionReasonSteps = computed(() => {
@@ -1618,6 +1803,19 @@ const pendingSuggestions = computed<OptimizationSuggestion[]>(() => {
 })
 
 const pendingChangesForDisplay = computed<OptimizationSuggestion[]>(() => {
+  // 单项优化只展示本次实际生成的建议，不能把剧本内其余待处理建议一并算入结果弹窗。
+  // 全局优化则按用户本次勾选项过滤；后端确实返回全局新建议时才完整展示。
+  if (activeOptimizationTaskType.value === 'APPLY_SUGGESTION_TO_DRAFT' && selectedSuggestionId.value) {
+    const matched = pendingSuggestions.value.filter(item => item.id === selectedSuggestionId.value)
+    if (matched.length) return matched
+    const selected = suggestions.value.find(item => item.id === selectedSuggestionId.value)
+    return selected ? [selected] : []
+  }
+  if (selectedSuggestionIds.value.length) {
+    const selectedIds = new Set(selectedSuggestionIds.value)
+    const matched = pendingSuggestions.value.filter(item => selectedIds.has(item.id))
+    if (matched.length) return matched
+  }
   if (pendingSuggestions.value.length) return pendingSuggestions.value
   return suggestions.value.filter((item) => selectedSuggestionIds.value.includes(item.id))
 })
@@ -1633,17 +1831,24 @@ const pendingCostDeltaText = computed(() => {
 })
 
 const pendingAffectedEpisodeCount = computed(() => {
-  const affectedEpisodes = new Set<string>()
+  const affectedEpisodes = new Set<number>()
   pendingChangesForDisplay.value.forEach((item) => {
-    const matches = item.affected.match(/\d+/g) || []
-    matches.forEach((value) => affectedEpisodes.add(value))
+    item.affectedEpisodeNos.forEach(value => affectedEpisodes.add(value))
+    if (item.sourceLocator?.episodeNo) affectedEpisodes.add(item.sourceLocator.episodeNo)
+    const matches = item.affected.match(/第?(\d+)集/g) || []
+    matches.forEach((value) => affectedEpisodes.add(Number(value.replace(/\D/g, ''))))
   })
-  return affectedEpisodes.size ? `${affectedEpisodes.size}集` : '以后端返回'
+  return affectedEpisodes.size ? `${affectedEpisodes.size}集` : '当前剧本'
 })
 
 const pendingChangeCount = computed(() => {
   return pendingChangesForDisplay.value.length || selectedSuggestionIds.value.length || 0
 })
+
+// 确认页只展示少量代表性改动，完整清单放到“查看详细改动”中，
+// 避免二十多条建议把应用版本这个核心决策淹没。
+const pendingChangePreview = computed(() => pendingChangesForDisplay.value.slice(0, 3))
+const pendingHiddenChangeCount = computed(() => Math.max(0, pendingChangesForDisplay.value.length - pendingChangePreview.value.length))
 
 const pendingOriginalVersion = computed(() => {
   return analysis.value?.currentScriptVersion || analysis.value?.scriptVersions?.find((item) => item.current)?.version || 'v1.2'
@@ -1952,11 +2157,24 @@ const reviewNodeKey = computed(() => ({
   full: 'FULLTEXT_REVIEW'
 })[activeTab.value])
 const currentReviewNode = computed(() => props.currentAnalysisRun.nodes?.[reviewNodeKey.value])
+const hasUsableCurrentReview = computed(() => {
+  // 节点成功只代表供应商调用结束，不代表评分与维度已经完整写回。
+  // 评分缺失或维度全为空时必须继续展示等待态，禁止把默认值 0 渲染成真实体检结论。
+  const score = Number(reviewModel.value.score)
+  const dimensions = reviewModel.value.dimensions || []
+  return Number.isFinite(score)
+    && score > 0
+    && dimensions.length > 0
+    && dimensions.some((item) => Number(item.value) > 0)
+})
 const isCurrentReviewReady = computed(() => {
   // 当前运行存在节点时必须以节点状态为准，失败节点不能借用旧快照冒充本次体检成功。
-  // 只有没有 V3 节点记录的历史项目，才以真实体检维度兼容判断。
-  if (currentReviewNode.value) return currentReviewNode.value.status === 'succeeded'
-  return reviewModel.value.dimensions.length > 0
+  // 同时要求结果内容可用，避免节点先成功、数据尚未回填时短暂展示“0 分/严重问题”。
+  // 只有没有 V3 节点记录的历史项目，才单独以真实体检内容兼容判断。
+  if (currentReviewNode.value) {
+    return currentReviewNode.value.status === 'succeeded' && hasUsableCurrentReview.value
+  }
+  return hasUsableCurrentReview.value
 })
 const isCurrentReviewSkipped = computed(() => currentReviewNode.value?.status === 'skipped')
 const isCurrentReviewFailed = computed(() => {
@@ -2371,6 +2589,11 @@ const currentEpisodeSuggestionCount = computed(() => getEpisodePendingCount(prop
 const currentEpisodePassedCount = computed(() => episodeJudgements.value.filter(item => item.status !== 'warning').length)
 
 const progressTitle = computed(() => {
+  if (activeOptimizationTaskType.value === 'APPLY_SUGGESTION_TO_DRAFT') {
+    if (optimizationRequestState.value === 'failed') return '工作草稿保存失败'
+    if (optimizationRequestState.value === 'success') return '已采纳到工作草稿'
+    return '正在采纳到工作草稿'
+  }
   if (activeOptimizationTaskType.value === 'REGENERATE_SUGGESTION_DRAFT') {
     if (optimizationRequestState.value === 'failed') return '优化稿生成失败'
     if (optimizationRequestState.value === 'success') return '优化稿已生成'
@@ -2387,7 +2610,12 @@ const isSingleSuggestionDraftTask = computed(() => (
   || activeOptimizationTaskType.value === 'REFRESH_STALE_SUGGESTION'
 ))
 
+const isApplyingSuggestionDraft = computed(() => activeOptimizationTaskType.value === 'APPLY_SUGGESTION_TO_DRAFT')
+
 const optimizationProgressSteps = computed(() => {
+  if (isApplyingSuggestionDraft.value) {
+    return ['确认原文范围', '校验优化稿', '写入草稿版本', '完成采纳']
+  }
   if (isSingleSuggestionDraftTask.value) {
     return ['确认影响范围', '生成优化内容', '校验改写结果', '保存工作草稿']
   }
@@ -2395,6 +2623,11 @@ const optimizationProgressSteps = computed(() => {
 })
 
 const progressStatusText = computed(() => {
+  if (isApplyingSuggestionDraft.value) {
+    if (optimizationRequestState.value === 'success') return '已采纳到工作草稿'
+    if (optimizationRequestState.value === 'failed') return '工作草稿保存失败'
+    return ['正在确认原文范围', '正在校验优化稿', '正在写入草稿版本', '正在完成采纳'][optimizationProgressStep.value] || '正在处理'
+  }
   if (optimizationRequestState.value === 'success') return isSingleSuggestionDraftTask.value ? '优化稿已生成' : '优化草稿已生成'
   if (optimizationRequestState.value === 'failed') return isSingleSuggestionDraftTask.value ? '优化稿生成失败' : '优化生成失败'
   return [
@@ -2406,6 +2639,16 @@ const progressStatusText = computed(() => {
 })
 
 const progressStatusDescription = computed(() => {
+  if (isApplyingSuggestionDraft.value) {
+    if (optimizationRequestState.value === 'success') return '采纳完成，正式版本仍保持不变。'
+    if (optimizationRequestState.value === 'failed') return '本次未保存，现有正式版本和建议不会被覆盖。'
+    return [
+      '正在确认建议对应的真实原文。',
+      '正在校验已生成的优化稿和安全替换范围。',
+      '正在本地创建工作草稿，不调用模型，也不扣积分。',
+      '正在完成草稿版本登记。'
+    ][optimizationProgressStep.value] || '正在处理本次采纳。'
+  }
   if (optimizationRequestState.value === 'success') return '处理完成，正在打开结果。'
   if (optimizationRequestState.value === 'failed') return '本次未完成，现有剧本和建议不会被覆盖。'
   return [
@@ -2593,13 +2836,14 @@ function openSuggestionDrawer(scope: SuggestionScope = 'all', episodeNo: number 
     && (episodeNo === null || suggestionAffectsEpisode(item, episodeNo))
   ))
   const hasPendingSuggestion = scopedSuggestions.some(item => matchesSuggestionStatus(item, 'pending'))
+  const hasArchivedSuggestion = scopedSuggestions.some(item => matchesSuggestionStatus(item, 'archived') || matchesSuggestionStatus(item, 'adopted'))
   const hasStaleSuggestion = scopedSuggestions.some(item => matchesSuggestionStatus(item, 'stale'))
   const hasFailedSuggestion = scopedSuggestions.some(item => matchesSuggestionStatus(item, 'failed'))
-  suggestionStatusFilter.value = hasPendingSuggestion ? 'pending' : hasStaleSuggestion ? 'stale' : hasFailedSuggestion ? 'failed' : 'pending'
+  suggestionStatusFilter.value = hasPendingSuggestion ? 'pending' : hasArchivedSuggestion ? 'archived' : hasStaleSuggestion ? 'stale' : hasFailedSuggestion ? 'failed' : 'pending'
   selectedSuggestionId.value = ''
   suggestionDrawerVisible.value = true
   const quoteIds = scopedSuggestions
-    .filter(item => item.actionable && !['generated', 'generating'].includes(getSuggestionDraftStatus(item)))
+    .filter(item => item.actionable && !isSuggestionHistory(item) && !['generated', 'generating'].includes(getSuggestionDraftStatus(item)))
     .map(item => item.id)
   void loadSuggestionDraftEstimates(quoteIds)
 }
@@ -2617,6 +2861,14 @@ function openAllSuggestions() {
   openSuggestionDrawer('all')
 }
 
+function openHistorySuggestions() {
+  suggestionFilter.value = 'all'
+  suggestionEpisodeFilter.value = null
+  suggestionStatusFilter.value = historicalOptimizedCount.value ? 'adopted' : 'archived'
+  selectedSuggestionId.value = ''
+  suggestionDrawerVisible.value = true
+}
+
 function openCharacterTab() {
   activeTab.value = 'characters'
   characterReviewMode.value = 'system'
@@ -2629,6 +2881,8 @@ function openEpisodeTab() {
 }
 
 async function ignoreSuggestion(id: string) {
+  const target = suggestions.value.find(item => item.id === id)
+  if (!target || isSuggestionHistory(target)) return
   const returnToSuggestionList = suggestionDetailVisible.value
   try {
     serverOptimizedDetail.value = await dramaService.updateScriptSuggestionStatus(projectId.value, id, {
@@ -2648,6 +2902,8 @@ async function ignoreSuggestion(id: string) {
 }
 
 async function restoreSuggestion(id: string) {
+  const target = suggestions.value.find(item => item.id === id)
+  if (!target || isSuggestionHistory(target)) return
   try {
     serverOptimizedDetail.value = await dramaService.updateScriptSuggestionStatus(projectId.value, id, {
       status: 'open',
@@ -2683,7 +2939,9 @@ async function openSuggestionDetail(id: string) {
     return
   }
   suggestionFilter.value = suggestion.scope
-  suggestionStatusFilter.value = suggestion.actionable ? 'pending' : 'strength'
+  suggestionStatusFilter.value = isSuggestionHistory(suggestion)
+    ? (getSuggestionOperationalStatus(suggestion) === 'adopted' ? 'adopted' : 'archived')
+    : suggestion.actionable ? 'pending' : 'strength'
   // 方案详情会保留项目顶部工作流，建议中心抽屉先收起，避免在顶部露出或抢占宽度。
   suggestionDrawerVisible.value = false
   selectedSuggestionId.value = id
@@ -2691,10 +2949,10 @@ async function openSuggestionDetail(id: string) {
   suggestionDraftEditing.value = false
   suggestionDraftText.value = String(suggestion.suggestedText || '')
   sourceResolveError.value = ''
-  if (suggestion.sourceLocator?.status !== 'resolved') {
+  if (!isSuggestionHistory(suggestion) && suggestion.sourceLocator?.status !== 'resolved') {
     suggestion = await resolveSuggestionSource(suggestion) || suggestion
   }
-  if (suggestion.sourceLocator?.status === 'resolved' && getSuggestionDraftStatus(suggestion) === 'not_generated') {
+  if (!isSuggestionHistory(suggestion) && suggestion.sourceLocator?.status === 'resolved' && getSuggestionDraftStatus(suggestion) === 'not_generated') {
     await regenerateSuggestionDraft(suggestion)
     return
   }
@@ -2702,7 +2960,7 @@ async function openSuggestionDetail(id: string) {
 }
 
 async function resolveSuggestionSource(item: OptimizationSuggestion) {
-  if (!item.id || sourceResolveBusy.value) return null
+  if (!item.id || sourceResolveBusy.value || isSuggestionHistory(item)) return null
   sourceResolveBusy.value = true
   sourceResolveError.value = ''
   try {
@@ -2758,7 +3016,10 @@ function closeSuggestionDetail() {
   suggestionDrawerVisible.value = true
 }
 
-const readySuggestionIds = computed(() => suggestions.value.filter(hasCompleteSuggestionDraft).map(item => item.id))
+// 历史建议即使没有生成过优化稿，也应允许在只读详情中前后浏览。
+const readySuggestionIds = computed(() => suggestions.value
+  .filter(item => isSuggestionHistory(item) || hasCompleteSuggestionDraft(item))
+  .map(item => item.id))
 const selectedReadySuggestionIndex = computed(() => readySuggestionIds.value.indexOf(selectedSuggestionId.value))
 
 function openAdjacentSuggestion(offset: number) {
@@ -2805,7 +3066,10 @@ function getOptimizationErrorMessage(error: unknown) {
       SCRIPT_OPTIMIZATION_BAD_RESPONSE: '模型返回格式异常，系统自动修复后仍未得到完整优化稿。',
       SCRIPT_OPTIMIZATION_DRAFT_TOO_SHORT: '模型返回的优化稿过短，系统自动重试后仍未通过完整性校验。',
       SCRIPT_OPTIMIZATION_VERSION_CONFLICT: '当前剧本版本已变化，请基于最新剧本重新分析这条建议的影响范围。',
-      SCRIPT_OPTIMIZATION_PERSIST_FAILED: '优化稿已经生成，但保存工作草稿失败；系统已保留结果，请稍后重试保存。'
+      SCRIPT_OPTIMIZATION_PERSIST_FAILED: '优化稿已经生成，但保存工作草稿失败；系统已保留结果，请稍后重试保存。',
+      PATCH_SOURCE_STALE: '当前优化稿对应的原文已经变化，请先更新优化稿后再采纳。',
+      PATCH_APPLY_FAILED: '优化稿未能安全写入工作草稿，请刷新页面后重试。',
+      PATCH_RANGE_CONFLICT: '当前建议包含多个冲突的修改范围，请拆分建议后再采纳。'
     }
     return messages[error.code] || error.message || '优化稿生成失败，原诊断建议仍然保留。'
   }
@@ -3096,7 +3360,7 @@ async function beginEpisodeOptimize() {
 }
 
 async function acceptSelectedSuggestion() {
-  if (!selectedSuggestion.value?.id || !hasCompleteSuggestionDraft(selectedSuggestion.value)) return
+  if (!selectedSuggestion.value?.id || isSuggestionHistory(selectedSuggestion.value) || !hasCompleteSuggestionDraft(selectedSuggestion.value)) return
   suggestionDetailVisible.value = false
   const manuallyAdjustedDraft = suggestionDraftText.value.trim()
   const modelDraft = String(selectedSuggestion.value.suggestedText || '').trim()
@@ -3111,7 +3375,26 @@ async function acceptSelectedSuggestion() {
       ? `用户已确认以下完整候选改写稿，请严格以此文本替换该建议对应的 original_text，不要再次压缩成修改指令：\n${manuallyAdjustedDraft}`
       : ''
   })
-  if (ok) globalResultVisible.value = true
+  if (ok && pendingOptimizedDetail.value) {
+    // 逐条采纳只写入同一份工作草稿，不进入“全局优化结果”弹窗，也不切换正式版本。
+    // 当前工作台即时展示累计草稿状态，用户可以继续处理其余建议。
+    serverOptimizedDetail.value = pendingOptimizedDetail.value
+    pendingOptimizedDetail.value = null
+    progressVisible.value = false
+    suggestionDetailVisible.value = false
+    suggestionDrawerVisible.value = true
+    selectedSuggestionId.value = ''
+    toast.add({
+      title: '已采纳到工作草稿',
+      description: '其他建议仍可继续处理，完成后再统一应用工作草稿。',
+      color: 'success'
+    })
+  }
+}
+
+async function startPaidReReview() {
+  reReviewConfirmVisible.value = false
+  await props.analyzeAction({ forceReanalyze: true })
 }
 
 async function regenerateSelectedSuggestion() {
@@ -3164,6 +3447,11 @@ async function applyOptimizedVersion() {
     optimizationErrorMessage.value = ''
     void accountStore.refreshProfile()
     emit('refresh')
+    toast.add({
+      title: `已发布 ${targetVersion}`,
+      description: '已采纳内容已记入优化记录，未处理建议已归档。如需当前版本的新建议，可重新体检。',
+      color: 'success'
+    })
   } catch (error) {
     console.warn('[script-stage] 应用后端剧本版本失败：', error)
     optimizationFailed.value = true
@@ -3200,8 +3488,16 @@ function formatNumber(value: number) {
 watch(suggestions, (rows) => {
   const validIds = new Set(rows.map((item) => item.id))
   const stillValid = selectedSuggestionIds.value.filter((id) => validIds.has(id))
+  // 只有建议确实不再由后端返回时才退出详情；应用工作草稿不会删除其它建议，
+  // 未受影响的建议会自动重定位，冲突项会继续保留供用户确认范围。
+  if (selectedSuggestionId.value && !validIds.has(selectedSuggestionId.value)) {
+    selectedSuggestionId.value = ''
+    suggestionDetailVisible.value = false
+    suggestionDraftEditing.value = false
+    suggestionDrawerVisible.value = true
+  }
   // 只默认勾选尚未生成的可执行建议，避免重复查看已生成稿时再次计费。
-  const generatableRows = rows.filter(item => item.actionable && !['generated', 'generating'].includes(getSuggestionDraftStatus(item)))
+  const generatableRows = rows.filter(item => item.actionable && !isSuggestionHistory(item) && !['generated', 'generating'].includes(getSuggestionDraftStatus(item)))
   selectedSuggestionIds.value = stillValid.length ? stillValid : generatableRows.slice(0, 3).map((item) => item.id)
 }, { immediate: true })
 
@@ -3351,6 +3647,13 @@ defineExpose({ openAllSuggestions })
       <div v-if="currentAnalysisRun.structureReady && !currentAnalysisRun.reviewsReady" class="rounded-[16px] border border-[#bfdbfe] bg-[#eff6ff] px-4 py-3 text-sm leading-6 text-[#315173]">
         基础解析已完成，专业体检后台进行中；体检结论不会阻塞资产制作，也不会修改已冻结的生产快照。
       </div>
+      <div v-else-if="analysis.scriptReviewsStale" class="flex flex-wrap items-center justify-between gap-3 rounded-[16px] border border-[#fde68a] bg-[#fffbeb] px-4 py-3 text-sm leading-6 text-[#92400e]">
+        <span>当前评分来自 {{ analysis.scriptReviewsSourceVersion || '上一版本' }}，仅作历史参考；旧建议已归档，不能继续采纳。如需当前版本的新建议，请重新体检。</span>
+        <div class="flex flex-wrap gap-2">
+          <button v-if="historicalSuggestionCount" type="button" class="rounded-[10px] border border-[#f59e0b] bg-white px-4 py-2 text-xs font-semibold text-[#b45309]" @click="openHistorySuggestions">查看历史优化记录</button>
+          <button type="button" class="rounded-[10px] bg-[#f59e0b] px-4 py-2 text-xs font-semibold text-white" :disabled="reReviewQuoteBusy" @click="reReviewConfirmVisible = true">{{ reReviewButtonLabel }}</button>
+        </div>
+      </div>
       <div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_520px]">
         <main class="min-w-0">
           <div class="rounded-[28px] border border-[#dfe8f6] bg-white p-6 shadow-[0_18px_60px_rgba(15,23,42,0.05)]">
@@ -3370,11 +3673,16 @@ defineExpose({ openAllSuggestions })
               </div>
             </div>
 
-            <div v-if="currentOptimizedVersion" class="mt-5 flex items-center justify-between rounded-[16px] border border-[#bbf7d0] bg-[#f0fdf4] px-4 py-3 text-sm font-semibold text-[#15803d]">
+            <div v-if="currentOptimizedVersion && !pendingDraftVersionItem" class="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-[16px] border border-[#bbf7d0] bg-[#f0fdf4] px-4 py-3 text-sm font-semibold text-[#15803d]">
               <span class="flex items-center gap-2">
                 <CheckCircle2 class="h-4 w-4" />
-                已应用 AI 优化版本 {{ currentOptimizedVersion.version }}，已同步更新剧本体检结果
+                已发布 AI 优化版本 {{ currentOptimizedVersion.version }}；已优化 {{ historicalOptimizedCount }} 项，旧建议与原体检结果已归档
               </span>
+              <button v-if="historicalSuggestionCount" type="button" class="rounded-[9px] border border-[#86efac] bg-white px-3 py-2 text-xs font-semibold text-[#15803d]" @click="openHistorySuggestions">查看优化记录</button>
+            </div>
+            <div v-else-if="pendingDraftVersionItem && !analysis.scriptReviewsStale" class="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-[16px] border border-[#bfdbfe] bg-[#eff6ff] px-4 py-3 text-sm leading-6 text-[#1e40af]">
+              <span><b>工作草稿 {{ pendingDraftVersionItem.version }} 已创建。</b> 发布前所有当前建议仍可继续生成、调整并累计采纳；发布后未处理建议会失效并归档。</span>
+              <button type="button" class="rounded-[9px] bg-[#0f67ff] px-4 py-2 text-xs font-semibold text-white" @click="pendingOptimizedDetail = effectiveProjectDetail; globalResultVisible = true">预览并发布</button>
             </div>
 
             <section v-if="activeTab === 'overview'" class="mt-6 space-y-5">
@@ -3946,9 +4254,9 @@ defineExpose({ openAllSuggestions })
         <template #footer><LivButton variant="primary" @click="reviewEvidenceIssue = null">知道了</LivButton></template>
       </LivDialog>
 
-      <LivDrawer :open="suggestionDrawerVisible" title="AI 优化建议中心" description="集中处理故事、人物、分集与文本建议" width="lg" @update:open="suggestionDrawerVisible = $event">
+      <LivDrawer :open="suggestionDrawerVisible" title="AI 优化建议中心" :description="analysis.scriptReviewsStale ? '当前版本已发布，以下为历史优化记录；重新体检后才会生成可操作的新建议' : '发布前可将建议累积采纳到同一份工作草稿'" width="lg" @update:open="suggestionDrawerVisible = $event">
         <div class="mt-5 grid grid-cols-3 gap-3 rounded-[18px] border border-[#e2e8f0] p-4 text-center">
-          <div><p class="text-[#64748b]">待优化建议</p><b class="text-2xl text-[#0f172a]">{{ filteredSuggestions.filter(item => item.actionable).length }}</b></div>
+          <div><p class="text-[#64748b]">{{ analysis.scriptReviewsStale ? '历史记录' : '待优化建议' }}</p><b class="text-2xl text-[#0f172a]">{{ filteredSuggestions.filter(item => item.actionable).length }}</b></div>
           <div><p class="text-[#64748b]">高优先级</p><b class="text-2xl text-[#ef4444]">{{ highPrioritySuggestionCount }}</b></div>
           <div><p class="text-[#64748b]">影响范围</p><b class="text-2xl">{{ affectedEpisodeCount }}集 / {{ affectedLocationCount }}处</b></div>
         </div>
@@ -4001,7 +4309,7 @@ defineExpose({ openAllSuggestions })
                   <div><p class="text-xs font-semibold text-[#0f67ff]">问题 {{ itemIndex + 1 }}</p><span class="mt-2 inline-flex rounded-full px-2 py-1 text-xs font-semibold" :class="item.actionable ? priorityClass(item.priority) : 'bg-[#ecfdf5] text-[#059669]'">{{ item.actionable ? (item.priority === 'high' ? '高优先级' : item.priority === 'low' ? '低优先级' : '中优先级') : '已达标' }}</span><h4 class="mt-3 text-lg font-semibold">{{ item.title }}</h4></div>
                   <div class="flex shrink-0 items-center gap-2">
                     <span class="rounded-[8px] px-2.5 py-1 text-xs font-semibold" :class="suggestionPrimaryStatusClass(item)">{{ suggestionPrimaryStatusLabel(item) }}</span>
-                    <input v-if="item.actionable && suggestionStatusFilter === 'pending' && getSuggestionDraftStatus(item) !== 'generating'" type="checkbox" :checked="selectedSuggestionIds.includes(item.id)" @click.stop @change="toggleSuggestionSelection(item.id)">
+                    <input v-if="item.actionable && !isSuggestionHistory(item) && suggestionStatusFilter === 'pending' && getSuggestionDraftStatus(item) !== 'generating'" type="checkbox" :checked="selectedSuggestionIds.includes(item.id)" @click.stop @change="toggleSuggestionSelection(item.id)">
                   </div>
                 </div>
             <p v-if="getSuggestionDraftStatus(item) === 'failed'" class="mt-3 line-clamp-2 text-xs leading-5 text-[#be123c]">{{ suggestionDraftErrorMessage(item) }}</p>
@@ -4018,12 +4326,12 @@ defineExpose({ openAllSuggestions })
               <div v-if="item.storyboardReference" class="rounded-[10px] border border-[#ede9fe] bg-[#faf5ff] px-3 py-2.5 text-[#6d28d9]"><b>后续分镜参考</b><p class="mt-1 leading-6">{{ item.storyboardReference }}</p></div>
             </div>
             <div class="mt-4 flex justify-end gap-2">
-              <button v-if="item.actionable && getSuggestionOperationalStatus(item) === 'pending'" class="rounded-[10px] border px-4 py-2 text-sm" @click.stop="ignoreSuggestion(item.id)">忽略</button>
+              <button v-if="item.actionable && !isSuggestionHistory(item) && getSuggestionOperationalStatus(item) === 'pending'" class="rounded-[10px] border px-4 py-2 text-sm" @click.stop="ignoreSuggestion(item.id)">忽略</button>
               <button v-if="getSuggestionDraftStatus(item) === 'generating'" class="rounded-[10px] border px-4 py-2 text-sm font-semibold text-[#94a3b8]" disabled>生成中</button>
               <button v-else-if="getSuggestionDraftStatus(item) === 'failed'" class="rounded-[10px] bg-[#0f67ff] px-4 py-2 text-sm font-semibold text-white" @click.stop="regenerateSuggestionDraft(item)">{{ suggestionDraftActionLabel(item) }}</button>
               <button v-else-if="getSuggestionDraftStatus(item) === 'stale'" class="rounded-[10px] bg-[#0f67ff] px-4 py-2 text-sm font-semibold text-white" @click.stop="regenerateSuggestionDraft(item, 'REFRESH_STALE_SUGGESTION')">{{ suggestionDraftActionLabel(item) }}</button>
               <button v-else-if="getSuggestionOperationalStatus(item) === 'ignored'" class="rounded-[10px] border border-[#0f67ff] px-4 py-2 text-sm font-semibold text-[#0f67ff]" @click.stop="restoreSuggestion(item.id)">恢复建议</button>
-              <button v-else class="rounded-[10px] border border-[#0f67ff] px-4 py-2 text-sm font-semibold text-[#0f67ff]" @click.stop="openSuggestionDetail(item.id)">{{ item.actionable ? (item.sourceLocator?.status === 'ambiguous' ? '确认原文范围' : hasCompleteSuggestionDraft(item) ? '查看方案' : suggestionDraftActionLabel(item)) : '查看依据' }}</button>
+              <button v-else class="rounded-[10px] border border-[#0f67ff] px-4 py-2 text-sm font-semibold text-[#0f67ff]" @click.stop="openSuggestionDetail(item.id)">{{ isSuggestionHistory(item) ? (getSuggestionOperationalStatus(item) === 'adopted' ? '查看优化记录' : '查看历史建议') : item.actionable ? (item.sourceLocator?.status === 'ambiguous' ? '确认原文范围' : hasCompleteSuggestionDraft(item) ? '查看方案' : suggestionDraftActionLabel(item)) : '查看依据' }}</button>
             </div>
               </div>
             </div>
@@ -4032,14 +4340,15 @@ defineExpose({ openAllSuggestions })
         <div class="sticky bottom-0 mt-6 grid grid-cols-3 gap-3 bg-white py-4">
           <button class="flex-1 rounded-[14px] border px-5 py-3" @click="suggestionDrawerVisible = false">稍后处理</button>
           <button
-            v-if="suggestionStatusFilter === 'pending'"
+            v-if="suggestionStatusFilter === 'pending' && !analysis.scriptReviewsStale"
             class="flex-1 rounded-[14px] bg-[#0f67ff] px-5 py-3 font-semibold text-white disabled:cursor-not-allowed disabled:bg-[#94a3b8]"
             :disabled="!selectedSuggestionIds.length"
             @click="beginSuggestionBatchOptimize"
           >
             生成所选优化稿
           </button>
-          <button v-if="suggestionStatusFilter === 'pending'" class="rounded-[14px] border border-[#0f67ff] px-4 py-3 font-semibold text-[#0f67ff]" @click="generateAllSuggestionDrafts">全部建议生成优化稿</button>
+          <button v-if="suggestionStatusFilter === 'pending' && !analysis.scriptReviewsStale" class="rounded-[14px] border border-[#0f67ff] px-4 py-3 font-semibold text-[#0f67ff]" @click="generateAllSuggestionDrafts">全部建议生成优化稿</button>
+          <button v-if="analysis.scriptReviewsStale" class="col-span-2 rounded-[14px] bg-[#f59e0b] px-5 py-3 font-semibold text-white" :disabled="reReviewQuoteBusy" @click="suggestionDrawerVisible = false; reReviewConfirmVisible = true">{{ reReviewButtonLabel }}</button>
         </div>
       </LivDrawer>
 
@@ -4067,8 +4376,14 @@ defineExpose({ openAllSuggestions })
             <div class="mt-3 flex flex-wrap gap-2 text-xs text-[#64748b]">
               <span class="rounded-[8px] bg-[#eef5ff] px-3 py-1.5">建议类型：{{ suggestionScopeLabel }}</span>
               <span class="rounded-[8px] bg-[#f8fafc] px-3 py-1.5">AI 判断可信度：{{ suggestionConfidenceLabel }}</span>
-              <span class="rounded-[8px] bg-[#f8fafc] px-3 py-1.5">基于版本：{{ selectedSuggestion.sourceVersion || pendingOriginalVersion }}</span>
+              <span class="rounded-[8px] bg-[#f8fafc] px-3 py-1.5">基于版本：{{ selectedSuggestionReviewVersion }}</span>
+              <span v-if="Number(selectedSuggestion.chargedCredits || 0) > 0" class="rounded-[8px] bg-[#ecfdf5] px-3 py-1.5 text-[#047857]">优化稿费用：{{ selectedSuggestion.chargedCredits }} 点（已结算）</span>
               <span class="rounded-[8px] px-3 py-1.5" :class="suggestionPrimaryStatusClass(selectedSuggestion)">当前状态：{{ suggestionPrimaryStatusLabel(selectedSuggestion) }}</span>
+            </div>
+
+            <div v-if="selectedSuggestionIsHistory" class="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-[14px] border border-[#fde68a] bg-[#fffbeb] px-4 py-3 text-sm leading-6 text-[#92400e]">
+              <span>这是 {{ selectedSuggestionReviewVersion }} 的历史{{ getSuggestionOperationalStatus(selectedSuggestion) === 'adopted' ? '优化记录' : '建议' }}，已随 {{ selectedSuggestionArchivedVersion || '新版本' }} 发布归档，只能查看，不能再次采纳或重新定位。</span>
+              <button type="button" class="rounded-[9px] bg-[#f59e0b] px-4 py-2 text-xs font-semibold text-white" :disabled="reReviewQuoteBusy" @click="suggestionDetailVisible = false; reReviewConfirmVisible = true">{{ reReviewButtonLabel }}</button>
             </div>
 
             <div v-if="hasSuggestionRewrite" class="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-[14px] border border-[#e2e8f0] bg-[#fbfdff] px-4 py-3">
@@ -4080,40 +4395,45 @@ defineExpose({ openAllSuggestions })
 
             <div class="mt-5 grid gap-5 lg:grid-cols-2">
               <section class="min-h-[360px] rounded-[18px] border border-[#e2e8f0] bg-white p-5">
-                <div class="flex items-center justify-between gap-3"><div><span class="rounded-[7px] bg-[#f1f5f9] px-2 py-1 text-xs font-semibold">当前原文</span><h3 class="mt-3 font-semibold">{{ suggestionSourceLocation }}</h3></div><span v-if="selectedSuggestionOriginalText" class="text-xs text-[#94a3b8]">{{ selectedSuggestionOriginalText.length }} 字</span></div>
-                <div v-if="sourceResolveBusy" class="mt-10 flex min-h-[220px] flex-col items-center justify-center text-center"><RefreshCw class="h-8 w-8 animate-spin text-[#0f67ff]" /><p class="mt-3 text-sm text-[#64748b]">正在免费定位正式剧本原文...</p></div>
-                <div v-else-if="selectedSuggestion.sourceLocator?.status === 'resolved' && selectedSuggestionOriginalText" class="mt-5 space-y-1 text-[15px] leading-8 text-[#334155]">
-                  <p v-for="(line, index) in originalTextLines" :key="`${index}-${line}`" class="px-2">{{ line }}</p>
+                <div class="flex items-center justify-between gap-3"><div><span class="rounded-[7px] bg-[#f1f5f9] px-2 py-1 text-xs font-semibold">{{ selectedSuggestionIsHistory ? `优化前原文（${selectedSuggestionReviewVersion}）` : '当前原文' }}</span><h3 class="mt-3 font-semibold">{{ suggestionSourceLocation }}</h3></div><span v-if="selectedSuggestionOriginalText" class="text-xs text-[#94a3b8]">{{ selectedSuggestionOriginalText.length }} 字</span></div>
+                <div v-if="sourceResolveBusy && !selectedSuggestionIsHistory" class="mt-10 flex min-h-[220px] flex-col items-center justify-center text-center"><RefreshCw class="h-8 w-8 animate-spin text-[#0f67ff]" /><p class="mt-3 text-sm text-[#64748b]">正在免费定位正式剧本原文...</p></div>
+                <div v-else-if="selectedSuggestionOriginalText" class="mt-5 space-y-1 text-[15px] leading-8 text-[#334155]">
+                  <div v-for="(line, index) in originalTextLines" :key="`${index}-${line}`" class="grid grid-cols-[40px_minmax(0,1fr)] items-start gap-1.5 rounded-[8px] border-l-2 border-transparent px-1 py-0.5">
+                    <span class="mt-1 inline-flex h-5 w-8 items-center justify-center rounded-[4px] border border-[#dbe3ee] bg-[#f8fafc] text-[11px] font-semibold leading-none text-[#64748b]">{{ String(index + 1).padStart(2, '0') }}</span>
+                    <p>{{ line }}</p>
+                  </div>
                 </div>
-                <div v-else-if="selectedSuggestion.sourceLocator?.status === 'ambiguous'" class="mt-5">
+                <div v-else-if="!selectedSuggestionIsHistory && selectedSuggestion.sourceLocator?.status === 'ambiguous'" class="mt-5">
                   <div class="rounded-[12px] border border-[#ddd6fe] bg-[#faf5ff] p-4"><p class="font-semibold text-[#6d28d9]">找到多处可能原文，请确认本条建议要修改哪一段</p><p class="mt-1 text-xs leading-5 text-[#64748b]">确认范围不会扣点，也不会修改剧本内容。</p></div>
                   <div class="mt-3 space-y-3">
                     <button v-for="candidate in selectedSuggestion.sourceLocator.candidates" :key="`${candidate.startOffset}-${candidate.endOffset}`" type="button" class="w-full rounded-[12px] border border-[#e2e8f0] p-4 text-left transition hover:border-[#8b5cf6] hover:bg-[#faf5ff]" @click="confirmSuggestionSourceCandidate(selectedSuggestion, candidate)"><span class="text-xs font-semibold text-[#7c3aed]">{{ candidate.episodeNo ? `第${candidate.episodeNo}集` : '候选原文' }}{{ candidate.sceneIndex !== null ? ` · 场${candidate.sceneIndex + 1}` : '' }}</span><p class="mt-2 line-clamp-4 text-sm leading-6 text-[#475569]">{{ candidate.excerpt }}</p></button>
                   </div>
                 </div>
+                <div v-else-if="selectedSuggestionIsHistory" class="mt-10 flex min-h-[220px] flex-col items-center justify-center rounded-[14px] border border-dashed border-[#cbd5e1] bg-[#f8fafc] px-6 text-center"><FileText class="h-9 w-9 text-[#64748b]" /><h4 class="mt-4 text-lg font-semibold">历史原文快照未保存</h4><p class="mt-2 max-w-[440px] text-sm leading-6 text-[#64748b]">这条旧建议仍保留诊断与处理状态，但早期数据没有保存对应原文快照，因此不再尝试匹配当前版本正文。</p></div>
                 <div v-else class="mt-10 flex min-h-[220px] flex-col items-center justify-center rounded-[14px] border border-dashed border-[#fecaca] bg-[#fffafa] px-6 text-center"><AlertTriangle class="h-9 w-9 text-[#ef4444]" /><h4 class="mt-4 text-lg font-semibold">尚未定位到真实原文</h4><p class="mt-2 max-w-[440px] text-sm leading-6 text-[#64748b]">系统不会拿诊断证据冒充正文，也不会在没有原文范围时调用模型生成优化稿。</p><button type="button" class="mt-5 rounded-[10px] border border-[#0f67ff] px-5 py-2.5 text-sm font-semibold text-[#0f67ff]" @click="resolveSuggestionSource(selectedSuggestion)">重新定位原文</button></div>
-                <p v-if="sourceResolveError" class="mt-3 text-sm text-[#be123c]">{{ sourceResolveError }}</p>
-                <button v-if="!sourceResolveBusy && selectedSuggestion.sourceLocator?.status === 'missing'" type="button" class="mt-5 text-sm font-semibold text-[#0f67ff]" @click="goToFullScriptForSourceBinding(selectedSuggestion)">前往完整剧本手动绑定 <ArrowRight class="ml-1 inline h-4 w-4" /></button>
+                <p v-if="sourceResolveError && !selectedSuggestionIsHistory" class="mt-3 text-sm text-[#be123c]">{{ sourceResolveError }}</p>
+                <button v-if="!selectedSuggestionIsHistory && !sourceResolveBusy && selectedSuggestion.sourceLocator?.status === 'missing'" type="button" class="mt-5 text-sm font-semibold text-[#0f67ff]" @click="goToFullScriptForSourceBinding(selectedSuggestion)">前往完整剧本手动绑定 <ArrowRight class="ml-1 inline h-4 w-4" /></button>
               </section>
               <section class="min-h-[360px] rounded-[18px] border border-[#bfdbfe] bg-[#fbfdff] p-5">
-                <div class="flex items-center justify-between gap-3"><div><span class="rounded-[7px] bg-[#0f67ff] px-2 py-1 text-xs font-semibold text-white">AI 优化稿</span><h3 class="mt-3 font-semibold">与左侧相同范围的完整改写</h3></div><span v-if="hasSuggestionRewrite" class="text-xs text-[#94a3b8]">{{ selectedSuggestionSuggestedText.length }} 字</span></div>
+                <div class="flex items-center justify-between gap-3"><div><span class="rounded-[7px] bg-[#0f67ff] px-2 py-1 text-xs font-semibold text-white">{{ selectedSuggestionIsHistory && getSuggestionOperationalStatus(selectedSuggestion) === 'adopted' ? '已采纳优化稿' : 'AI 优化稿' }}</span><h3 class="mt-3 font-semibold">{{ selectedSuggestionIsHistory ? '发布前保存的优化内容' : '与左侧相同范围的完整改写' }}</h3></div><span v-if="hasSuggestionRewrite" class="text-xs text-[#94a3b8]">{{ selectedSuggestionSuggestedText.length }} 字</span></div>
                 <div v-if="!hasSuggestionRewrite" class="mt-10 flex min-h-[245px] flex-col items-center justify-center rounded-[14px] border border-dashed border-[#bfdbfe] bg-white px-6 text-center">
                   <AlertTriangle v-if="getSuggestionDraftStatus(selectedSuggestion) === 'failed'" class="h-9 w-9 text-[#f97316]" />
                   <Clock v-else class="h-9 w-9 text-[#64748b]" />
-                  <h4 class="mt-4 text-lg font-semibold">{{ getSuggestionDraftStatus(selectedSuggestion) === 'failed' ? '优化稿生成失败' : '尚未生成具体优化稿' }}</h4>
-                  <p class="mt-2 max-w-[440px] text-sm leading-6 text-[#64748b]">诊断建议、问题证据和优化方向已经保留。生成只处理当前建议的完整改写稿，成功后按 Token 扣点，失败不扣点。</p>
+                  <h4 class="mt-4 text-lg font-semibold">{{ selectedSuggestionIsHistory ? '该历史建议未生成优化稿' : getSuggestionDraftStatus(selectedSuggestion) === 'failed' ? '优化稿生成失败' : '尚未生成具体优化稿' }}</h4>
+                  <p class="mt-2 max-w-[440px] text-sm leading-6 text-[#64748b]">{{ selectedSuggestionIsHistory ? '历史诊断内容仍可查看，但发布后不会再为旧建议补生成优化稿；需要当前版本的新建议，请重新体检。' : '诊断建议、问题证据和优化方向已经保留。生成只处理当前建议的完整改写稿，成功后按 Token 扣点，失败不扣点。' }}</p>
                   <p v-if="getSuggestionDraftStatus(selectedSuggestion) === 'failed'" class="mt-2 max-w-[440px] text-xs leading-5 text-[#be123c]">{{ suggestionDraftErrorMessage(selectedSuggestion) }}</p>
                 </div>
-                <textarea v-else-if="suggestionDraftEditing" v-model="suggestionDraftText" class="mt-5 min-h-[270px] w-full resize-y rounded-[12px] border border-[#93c5fd] bg-white p-4 text-[15px] leading-8 text-[#0f172a] outline-none focus:ring-2 focus:ring-[#bfdbfe]" aria-label="编辑AI优化稿" />
+                <textarea v-else-if="suggestionDraftEditing && !selectedSuggestionIsHistory" v-model="suggestionDraftText" class="mt-5 min-h-[270px] w-full resize-y rounded-[12px] border border-[#93c5fd] bg-white p-4 text-[15px] leading-8 text-[#0f172a] outline-none focus:ring-2 focus:ring-[#bfdbfe]" aria-label="编辑AI优化稿" />
                 <div v-else class="mt-5 space-y-1.5 text-[15px] leading-8">
                   <div
                     v-for="(line, index) in suggestedDiffRows"
                     :key="`${index}-${line.text}`"
-                    class="grid grid-cols-[minmax(0,1fr)_72px] items-start gap-3 rounded-[7px] border-l-2 px-3 py-1.5"
+                    class="relative grid grid-cols-[40px_minmax(0,1fr)] items-start gap-1.5 rounded-[7px] border-l-2 px-1 py-0.5"
                     :class="diffLineClass(line.kind, 'suggested')"
                   >
+                    <span class="mt-1 inline-flex h-5 w-8 items-center justify-center rounded-[4px] border border-[#bfdbfe] bg-[#eff6ff] text-[11px] font-semibold leading-none text-[#2563eb]">{{ String((line.targetIndex ?? line.sourceIndex ?? 0) + 1).padStart(2, '0') }}</span>
                     <div class="min-w-0">
-                      <p :class="line.kind === 'deleted' ? 'line-through decoration-[#fb7185]' : ''">{{ line.text }}</p>
+                      <p :class="[line.kind === 'deleted' ? 'line-through decoration-[#fb7185]' : '', line.showType ? 'pr-20' : '']">{{ line.text }}</p>
                       <span
                         v-if="diffMoveDescription(line)"
                         class="mt-1.5 inline-flex rounded-[4px] border border-[#ffd591] bg-[#fff7e6] px-2 py-0.5 text-[11px] font-medium leading-5 text-[#ad6800]"
@@ -4123,7 +4443,7 @@ defineExpose({ openAllSuggestions })
                     </div>
                     <span
                       v-if="line.showType"
-                      class="mt-1 inline-flex min-w-[56px] items-center justify-center rounded-[4px] border px-2 py-0.5 text-[11px] font-medium leading-5"
+                      class="absolute right-1 top-1 inline-flex min-w-[56px] items-center justify-center rounded-[4px] border px-2 py-0.5 text-[11px] font-medium leading-5"
                       :class="diffTagClass(line.kind)"
                     >
                       {{ diffTagLabel(line.kind) }}
@@ -4144,7 +4464,11 @@ defineExpose({ openAllSuggestions })
 
               <section class="rounded-[18px] border border-[#dbe7f7] bg-[#fbfdff] p-5">
                 <h3 class="font-semibold">版本管理</h3>
-                <div class="mt-4 space-y-3">
+                <div v-if="selectedSuggestionIsHistory" class="mt-4 space-y-3">
+                  <div class="rounded-[12px] border border-[#e2e8f0] bg-white p-4"><div class="flex items-center justify-between gap-2"><p class="text-sm font-semibold">体检来源 {{ selectedSuggestionReviewVersion }}</p><span class="rounded-[6px] bg-[#f1f5f9] px-2 py-1 text-[10px] font-semibold text-[#64748b]">历史快照</span></div><p class="mt-1 text-xs leading-5 text-[#64748b]">保留当时的原文、优化稿和扣费记录。</p></div>
+                  <div class="rounded-[12px] border border-[#fde68a] bg-[#fffbeb] p-4"><div class="flex items-center justify-between gap-2"><p class="text-sm font-semibold text-[#92400e]">发布版本 {{ selectedSuggestionArchivedVersion || analysis.currentScriptVersion }}</p><span class="rounded-[6px] bg-[#fef3c7] px-2 py-1 text-[10px] font-semibold text-[#b45309]">已归档</span></div><p class="mt-1 text-xs leading-5 text-[#64748b]">发布后不再重新计算行号，也不能重复采纳。</p></div>
+                </div>
+                <div v-else class="mt-4 space-y-3">
                   <div class="rounded-[12px] border border-[#e2e8f0] bg-white p-4"><div class="flex items-center justify-between gap-2"><p class="text-sm font-semibold">正式版本 {{ pendingOriginalVersion }}</p><span class="rounded-[6px] bg-[#f1f5f9] px-2 py-1 text-[10px] font-semibold text-[#64748b]">当前使用</span></div><p class="mt-1 text-xs leading-5 text-[#64748b]">本次采纳不会直接覆盖正式版本。</p></div>
                   <div class="rounded-[12px] border border-[#93c5fd] bg-[#eff6ff] p-4"><div class="flex items-center justify-between gap-2"><p class="text-sm font-semibold text-[#0f67ff]">工作草稿 {{ pendingDraftVersionItem?.version || currentOptimizedVersion?.version || '待创建' }}</p><span class="rounded-[6px] bg-[#dcfce7] px-2 py-1 text-[10px] font-semibold text-[#047857]">待写入</span></div><p class="mt-1 text-xs leading-5 text-[#64748b]">采纳后写入草稿，确认版本后才同步后续阶段。</p></div>
                 </div>
@@ -4153,12 +4477,18 @@ defineExpose({ openAllSuggestions })
               <section class="rounded-[18px] border border-[#e2e8f0] p-5">
                 <h3 class="font-semibold">操作</h3>
                 <div class="mt-4 space-y-3">
-                  <button v-if="selectedSuggestion.actionable && hasSuggestionRewrite" class="flex w-full items-center justify-center rounded-[10px] bg-[#0f67ff] px-5 py-3 text-sm font-semibold text-white" @click="acceptSelectedSuggestion"><Check class="mr-2 h-4 w-4" />采纳到工作草稿</button>
-                  <button v-if="selectedSuggestion.actionable && hasSuggestionRewrite" class="flex w-full items-center justify-center rounded-[10px] border border-[#dbe7f7] px-5 py-3 text-sm font-semibold text-[#334155]" @click="startSuggestionDraftEditing"><Pencil class="mr-2 h-4 w-4" />继续调整</button>
-                  <button v-else-if="selectedSuggestion.actionable && selectedSuggestion.sourceLocator?.status === 'resolved'" class="flex w-full items-center justify-center rounded-[10px] bg-[#0f67ff] px-5 py-3 text-sm font-semibold text-white" @click="regenerateSuggestionDraft(selectedSuggestion, getSuggestionDraftStatus(selectedSuggestion) === 'stale' ? 'REFRESH_STALE_SUGGESTION' : 'REGENERATE_SUGGESTION_DRAFT')"><RefreshCw class="mr-2 h-4 w-4" />{{ suggestionDraftActionLabel(selectedSuggestion) }}</button>
-                  <button v-else-if="selectedSuggestion.actionable && selectedSuggestion.sourceLocator?.status !== 'ambiguous'" class="flex w-full items-center justify-center rounded-[10px] border border-[#0f67ff] px-5 py-3 text-sm font-semibold text-[#0f67ff]" :disabled="sourceResolveBusy" @click="resolveSuggestionSource(selectedSuggestion)"><Target class="mr-2 h-4 w-4" />重新定位原文</button>
-                  <button v-if="selectedSuggestion.actionable" class="flex w-full items-center justify-center rounded-[10px] border border-[#e2e8f0] px-5 py-3 text-sm text-[#64748b]" @click="ignoreSuggestion(selectedSuggestion.id)"><X class="mr-2 h-4 w-4" />忽略此建议</button>
-                  <button v-else class="w-full rounded-[10px] bg-[#0f67ff] px-5 py-3 text-sm font-semibold text-white" @click="closeSuggestionDetail">关闭</button>
+                  <template v-if="selectedSuggestionIsHistory">
+                    <button class="flex w-full items-center justify-center rounded-[10px] bg-[#f59e0b] px-5 py-3 text-sm font-semibold text-white" :disabled="reReviewQuoteBusy" @click="suggestionDetailVisible = false; reReviewConfirmVisible = true"><RefreshCw class="mr-2 h-4 w-4" />{{ reReviewButtonLabel }}</button>
+                    <button class="w-full rounded-[10px] border border-[#e2e8f0] px-5 py-3 text-sm font-semibold text-[#64748b]" @click="closeSuggestionDetail">关闭记录</button>
+                  </template>
+                  <template v-else>
+                    <button v-if="selectedSuggestion.actionable && hasSuggestionRewrite" class="flex w-full items-center justify-center rounded-[10px] bg-[#0f67ff] px-5 py-3 text-sm font-semibold text-white" @click="acceptSelectedSuggestion"><Check class="mr-2 h-4 w-4" />采纳到工作草稿</button>
+                    <button v-if="selectedSuggestion.actionable && hasSuggestionRewrite" class="flex w-full items-center justify-center rounded-[10px] border border-[#dbe7f7] px-5 py-3 text-sm font-semibold text-[#334155]" @click="startSuggestionDraftEditing"><Pencil class="mr-2 h-4 w-4" />继续调整</button>
+                    <button v-else-if="selectedSuggestion.actionable && selectedSuggestion.sourceLocator?.status === 'resolved'" class="flex w-full items-center justify-center rounded-[10px] bg-[#0f67ff] px-5 py-3 text-sm font-semibold text-white" @click="regenerateSuggestionDraft(selectedSuggestion, getSuggestionDraftStatus(selectedSuggestion) === 'stale' ? 'REFRESH_STALE_SUGGESTION' : 'REGENERATE_SUGGESTION_DRAFT')"><RefreshCw class="mr-2 h-4 w-4" />{{ suggestionDraftActionLabel(selectedSuggestion) }}</button>
+                    <button v-else-if="selectedSuggestion.actionable && selectedSuggestion.sourceLocator?.status !== 'ambiguous'" class="flex w-full items-center justify-center rounded-[10px] border border-[#0f67ff] px-5 py-3 text-sm font-semibold text-[#0f67ff]" :disabled="sourceResolveBusy" @click="resolveSuggestionSource(selectedSuggestion)"><Target class="mr-2 h-4 w-4" />重新定位原文</button>
+                    <button v-if="selectedSuggestion.actionable" class="flex w-full items-center justify-center rounded-[10px] border border-[#e2e8f0] px-5 py-3 text-sm text-[#64748b]" @click="ignoreSuggestion(selectedSuggestion.id)"><X class="mr-2 h-4 w-4" />忽略此建议</button>
+                    <button v-else class="w-full rounded-[10px] bg-[#0f67ff] px-5 py-3 text-sm font-semibold text-white" @click="closeSuggestionDetail">关闭</button>
+                  </template>
                 </div>
               </section>
             </div>
@@ -4296,33 +4626,51 @@ defineExpose({ openAllSuggestions })
         </div>
       </div>
 
-      <div v-if="globalResultVisible || characterResultVisible || episodeResultVisible" class="fixed inset-0 z-[80] overflow-y-auto bg-white p-6">
-        <div class="mx-auto max-w-[1480px]">
-          <button class="mb-5 text-[#475569]" @click="globalResultVisible = false; characterResultVisible = false; episodeResultVisible = false">← 返回</button>
-          <h2 class="text-3xl font-semibold">{{ characterResultVisible ? '人物关系优化结果' : episodeResultVisible ? '分集节奏优化结果' : 'AI 辅助优化结果' }}</h2>
-          <div class="mt-5 grid gap-4 md:grid-cols-3">
-            <div class="rounded-[20px] border p-5"><Heart class="h-10 w-10 text-[#10b981]" /><p class="mt-2 text-[#64748b]">剧本健康度</p><b class="text-3xl">{{ healthScore }} → {{ pendingReviewScore }}</b></div>
-            <div class="rounded-[20px] border p-5"><Target class="h-10 w-10 text-[#0f67ff]" /><p class="mt-2 text-[#64748b]">已优化点位</p><b class="text-3xl">{{ pendingChangeCount }}处</b></div>
-            <div class="rounded-[20px] border p-5"><FileText class="h-10 w-10 text-[#f97316]" /><p class="mt-2 text-[#64748b]">影响集数</p><b class="text-3xl">{{ pendingAffectedEpisodeCount }}</b></div>
-          </div>
-          <div class="mt-5 grid gap-5 lg:grid-cols-[1fr_1fr_320px]">
-            <div class="rounded-[22px] border border-[#fee2e2] bg-[#fff7f7] p-5">
-              <h3 class="text-xl font-semibold text-[#dc2626]">原剧本 {{ pendingOriginalVersion }}</h3>
-              <div class="mt-4 space-y-3">
-                <p v-for="item in pendingChangesForDisplay" :key="`old-${item.id}`" class="rounded-[14px] bg-white p-4">{{ item.problem }}</p>
-                <p v-if="!pendingChangesForDisplay.length" class="rounded-[14px] bg-white p-4 text-[#64748b]">后端暂未返回具体变更点。</p>
+      <div v-if="globalResultVisible || characterResultVisible || episodeResultVisible" class="fixed inset-0 z-[80] flex items-center justify-center bg-[#0f172a]/45 p-4">
+        <section class="flex max-h-[calc(100vh-48px)] w-full max-w-[960px] flex-col overflow-hidden rounded-[20px] border border-white/70 bg-white shadow-[0_28px_80px_rgba(15,23,42,0.28)]">
+          <header class="flex items-center justify-between border-b border-[#e2e8f0] px-6 py-4">
+            <div>
+              <h2 class="text-xl font-semibold text-[#0f172a]">{{ characterResultVisible ? '人物关系优化结果' : episodeResultVisible ? '分集节奏优化结果' : 'AI 辅助优化结果' }}</h2>
+              <p class="mt-1 text-xs text-[#64748b]">预览工作草稿的主要改动；发布后原版本保留，旧建议进入只读历史。</p>
+            </div>
+            <button class="flex h-9 w-9 items-center justify-center rounded-[10px] border border-[#e2e8f0] text-[#64748b]" aria-label="关闭优化结果" @click="globalResultVisible = false; characterResultVisible = false; episodeResultVisible = false"><X class="h-4 w-4" /></button>
+          </header>
+
+          <div class="min-h-0 flex-1 overflow-y-auto bg-gradient-to-b from-white to-[#f8fbff] p-5">
+            <div class="grid gap-3 sm:grid-cols-3">
+              <div class="flex items-center gap-3 rounded-[14px] border border-[#dbe4f0] px-4 py-3"><Heart class="h-6 w-6 text-[#10b981]" /><div><p class="text-xs text-[#64748b]">剧本健康度</p><b class="text-xl">{{ healthScore }} → {{ pendingReviewScore }}</b></div></div>
+              <div class="flex items-center gap-3 rounded-[14px] border border-[#dbe4f0] px-4 py-3"><Target class="h-6 w-6 text-[#0f67ff]" /><div><p class="text-xs text-[#64748b]">优化点位</p><b class="text-xl">{{ pendingChangeCount }}处</b></div></div>
+              <div class="flex items-center gap-3 rounded-[14px] border border-[#dbe4f0] px-4 py-3"><FileText class="h-6 w-6 text-[#f97316]" /><div><p class="text-xs text-[#64748b]">影响范围</p><b class="text-xl">{{ pendingAffectedEpisodeCount }}</b></div></div>
+            </div>
+
+            <div class="mt-4 grid gap-4 lg:grid-cols-2">
+              <div class="rounded-[16px] border border-[#fee2e2] bg-[#fffafa] p-4">
+                <h3 class="font-semibold text-[#dc2626]">原剧本 {{ pendingOriginalVersion }}</h3>
+                <div class="mt-3 space-y-2">
+                  <p v-for="item in pendingChangePreview" :key="`old-${item.id}`" class="rounded-[10px] bg-white px-3 py-2.5 text-sm leading-6">{{ item.problem }}</p>
+                  <p v-if="!pendingChangePreview.length" class="rounded-[10px] bg-white px-3 py-2.5 text-sm text-[#64748b]">后端暂未返回具体变更点。</p>
+                </div>
+              </div>
+              <div class="rounded-[16px] border border-[#dbeafe] bg-[#f8fbff] p-4">
+                <h3 class="font-semibold text-[#0f67ff]">优化版本 {{ pendingDraftVersion }}（AI 生成）</h3>
+                <div class="mt-3 space-y-2">
+                  <p v-for="item in pendingChangePreview" :key="`new-${item.id}`" class="rounded-[10px] bg-white px-3 py-2.5 text-sm leading-6">{{ item.advice }}</p>
+                  <p v-if="!pendingChangePreview.length" class="rounded-[10px] bg-white px-3 py-2.5 text-sm text-[#64748b]">优化草稿已生成，但后端未返回可展示的差异摘要。</p>
+                </div>
               </div>
             </div>
-            <div class="rounded-[22px] border border-[#dbeafe] bg-[#f8fbff] p-5">
-              <h3 class="text-xl font-semibold text-[#0f67ff]">优化版本 {{ pendingDraftVersion }}（AI生成）</h3>
-              <div class="mt-4 space-y-3">
-                <p v-for="item in pendingChangesForDisplay" :key="`new-${item.id}`" class="rounded-[14px] bg-white p-4">{{ item.advice }}</p>
-                <p v-if="!pendingChangesForDisplay.length" class="rounded-[14px] bg-white p-4 text-[#64748b]">优化草稿已生成，但后端未返回可展示的差异摘要。</p>
-              </div>
-            </div>
-            <aside class="rounded-[22px] border p-5"><h3 class="font-semibold">版本操作</h3><button class="mt-4 w-full rounded-[14px] bg-[#0f67ff] px-5 py-4 font-semibold text-white" @click="applyConfirmVisible = true">应用优化版本</button><button class="mt-3 w-full rounded-[14px] border px-5 py-4 font-semibold text-[#0f67ff]" @click="detailChangesVisible = true">查看详细改动</button><button class="mt-3 w-full rounded-[14px] border px-5 py-4" @click="resultAdjustVisible = true">继续调整</button><button class="mt-5 w-full text-[#0f67ff]" @click="globalResultVisible = false; characterResultVisible = false; episodeResultVisible = false">保留原版本</button></aside>
+            <button v-if="pendingHiddenChangeCount" class="mt-3 text-sm font-semibold text-[#0f67ff]" @click="detailChangesVisible = true">另有 {{ pendingHiddenChangeCount }} 处改动，查看完整对比 →</button>
           </div>
-        </div>
+
+          <footer class="flex flex-wrap items-center justify-between gap-3 border-t border-[#e2e8f0] bg-[#f8fafc] px-6 py-4">
+            <button class="text-sm font-semibold text-[#64748b]" @click="globalResultVisible = false; characterResultVisible = false; episodeResultVisible = false">保留原版本</button>
+            <div class="flex flex-wrap gap-2">
+              <button class="rounded-[10px] border border-[#cbd5e1] bg-white px-4 py-2 text-sm font-semibold text-[#0f67ff]" @click="detailChangesVisible = true">查看详细改动</button>
+              <button class="rounded-[10px] border border-[#cbd5e1] bg-white px-4 py-2 text-sm font-semibold" @click="resultAdjustVisible = true">继续调整</button>
+              <button class="rounded-[10px] bg-[#0f67ff] px-5 py-2 text-sm font-semibold text-white" @click="applyConfirmVisible = true">预览完成，发布 {{ pendingDraftVersion }}</button>
+            </div>
+          </footer>
+        </section>
       </div>
 
       <div v-if="detailChangesVisible" class="fixed inset-0 z-[95] overflow-y-auto bg-white p-8">
@@ -4335,7 +4683,27 @@ defineExpose({ openAllSuggestions })
       </div>
 
       <div v-if="applyConfirmVisible" class="fixed inset-0 z-[100] flex items-center justify-center bg-[#0f172a]/45 p-4">
-        <div class="w-full max-w-[520px] rounded-[24px] bg-white p-7 text-center"><CheckCircle2 class="mx-auto h-16 w-16 text-[#10b981]" /><h3 class="mt-4 text-2xl font-semibold">应用 AI 优化版本 {{ pendingDraftVersion }}？</h3><p class="mt-3 text-[#64748b]">应用后 {{ pendingDraftVersion }} 将成为当前工作版本，原版本 {{ pendingOriginalVersion }} 会保留在版本历史中。</p><div class="mt-6 flex gap-3"><button class="flex-1 rounded-[14px] border px-5 py-3" @click="applyConfirmVisible = false">取消</button><button class="flex-1 rounded-[14px] bg-[#0f67ff] px-5 py-3 font-semibold text-white" @click="applyOptimizedVersion">确认应用</button></div></div>
+        <div class="w-full max-w-[560px] rounded-[24px] bg-white p-7">
+          <div class="flex gap-4"><div class="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#fff7ed]"><AlertTriangle class="h-6 w-6 text-[#f59e0b]" /></div><div><h3 class="text-xl font-semibold text-[#0f172a]">确认发布 AI 优化版本 {{ pendingDraftVersion }}？</h3><p class="mt-2 text-sm leading-7 text-[#64748b]">发布后 {{ pendingDraftVersion }} 将成为正式版本，原版本 {{ pendingOriginalVersion }} 会保留在版本历史中。</p></div></div>
+          <div class="mt-5 rounded-[14px] border border-[#fde68a] bg-[#fffbeb] p-4 text-sm leading-7 text-[#92400e]">
+            <p><b>发布前请确认：</b>当前仍有 {{ publishInvalidSuggestionCount }} 条未处理建议。发布后它们会立即失效并归档，不能再生成、定位或采纳；已采纳建议会显示为“已优化记录”。</p>
+            <p class="mt-2">发布不会自动重新体检，也不会额外扣点。若要获得适用于 {{ pendingDraftVersion }} 的新建议，需要在发布后主动重新体检当前版本。</p>
+          </div>
+          <div class="mt-6 flex gap-3"><button class="flex-1 rounded-[12px] border border-[#cbd5e1] px-5 py-3" @click="applyConfirmVisible = false">继续处理建议</button><button class="flex-1 rounded-[12px] bg-[#0f67ff] px-5 py-3 font-semibold text-white" @click="applyOptimizedVersion">确认发布新版本</button></div>
+        </div>
+      </div>
+
+      <div v-if="reReviewConfirmVisible" class="fixed inset-0 z-[105] flex items-center justify-center bg-[#0f172a]/45 p-4">
+        <div class="w-full max-w-[480px] rounded-[22px] bg-white p-6 shadow-[0_24px_72px_rgba(15,23,42,0.28)]">
+          <h3 class="text-xl font-semibold text-[#0f172a]">重新体检当前剧本？</h3>
+          <p class="mt-3 text-sm leading-7 text-[#64748b]">这会按当前版本重新执行剧本解析与专业体检。已有工作草稿和历史版本不会被删除。</p>
+          <p v-if="reReviewEstimatedCredits !== null" class="mt-3 rounded-[12px] bg-[#fff7ed] px-4 py-3 text-sm font-semibold text-[#b45309]">本次预计消耗 {{ reReviewEstimatedCredits }} 积分</p>
+          <p v-else-if="reReviewQuoteError" class="mt-3 text-sm text-[#b45309]">{{ reReviewQuoteError }}</p>
+          <div class="mt-6 flex justify-end gap-3">
+            <button class="rounded-[10px] border border-[#cbd5e1] px-4 py-2 text-sm font-semibold" @click="reReviewConfirmVisible = false">取消</button>
+            <button class="rounded-[10px] bg-[#0f67ff] px-5 py-2 text-sm font-semibold text-white" @click="startPaidReReview">{{ reReviewEstimatedCredits !== null ? `确认重新体检 · ${reReviewEstimatedCredits} 积分` : '计算积分并继续' }}</button>
+          </div>
+        </div>
       </div>
 
       <div v-if="sceneOptimizeVisible" class="fixed inset-0 z-[86] overflow-y-auto bg-white p-8">

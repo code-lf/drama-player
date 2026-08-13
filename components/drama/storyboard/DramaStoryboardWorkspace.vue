@@ -174,7 +174,7 @@ const generationTargetTitle = computed(() => {
   const rows = eligibleGenerationRows.value
   if (rows.length !== 1) return `已选择 ${rows.length} 个视频镜头`
   const row = rows[0]
-  return `镜头 ${String(row.shotNo).padStart(2, '0')} · ${titleFor(row)}`
+  return `镜头 ${rowNumber(row)} · ${titleFor(row)}`
 })
 
 const availableEpisodeNumbers = computed(() => {
@@ -193,6 +193,33 @@ const currentEpisodeStatus = computed(() => {
   return String(run?.episodeStatuses?.[String(currentEpisodeNo.value)] || run?.status || 'idle')
 })
 
+const currentEpisodeStage = computed(() => {
+  return workspace.value?.run.episodeStages?.[String(currentEpisodeNo.value)] || {
+    stage: currentEpisodeStatus.value,
+    progress: currentPlanningProgress.value,
+    totalBatches: 0,
+    completedBatches: 0,
+    totalScenes: 0,
+    completedScenes: 0,
+    workspaceReady: false,
+    publishedRows: 0,
+    baseGenerationStatus: '',
+    qualityStatus: '',
+    qaTotal: 0,
+    qaCompleted: 0,
+    qaWarning: 0,
+    qaFailed: 0,
+    currentNodeLabel: '',
+    retryableNodes: []
+  }
+})
+
+const otherPlanningEpisodeNos = computed(() => Object.entries(workspace.value?.run.episodeStatuses || {})
+  .filter(([episodeNo, status]) => Number(episodeNo) !== currentEpisodeNo.value && ['queued', 'running', 'generating', 'global_director_map', 'director_scene', 'director_planning', 'detailing', 'director_review', 'assembling'].includes(String(status)))
+  .map(([episodeNo]) => Number(episodeNo))
+  .filter(Number.isFinite)
+  .sort((left, right) => left - right))
+
 const currentPlanningProgress = computed(() => {
   const value = workspace.value?.run.episodeProgresses?.[String(currentEpisodeNo.value)]
   if (currentEpisodeStatus.value === 'completed') return 100
@@ -200,7 +227,9 @@ const currentPlanningProgress = computed(() => {
 })
 
 const currentGeneratedCount = computed(() => Number(
-  workspace.value?.run.generatedCounts?.[String(currentEpisodeNo.value)] || workspace.value?.rows.length || 0
+  currentEpisodeStage.value.workspaceReady
+    ? workspace.value?.rows.length || 0
+    : workspace.value?.run.generatedCounts?.[String(currentEpisodeNo.value)] || workspace.value?.rows.length || 0
 ))
 
 const currentExpectedCount = computed(() => Number(
@@ -208,33 +237,43 @@ const currentExpectedCount = computed(() => Number(
 ))
 
 const isStoryboardPlanning = computed(() => {
-  const runStatus = workspace.value?.run.status || 'idle'
-  return ['queued', 'running', 'generating'].includes(runStatus)
-    || ['queued', 'running', 'generating'].includes(currentEpisodeStatus.value)
+  // 项目可以同时保留“第 1 集失败、第 2 集生成中”等状态；当前页只能读取当前集状态，
+  // 不能因为项目级 run 仍在运行就把其它集误显示为“正在重新规划”。
+  return ['queued', 'running', 'generating', 'global_director_map', 'director_scene', 'director_planning', 'detailing', 'base_ready', 'director_review', 'quality_review', 'assembling'].includes(currentEpisodeStatus.value)
 })
 
 const planningFailed = computed(() => {
-  return workspace.value?.run.status === 'failed' || currentEpisodeStatus.value === 'failed'
+  return currentEpisodeStatus.value === 'failed'
 })
 
-// 四个阶段不使用前端计时器伪造进度，而是由后端真实运行态和已落库镜头数驱动。
+const planningCanResumeFromDetail = computed(() => {
+  // 旧规则拦截但供应商响应可复用时，后端会把导演骨架恢复到 35%。此时按钮应明确
+  // 表达“从细化继续”，避免用户误以为需要从头重跑导演规划或再次扣积分。
+  const stage = currentEpisodeStage.value
+  return stage.currentNodeLabel === '镜头细化待继续'
+    || String(stage.errorMessage || '').includes('旧导演规划已恢复')
+})
+
+// 五个阶段不使用前端计时器伪造进度，而是由后端真实节点运行态驱动。
 const planningStages = computed(() => {
-  const progress = currentPlanningProgress.value
   const completed = currentEpisodeStatus.value === 'completed'
-  const stageIndex = completed
-    ? 4
-    : progress >= 90
-      ? 3
-      : progress > 0
-        ? 2
-        : workspace.value?.run.status === 'queued'
-          ? 0
-          : isStoryboardPlanning.value ? 1 : 0
+  const stageIndex = completed ? 5 : ({
+    queued: 0,
+    global_director_map: 0,
+    director_planning: 0,
+    director_scene: 1,
+    detailing: 2,
+    base_ready: 3,
+    director_review: 3,
+    quality_review: 3,
+    assembling: 4,
+  }[currentEpisodeStage.value.stage] ?? 0)
   return [
-    { title: '冻结创作上下文', description: '读取已确认剧本、视觉基准与锁定资产' },
-    { title: '拆解剧情节点', description: '识别场次目标、动作密度与情绪节奏' },
-    { title: '编排镜头方案', description: '动态生成景别、运镜、时长与声音设计' },
-    { title: '校验制作连续性', description: '检查剧情覆盖、资产绑定与前后镜头状态' }
+    { title: '全局导演分析', description: '梳理原文覆盖、人物认知边界与场次节拍' },
+    { title: '分场导演规划', description: `思考镜头边界、对白时长和专业时间轴${currentEpisodeStage.value.totalScenes ? ` · ${currentEpisodeStage.value.completedScenes}/${currentEpisodeStage.value.totalScenes} 场` : ''}` },
+    { title: '镜头细化', description: `并行补全景别、运镜、表演与声音${currentEpisodeStage.value.totalBatches ? ` · ${currentEpisodeStage.value.completedBatches}/${currentEpisodeStage.value.totalBatches} 批` : ''}` },
+    { title: '导演质检', description: `后台复核时间轴、对白、动作和连续性${currentEpisodeStage.value.qaTotal ? ` · ${currentEpisodeStage.value.qaCompleted}/${currentEpisodeStage.value.qaTotal} 个镜头` : ''}` },
+    { title: '生成可制作方案', description: currentEpisodeStage.value.workspaceReady ? `基础分镜已发布 ${currentEpisodeStage.value.publishedRows || workspace.value?.rows.length || 0} 个，质检建议将增量更新` : '细化完成的镜头会先进入工作台，导演质检在后台继续' }
   ].map((item, index) => ({
     ...item,
     status: completed || index < stageIndex ? 'completed' : index === stageIndex ? 'active' : 'pending'
@@ -242,6 +281,8 @@ const planningStages = computed(() => {
 })
 
 const pendingSkeletonCount = computed(() => {
+  // 基础分镜已发布后，剩余工作只是后台质检，不能再按旧预期数量补虚假的骨架卡片。
+  if (currentEpisodeStage.value.workspaceReady) return 0
   const expected = currentExpectedCount.value || 8
   return Math.max(0, Math.min(12, expected - (workspace.value?.rows.length || 0)))
 })
@@ -284,6 +325,11 @@ const hasVideoTasks = computed(() => (workspace.value?.rows || []).some(row =>
 ))
 
 const selectedRow = computed(() => currentRow.value)
+const selectedDirectorPlanPending = computed(() => Boolean(
+  selectedRow.value
+  && !selectedRow.value.directorSegments.length
+  && (selectedRow.value.planStatus === 'draft' || isStoryboardPlanning.value)
+))
 const selectedTake = computed(() => {
   if (!selectedRow.value) return null
   return selectedRow.value.takes.find(take => take.id === selectedRow.value?.selectedTakeId)
@@ -524,8 +570,52 @@ const blockedSummary = computed(() => {
 })
 
 function titleFor(row: StoryboardRow): string {
-  const title = row.sceneDescription.split(/[，。；;\n]/).map(item => item.trim()).find(Boolean)
-  return title?.slice(0, 12) || `镜头 ${String(row.shotNo).padStart(2, '0')}`
+  const extra = row.extra as Record<string, unknown>
+  const explicitTitle = String(extra.shot_title || extra.shotTitle || '').trim()
+  const episodeRows = workspace.value?.rows || []
+  const repeatedExplicitTitle = explicitTitle && episodeRows.filter((item) => {
+    const itemExtra = item.extra as Record<string, unknown>
+    return String(itemExtra.shot_title || itemExtra.shotTitle || '').trim() === explicitTitle
+  }).length > 1
+
+  // 新管线优先使用导演输出的独立标题；历史数据若把场景名机械复制为标题，
+  // 则从该镜头动作中提取差异化标题，避免同场十几个卡片都叫同一个名字。
+  if (explicitTitle && !repeatedExplicitTitle) return explicitTitle.slice(0, 18)
+  const actionTitle = normalizeVisibleTimelineText(row.actionDesc)
+    .replace(/^镜头\s*\d+[:：]?\s*/, '')
+    .split(/[，。；;\n]/)
+    .map(item => item.trim())
+    .find(Boolean)
+  if (actionTitle) return actionTitle.slice(0, 18)
+  // 场景描述是空间资料，不可再拿第一行冒充镜头标题；缺失时显示稳定编号。
+  return `镜头 ${rowNumber(row)}`
+}
+
+/**
+ * 镜头对外编号严格按当前工作台数组位置计算，不再直接展示历史 shot_no。
+ * 旧质检曾把部分批次替换后留下 1、2、8、11、23 等稀疏编号，实际仍只有 18 条。
+ */
+function rowPosition(row: StoryboardRow): number {
+  const rows = workspace.value?.rows || []
+  const index = rows.findIndex(item => item.id === row.id)
+  if (index >= 0) return index + 1
+  return Math.max(1, Number(row.sortIndex || row.shotNo || 1))
+}
+
+function rowNumber(row: StoryboardRow): string {
+  return String(rowPosition(row)).padStart(2, '0')
+}
+
+/** 将历史自由文本中的毫秒区间转换为用户可读的秒制，结构化 startMs/endMs 不受影响。 */
+function normalizeVisibleTimelineText(value: unknown): string {
+  const text = String(value || '')
+  const seconds = (milliseconds: string) => {
+    const number = Number(milliseconds) / 1000
+    return Number.isInteger(number) ? String(number) : number.toFixed(1).replace(/\.0$/, '')
+  }
+  return text
+    .replace(/(\d+(?:\.\d+)?)\s*[–—~-]\s*(\d+(?:\.\d+)?)\s*(?:ms|毫秒)/gi, (_match, start, end) => `${seconds(start)}–${seconds(end)}秒`)
+    .replace(/(\d+(?:\.\d+)?)\s*(?:ms|毫秒)/gi, (_match, value) => `${seconds(value)}秒`)
 }
 
 function thumbnailFor(row: StoryboardRow): string {
@@ -602,7 +692,9 @@ function takeStatusText(status: string): string {
 
 function sourceLabel(row: StoryboardRow): string {
   const extra = row.extra as Record<string, unknown>
-  return String(extra.source_label || extra.sourceLabel || `第${row.episodeNo}集 · 镜头 ${row.shotNo}`)
+  const label = String(extra.source_label || extra.sourceLabel || '').trim()
+  if (!label) return `第${row.episodeNo}集 · 镜头 ${rowPosition(row)}`
+  return label.replace(/镜头\s*\d+/, `镜头 ${rowPosition(row)}`)
 }
 
 function videoStatusText(row: StoryboardRow): string {
@@ -650,7 +742,8 @@ function updateDirectorSegmentExtra(segment: StoryboardDirectorSegment, key: str
   segment.extra = { ...(segment.extra || {}), [key]: value }
 }
 
-const MIN_DIRECTOR_SEGMENT_MS = 300
+// 快动作与特效段允许的技术下限为 0.5 秒；常规段的 0.8 秒门槛由服务端质量校验负责。
+const MIN_DIRECTOR_SEGMENT_MS = 500
 
 // 导演段落的时间轴由系统连续编排，用户无需维护容易冲突的开始和结束时间。
 function directorSegmentRange(segment: StoryboardDirectorSegment): string {
@@ -716,6 +809,30 @@ function planStatusText(row: StoryboardRow): string {
   if (row.planStatus === 'stale') return '方案需更新'
   if (row.planStatus === 'preflight_running') return '方案检查中'
   return row.reviewStatus === 'needs_revision' ? '需要修改' : '待审核'
+}
+
+/** 质检是基础分镜发布后的增强状态，不能覆盖方案或视频制作状态。 */
+function qaStatusFor(row: StoryboardRow): string {
+  const extra = row.extra as Record<string, unknown>
+  return String(extra.qa_status || extra.qaStatus || '').trim().toLowerCase()
+}
+
+function qaStatusText(row: StoryboardRow): string {
+  const status = qaStatusFor(row)
+  if (['pending', 'queued', 'running'].includes(status)) return '导演质检中'
+  if (['passed', 'success', 'succeeded'].includes(status)) return '质检通过'
+  if (status === 'suggested') return '有质检建议'
+  if (['warning', 'review_required'].includes(status)) return '质检建议'
+  if (['manual_review', 'failed'].includes(status)) return '建议人工检查'
+  return ''
+}
+
+function qaStatusClass(row: StoryboardRow): string {
+  const status = qaStatusFor(row)
+  if (['pending', 'queued', 'running'].includes(status)) return 'running'
+  if (['passed', 'success', 'succeeded'].includes(status)) return 'passed'
+  if (['manual_review', 'failed'].includes(status)) return 'manual'
+  return 'warning'
 }
 
 function riskText(row: StoryboardRow): string {
@@ -950,7 +1067,7 @@ async function generatePrevisualization(row: StoryboardRow): Promise<void> {
   actionBusy.value = `previsualization-${row.id}`
   try {
     updateWorkspace(await dramaService.generateStoryboardPrevisualization(props.projectId, row.id))
-    showNotice(`镜头 ${String(row.shotNo).padStart(2, '0')} 已提交首帧预演，完成后会自动刷新。`)
+    showNotice(`镜头 ${rowNumber(row)} 已提交首帧预演，完成后会自动刷新。`)
   } catch (error) {
     showNotice(actionErrorMessage(error, '首帧预演提交失败，请稍后重试。'), 'error')
   } finally {
@@ -1127,7 +1244,7 @@ async function handleShotMenu(row: StoryboardRow, item: BaseMenuItem): Promise<v
   try {
     if (item.key === 'copy') {
       await dramaService.copyStoryboard(props.projectId, row.id)
-      showNotice(`镜头 ${String(row.shotNo).padStart(2, '0')} 已复制。`)
+      showNotice(`镜头 ${rowNumber(row)} 已复制。`)
     } else if (item.key === 'up' || item.key === 'down') {
       await dramaService.updateStoryboard(props.projectId, row.id, {
         sortIndex: row.sortIndex + (item.key === 'up' ? -1 : 1)
@@ -1741,10 +1858,11 @@ onBeforeUnmount(stopRealtimeTracking)
                 <h2 v-if="availableEpisodeNumbers.length === 1">第 {{ currentEpisodeNo }} 集</h2>
                 <BaseSelect
                   v-else
+                  class="episode-switcher"
                   :model-value="String(currentEpisodeNo)"
                   :options="availableEpisodeNumbers.map(episodeNo => ({ label: `第 ${episodeNo} 集`, value: String(episodeNo) }))"
                   tone="light"
-                  size="sm"
+                  size="md"
                   @update:model-value="switchEpisode(Number($event))"
                 />
               </div>
@@ -1796,12 +1914,12 @@ onBeforeUnmount(stopRealtimeTracking)
                       <div v-if="failedStoryboardRows.length" class="failed-shot-list">
                         <article v-for="row in failedStoryboardRows" :key="row.id" class="failed-shot-item">
                           <div class="failed-shot-item__heading">
-                            <strong>镜头 {{ String(row.shotNo).padStart(2, '0') }}</strong>
+                            <strong>镜头 {{ rowNumber(row) }}</strong>
                             <span>{{ titleFor(row) }}</span>
                           </div>
                           <p>{{ failedRowIssueText(row) }}</p>
                           <div v-if="failedRowEvidence(row)" class="failed-shot-item__evidence">
-                            <img :src="failedRowEvidence(row)?.url" :alt="`镜头 ${row.shotNo} ${failedRowEvidence(row)?.label}`" />
+                            <img :src="failedRowEvidence(row)?.url" :alt="`镜头 ${rowPosition(row)} ${failedRowEvidence(row)?.label}`" />
                             <span>{{ failedRowEvidence(row)?.label }}</span>
                           </div>
                           <div v-else class="failed-shot-item__no-evidence">暂无可附带截图</div>
@@ -1865,8 +1983,8 @@ onBeforeUnmount(stopRealtimeTracking)
           <div class="planning-panel__heading">
             <div class="planning-icon"><WandSparkles :size="22" /></div>
             <div>
-              <strong>AI 正在规划第 {{ currentEpisodeNo }} 集镜头</strong>
-              <span>镜头会逐个写入工作台，完成一个即可先查看一个。</span>
+              <strong>{{ currentEpisodeStage.currentNodeLabel || `AI 正在规划第 ${currentEpisodeNo} 集镜头` }}</strong>
+              <span>{{ currentEpisodeStage.workspaceReady ? '基础分镜已经可以使用，导演质检正在后台继续，不会隐藏或清空现有镜头。' : '细化完成的基础分镜会先进入工作台，导演质检随后在后台继续。' }}</span>
             </div>
             <div class="planning-count">
               <b>{{ currentPlanningProgress }}%</b>
@@ -1880,6 +1998,20 @@ onBeforeUnmount(stopRealtimeTracking)
             </article>
           </div>
           <div class="planning-progress"><span :style="{ width: `${currentPlanningProgress}%` }" /></div>
+        </section>
+
+        <section v-else-if="planningFailed && workspace.rows.length" class="planning-interrupted-panel">
+          <div>
+            <AlertTriangle :size="18" />
+            <span>
+              <strong>第 {{ currentEpisodeNo }} 集规划中断</strong>
+              已生成 {{ currentGeneratedCount }}{{ currentExpectedCount ? ` / ${currentExpectedCount}` : '' }} 个镜头，现有内容不是完整方案。
+              <template v-if="otherPlanningEpisodeNos.length">第 {{ otherPlanningEpisodeNos.join('、') }} 集正在后台规划，完成后可重试本集。</template>
+            </span>
+          </div>
+          <button class="button button--secondary planning-retry-button" type="button" :disabled="otherPlanningEpisodeNos.length > 0" @click="requestStoryboardPlanning">
+            <RotateCcw :size="13" />重新规划第 {{ currentEpisodeNo }} 集
+          </button>
         </section>
 
         <div v-if="hasVideoTasks" class="task-progress">
@@ -1912,7 +2044,7 @@ onBeforeUnmount(stopRealtimeTracking)
               color="neutral"
               :variant="selectionMode ? 'soft' : 'outline'"
               size="sm"
-              :disabled="isStoryboardPlanning || !workspace.rows.length"
+              :disabled="!workspace.rows.length"
               @click="selectionMode ? exitSelectionMode() : enterSelectionMode()"
             >
               <CheckCircle2 :size="16" />
@@ -1927,9 +2059,11 @@ onBeforeUnmount(stopRealtimeTracking)
 
         <div v-if="planningFailed && !workspace.rows.length" class="workspace-state workspace-state--compact workspace-state--error">
           <AlertTriangle :size="25" />
-          <strong>第 {{ currentEpisodeNo }} 集分镜规划失败</strong>
-          <span>{{ workspace.run.errorMessage || '当前规划任务未完成，可直接重试，不会影响已确认剧本和资产。' }}</span>
-          <button class="button button--primary" type="button" @click="requestStoryboardPlanning"><RotateCcw :size="16" />重新规划分镜</button>
+          <strong>{{ planningCanResumeFromDetail ? `第 ${currentEpisodeNo} 集导演规划已恢复` : `第 ${currentEpisodeNo} 集分镜规划失败` }}</strong>
+          <span>{{ currentEpisodeStage.errorMessage || workspace.run.errorMessage || '当前规划任务未完成，可直接重试，不会影响已确认剧本和资产。' }}</span>
+          <button class="button button--primary" type="button" @click="requestStoryboardPlanning">
+            <RotateCcw :size="16" />{{ planningCanResumeFromDetail ? '继续生成镜头细化' : '重新规划分镜' }}
+          </button>
         </div>
 
         <div v-else-if="!workspace.rows.length && !isStoryboardPlanning" class="workspace-state workspace-state--compact storyboard-empty">
@@ -1955,7 +2089,7 @@ onBeforeUnmount(stopRealtimeTracking)
       class="shot-check"
       type="button"
       :disabled="row.videoStatus !== 'idle'"
-      :aria-label="`选择镜头 ${row.shotNo}`"
+      :aria-label="`选择镜头 ${rowPosition(row)}`"
       @click.stop="toggleSelection(row.id)"
     >
       <Check v-if="selectedIds.includes(row.id)" :size="14" />
@@ -1964,12 +2098,14 @@ onBeforeUnmount(stopRealtimeTracking)
                 <template #trigger><MoreHorizontal :size="16" /></template>
               </BaseMenu>
               <span v-if="row.previsualizationUrl && !row.videoUrl" class="media-label">首帧预演</span>
+              <span v-else-if="thumbnailFor(row) && !row.videoUrl && !row.directorSegments.length && isStoryboardPlanning" class="media-label media-label--planning"><LoaderCircle :size="12" class="spin" />编排细化中</span>
+              <span v-else-if="thumbnailFor(row) && !row.videoUrl && !row.directorSegments.length && planningFailed" class="media-label media-label--interrupted"><AlertTriangle :size="12" />方案未完成</span>
               <span v-else-if="thumbnailFor(row) && !row.videoUrl" class="media-label">方案参考</span>
               <span v-else-if="row.videoUrl" class="media-label media-label--video"><Play :size="12" />视频版本</span>
             </div>
             <div class="shot-card__body">
-              <div class="shot-title"><strong>{{ String(row.shotNo).padStart(2, '0') }} {{ titleFor(row) }}</strong><span>{{ row.durationSec }}s</span></div>
-              <p>{{ row.actionDesc || row.sceneDescription }}</p>
+              <div class="shot-title"><strong>{{ rowNumber(row) }} {{ titleFor(row) }}</strong><span>{{ row.durationSec }}秒</span></div>
+              <p>{{ normalizeVisibleTimelineText(row.actionDesc || row.sceneDescription) }}</p>
               <div class="asset-tags">
                 <span v-for="key in row.roleKeys.slice(0, 1)" :key="`role-${key}`">角色 {{ assetLabel(row, 'role', key) }}</span>
                 <span v-for="key in row.sceneKeys.slice(0, 1)" :key="`scene-${key}`">场景 {{ assetLabel(row, 'scene', key) }}</span>
@@ -1978,6 +2114,7 @@ onBeforeUnmount(stopRealtimeTracking)
               <div class="shot-statuses">
                 <span class="status-chip status-chip--plan">{{ planStatusText(row) }}</span>
                 <span class="status-chip" :class="`status-chip--${row.videoStatus}`">{{ videoStatusText(row) }}</span>
+                <span v-if="qaStatusText(row)" class="status-chip" :class="`status-chip--qa-${qaStatusClass(row)}`">{{ qaStatusText(row) }}</span>
                 <span v-if="row.previsualizationStatus !== 'not_required'" class="status-chip status-chip--preview">{{ previsualizationText(row) }}</span>
                 <span v-if="row.riskLevel !== 'low'" class="risk-chip"><AlertTriangle :size="12" />{{ riskText(row) }}</span>
               </div>
@@ -2027,7 +2164,7 @@ onBeforeUnmount(stopRealtimeTracking)
           <div class="workbench-heading__content">
             <div class="workbench-heading__title">
               <div class="eyebrow">镜头工作台</div>
-              <h2>镜头 {{ String(selectedRow.shotNo).padStart(2, '0') }} · {{ titleFor(selectedRow) }}</h2>
+              <h2>镜头 {{ rowNumber(selectedRow) }} · {{ titleFor(selectedRow) }}</h2>
             </div>
             <div class="workbench-heading__context">
               <div class="workbench-heading__meta">
@@ -2036,7 +2173,7 @@ onBeforeUnmount(stopRealtimeTracking)
                 <strong>{{ selectedRow.durationSec }} 秒</strong>
                 <span>{{ workspace.currentPlan.versionLabel }}</span>
               </div>
-              <p>{{ selectedRow.sceneDescription }}</p>
+              <p>{{ normalizeVisibleTimelineText(selectedRow.sceneDescription) }}</p>
             </div>
           </div>
           <div class="workbench-heading__nav">
@@ -2070,11 +2207,11 @@ onBeforeUnmount(stopRealtimeTracking)
             </section>
 
             <section class="filmstrip-section">
-              <div class="section-heading"><div><strong>快速切换镜头</strong><span>{{ selectedRow.shotNo }} / {{ workspace.rows.length }}</span></div></div>
+              <div class="section-heading"><div><strong>快速切换镜头</strong><span>{{ rowPosition(selectedRow) }} / {{ workspace.rows.length }}</span></div></div>
               <div class="filmstrip">
                 <button v-for="row in workspace.rows" :key="row.id" type="button" :class="{ active: row.id === selectedRow.id }" @click="openWorkbench(row)">
                   <div class="filmstrip__heading">
-                    <b>{{ String(row.shotNo).padStart(2, '0') }}</b>
+                    <b>{{ rowNumber(row) }}</b>
                     <span>{{ titleFor(row) }}</span>
                     <small>{{ row.durationSec }} 秒</small>
                   </div>
@@ -2090,16 +2227,20 @@ onBeforeUnmount(stopRealtimeTracking)
             <div class="detail-column__scroll">
             <section class="detail-section">
               <div class="section-heading">
-                <div><strong>导演方案</strong><span>{{ selectedRow.directorSegments.length }} 段镜头内节奏 · 同一视频片段内连续执行</span></div>
+                <div><strong>导演方案</strong><span>{{ selectedDirectorPlanPending ? '编排细化中，完成后展示专业时间轴' : `${selectedRow.directorSegments.length} 段镜头内节奏 · 同一视频片段内连续执行` }}</span></div>
                 <div class="section-heading__actions">
-                  <LivButton variant="secondary" size="sm" @click="openSegmentEditor"><template #icon><Pencil :size="15" /></template>手工编辑</LivButton>
-                  <LivButton variant="primary" size="sm" @click="openShotTuning"><template #icon><WandSparkles :size="15" /></template>调整方案</LivButton>
+                  <LivButton variant="secondary" size="sm" :disabled="selectedDirectorPlanPending" @click="openSegmentEditor"><template #icon><Pencil :size="15" /></template>手工编辑</LivButton>
+                  <LivButton variant="primary" size="sm" :disabled="selectedDirectorPlanPending" @click="openShotTuning"><template #icon><WandSparkles :size="15" /></template>调整方案</LivButton>
                 </div>
               </div>
-              <div class="director-list">
+              <div v-if="selectedDirectorPlanPending" class="director-plan-pending">
+                <span><LoaderCircle :size="20" class="spin" /></span>
+                <div><strong>正在编排镜头内时间轴</strong><p>系统正在补齐景别、运镜、动作表演、声音提示和每段结束状态，不会提前展示单段占位方案。</p></div>
+              </div>
+              <div v-else class="director-list">
                 <article v-for="(segment, segmentIndex) in selectedRow.directorSegments" :key="segment.id">
                   <div class="director-timing">
-                    <strong>{{ (segment.startMs / 1000).toFixed(1) }}–{{ (segment.endMs / 1000).toFixed(1) }}</strong>
+                    <strong>{{ (segment.startMs / 1000).toFixed(1) }}–{{ (segment.endMs / 1000).toFixed(1) }}秒</strong>
                     <span>{{ directorSegmentDuration(segment) }}</span>
                   </div>
                   <div class="director-content">
@@ -2109,11 +2250,11 @@ onBeforeUnmount(stopRealtimeTracking)
                       <span>{{ directorSegmentExtra(segment, 'pace', segmentIndex, selectedRow.directorSegments.length) }}</span>
                       <span v-if="segment.emotionDesc">情绪：{{ segment.emotionDesc }}</span>
                     </div>
-                    <p v-if="segment.visualFocus"><b>画面重点</b>{{ segment.visualFocus }}</p>
-                    <p><b>动作与表演</b>{{ segment.actionDesc || segment.visualFocus || '待补充导演动作' }}</p>
-                    <p v-if="directorSegmentExtra(segment, 'turn', segmentIndex, selectedRow.directorSegments.length)"><b>段落变化</b>{{ directorSegmentExtra(segment, 'turn', segmentIndex, selectedRow.directorSegments.length) }}</p>
-                    <p v-if="directorSegmentExtra(segment, 'endpoint', segmentIndex, selectedRow.directorSegments.length)"><b>结束状态</b>{{ directorSegmentExtra(segment, 'endpoint', segmentIndex, selectedRow.directorSegments.length) }}</p>
-                    <small v-if="segment.audioCue"><Volume2 :size="13" />{{ segment.audioCue }}</small>
+                    <p v-if="segment.visualFocus"><b>画面重点</b>{{ normalizeVisibleTimelineText(segment.visualFocus) }}</p>
+                    <p><b>动作与表演</b>{{ normalizeVisibleTimelineText(segment.actionDesc || segment.visualFocus || '待补充导演动作') }}</p>
+                    <p v-if="directorSegmentExtra(segment, 'turn', segmentIndex, selectedRow.directorSegments.length)"><b>段落变化</b>{{ normalizeVisibleTimelineText(directorSegmentExtra(segment, 'turn', segmentIndex, selectedRow.directorSegments.length)) }}</p>
+                    <p v-if="directorSegmentExtra(segment, 'endpoint', segmentIndex, selectedRow.directorSegments.length)"><b>结束状态</b>{{ normalizeVisibleTimelineText(directorSegmentExtra(segment, 'endpoint', segmentIndex, selectedRow.directorSegments.length)) }}</p>
+                    <small v-if="segment.audioCue"><Volume2 :size="13" />{{ normalizeVisibleTimelineText(segment.audioCue) }}</small>
                   </div>
                   <BaseMenu :items="directorSegmentMenuItems(segmentIndex, selectedRow.directorSegments.length)" @select="handleDirectorSegmentMenu(segmentIndex, $event)">
                     <template #trigger><MoreHorizontal :size="16" /></template>
@@ -2221,7 +2362,7 @@ onBeforeUnmount(stopRealtimeTracking)
       <LivDrawer
         v-if="selectedRow"
         :open="quickReviewVisible"
-        :title="`快速审核 · 镜头 ${String(selectedRow.shotNo).padStart(2, '0')}`"
+        :title="`快速审核 · 镜头 ${rowNumber(selectedRow)}`"
         :description="titleFor(selectedRow)"
         width="md"
         @update:open="value => !value && closeQuickReview()"
@@ -2234,8 +2375,8 @@ onBeforeUnmount(stopRealtimeTracking)
             <img v-else-if="thumbnailFor(selectedRow)" :src="thumbnailFor(selectedRow)" :alt="`${titleFor(selectedRow)}方案参考`" />
             <div v-else><ImageIcon :size="30" /><span>暂无方案参考</span></div>
           </div>
-          <section><h4>镜头目的</h4><p>{{ selectedRow.sceneDescription }}</p></section>
-          <section><h4>导演方案</h4><ol><li v-for="segment in selectedRow.directorSegments" :key="segment.id"><span>{{ (segment.startMs / 1000).toFixed(1) }}–{{ (segment.endMs / 1000).toFixed(1) }}s</span>{{ segment.shotSize }} · {{ segment.cameraMotion }} · {{ segment.actionDesc }}</li></ol></section>
+          <section><h4>镜头目的</h4><p>{{ normalizeVisibleTimelineText(selectedRow.sceneDescription) }}</p></section>
+          <section><h4>导演方案</h4><ol><li v-for="segment in selectedRow.directorSegments" :key="segment.id"><span>{{ (segment.startMs / 1000).toFixed(1) }}–{{ (segment.endMs / 1000).toFixed(1) }}秒</span>{{ segment.shotSize }} · {{ segment.cameraMotion }} · {{ normalizeVisibleTimelineText(segment.actionDesc) }}</li></ol></section>
           <section><h4>使用资产</h4><div class="review-assets"><span v-for="asset in boundAssets(selectedRow)" :key="`${asset.type}-${asset.name}`">{{ assetTypeLabel(asset.type) }} · {{ asset.name }}</span><span v-if="!boundAssets(selectedRow).length" class="warning-text">资产尚未就绪</span></div></section>
           <section><h4>制作预检</h4><div class="preflight-list"><div><CheckCircle2 :size="15" />视频片段时长 {{ selectedRow.durationSec }} 秒</div><div><CheckCircle2 :size="15" />镜头内节奏 {{ selectedRow.directorSegments.length }} 段</div><div :class="{ warning: selectedRow.riskLevel !== 'low' }"><AlertTriangle v-if="selectedRow.riskLevel !== 'low'" :size="15" /><CheckCircle2 v-else :size="15" />{{ riskText(selectedRow) }}</div><div v-if="selectedRow.previsualizationStatus !== 'not_required'" :class="{ warning: selectedRow.previsualizationStatus !== 'succeeded' }"><ImageIcon :size="15" />{{ previsualizationText(selectedRow) }}</div></div></section>
         </div>
@@ -2264,7 +2405,7 @@ onBeforeUnmount(stopRealtimeTracking)
         <template #footer><LivButton variant="secondary" @click="tuningVisible = false">取消</LivButton><LivButton variant="secondary" :loading="actionBusy === 'preview-tuning'" @click="previewTuning"><template #icon><Gauge :size="16" /></template>预览调整结果</LivButton><LivButton variant="primary" :loading="actionBusy === 'apply-tuning'" :disabled="!tuningPreview" @click="applyTuning">应用到当前集</LivButton></template>
       </LivDialog>
 
-      <LivDialog v-model:open="shotTuningVisible" :title="`调整镜头 ${String(selectedRow?.shotNo || 0).padStart(2, '0')}`" description="调整目标时长或补充导演意见，系统将重新编排方案并保留已锁定资产。" width="md">
+      <LivDialog v-model:open="shotTuningVisible" :title="selectedRow ? `调整镜头 ${rowNumber(selectedRow)}` : '调整镜头'" description="调整目标时长或补充导演意见，系统将重新编排方案并保留已锁定资产。" width="md">
         <template #icon><WandSparkles :size="22" /></template>
         <div class="shot-tuning-form">
           <label class="shot-tuning-duration"><span>目标时长</span><BaseSelect v-model="shotTuningDuration" :options="durationOptions" tone="light" full :disabled="actionBusy === 'tune-shot'" /></label>
@@ -2286,7 +2427,7 @@ onBeforeUnmount(stopRealtimeTracking)
         <template #footer><LivButton variant="secondary" :disabled="actionBusy === 'tune-shot'" @click="shotTuningVisible = false">取消</LivButton><LivButton variant="primary" :loading="actionBusy === 'tune-shot'" :disabled="actionBusy === 'tune-shot'" @click="tuneSelectedShot"><template #icon><CreditIcon size="md" class="shot-tuning-credit-icon" /></template>{{ actionBusy === 'tune-shot' ? `正在调整 ${shotTuningElapsedSec} 秒` : '生成调整方案' }}</LivButton></template>
       </LivDialog>
 
-      <LivDrawer v-if="selectedRow" v-model:open="segmentEditorVisible" :title="`编辑镜头 ${String(selectedRow.shotNo).padStart(2, '0')}`" description="结构化导演方案" width="lg">
+      <LivDrawer v-if="selectedRow" v-model:open="segmentEditorVisible" :title="`编辑镜头 ${rowNumber(selectedRow)}`" description="结构化导演方案" width="lg">
         <div class="segment-editor-content">
           <div class="segment-editor-overview">
             <div>
@@ -2478,7 +2619,7 @@ onBeforeUnmount(stopRealtimeTracking)
         </template>
       </LivDialog>
 
-      <LivDialog v-if="deleteConfirmRow" :open="Boolean(deleteConfirmRow)" :title="`删除镜头 ${String(deleteConfirmRow.shotNo).padStart(2, '0')}？`" description="删除后本集镜头会自动重新编号，已有视频版本和任务记录也会从当前方案中移除。" width="sm" @update:open="value => !value && (deleteConfirmRow = null)">
+      <LivDialog v-if="deleteConfirmRow" :open="Boolean(deleteConfirmRow)" :title="`删除镜头 ${rowNumber(deleteConfirmRow)}？`" description="删除后本集镜头会自动重新编号，已有视频版本和任务记录也会从当前方案中移除。" width="sm" @update:open="value => !value && (deleteConfirmRow = null)">
         <template #icon><Trash2 :size="20" /></template>
         <div class="confirm-note confirm-note--danger"><AlertTriangle :size="17" /><span>此操作只影响当前镜头方案，不会删除项目资产。</span></div>
         <template #footer><LivButton variant="secondary" @click="deleteConfirmRow = null">取消</LivButton><LivButton variant="danger" :loading="actionBusy === `delete-shot-${deleteConfirmRow.id}`" @click="confirmDeleteStoryboard"><template #icon><Trash2 :size="16" /></template>确认删除</LivButton></template>
@@ -2487,7 +2628,7 @@ onBeforeUnmount(stopRealtimeTracking)
       <LivDialog
         v-if="selectedRow"
         :open="assetManagerVisible"
-        :title="assetManagerMode === 'list' ? `管理镜头 ${String(selectedRow.shotNo).padStart(2, '0')} 的资产` : assetManagerMode === 'create' ? `新增${assetTypeLabel(assetManagerType)}` : `编辑${assetTypeLabel(assetManagerType)}`"
+        :title="assetManagerMode === 'list' ? `管理镜头 ${rowNumber(selectedRow)} 的资产` : assetManagerMode === 'create' ? `新增${assetTypeLabel(assetManagerType)}` : `编辑${assetTypeLabel(assetManagerType)}`"
         description="绑定使用当前已确认版本；角色可为本镜头选择不同剧情时期的形象和声音。"
         width="xl"
         @update:open="value => !value && closeAssetManager()"
@@ -2603,7 +2744,7 @@ onBeforeUnmount(stopRealtimeTracking)
 </template>
 
 <style scoped>
-.storyboard-workspace { --sb-blue: #1468ff; --sb-blue-soft: #edf4ff; --sb-ink: #111827; --sb-muted: #667085; --sb-line: #dfe7f2; --sb-panel: #fff; --sb-soft: #f7f9fc; width: min(100%, 1560px); min-height: 680px; margin: 0 auto; padding: 18px; border: 1px solid #e4eaf3; border-radius: 8px; background: #fff; color: var(--sb-ink); box-shadow: 0 16px 48px rgba(15, 23, 42, .055); }
+.storyboard-workspace { --sb-blue: #1468ff; --sb-blue-soft: #edf4ff; --sb-ink: #111827; --sb-muted: #667085; --sb-line: #dfe7f2; --sb-panel: #fff; --sb-soft: #f7f9fc; width: min(100%, 1560px); min-height: 680px; margin: 0 auto; padding: 18px; border: 1px solid #dce7f7; border-radius: 12px; background: linear-gradient(155deg, rgba(255,255,255,.98) 0%, rgba(246,250,255,.96) 58%, rgba(241,246,255,.96) 100%); color: var(--sb-ink); box-shadow: 0 18px 54px rgba(37, 76, 142, .09); }
 /* 单镜头页是高频制作工具，使用完整内容宽度，不再套一层居中的浮动大卡片。 */
 .storyboard-workspace--workbench { width: calc(100% + 32px); min-height: calc(100dvh - 130px); margin: -24px -16px -112px; padding: 14px 16px 16px; border: 0; border-radius: 0; background: #f8fafc; box-shadow: none; }
 .workspace-state { min-height: 420px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; color: var(--sb-muted); }
@@ -2612,11 +2753,16 @@ onBeforeUnmount(stopRealtimeTracking)
 .workspace-state--error { color: #c2410c; }
 .segment-title button { display: grid; place-items: center; border: 0; background: transparent; color: inherit; cursor: pointer; }
 .segment-title button:disabled { opacity: .3; cursor: not-allowed; }
-.production-header { display: grid; grid-template-columns: minmax(390px, 1.16fr) minmax(430px, 1fr) minmax(330px, .82fr); gap: 18px; align-items: stretch; padding-bottom: 18px; border-bottom: 1px solid var(--sb-line); }
-.episode-brief { display: flex; gap: 16px; min-width: 0; }
+.production-header { position: relative; display: grid; grid-template-columns: minmax(390px, 1.16fr) minmax(430px, 1fr) minmax(330px, .82fr); gap: 18px; align-items: stretch; padding: 16px; overflow: hidden; border: 1px solid #d7e5fa; border-radius: 10px; background: linear-gradient(120deg, rgba(255,255,255,.98), rgba(244,249,255,.96) 55%, rgba(237,244,255,.94)); box-shadow: 0 10px 28px rgba(43, 88, 158, .07); }
+/* 顶部光晕只做轻量科技氛围，不遮挡剧集信息和操作控件。 */
+.production-header::after { position: absolute; top: -82px; right: 18%; width: 260px; height: 170px; border-radius: 50%; background: radial-gradient(circle, rgba(75, 128, 255, .14), rgba(75, 128, 255, 0) 70%); content: ''; pointer-events: none; }
+.episode-brief { position: relative; z-index: 1; display: flex; gap: 16px; min-width: 0; }
 .episode-cover { flex: 0 0 88px; aspect-ratio: 3 / 4; overflow: hidden; display: flex; align-items: center; justify-content: center; border: 1px solid #c8d6eb; border-radius: 7px; background: #eef4fb; color: #30527f; font-weight: 700; }
 .episode-cover img { width: 100%; height: 100%; object-fit: cover; }
 .episode-copy { min-width: 0; }
+.episode-switcher { width: 112px; max-width: 112px; flex: 0 0 112px; }
+/* BaseSelect 的实际点击区域位于组件内部，单独放大剧集切换器以避免误触。 */
+.episode-switcher :deep(button[role="combobox"]) { width: 112px; min-width: 112px; min-height: 34px; border: 1px solid #bfd2ef !important; border-radius: 7px; background: rgba(255,255,255,.96); padding-inline: 11px 28px; font-size: 12px; font-weight: 750; box-shadow: inset 0 0 0 1px rgba(191,210,239,.18), 0 3px 9px rgba(40, 83, 151, .05); }
 .eyebrow { color: var(--sb-blue); font-size: 12px; font-weight: 700; }
 .episode-copy h2, .workbench-heading h2 { margin: 5px 0 8px; font-size: 22px; line-height: 1.25; }
 .episode-title-row { display: flex; align-items: center; gap: 10px; min-width: 0; }
@@ -2677,7 +2823,14 @@ onBeforeUnmount(stopRealtimeTracking)
 .task-progress > div:first-child span { margin-left: auto; color: var(--sb-muted); }
 .progress-track { height: 4px; margin-top: 9px; overflow: hidden; border-radius: 4px; background: #dde8f8; }
 .progress-track span { display: block; height: 100%; background: var(--sb-blue); transition: width .3s ease; }
-.planning-panel { margin: 16px 0 2px; padding: 16px 18px; border: 1px solid #cbdcff; border-radius: 8px; background: #f7faff; }
+.planning-panel { position: relative; margin: 16px 0 2px; padding: 16px 18px; overflow: hidden; border: 1px solid #bcd4ff; border-radius: 10px; background: linear-gradient(118deg, #f8fbff 0%, #edf4ff 62%, #f6f1ff 100%); box-shadow: inset 0 1px 0 rgba(255,255,255,.9), 0 9px 24px rgba(34, 91, 181, .07); }
+.planning-panel::after { position: absolute; right: -35px; bottom: -74px; width: 220px; height: 160px; border-radius: 50%; background: radial-gradient(circle, rgba(117, 91, 255, .14), rgba(117, 91, 255, 0) 70%); content: ''; pointer-events: none; }
+.planning-panel > * { position: relative; z-index: 1; }
+.planning-interrupted-panel { min-height: 58px; display: flex; align-items: center; justify-content: space-between; gap: 14px; margin: 16px 0 2px; padding: 11px 14px; border: 1px solid #f1c27d; border-radius: 9px; background: linear-gradient(110deg, #fffaf0, #fff5e6); color: #8a570a; }
+.planning-interrupted-panel > div { display: flex; align-items: center; gap: 9px; }
+.planning-interrupted-panel span { font-size: 12px; line-height: 1.55; }
+.planning-interrupted-panel strong { margin-right: 7px; color: #a35d00; font-size: 13px; }
+.planning-retry-button { min-height: 32px; padding: 0 10px; border-radius: 6px; font-size: 12px; white-space: nowrap; }
 .planning-panel__heading { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: center; }
 .planning-icon { width: 40px; height: 40px; display: grid; place-items: center; border-radius: 8px; background: #1468ff; color: #fff; box-shadow: 0 8px 18px rgba(20, 104, 255, .2); }
 .planning-panel__heading > div:nth-child(2) { display: flex; flex-direction: column; gap: 3px; }
@@ -2741,6 +2894,8 @@ onBeforeUnmount(stopRealtimeTracking)
 .shot-card__empty, .viewer__empty, .review-media > div { width: 100%; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 7px; color: #8190a5; font-size: 12px; }
 .shot-check { position: absolute; left: 8px; top: 8px; width: 22px; height: 22px; display: grid; place-items: center; border: 1px solid rgba(255,255,255,.9); border-radius: 4px; background: rgba(255,255,255,.92); color: var(--sb-blue); cursor: pointer; }
 .media-label { position: absolute; right: 8px; bottom: 8px; padding: 3px 6px; border-radius: 4px; background: rgba(16, 24, 40, .76); color: white; font-size: 10px; }
+.media-label--planning { display: inline-flex; align-items: center; gap: 4px; border: 1px solid rgba(255,255,255,.32); background: linear-gradient(110deg, rgba(20,104,255,.9), rgba(108,72,225,.88)); }
+.media-label--interrupted { display: inline-flex; align-items: center; gap: 4px; border: 1px solid rgba(255,255,255,.32); background: rgba(180, 83, 9, .9); }
 .media-label--video { display: flex; align-items: center; gap: 4px; }
 .shot-card__body { min-width: 0; padding: 10px; }
 .shot-title { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
@@ -2755,6 +2910,10 @@ onBeforeUnmount(stopRealtimeTracking)
 .status-chip--running, .status-chip--queued, .status-chip--pending { background: #edf4ff; color: var(--sb-blue); }
 .status-chip--failed, .risk-chip { background: #fff0f0; color: #d13b3b; }
 .status-chip--preview { background: #f3f0ff; color: #6941c6; }
+.status-chip--qa-running { background: #eef4ff; color: #2563eb; }
+.status-chip--qa-passed { background: #eaf9ef; color: #16844b; }
+.status-chip--qa-warning { background: #fff7e8; color: #b45309; }
+.status-chip--qa-manual { background: #fff0f0; color: #c2413b; }
 .risk-chip { margin-left: auto; }
 .selection-bar { position: sticky; bottom: 14px; z-index: 25; width: min(640px, calc(100% - 24px)); min-height: 56px; display: flex; align-items: center; gap: 10px; margin: 18px auto 0; padding: 8px 10px 8px 16px; border: 1px solid #27364d; border-radius: 8px; background: #111827; color: white; box-shadow: 0 12px 34px rgba(15, 23, 42, .22); }
 .selection-bar > div { display: flex; gap: 8px; align-items: center; margin-right: auto; }
@@ -2813,6 +2972,11 @@ onBeforeUnmount(stopRealtimeTracking)
 .filmstrip__heading small { color: var(--sb-muted); font-size: 11px; }
 .filmstrip__status { min-width: 0; display: flex; align-items: center; }
 .filmstrip__status :deep(.u-badge) { max-width: 100%; align-self: flex-start; }
+.director-plan-pending { position: relative; min-height: 112px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; overflow: hidden; border: 1px dashed #9cbcff; border-radius: 8px; background: linear-gradient(135deg, #f7fbff, #eef4ff 58%, #f7f2ff); color: #49627f; text-align: center; }
+.director-plan-pending::before { position: absolute; width: 190px; height: 190px; border-radius: 50%; background: radial-gradient(circle, rgba(61,112,255,.12), rgba(61,112,255,0) 68%); content: ''; pointer-events: none; }
+.director-plan-pending > * { position: relative; z-index: 1; }
+.director-plan-pending strong { color: #215ec8; font-size: 14px; }
+.director-plan-pending span { max-width: 520px; font-size: 12px; line-height: 1.6; }
 .director-list { border: 1px solid var(--sb-line); border-radius: 6px; overflow: hidden; }
 .director-list article { display: grid; grid-template-columns: 88px minmax(0, 1fr) 28px; gap: 10px; align-items: start; padding: 10px; border-bottom: 1px solid var(--sb-line); }
 .director-list article:last-child { border-bottom: 0; }

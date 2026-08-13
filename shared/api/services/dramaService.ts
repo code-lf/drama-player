@@ -91,8 +91,8 @@ export const dramaService = {
     return callApi('drama/estimateAssetGeneration', (adapter) => adapter.estimateDramaAssetGeneration!(projectId, targets))
   },
 
-  async generateWorkspaceAssets(projectId: string, targets: string[], overwrite = false, compileHashes: Record<string, string> = {}) {
-    return callApi('drama/generateWorkspaceAssets', (adapter) => adapter.generateDramaWorkspaceAssets!(projectId, targets, overwrite, compileHashes))
+  async generateWorkspaceAssets(projectId: string, targets: string[], overwrite = false, compileHashes: Record<string, string> = {}, retryFailed = false) {
+    return callApi('drama/generateWorkspaceAssets', (adapter) => adapter.generateDramaWorkspaceAssets!(projectId, targets, overwrite, compileHashes, retryFailed))
   },
 
   async lockWorkspaceAsset(projectId: string, assetType: DramaWorkspaceAssetType, assetKey: string, locked: boolean) {

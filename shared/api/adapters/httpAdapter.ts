@@ -233,6 +233,14 @@ interface BackendStoryboardRowsResponse {
     current_episode_no: number
     episode_statuses: Record<string, string>
     episode_progresses: Record<string, number>
+    episode_stages?: Record<string, {
+      stage?: string
+      progress?: number
+      total_batches?: number
+      completed_batches?: number
+      retryable_nodes?: string[]
+      error_message?: string
+    }>
     generated_counts: Record<string, number>
     expected_counts: Record<string, number>
     model: string
@@ -671,6 +679,8 @@ interface BackendDramaDetailResponse {
       confidence?: number
       updated_at?: string
     }>
+    script_reviews_source_version?: string
+    script_reviews_stale?: boolean
     production_estimate?: {
       roles?: number
       scenes?: number
@@ -1580,6 +1590,19 @@ function mapStoryboardRun(run?: BackendStoryboardRowsResponse['run']): Storyboar
     currentEpisodeNo: run?.current_episode_no || 1,
     episodeStatuses: run?.episode_statuses || {},
     episodeProgresses: run?.episode_progresses || {},
+    episodeStages: Object.fromEntries(Object.entries(run?.episode_stages || {}).map(([key, stage]) => [key, {
+      stage: stage.stage || 'idle',
+      progress: Number(stage.progress || 0),
+      totalBatches: Number(stage.total_batches || 0),
+      completedBatches: Number(stage.completed_batches || 0),
+      totalScenes: Number(stage.total_scenes || 0),
+      completedScenes: Number(stage.completed_scenes || 0),
+      currentNodeLabel: stage.current_node_label || '',
+      errorCode: stage.error_code || '',
+      validationIssues: stage.validation_issues || [],
+      retryableNodes: stage.retryable_nodes || [],
+      errorMessage: stage.error_message || ''
+    }])),
     generatedCounts: run?.generated_counts || {},
     expectedCounts: run?.expected_counts || {},
     style: run?.style || '',
@@ -1928,6 +1951,8 @@ function mapDramaDetail(raw: BackendDramaDetailResponse): DramaProjectDetail {
         episodes: mapDramaScriptReview(scriptReviews.episodes),
         fullText: mapDramaScriptReview(scriptReviews.full_text)
       },
+      scriptReviewsSourceVersion: raw.analysis?.script_reviews_source_version || '',
+      scriptReviewsStale: Boolean(raw.analysis?.script_reviews_stale),
       productionEstimate: {
         roles: Number(raw.analysis?.production_estimate?.roles || 0),
         scenes: Number(raw.analysis?.production_estimate?.scenes || 0),
@@ -1956,6 +1981,9 @@ function mapDramaDetail(raw: BackendDramaDetailResponse): DramaProjectDetail {
         affectedLocations: item.affected_locations || [],
         confidence: Number(item.confidence || 0),
         sourceVersion: item.source_version || '',
+        reviewSourceVersion: item.review_source_version || '',
+        historyReadonly: Boolean(item.history_readonly),
+        archivedInVersion: item.archived_in_version || '',
         originalText: item.original_text || '',
         suggestedText: item.suggested_text || '',
         problemIdentification: item.problem_identification || '',
@@ -2074,6 +2102,19 @@ function mapDramaDetail(raw: BackendDramaDetailResponse): DramaProjectDetail {
       currentEpisodeNo: raw.storyboard_run?.current_episode_no || 1,
       episodeStatuses: raw.storyboard_run?.episode_statuses || {},
       episodeProgresses: raw.storyboard_run?.episode_progresses || {},
+      episodeStages: Object.fromEntries(Object.entries(raw.storyboard_run?.episode_stages || {}).map(([key, stage]) => [key, {
+        stage: stage.stage || 'idle',
+        progress: Number(stage.progress || 0),
+        totalBatches: Number(stage.total_batches || 0),
+        completedBatches: Number(stage.completed_batches || 0),
+        totalScenes: Number(stage.total_scenes || 0),
+        completedScenes: Number(stage.completed_scenes || 0),
+        currentNodeLabel: stage.current_node_label || '',
+        errorCode: stage.error_code || '',
+        validationIssues: stage.validation_issues || [],
+        retryableNodes: stage.retryable_nodes || [],
+        errorMessage: stage.error_message || ''
+      }])),
       generatedCounts: raw.storyboard_run?.generated_counts || {},
       expectedCounts: raw.storyboard_run?.expected_counts || {},
       model: raw.storyboard_run?.model || '',
@@ -2777,9 +2818,9 @@ export const httpAdapter: ApiAdapter = {
     return ok(response)
   },
 
-  async generateDramaWorkspaceAssets(projectId: string, targets: string[], overwrite = false, compileHashes: Record<string, string> = {}) {
+  async generateDramaWorkspaceAssets(projectId: string, targets: string[], overwrite = false, compileHashes: Record<string, string> = {}, retryFailed = false) {
     const response = await request<DramaAssetGenerationRun>(`/drama/projects/${projectId}/assets/generate`, {
-      method: 'POST', body: { targets, overwrite, compile_hashes: compileHashes },
+      method: 'POST', body: { targets, overwrite, compile_hashes: compileHashes, retry_failed: retryFailed },
     })
     return ok(response)
   },
@@ -2989,6 +3030,7 @@ export const httpAdapter: ApiAdapter = {
         audio: payload.audio ?? true,
         overwrite: payload.overwrite ?? true,
         shot_count: payload.shotCount || 12,
+        episode_nos: payload.episodeNos || [],
         row_id: payload.rowId || '',
         role_keys: payload.roleKeys || [],
         scene_keys: payload.sceneKeys || [],
@@ -3223,7 +3265,8 @@ export const httpAdapter: ApiAdapter = {
         style: payload?.style || '',
         provider: payload?.provider || 'alibaba',
         resolution: payload?.resolution || '360p',
-        quality_policy: payload?.qualityPolicy || 'smart'
+        quality_policy: payload?.qualityPolicy || 'smart',
+        episode_nos: payload?.episodeNos || []
       }
     })
     return ok(mapDramaDetail(response))
@@ -3240,6 +3283,19 @@ export const httpAdapter: ApiAdapter = {
         currentEpisodeNo: response.run?.current_episode_no || 1,
         episodeStatuses: response.run?.episode_statuses || {},
         episodeProgresses: response.run?.episode_progresses || {},
+        episodeStages: Object.fromEntries(Object.entries(response.run?.episode_stages || {}).map(([key, stage]) => [key, {
+          stage: stage.stage || 'idle',
+          progress: Number(stage.progress || 0),
+          totalBatches: Number(stage.total_batches || 0),
+          completedBatches: Number(stage.completed_batches || 0),
+          totalScenes: Number(stage.total_scenes || 0),
+          completedScenes: Number(stage.completed_scenes || 0),
+          currentNodeLabel: stage.current_node_label || '',
+          errorCode: stage.error_code || '',
+          validationIssues: stage.validation_issues || [],
+          retryableNodes: stage.retryable_nodes || [],
+          errorMessage: stage.error_message || ''
+        }])),
         generatedCounts: response.run?.generated_counts || {},
         expectedCounts: response.run?.expected_counts || {},
         model: response.run?.model || '',
