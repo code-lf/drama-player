@@ -119,12 +119,6 @@ const segmentDraft = ref<StoryboardDirectorSegment[]>([])
 const advancedSegmentId = ref('')
 const batchEstimate = ref<StoryboardBatchEstimate | null>(null)
 const batchConfirmVisible = ref(false)
-// 声音策略由普通用户选择业务意图，供应商和模型仍由后端黑盒路由。
-const audioMode = ref<'preserve_original' | 'drive_video' | 'none'>('preserve_original')
-const audioAssetId = ref('')
-const audioTrimStartMs = ref(0)
-const audioTrimEndMs = ref<number | null>(null)
-const audioMixMode = ref<'replace' | 'mix'>('replace')
 /** 失败镜头重试的二次确认气泡开关。 */
 const retryFailedPopoverOpen = ref(false)
 const pendingGenerationIds = ref<string[]>([])
@@ -175,6 +169,40 @@ const generationTargetTitle = computed(() => {
   if (rows.length !== 1) return `已选择 ${rows.length} 个视频镜头`
   const row = rows[0]
   return `镜头 ${rowNumber(row)} · ${titleFor(row)}`
+})
+
+/**
+ * 生成确认页只读取资产阶段已经锁定的声音信息，不在临提交时重新选择素材。
+ * ready 表示角色声音引用仍然有效；缺失时仅提示用户返回资产阶段处理，
+ * 避免把内部素材 ID、裁切毫秒和供应商混音参数暴露给普通用户。
+ */
+const generationAudioSummary = computed(() => {
+  const rows = eligibleGenerationRows.value
+  const voiceRequiredRows = rows.filter(row => row.audioIntent.voiceRequired)
+  const readyRows = voiceRequiredRows.filter(row => row.audioIntent.voiceReferenceStatus === 'ready')
+  const speakers = Array.from(new Set(rows.flatMap(row => row.audioIntent.speakers).filter(Boolean)))
+  const cueCount = rows.reduce((total, row) => total + row.directorSegments.filter(segment => Boolean(segment.audioCue)).length, 0)
+
+  if (!voiceRequiredRows.length) {
+    return {
+      status: '无需角色声音',
+      detail: '本次镜头没有角色对白，将沿用导演方案中的环境音与动作音设计。',
+      speakers: '无角色对白',
+      cueCount,
+      warning: false,
+    }
+  }
+
+  const allReady = readyRows.length === voiceRequiredRows.length
+  return {
+    status: allReady ? '资产声音已就绪' : `${voiceRequiredRows.length - readyRows.length} 个镜头缺少声音资产`,
+    detail: allReady
+      ? '生成时自动读取资产阶段已确认的角色声音，不需要在此重复设置。'
+      : '请返回资产管理补齐角色声音；本弹窗不会临时覆盖资产阶段的确认结果。',
+    speakers: speakers.length ? speakers.join('、') : '已按镜头角色绑定',
+    cueCount,
+    warning: !allReady,
+  }
 })
 
 const availableEpisodeNumbers = computed(() => {
@@ -431,8 +459,11 @@ const managedAssets = computed(() => (assetWorkspace.value?.assets || []).filter
 
 const projectResolution = computed(() => String(props.resolution || '720p').toLowerCase())
 const durationOptions = computed<BaseSelectOption[]>(() => {
-  const minDuration = publicVideoCapabilities.value?.minDurationSec ?? 4
-  const maxDuration = publicVideoCapabilities.value?.maxDurationSec ?? 15
+  // 时长选项完全由管理端当前默认视频模型的 limits_json 生成。
+  // 能力接口尚未返回时保持空列表，避免短暂展示一套写死的 4-15 秒假配置。
+  if (!publicVideoCapabilities.value) return []
+  const minDuration = publicVideoCapabilities.value.minDurationSec
+  const maxDuration = publicVideoCapabilities.value.maxDurationSec
   return Array.from({ length: Math.max(1, maxDuration - minDuration + 1) }, (_, index) => ({
     label: `${minDuration + index} 秒`,
     value: String(minDuration + index)
@@ -444,7 +475,8 @@ async function loadPublicVideoCapabilities(): Promise<void> {
     publicVideoCapabilities.value = await dramaService.getPublicVideoCapabilities()
     const values = durationOptions.value.map(item => item.value)
     if (!values.includes(shotTuningDuration.value)) {
-      shotTuningDuration.value = values[0] || '4'
+      // 旧项目时长若超出新模型能力，默认定位到模型配置的最小值，不使用代码常量。
+      shotTuningDuration.value = values[0] || shotTuningDuration.value
     }
   } catch (error) {
     // 能力接口失败时保留 4～15 秒安全边界；服务端仍会做最终兼容性校验。
@@ -951,11 +983,6 @@ async function ensureOverviewEstimate(force = false): Promise<void> {
       episodeNo: currentEpisodeNo.value,
       rowIds: rows.map(row => row.id),
       qualityPolicy: 'smart',
-      audioMode: audioMode.value,
-      audioAssetId: audioAssetId.value,
-      audioTrimStartMs: audioTrimStartMs.value,
-      audioTrimEndMs: audioTrimEndMs.value,
-      audioMixMode: audioMixMode.value,
       resolution: projectResolution.value
     })
   } catch {
@@ -971,11 +998,6 @@ async function ensureRowEstimate(row: StoryboardRow): Promise<void> {
       episodeNo: currentEpisodeNo.value,
       rowIds: [row.id],
       qualityPolicy: 'smart',
-      audioMode: audioMode.value,
-      audioAssetId: audioAssetId.value,
-      audioTrimStartMs: audioTrimStartMs.value,
-      audioTrimEndMs: audioTrimEndMs.value,
-      audioMixMode: audioMixMode.value,
       resolution: projectResolution.value
     })
     rowEstimateCache.value = { ...rowEstimateCache.value, [row.id]: estimate }
@@ -1183,11 +1205,6 @@ async function prepareGeneration(rowIds: string[]): Promise<void> {
       episodeNo: currentEpisodeNo.value,
       rowIds,
       qualityPolicy: qualityPolicy.value,
-      audioMode: audioMode.value,
-      audioAssetId: audioAssetId.value,
-      audioTrimStartMs: audioTrimStartMs.value,
-      audioTrimEndMs: audioTrimEndMs.value,
-      audioMixMode: audioMixMode.value,
       resolution: projectResolution.value
     })
     batchConfirmVisible.value = true
@@ -1222,11 +1239,6 @@ async function startGeneration(): Promise<void> {
       episodeNo: currentEpisodeNo.value,
       rowIds: pendingGenerationIds.value,
       qualityPolicy: qualityPolicy.value,
-      audioMode: audioMode.value,
-      audioAssetId: audioAssetId.value,
-      audioTrimStartMs: audioTrimStartMs.value,
-      audioTrimEndMs: audioTrimEndMs.value,
-      audioMixMode: audioMixMode.value,
       resolution: projectResolution.value,
       idempotencyKey: `${props.projectId}:${currentEpisodeNo.value}:${Date.now()}`
     })
@@ -1564,8 +1576,6 @@ function startEditAsset(profile: DramaAssetProfile): void {
   assetManagerType.value = profile.asset_type
   assetManagerMode.value = 'edit'
   assetEditorProfile.value = profile
-  // 最近编辑的角色声音可直接作为本次生成的候选素材；后端仍会按项目归属再次校验。
-  if (profile.voice?.audio_asset?.id) audioAssetId.value = profile.voice.audio_asset.id
   assetDraft.value = {
     ...profile.data,
     name: profile.name,
@@ -1627,7 +1637,6 @@ async function chooseManagedVersion(profile: DramaAssetProfile, versionId: strin
     const refreshed = assetWorkspace.value.assets.find(item => item.id === profile.id)
     if (refreshed) {
       startEditAsset(refreshed)
-      audioAssetId.value = refreshed.voice?.audio_asset?.id || audioAssetId.value
     }
     showNotice('资产图片版本已切换。')
   } catch (error) {
@@ -2588,7 +2597,7 @@ onBeforeUnmount(stopRealtimeTracking)
         v-model:open="batchConfirmVisible"
         :title="batchEstimate.eligibleRowIds.length ? '确认生成视频' : '暂时无法生成视频'"
         :description="batchEstimate.eligibleRowIds.length ? '确认本次视频片段、总时长与点数。提交后会进入后台队列，排队、生成和完成状态均会在顶部提示。' : '请先处理下方问题，再重新点击生成视频。'"
-        width="md"
+        width="lg"
       >
         <template #icon><CreditIcon size="lg" class="confirm-dialog-credit-icon" /></template>
           <div v-if="batchEstimate.eligibleRowIds.length" class="generation-confirmation">
@@ -2620,38 +2629,42 @@ onBeforeUnmount(stopRealtimeTracking)
             </div>
 
             <div class="generation-credit-summary">
-              <div><span>预计消耗</span><CreditAmount :value="batchEstimate.estimatedCredits" size="md" tone="inherit" /></div>
-              <div><span>当前余额</span><CreditAmount :value="batchEstimate.currentBalance" size="md" tone="inherit" /></div>
+              <div class="generation-credit-card generation-credit-card--cost">
+                <span>预计消耗</span>
+                <CreditAmount :value="batchEstimate.estimatedCredits" size="lg" tone="inherit" />
+                <small>按当前镜头方案预估</small>
+              </div>
+              <div class="generation-credit-card">
+                <span>当前余额</span>
+                <CreditAmount :value="batchEstimate.currentBalance" size="lg" tone="inherit" />
+                <small>{{ batchEstimate.sufficient ? '余额充足，可以开始生成' : '余额不足，请先充值' }}</small>
+              </div>
             </div>
 
-            <div class="generation-audio-options">
-              <div class="generation-audio-options__title"><Volume2 :size="16" /><strong>声音处理方式</strong><span>不展示供应商和模型</span></div>
-              <label>声音策略
-                <select v-model="audioMode">
-                  <option value="preserve_original">保留我的原声（生成后混音）</option>
-                  <option value="drive_video" :disabled="!publicVideoCapabilities?.supportsAudioDrivenVideo">让画面跟随声音（需验证通过）</option>
-                  <option value="none">不使用上传声音</option>
-                </select>
-              </label>
-              <label v-if="audioMode !== 'none'">音频素材 ID
-                <input v-model="audioAssetId" type="text" placeholder="先在角色资产中上传参考音频" />
-              </label>
-              <div v-if="audioMode !== 'none'" class="generation-audio-options__row">
-                <label>开始毫秒<input v-model.number="audioTrimStartMs" type="number" min="0" /></label>
-                <label>结束毫秒<input v-model.number="audioTrimEndMs" type="number" min="0" placeholder="默认到素材末尾" /></label>
-                <label>混音方式
-                  <select v-model="audioMixMode">
-                    <option value="replace">替换模型音轨</option>
-                    <option value="mix">与模型音轨混合</option>
-                  </select>
-                </label>
+            <div class="generation-audio-summary" :class="{ 'generation-audio-summary--warning': generationAudioSummary.warning }">
+              <div class="generation-audio-summary__title">
+                <Volume2 :size="16" />
+                <strong>声音方案</strong>
+                <span>{{ generationAudioSummary.status }}</span>
               </div>
-              <p v-if="audioMode === 'drive_video' && !publicVideoCapabilities?.supportsAudioDrivenVideo" class="generation-audio-options__warning">当前没有通过真实音频输入验证的模型，不能提交声音驱动画面任务。</p>
-              <p v-else-if="audioMode === 'preserve_original'">生成完成后由平台 FFmpeg 按当前镜头时长裁切，短音频自动静音补齐。</p>
+              <div class="generation-audio-summary__grid">
+                <div><span>声音来源</span><strong>资产阶段已确认</strong></div>
+                <div><span>涉及角色</span><strong>{{ generationAudioSummary.speakers }}</strong></div>
+                <div><span>导演声音提示</span><strong>{{ generationAudioSummary.cueCount }} 段</strong></div>
+              </div>
+              <p>{{ generationAudioSummary.detail }}</p>
             </div>
             <div v-if="batchEstimate.costItems.length" class="generation-cost-items">
-              <span>费用明细</span>
-              <p v-for="item in batchEstimate.costItems" :key="`${item.rowId || item.type}-${item.label}`"><span>{{ item.label }}</span><b>{{ item.credits }} 点</b></p>
+              <div class="generation-cost-items__header">
+                <strong>费用明细</strong>
+                <span>共 {{ batchEstimate.costItems.length }} 项</span>
+              </div>
+              <div class="generation-cost-items__list">
+                <p v-for="item in batchEstimate.costItems" :key="`${item.rowId || item.type}-${item.label}`">
+                  <span>{{ item.label }}</span>
+                  <b>{{ item.credits }}<small>点</small></b>
+                </p>
+              </div>
             </div>
             <div v-if="batchEstimate.warnings.length" class="generation-warning-list"><AlertTriangle :size="18" /><div><strong>可以继续生成，但请确认以下风险</strong><p v-for="item in warningSummary" :key="item.reason">{{ item.count }} 个镜头：{{ item.reason }}</p></div></div>
           </div>
@@ -3209,8 +3222,34 @@ onBeforeUnmount(stopRealtimeTracking)
 .generation-confirm-metrics small { margin-left: 3px; color: #344054; font-size: 14px; font-weight: 700; }
 .generation-confirm-metrics span { color: #667085; font-size: 13px; }
 .generation-credit-summary { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-.generation-credit-summary > div { min-height: 46px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; border-radius: 7px; background: #f5f7fa; }
-.generation-credit-summary span { color: #475467; font-size: 13px; font-weight: 650; }
+.generation-credit-card { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 14px; align-items: center; padding: 15px 16px; border: 1px solid #e3eaf4; border-radius: 9px; background: linear-gradient(135deg, #f8fafc 0%, #fff 100%); }
+.generation-credit-card--cost { border-color: #cfe0ff; background: linear-gradient(135deg, #edf4ff 0%, #f8fbff 100%); color: #1768ff; }
+.generation-credit-card > span { color: #475467; font-size: 13px; font-weight: 750; }
+.generation-credit-card > small { grid-column: 1 / -1; color: #7b8799; font-size: 11px; line-height: 1.5; }
+/* 声音在资产阶段确认；生成弹窗只读展示绑定结果，避免同一业务配置出现两个入口。 */
+.generation-audio-summary { display: grid; gap: 12px; padding: 16px; border: 1px solid #dbe7f8; border-radius: 9px; background: #f8fbff; }
+.generation-audio-summary__title { display: flex; align-items: center; gap: 7px; padding-bottom: 10px; border-bottom: 1px solid #e2eaf5; color: #25324a; }
+.generation-audio-summary__title svg { color: #1768ff; }
+.generation-audio-summary__title strong { font-size: 14px; }
+.generation-audio-summary__title span { margin-left: auto; padding: 4px 7px; border-radius: 5px; background: #e7f7ee; color: #16804b; font-size: 11px; font-weight: 750; }
+.generation-audio-summary__grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.generation-audio-summary__grid > div { min-width: 0; display: flex; flex-direction: column; gap: 5px; padding: 10px 11px; border-radius: 7px; background: #fff; }
+.generation-audio-summary__grid span { color: #8491a5; font-size: 11px; font-weight: 650; }
+.generation-audio-summary__grid strong { overflow: hidden; color: #344054; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.generation-audio-summary > p { margin: 0; color: #60718a; font-size: 12px; line-height: 1.6; }
+.generation-audio-summary--warning { border-color: #f2d09d; background: #fffaf1; }
+.generation-audio-summary--warning .generation-audio-summary__title span { background: #fff0d7; color: #9a5c09; }
+/* 费用项数量可能很多，限定滚动区域并让名称、点数各占一列，避免文字堆叠。 */
+.generation-cost-items { overflow: hidden; border: 1px solid #e1e8f2; border-radius: 9px; background: #fff; }
+.generation-cost-items__header { display: flex; align-items: center; justify-content: space-between; padding: 11px 14px; border-bottom: 1px solid #e8edf4; background: #f8fafc; }
+.generation-cost-items__header strong { color: #25324a; font-size: 13px; }
+.generation-cost-items__header span { color: #8491a5; font-size: 11px; font-weight: 650; }
+.generation-cost-items__list { max-height: 190px; overflow-y: auto; padding: 4px 14px; scrollbar-gutter: stable; }
+.generation-cost-items__list p { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 14px; align-items: center; margin: 0; padding: 10px 0; border-bottom: 1px solid #edf1f6; }
+.generation-cost-items__list p:last-child { border-bottom: 0; }
+.generation-cost-items__list p > span { overflow: hidden; color: #526078; font-size: 12px; line-height: 1.5; text-overflow: ellipsis; white-space: nowrap; }
+.generation-cost-items__list p > b { color: #1768ff; font-size: 14px; white-space: nowrap; }
+.generation-cost-items__list p > b small { margin-left: 3px; color: #667085; font-size: 11px; }
 .blocked-list, .generation-warning-list, .confirm-note { display: flex; gap: 10px; margin-top: 12px; padding: 12px; border-radius: 6px; }
 .blocked-list { background: #fff5e8; color: #a15c07; }
 .blocked-list p, .generation-warning-list p { margin: 5px 0 0; font-size: 12px; }
@@ -3218,6 +3257,14 @@ onBeforeUnmount(stopRealtimeTracking)
 .confirm-note { background: #eef8f2; color: #16784a; font-size: 13px; line-height: 1.6; }
 .confirm-dialog--small { width: min(500px, 94vw); }
 .dialog-icon--danger { background: #fff0f0; color: #d14343; }
+
+@media (max-width: 720px) {
+  .generation-credit-summary, .generation-audio-summary__grid { grid-template-columns: 1fr; }
+  .generation-confirm-metrics { grid-template-columns: 1fr; }
+  .generation-confirm-metrics > div { border-right: 0; border-bottom: 1px solid #e7edf5; }
+  .generation-confirm-metrics > div:last-child { border-bottom: 0; }
+  .generation-target { flex-direction: column; gap: 10px; }
+}
 
 .asset-manager-shell { z-index: 95; }
 .asset-manager-dialog { width: min(1120px, 96vw); height: min(760px, 92vh); overflow: hidden; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; border-radius: 8px; background: white; box-shadow: 0 28px 80px rgba(15, 23, 42, .26); }
