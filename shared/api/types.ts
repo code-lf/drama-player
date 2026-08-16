@@ -546,7 +546,16 @@ export interface DramaAssetWorkspace {
   confirmed_snapshot_id: string
   confirmed_content_hash: string
   asset_compiler_version: number
-  preparation_status: string
+  preparation_status: 'local_ready' | 'preparing' | 'ready' | 'failed'
+  preparation_run_id: string
+  preparation_model_code: string
+  preparation_error_message: string
+  /** Worker 持久化的真实业务检查点；刷新页面后仍能继续展示当前阶段。 */
+  preparation_stage: string
+  preparation_stage_label: string
+  preparation_progress: number
+  preparation_message: string
+  preparation_updated_at: string
   visual_bible: DramaVisualBible
   assets: DramaAssetProfile[]
   readiness: {
@@ -555,6 +564,35 @@ export interface DramaAssetWorkspace {
     locked_total: number
     blockers: string[]
   }
+}
+
+/** 资产专用提炼只在用户确认本报价后调用模型；确认剧本和加载工作台均不扣点。 */
+export interface DramaAssetPreparationEstimate {
+  status: 'local_ready' | 'preparing' | 'ready' | 'failed'
+  asset_count: number
+  requires_model_call: boolean
+  cached: boolean
+  required_credits: number
+  current_balance: number
+  sufficient: boolean
+  model_code: string
+  confirmed_content_hash: string
+  summary: string
+  cost_items: Array<{
+    label: string
+    quantity: number
+    unit: string
+    credits: number
+    estimated_tokens?: number
+  }>
+}
+
+export interface DramaAssetPreparationRun {
+  run_id: string
+  status: 'preparing' | 'ready'
+  asset_count: number
+  required_credits: number
+  cached: boolean
 }
 
 export interface DramaAssetGenerationEstimate {
@@ -642,6 +680,8 @@ export interface ApiAdapter {
   getDramaProject(projectId: string): Promise<ApiResponse<DramaProjectDetail>>
   // Mock 适配器仍可运行旧页面，因此新资产接口先声明为可选；真实 HTTP 适配器已完整实现。
   getDramaAssetWorkspace?(projectId: string): Promise<ApiResponse<DramaAssetWorkspace>>
+  estimateDramaAssetPreparation?(projectId: string): Promise<ApiResponse<DramaAssetPreparationEstimate>>
+  prepareDramaAssetWorkspace?(projectId: string, force?: boolean): Promise<ApiResponse<DramaAssetPreparationRun>>
   updateDramaVisualBible?(projectId: string, payload: Omit<DramaVisualBible, 'id' | 'version_no' | 'source_script_version' | 'status'>): Promise<ApiResponse<DramaAssetWorkspace>>
   createDramaAssetProfile?(projectId: string, payload: { asset_type: DramaWorkspaceAssetType; name: string; is_required?: boolean; data?: Record<string, unknown> }): Promise<ApiResponse<DramaAssetWorkspace>>
   updateDramaAssetProfile?(projectId: string, assetType: DramaWorkspaceAssetType, assetKey: string, payload: { name?: string; is_required?: boolean; production_status?: DramaWorkspaceAssetStatus; selected_asset_id?: string; data?: Record<string, unknown> }): Promise<ApiResponse<DramaAssetWorkspace>>
@@ -692,6 +732,10 @@ export interface ApiAdapter {
   updateStoryboardDirectorSegments(projectId: string, rowId: string, payload: StoryboardDirectorSegmentsPayload): Promise<ApiResponse<StoryboardWorkspace>>
   tuneStoryboardShot(projectId: string, rowId: string, payload: StoryboardShotTuningPayload): Promise<ApiResponse<StoryboardWorkspace>>
   generateStoryboardPrevisualization(projectId: string, rowId: string): Promise<ApiResponse<StoryboardWorkspace>>
+  /** 上传/替换分镜的首帧或尾帧参考图，返回刷新后的完整工作区。 */
+  uploadStoryboardFrameReference(projectId: string, rowId: string, slot: 'first' | 'last', file: File): Promise<ApiResponse<StoryboardWorkspace>>
+  /** 仅解除当前槽位绑定，历史素材仍由后端保留用于审计。 */
+  clearStoryboardFrameReference(projectId: string, rowId: string, slot: 'first' | 'last'): Promise<ApiResponse<StoryboardWorkspace>>
   reviewStoryboards(projectId: string, payload: StoryboardReviewBatchPayload): Promise<ApiResponse<StoryboardWorkspace>>
   previewStoryboardTuning(projectId: string, payload: StoryboardTuningPayload): Promise<ApiResponse<StoryboardTuningPreview>>
   applyStoryboardTuning(projectId: string, payload: StoryboardTuningPayload): Promise<ApiResponse<StoryboardWorkspace>>

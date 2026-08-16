@@ -45,6 +45,8 @@ import type {
   DramaAssetGeneratePayload,
   DramaAssetGenerationEstimate,
   DramaAssetGenerationRun,
+  DramaAssetPreparationEstimate,
+  DramaAssetPreparationRun,
   DramaAssetConsistencyEstimate,
   DramaAssetConsistencyRun,
   DramaAssetRepairEstimate,
@@ -2778,6 +2780,21 @@ export const httpAdapter: ApiAdapter = {
     return ok(response)
   },
 
+  async estimateDramaAssetPreparation(projectId: string) {
+    const response = await request<DramaAssetPreparationEstimate>(
+      `/drama/projects/${projectId}/asset-workspace/preparation/estimate`,
+    )
+    return ok(response)
+  },
+
+  async prepareDramaAssetWorkspace(projectId: string, force = false) {
+    const response = await request<DramaAssetPreparationRun>(
+      `/drama/projects/${projectId}/asset-workspace/prepare`,
+      { method: 'POST', body: { force } },
+    )
+    return ok(response)
+  },
+
   async updateDramaVisualBible(
     projectId: string,
     payload: Omit<DramaVisualBible, 'id' | 'version_no' | 'source_script_version' | 'status'>,
@@ -3361,6 +3378,25 @@ export const httpAdapter: ApiAdapter = {
     const response = await request<BackendStoryboardWorkspaceResponse>(`/drama/projects/${projectId}/storyboards/${rowId}/previsualization`, {
       method: 'POST'
     })
+    return ok(mapStoryboardWorkspace(response))
+  },
+
+  async uploadStoryboardFrameReference(projectId: string, rowId: string, slot: 'first' | 'last', file: File) {
+    // 图片使用 multipart/form-data 上传，不能走普通 JSON body；浏览器会自动补充 boundary。
+    const body = new FormData()
+    body.append('file', file)
+    const response = await request<BackendStoryboardWorkspaceResponse>(
+      `/drama/projects/${projectId}/storyboards/${rowId}/frames/${slot}`,
+      { method: 'POST', body }
+    )
+    return ok(mapStoryboardWorkspace(response))
+  },
+
+  async clearStoryboardFrameReference(projectId: string, rowId: string, slot: 'first' | 'last') {
+    const response = await request<BackendStoryboardWorkspaceResponse>(
+      `/drama/projects/${projectId}/storyboards/${rowId}/frames/${slot}`,
+      { method: 'DELETE' }
+    )
     return ok(mapStoryboardWorkspace(response))
   },
 

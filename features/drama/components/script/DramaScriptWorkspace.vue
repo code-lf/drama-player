@@ -12,6 +12,7 @@ import type {
 import { useAccountStore } from '~/features/billing/store/useAccountStore'
 import { dramaService } from '~/shared/api/services/dramaService'
 import { ApiClientError } from '~/shared/api/errors'
+import type { DramaAssetPreparationEstimate } from '~/shared/api/types'
 import LivButton from '~/components/liv-ui/LivButton.vue'
 import LivDialog from '~/components/liv-ui/LivDialog.vue'
 import LivDrawer from '~/components/liv-ui/LivDrawer.vue'
@@ -209,7 +210,8 @@ const props = defineProps<{
   retryAnalysisNodeAction: (nodeKey: string) => Promise<void> | void
   regenerateCoverAction: () => Promise<void> | void
   changeIntentModeAction: (mode: DramaIntentMode) => Promise<void> | void
-  // 当前确认接口会同步准备资产候选并冻结生产快照；专业体检继续由后台独立运行。
+  // 子组件会在“剧本已冻结 + 提炼任务已安全入队（或缓存已就绪）”后进入资产阶段。
+  // 后续真实进度由资产页承接；专业体检仍可在后台独立运行，不阻塞资产生产主链路。
   confirmScriptAction: (confirmedDetail?: DramaProjectDetail) => Promise<void> | void
 }>()
 
@@ -890,9 +892,64 @@ async function saveCurrentScene(snapshot = buildCurrentSceneSaveSnapshot()): Pro
   }
 }
 
+/**
+ * 报价确认完成后立即进入资产步骤：如果命中缓存就直接展示完整工作台；如果刚进入队列，
+ * 资产页负责展示 Worker 的真实阶段。这里不再把用户锁在剧本页的等待弹窗中。
+ */
+async function enterAssetWorkspaceAfterSubmit(options: { cached?: boolean; preparing?: boolean } = {}): Promise<void> {
+  assetPreparationDialogVisible.value = false
+  assetPreparationSubmitBusy.value = false
+  assetTransitionPhase.value = 'entering'
+  await accountStore.refreshProfile().catch(() => undefined)
+  toast.add({
+    title: options.preparing ? '资产资料提炼已开始' : '完整资产资料已就绪',
+    description: options.preparing
+      ? '正在进入资产制作，你可以在资产页查看每个真实执行阶段和当前进度。'
+      : options.cached
+      ? '当前剧本版本已命中提炼缓存，本次不重复扣点，正在进入资产制作。'
+      : '人物、场景和道具的制作资料已完成提炼，正在进入资产制作。',
+    color: 'success',
+    icon: 'i-lucide-circle-check',
+    close: true,
+    duration: 4200,
+  })
+  emit('refresh')
+  await props.confirmScriptAction(serverOptimizedDetail.value || undefined)
+}
+
+/** 用户在费用弹窗中明确确认后，才提交模型任务和扣点。 */
+async function confirmAssetPreparation(): Promise<void> {
+  const estimate = assetPreparationEstimate.value
+  if (!estimate || !estimate.sufficient || assetPreparationSubmitBusy.value) return
+  assetPreparationSubmitBusy.value = true
+  assetPreparationErrorMessage.value = ''
+  assetTransitionPhase.value = 'extracting'
+  try {
+    const result = await dramaService.prepareAssetWorkspace(projectId.value, estimate.status === 'failed')
+    await accountStore.refreshProfile().catch(() => undefined)
+    if (result.status === 'ready') {
+      await enterAssetWorkspaceAfterSubmit({ cached: result.cached })
+      return
+    }
+    // POST 成功代表扣点、任务和 queued 状态已经在同一事务落库，可以安全切入资产页观察进度。
+    await enterAssetWorkspaceAfterSubmit({ preparing: true })
+  } catch (error) {
+    console.error('[script-stage] 提交完整资产资料提炼失败：', error)
+    assetPreparationDialogState.value = 'failed'
+    assetPreparationSubmitBusy.value = false
+    assetTransitionPhase.value = 'idle'
+    assetPreparationErrorMessage.value = getOptimizationErrorMessage(error)
+  }
+}
+
+function updateAssetPreparationDialog(open: boolean): void {
+  assetPreparationDialogVisible.value = open
+  if (!open) assetTransitionPhase.value = 'idle'
+}
+
 async function confirmCurrentScriptVersion() {
-  // 网络响应期间禁止重复确认，并为用户提供明确的处理中状态。
-  if (confirmScriptBusy.value) return
+  // 保存、冻结和报价期间禁止重复确认；报价接口本身不调用模型、不扣积分。
+  if (confirmScriptBusy.value || assetPreparationSubmitBusy.value) return
   confirmScriptBusy.value = true
   try {
     if (sceneAutoSaveTimer.value) {
@@ -900,34 +957,37 @@ async function confirmCurrentScriptVersion() {
       sceneAutoSaveTimer.value = null
     }
 
-    // 从保存草稿开始就锁定确认按钮，避免慢网络下重复点击产生两次确认请求。
-    assetTransitionPhase.value = hasPendingSceneDrafts.value ? 'saving' : 'preparing'
+    assetTransitionPhase.value = hasPendingSceneDrafts.value ? 'saving' : 'freezing'
     if (hasPendingSceneDrafts.value) {
       const saved = await saveCurrentScene()
       if (!saved) return
     }
-    assetTransitionPhase.value = 'preparing'
-    // 进入资产前由后端锁定正式版本与分析快照，后续角色、场景、道具和分镜只读这份快照。
+    assetTransitionPhase.value = 'freezing'
+    // 先冻结生产快照，后续报价与专用提炼始终绑定同一个剧本版本，防止边编辑边扣费。
     serverOptimizedDetail.value = await dramaService.confirmScriptVersion(projectId.value)
-    assetTransitionPhase.value = 'entering'
-    toast.add({
-      title: '剧本版本已确认',
-      description: props.currentAnalysisRun.reviewsReady
-        ? '已冻结当前剧本与分析快照，正在进入资产制作。'
-        : '已冻结当前剧本与分析快照，体检将继续在后台运行。',
-      color: 'success',
-      icon: 'i-lucide-circle-check',
-      close: true,
-      duration: 4200,
-    })
-    emit('refresh')
-    // 把确认接口返回的最新详情直接交给父级，避免父级刷新请求尚未完成时先切入资产页，
-    // 导致资产工作台短暂读取旧的未冻结快照。
-    await props.confirmScriptAction(serverOptimizedDetail.value || undefined)
+    assetTransitionPhase.value = 'quoting'
+    assetPreparationErrorMessage.value = ''
+    assetPreparationEstimate.value = await dramaService.estimateAssetPreparation(projectId.value)
+
+    const estimate = assetPreparationEstimate.value
+    // 同一内容哈希已提炼完成时直接复用；没有识别出资产时也没有必要制造一个 0 点确认弹窗。
+    if (estimate.status === 'ready' || !estimate.requires_model_call) {
+      await enterAssetWorkspaceAfterSubmit({ cached: estimate.status === 'ready' })
+      return
+    }
+
+    // 已经有任务在跑时不再弹重复报价，直接回到资产页续看同一个 Run 的实时阶段。
+    if (estimate.status === 'preparing') {
+      await enterAssetWorkspaceAfterSubmit({ preparing: true })
+    } else {
+      assetPreparationDialogVisible.value = true
+      assetPreparationDialogState.value = estimate.status === 'failed' ? 'failed' : 'quote'
+      assetTransitionPhase.value = 'idle'
+    }
   } catch (error) {
-    console.error('[script-stage] 确认剧本版本失败：', error)
+    console.error('[script-stage] 确认剧本版本或获取资产提炼报价失败：', error)
     toast.add({
-      title: '剧本版本未确认',
+      title: '暂时无法进入资产制作',
       description: getOptimizationErrorMessage(error),
       color: 'error',
       icon: 'i-lucide-circle-alert',
@@ -936,7 +996,7 @@ async function confirmCurrentScriptVersion() {
     })
   } finally {
     confirmScriptBusy.value = false
-    assetTransitionPhase.value = 'idle'
+    if (!assetPreparationSubmitBusy.value && !assetPreparationDialogVisible.value) assetTransitionPhase.value = 'idle'
   }
 }
 
@@ -2187,25 +2247,38 @@ const isCurrentReviewAutoBackfilling = computed(() => (
   currentReviewNode.value?.autoBackfill === true
   && ['queued', 'running'].includes(currentReviewNode.value?.status || '')
 ))
-// 基础结构完成即可进入资产；候选整理和快照冻结由点击确认接口同步完成。
+// 基础结构完成即可发起确认；真正进入资产阶段前还必须完成专用资产资料提炼。
 const canConfirmScriptVersion = computed(() => props.currentAnalysisRun.structureReady)
 const confirmScriptBusy = ref(false)
-type AssetTransitionPhase = 'idle' | 'saving' | 'preparing' | 'entering'
+type AssetTransitionPhase = 'idle' | 'saving' | 'freezing' | 'quoting' | 'extracting' | 'entering'
 const assetTransitionPhase = ref<AssetTransitionPhase>('idle')
+type AssetPreparationDialogState = 'quote' | 'failed'
+const assetPreparationDialogVisible = ref(false)
+const assetPreparationDialogState = ref<AssetPreparationDialogState>('quote')
+const assetPreparationEstimate = ref<DramaAssetPreparationEstimate | null>(null)
+const assetPreparationSubmitBusy = ref(false)
+const assetPreparationErrorMessage = ref('')
 const assetTransitionSteps = computed(() => {
-  const phaseOrder: Record<Exclude<AssetTransitionPhase, 'idle'>, number> = { saving: 0, preparing: 1, entering: 3 }
+  const phaseOrder: Record<Exclude<AssetTransitionPhase, 'idle'>, number> = {
+    saving: 0,
+    freezing: 1,
+    quoting: 2,
+    extracting: 2,
+    entering: 3,
+  }
   const currentIndex = assetTransitionPhase.value === 'idle' ? -1 : phaseOrder[assetTransitionPhase.value]
   return [
     { label: '保存当前编辑', state: currentIndex > 0 ? 'done' : currentIndex === 0 ? 'running' : 'pending' },
-    // 候选整理与快照冻结由同一个后端事务完成，因此在等待确认接口时同时展示为进行中。
-    { label: '整理角色/场景/道具候选', state: currentIndex > 1 ? 'done' : currentIndex === 1 ? 'running' : 'pending' },
     { label: '冻结当前剧本版本', state: currentIndex > 1 ? 'done' : currentIndex === 1 ? 'running' : 'pending' },
+    { label: assetTransitionPhase.value === 'quoting' ? '核算提炼费用' : '提炼完整资产资料', state: currentIndex > 2 ? 'done' : currentIndex === 2 ? 'running' : 'pending' },
     { label: '进入资产制作', state: currentIndex === 3 ? 'running' : 'pending' },
   ]
 })
 const confirmScriptButtonLabel = computed(() => {
   if (assetTransitionPhase.value === 'saving') return '正在保存当前编辑…'
-  if (assetTransitionPhase.value === 'preparing') return '正在整理资产候选并冻结版本…'
+  if (assetTransitionPhase.value === 'freezing') return '正在冻结当前剧本版本…'
+  if (assetTransitionPhase.value === 'quoting') return '正在核算资产提炼费用…'
+  if (assetTransitionPhase.value === 'extracting') return '正在提炼完整资产资料…'
   if (assetTransitionPhase.value === 'entering') return '正在进入资产制作…'
   if (!canConfirmScriptVersion.value) return '正在解析剧本结构…'
   if (!props.currentAnalysisRun.reviewsReady) return '进入资产制作（体检将在后台继续）'
@@ -4180,16 +4253,16 @@ defineExpose({ openAllSuggestions })
             </li>
           </ol>
           <p v-else class="text-xs font-medium text-[#64748b]">
-            角色、场景、道具识别费用已包含在剧本解析中；本步骤仅整理并冻结候选：<b class="text-[#059669]">0 点</b>
+            确认剧本版本本身不扣点；完整资产资料将按当前模型和识别出的资产数量报价，确认费用后才开始提炼。
           </p>
-          <span :title="canConfirmScriptVersion ? '将整理角色、场景、道具候选并冻结当前剧本版本。' : '基础剧本结构完成后即可进入资产制作。'">
+          <span :title="canConfirmScriptVersion ? '冻结当前剧本版本，核算完整资产资料提炼费用，确认后再进入资产制作。' : '基础剧本结构完成后即可确认版本。'">
             <button
               type="button"
               class="flex h-11 w-[min(460px,calc(100vw-40px))] items-center justify-center gap-2 rounded-[10px] bg-[#0f67ff] px-5 text-sm font-semibold text-white shadow-[0_8px_22px_rgba(15,103,255,0.18)] disabled:cursor-not-allowed disabled:bg-[#94a3b8] disabled:shadow-none"
-              :disabled="sceneSaveBusy || confirmScriptBusy || !canConfirmScriptVersion"
+              :disabled="sceneSaveBusy || confirmScriptBusy || assetPreparationSubmitBusy || !canConfirmScriptVersion"
               @click="confirmCurrentScriptVersion"
             >
-              <!-- 该确认只做本地候选整理和快照冻结，不调用模型、不扣积分。 -->
+              <!-- 第一次点击只保存并冻结版本、读取报价；模型调用和扣点必须经过下一层费用确认。 -->
               {{ confirmScriptButtonLabel }} <ArrowRight v-if="canConfirmScriptVersion && !confirmScriptBusy" class="h-4 w-4" />
             </button>
           </span>
@@ -4198,6 +4271,61 @@ defineExpose({ openAllSuggestions })
     </template>
 
     <Teleport to="body">
+      <LivDialog
+        v-if="assetPreparationEstimate"
+        :open="assetPreparationDialogVisible"
+        title="确认生成完整资产资料"
+        description="后续角色图、场景图、道具图与分镜都依赖这份资料；确认后会立即进入资产制作，并在那里实时展示提炼阶段。"
+        width="sm"
+        @update:open="updateAssetPreparationDialog"
+      >
+        <div class="space-y-4">
+          <div class="grid grid-cols-2 overflow-hidden rounded-[14px] border border-[#dbe7f7] bg-[#f8fbff]">
+            <div class="border-r border-[#dbe7f7] p-4">
+              <p class="text-xs text-[#64748b]">预计消耗</p>
+              <p class="mt-1 flex items-center gap-1 text-2xl font-bold text-[#0f67ff]"><Zap class="h-5 w-5" />{{ assetPreparationEstimate.required_credits }} <span class="text-sm font-medium">点</span></p>
+            </div>
+            <div class="p-4">
+              <p class="text-xs text-[#64748b]">当前余额</p>
+              <p class="mt-1 text-2xl font-bold text-[#0f172a]">{{ assetPreparationEstimate.current_balance }} <span class="text-sm font-medium">点</span></p>
+            </div>
+          </div>
+
+          <div class="rounded-[14px] border border-[#dbe7f7] p-4 text-sm leading-6 text-[#475569]">
+            <p class="font-semibold text-[#0f172a]">本次提炼 {{ assetPreparationEstimate.asset_count }} 项资产</p>
+            <p class="mt-1">{{ assetPreparationEstimate.summary }}</p>
+            <ul class="mt-3 list-disc space-y-1 pl-5">
+              <li>从已确认剧本中核验年龄、身份、外观等事实，并保留原文出处</li>
+              <li>区分固定设定与淋湿、受伤、换装、强化前后等剧情状态</li>
+              <li>单独标记美术补全与推断，避免把模型猜测写成剧本事实</li>
+              <li>形成后续生图、质检和分镜可以稳定复用的统一资产资料</li>
+            </ul>
+          </div>
+
+          <details v-if="assetPreparationEstimate.cost_items.length" class="rounded-[12px] border border-[#e2e8f0] bg-white px-4 py-3 text-sm">
+            <summary class="cursor-pointer font-medium text-[#334155]">查看费用明细</summary>
+            <div v-for="item in assetPreparationEstimate.cost_items" :key="item.label" class="mt-3 flex items-center justify-between border-t border-[#edf2f7] pt-3 text-[#64748b]">
+              <span>{{ item.label }} · {{ item.quantity }} {{ item.unit }}</span><b class="text-[#0f172a]">{{ item.credits }} 点</b>
+            </div>
+          </details>
+
+          <div v-if="assetPreparationDialogState === 'failed' || assetPreparationErrorMessage" class="flex gap-2 rounded-[12px] border border-[#fecdd3] bg-[#fff6f7] p-3 text-sm leading-6 text-[#be123c]">
+            <AlertTriangle class="mt-0.5 h-4 w-4 shrink-0" />
+            <span>{{ assetPreparationErrorMessage || '上一次提炼未完成，失败任务积分已退回；确认后可按当前报价重新提炼。' }}</span>
+          </div>
+          <div v-if="!assetPreparationEstimate.sufficient" class="rounded-[12px] border border-[#fed7aa] bg-[#fffaf0] p-3 text-sm text-[#c2410c]">
+            当前积分不足，还差 {{ Math.max(0, assetPreparationEstimate.required_credits - assetPreparationEstimate.current_balance) }} 点，请充值后再继续。
+          </div>
+        </div>
+        <template #footer>
+          <LivButton variant="secondary" :disabled="assetPreparationSubmitBusy" @click="updateAssetPreparationDialog(false)">暂不进入</LivButton>
+          <LivButton variant="primary" :loading="assetPreparationSubmitBusy" :disabled="!assetPreparationEstimate.sufficient" @click="confirmAssetPreparation">
+            <template #icon><Zap :size="16" /></template>
+            {{ assetPreparationEstimate.sufficient ? `${assetPreparationDialogState === 'failed' ? '重新提炼' : '确认并提炼'} · ${assetPreparationEstimate.required_credits} 点` : '积分不足' }}
+          </LivButton>
+        </template>
+      </LivDialog>
+
       <LivDialog :open="modeDialogVisible" title="调整内容模式" description="切换后将重新执行内容结构分析、人物关系识别、分集节奏分析与 AI 体检。" width="md" @update:open="modeDialogVisible = $event">
           <p class="mt-4 text-sm text-[#475569]">当前识别模式：<span class="rounded-full bg-[#e8f1ff] px-2 py-1 font-semibold text-[#0f67ff]">{{ modeLabel }}</span></p>
           <div class="mt-5 space-y-3">

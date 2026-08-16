@@ -3,7 +3,7 @@ import {
   AlertTriangle, BriefcaseBusiness, Check, CircleHelp, Clock3,
   Image as ImageIcon, Layers3, LockKeyhole, Maximize2, MoreHorizontal, Mountain,
   Mic2, Music2, Plus, RefreshCw, Search, ShieldCheck, SunMedium, Trash2, Unlock, Upload,
-  UserRound, Users, Volume2, WandSparkles, X,
+  UserRound, Users, Volume2, X,
 } from '@lucide/vue'
 import { useAuthStore } from '~/features/auth/store/useAuthStore'
 import { dramaService } from '~/shared/api/services/dramaService'
@@ -18,6 +18,7 @@ import LivDialog from '~/components/liv-ui/LivDialog.vue'
 import type {
   DramaAssetConsistencyEstimate,
   DramaAssetGenerationEstimate,
+  DramaAssetPreparationEstimate,
   DramaAssetProfile,
   DramaAssetWorkspace,
   DramaVisualBible,
@@ -47,6 +48,11 @@ const actionBusy = ref('')
 const errorMessage = ref('')
 // 生成确认弹窗使用独立错误状态：提交失败时弹窗继续保留，用户能看到原因并直接重试。
 const generationErrorMessage = ref('')
+// 完整资料失败后的重试仍然先报价再扣点；不能因为用户已在资产页就绕过费用确认。
+const preparationRetryEstimate = ref<DramaAssetPreparationEstimate | null>(null)
+const showPreparationRetry = ref(false)
+const preparationRetryBusy = ref('')
+const preparationRetryError = ref('')
 const showBibleEditor = ref(false)
 const showEstimate = ref(false)
 const estimate = ref<DramaAssetGenerationEstimate | null>(null)
@@ -190,6 +196,9 @@ const currentStats = computed(() => {
 })
 
 const selectedProfiles = computed(() => allAssets.value.filter(item => selectedKeys.value.includes(profileTarget(item))))
+// 记录“请求正在提交、但后端状态还没来得及回传”的资产，补齐 HTTP 提交到 queued 状态之间的短暂空档。
+// 如果只观察 production_status，用户快速连点时会在这几百毫秒内重复提交同一项任务。
+const submittingGenerationTargets = ref<string[]>([])
 const selectionTargets = computed(() => selectedProfiles.value
   .filter(item => ['candidate', 'planned', 'failed', 'stale'].includes(item.production_status))
   .map(profileTarget))
@@ -204,6 +213,13 @@ const lockableSelectedProfiles = computed(() => selectedProfiles.value.filter(it
 ))
 const unlockedProfiles = computed(() => allAssets.value.filter(item => item.production_status !== 'locked'))
 const lockedProfiles = computed(() => allAssets.value.filter(item => item.production_status === 'locked'))
+// 顶部“一键锁定”只处理已经具备当前图片、且主生图任务已结束的资产。
+// 未生成的候选资产会被明确跳过，不能因为其中一项没图片就卡死其余全部已完成资产。
+const lockableAllProfiles = computed(() => unlockedProfiles.value.filter(item =>
+  Boolean(item.selected_asset_id)
+  && !['queued', 'generating'].includes(item.production_status)
+  && Boolean(workspace.value && item.visual_bible_version_id === workspace.value.visual_bible.id)
+))
 const allLockBlockers = computed(() => {
   const candidates = unlockedProfiles.value
   const missingImages = candidates.filter(item => !item.selected_asset_id).length
@@ -216,16 +232,18 @@ const allLockBlockers = computed(() => {
   if (staleVisual) reasons.push(`${staleVisual} 项使用旧视觉基准`)
   return reasons
 })
-const canLockAll = computed(() => unlockedProfiles.value.length > 0 && allLockBlockers.value.length === 0)
-const batchLockState = computed(() => unlockedProfiles.value.length > 0)
-const batchLockLabel = computed(() => batchLockState.value ? '一键锁定全部' : '一键取消锁定')
+const canLockAll = computed(() => lockableAllProfiles.value.length > 0)
+// 只要还有可锁定图片就优先显示锁定；全部可用图片锁完后，按钮自然切换为批量解除锁定。
+const batchLockState = computed(() => lockableAllProfiles.value.length > 0)
+const batchLockLabel = computed(() => batchLockState.value ? '一键锁定已生成' : '一键取消锁定')
 const batchLockTooltip = computed(() => {
   if (!batchLockState.value) {
     return lockedProfiles.value.length ? `解除项目内全部 ${lockedProfiles.value.length} 项已锁定资产` : '当前没有可操作资产'
   }
-  return canLockAll.value
-    ? `锁定项目内全部 ${unlockedProfiles.value.length} 项未锁定资产`
-    : (allLockBlockers.value.join('；') || '当前没有可锁定资产')
+  const skipped = Math.max(0, unlockedProfiles.value.length - lockableAllProfiles.value.length)
+  return skipped
+    ? `锁定当前已生成的 ${lockableAllProfiles.value.length} 项；另有 ${skipped} 项未就绪，将自动跳过`
+    : `锁定项目内全部 ${lockableAllProfiles.value.length} 项已生成资产`
 })
 const riskyPendingLockProfiles = computed(() => pendingLockProfiles.value.filter(item =>
   item.consistency.status === 'succeeded'
@@ -235,7 +253,56 @@ const riskyPendingLockProfiles = computed(() => pendingLockProfiles.value.filter
 const hasRunningAssets = computed(() => allAssets.value.some(item =>
   ['queued', 'generating'].includes(item.production_status)
   || ['queued', 'running'].includes(item.consistency?.status),
-))
+) || workspace.value?.preparation_status === 'preparing')
+
+/**
+ * 资产初始化页展示的是 Worker 已持久化的真实检查点。
+ * validating 与 repairing 共用“质量校验”大阶段，但会显示后端传回的具体说明，
+ * 不根据等待秒数伪造供应商内部进度。
+ */
+const preparationStageIndex = computed(() => ({
+  queued: 0,
+  collecting_evidence: 1,
+  model_extracting: 2,
+  validating: 3,
+  repairing: 3,
+  merging: 4,
+  ready: 5,
+}[workspace.value?.preparation_stage || 'queued'] ?? 0))
+const preparationSteps = computed(() => [
+  { key: 'queued', label: '任务排队', detail: '积分与任务已安全落库' },
+  { key: 'collecting_evidence', label: '整理剧本证据', detail: '汇总人物、场景、道具原文' },
+  { key: 'model_extracting', label: 'AI 专用提炼', detail: '拆分事实、固定设定与状态' },
+  { key: 'validating', label: '质量与证据校验', detail: workspace.value?.preparation_stage === 'repairing' ? '发现问题，正在免费系统修复' : '核验结构、出处和资产覆盖' },
+  { key: 'merging', label: '合并保存', detail: '保护手工字段并写入资产档案' },
+].map((step, index) => ({
+  ...step,
+  state: index < preparationStageIndex.value ? 'done' : index === preparationStageIndex.value ? 'running' : 'pending',
+})))
+const preparationProgress = computed(() => Math.max(0, Math.min(100, Number(workspace.value?.preparation_progress || 0))))
+const preparationAssetCounts = computed(() => ({
+  role: allAssets.value.filter(item => item.asset_type === 'role').length,
+  scene: allAssets.value.filter(item => item.asset_type === 'scene').length,
+  prop: allAssets.value.filter(item => item.asset_type === 'prop').length,
+}))
+const preparationUpdatedLabel = computed(() => {
+  const value = workspace.value?.preparation_updated_at
+  if (!value) return '等待首次进度回传'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '进度刚刚更新'
+  return `最近更新 ${date.toLocaleTimeString('zh-CN', { hour12: false })}`
+})
+/**
+ * 旧任务可能保存了“基础资料仍可继续使用”的历史提示，但现在完整资产提炼是进入工作台的硬门槛。
+ * 这里仅兼容展示旧数据，不篡改数据库中的失败记录；新任务会直接使用后端返回的准确原因。
+ */
+const preparationFailureMessage = computed(() => {
+  const message = String(workspace.value?.preparation_error_message || '').trim()
+  if (!message || message.includes('基础资料仍可继续编辑和使用')) {
+    return '上一次提炼未完成，本次积分已全额退回。请使用下方“重新提炼”查看最新报价后继续。'
+  }
+  return message
+})
 const readinessReason = computed(() => {
   if (!workspace.value || workspace.value.readiness.ready) return ''
   const blockers = workspace.value.readiness.blockers.filter(Boolean)
@@ -342,6 +409,44 @@ function selectedVersion(profile: DramaAssetProfile | null): DramaAssetProfile['
   return profile.versions.find(item => item.id === profile.selected_asset_id) || profile.versions[0] || null
 }
 
+/**
+ * 页面展示图片和按钮权限必须使用同一套版本判断。
+ * 历史数据可能已经有成功图片版本，但 selected_asset_id 尚未回填；此前页面能显示图片，
+ * “确认并锁定”却仍按空 selected_asset_id 永久禁用，造成用户看到与操作结果互相矛盾。
+ */
+function hasUsableAssetVersion(profile: DramaAssetProfile): boolean {
+  const version = selectedVersion(profile)
+  return Boolean(version?.id && version.image_url)
+}
+
+/**
+ * 一次重新生成包含“提交、排队、生图、附送质检”四段。
+ * 质检仍属于本次任务收尾阶段，因此期间禁止再次生成，避免新旧图片与质检报告交叉覆盖；
+ * 但质检不会阻止用户锁定已经成功生成的当前图片。
+ */
+function generationActionState(profile: DramaAssetProfile): { busy: boolean; label: string } {
+  if (submittingGenerationTargets.value.includes(profileTarget(profile))) return { busy: true, label: '提交中' }
+  if (profile.production_status === 'queued') return { busy: true, label: '排队中' }
+  if (profile.production_status === 'generating') return { busy: true, label: '生成中' }
+  if (['queued', 'running'].includes(profile.consistency?.status)) return { busy: true, label: '质检中' }
+  return {
+    busy: false,
+    label: profile.production_status === 'failed' ? '免费重试' : '重新生成',
+  }
+}
+
+function canLockProfile(profile: DramaAssetProfile): boolean {
+  // 已锁定资产始终允许解除；生成主任务未完成时不允许抢先锁定，质检阶段则不阻塞锁定。
+  if (profile.production_status === 'locked') return true
+  return hasUsableAssetVersion(profile) && !['queued', 'generating'].includes(profile.production_status)
+}
+
+function lockDisabledReason(profile: DramaAssetProfile): string {
+  if (!hasUsableAssetVersion(profile)) return '请先生成或上传一张资产图片'
+  if (['queued', 'generating'].includes(profile.production_status)) return '当前图片仍在生成，完成后即可锁定'
+  return ''
+}
+
 function assetImage(profile: DramaAssetProfile): string {
   return selectedVersion(profile)?.image_url || ''
 }
@@ -363,6 +468,32 @@ function dataText(profile: DramaAssetProfile): string {
   if (profile.asset_type === 'role') return [data.identity, data.age, data.role_label].filter(Boolean).join(' · ')
   if (profile.asset_type === 'scene') return [data.canonical_location, ...(data.time_states || [])].filter(Boolean).join(' · ')
   return [data.owner, data.material, data.plot_significance].filter(Boolean).join(' · ')
+}
+
+/**
+ * 卡片摘要拆成“字段标签 + 字段正文”，避免身份、年龄、定位继续挤成一串灰色文本。
+ * 详情抽屉仍展示全部制作资料；卡片只保留最适合快速扫读的三个稳定字段。
+ */
+function cardFacts(profile: DramaAssetProfile): Array<{ label: string, value: string }> {
+  const data = profile.data || {}
+  if (profile.asset_type === 'role') {
+    return [
+      { label: '身份', value: String(data.identity || '') },
+      { label: '年龄', value: String(data.age || '') },
+      { label: '定位', value: String(data.role_label || '') },
+    ].filter(item => item.value.trim())
+  }
+  if (profile.asset_type === 'scene') {
+    return [
+      { label: '地点', value: String(data.canonical_location || '') },
+      { label: '时间', value: (data.time_states || []).filter(Boolean).join('、') },
+    ].filter(item => item.value.trim())
+  }
+  return [
+    { label: '归属', value: String(data.owner || '') },
+    { label: '材质', value: String(data.material || '') },
+    { label: '作用', value: String(data.plot_significance || '') },
+  ].filter(item => item.value.trim())
 }
 
 function descriptionText(profile: DramaAssetProfile): string {
@@ -687,7 +818,8 @@ async function loadWorkspace(silent = false): Promise<void> {
   try {
     workspace.value = await dramaService.getAssetWorkspace(props.projectId)
     // 仅首次进入且成功获取资产资料后自动显示；页面不再保留重复打开的“操作引导”入口。
-    if (!silent && import.meta.client && !window.localStorage.getItem(assetGuideStorageKey())) {
+    // 完整资料没有就绪时保持阻断页，不要在阻断页上叠加新手引导。
+    if (!silent && workspace.value.preparation_status === 'ready' && import.meta.client && !window.localStorage.getItem(assetGuideStorageKey())) {
       await nextTick()
       assetGuideTour.start(0)
     }
@@ -701,6 +833,46 @@ async function loadWorkspace(silent = false): Promise<void> {
     errorMessage.value = error?.message || '资产制作资料加载失败，请确认当前剧本版本已经完成确认。'
   } finally {
     loading.value = false
+  }
+}
+
+/** 在资产页读取最新报价，让超时退款后的用户无需退回剧本页即可安全重试。 */
+async function openPreparationRetry(): Promise<void> {
+  if (preparationRetryBusy.value) return
+  preparationRetryBusy.value = 'estimate'
+  preparationRetryError.value = ''
+  try {
+    const result = await dramaService.estimateAssetPreparation(props.projectId)
+    preparationRetryEstimate.value = result
+    // 可能另一浏览器已经重试或任务已经完成，此时只同步状态，不再展示重复扣点弹窗。
+    if (result.status === 'ready' || result.status === 'preparing') {
+      await loadWorkspace(true)
+      showGlobalNotice(result.status === 'ready' ? '完整资产资料已经就绪。' : '提炼任务已经在运行，正在恢复实时进度。')
+      return
+    }
+    showPreparationRetry.value = true
+  } catch (error: any) {
+    preparationRetryError.value = error?.message || '暂时无法获取重新提炼报价，请稍后重试。'
+  } finally {
+    preparationRetryBusy.value = ''
+  }
+}
+
+/** 用户在报价弹窗中再次确认后才会重新扣点；提交成功立即切回实时进度页。 */
+async function confirmPreparationRetry(): Promise<void> {
+  const quote = preparationRetryEstimate.value
+  if (!quote?.sufficient || preparationRetryBusy.value) return
+  preparationRetryBusy.value = 'submit'
+  preparationRetryError.value = ''
+  try {
+    await dramaService.prepareAssetWorkspace(props.projectId, true)
+    showPreparationRetry.value = false
+    await loadWorkspace(true)
+    showGlobalNotice('重新提炼任务已提交，正在使用长任务流式通道执行。')
+  } catch (error: any) {
+    preparationRetryError.value = error?.message || '重新提炼任务提交失败，请稍后重试。'
+  } finally {
+    preparationRetryBusy.value = ''
   }
 }
 
@@ -746,10 +918,10 @@ function roleVoiceApiKey(profile: DramaAssetProfile): string {
 
 function voiceRecommendationText(profile: DramaAssetProfile): string {
   const recommendation = profile.voice?.recommendation
-  if (!recommendation) return '当前暂无声音方向建议，可直接选择预设类型或上传自定义音频。'
+  if (!recommendation) return '当前暂无 AI 音色建议，可选择系统预设音色或上传自定义音频。'
   return [recommendation.voice_type, recommendation.tone, recommendation.pitch, recommendation.pace]
     .filter(Boolean)
-    .join(' · ') || '当前暂无声音方向建议，可直接选择预设类型或上传自定义音频。'
+    .join(' · ') || '当前暂无 AI 音色建议，可选择系统预设音色或上传自定义音频。'
 }
 
 async function saveRoleVoicePreset(): Promise<void> {
@@ -759,7 +931,7 @@ async function saveRoleVoicePreset(): Promise<void> {
   try {
     await dramaService.updateRoleVoice(props.projectId, roleVoiceApiKey(profile), { voiceRef: voicePreset.value })
     await loadWorkspace(true)
-    showDrawerFeedback('success', voicePreset.value ? '角色声音方向已保存。' : '角色声音设置已清空。')
+    showDrawerFeedback('success', voicePreset.value ? '角色系统预设音色已保存。' : '角色声音设置已清空。')
   } catch (error: any) {
     showDrawerFeedback('error', error?.message || '角色声音方向保存失败，请稍后重试。')
   } finally {
@@ -862,6 +1034,7 @@ async function requestEstimate(targets = selectionTargets.value, scopeLabel = '�
 async function startGeneration(targets = selectionTargets.value, overwrite = false): Promise<void> {
   if (!targets.length) return
   actionBusy.value = 'generate'
+  submittingGenerationTargets.value = [...new Set([...submittingGenerationTargets.value, ...targets])]
   generationErrorMessage.value = ''
   try {
     if (generationMode.value === 'repair' && repairTarget.value) {
@@ -887,6 +1060,7 @@ async function startGeneration(targets = selectionTargets.value, overwrite = fal
     // 现在直接在确认弹窗中显示后端返回原因，并保留本次估价和选择，方便再次提交。
     generationErrorMessage.value = error?.message || '资产生成任务提交失败，请稍后重试。'
   } finally {
+    submittingGenerationTargets.value = submittingGenerationTargets.value.filter(item => !targets.includes(item))
     actionBusy.value = ''
   }
 }
@@ -894,6 +1068,7 @@ async function startGeneration(targets = selectionTargets.value, overwrite = fal
 async function retryFailedAssets(targets: string[]): Promise<void> {
   if (!targets.length) return
   actionBusy.value = 'retry-failed'
+  submittingGenerationTargets.value = [...new Set([...submittingGenerationTargets.value, ...targets])]
   generationErrorMessage.value = ''
   try {
     // retry_failed 会在服务端校验每一项当前确为 failed，前端参数不能绕过首次生成计费。
@@ -904,11 +1079,14 @@ async function retryFailedAssets(targets: string[]): Promise<void> {
   } catch (error: any) {
     showGlobalNotice(error?.message || '失败资产重试提交失败，请稍后重试。', 'error')
   } finally {
+    submittingGenerationTargets.value = submittingGenerationTargets.value.filter(item => !targets.includes(item))
     actionBusy.value = ''
   }
 }
 
 function regenerateProfile(profile: DramaAssetProfile): void {
+  // 后台仍在执行本轮任务时直接忽略重复点击；按钮也会同步显示旋转加载和当前阶段。
+  if (generationActionState(profile).busy) return
   if (profile.production_status === 'failed') {
     void retryFailedAssets([profileTarget(profile)])
     return
@@ -921,7 +1099,30 @@ async function lockProfile(profile: DramaAssetProfile, locked = true): Promise<v
     await applyProfileLocks([profile], false)
     return
   }
-  requestProfileLocks([profile])
+  if (!canLockProfile(profile)) {
+    showDrawerFeedback('error', lockDisabledReason(profile) || '当前资产暂时无法锁定。')
+    return
+  }
+
+  let lockTarget = profile
+  // 兼容“图片版本已生成但旧数据未写 selected_asset_id”的记录：先将页面正在展示的版本设为当前版本，
+  // 再发起锁定，保证后端锁定的图片与用户眼前看到的图片完全一致。
+  if (!profile.selected_asset_id) {
+    const fallbackVersion = selectedVersion(profile)
+    if (!fallbackVersion) return
+    actionBusy.value = `select-lock:${profile.id}`
+    try {
+      workspace.value = await dramaService.updateAssetProfile(props.projectId, profile, { selected_asset_id: fallbackVersion.id })
+      lockTarget = workspace.value.assets.find(item => item.id === profile.id) || profile
+      if (selectedProfile.value?.id === profile.id) selectedProfile.value = lockTarget
+    } catch (error: any) {
+      showDrawerFeedback('error', error?.message || '当前图片版本确认失败，请稍后重试。')
+      return
+    } finally {
+      actionBusy.value = ''
+    }
+  }
+  requestProfileLocks([lockTarget])
 }
 
 function requestBatchLock(): void {
@@ -933,7 +1134,7 @@ function requestLockAll(): void {
     showGlobalNotice(allLockBlockers.value.join('；') || '全部资产均已锁定。', 'error')
     return
   }
-  requestProfileLocks(unlockedProfiles.value, true)
+  requestProfileLocks(lockableAllProfiles.value, true)
 }
 
 function requestUnlockAll(): void {
@@ -1113,17 +1314,23 @@ function showDrawerFeedback(tone: 'success' | 'error', message: string): void {
 }
 
 function assetMenuItems(profile: DramaAssetProfile): BaseMenuItem[] {
-  const hasImage = Boolean(profile.selected_asset_id)
+  const generationState = generationActionState(profile)
   return [
     { key: 'detail', label: '查看详情', icon: ImageIcon },
     { key: 'upload', label: '上传样本图', icon: Upload },
-    { key: 'regenerate', label: '重新生成', icon: RefreshCw },
+    {
+      key: 'regenerate',
+      label: generationState.label,
+      icon: RefreshCw,
+      disabled: generationState.busy,
+      disabledReason: generationState.busy ? `当前资产${generationState.label}，请等待本轮任务结束` : '',
+    },
     {
       key: 'lock',
       label: profile.production_status === 'locked' ? '解除锁定' : '确认并锁定',
       icon: profile.production_status === 'locked' ? Unlock : LockKeyhole,
-      disabled: profile.production_status !== 'locked' && !hasImage,
-      disabledReason: '请先生成或上传一张资产图片',
+      disabled: !canLockProfile(profile),
+      disabledReason: lockDisabledReason(profile),
     },
     { key: 'delete', label: '删除资产', icon: Trash2, danger: true },
   ]
@@ -1218,7 +1425,13 @@ function syncRealtimeTracking(): void {
     if (!hasRunningAssets.value) stopRealtimeTracking()
     return
   }
-  if (!fallbackPollTimer) fallbackPollTimer = window.setInterval(() => loadWorkspace(true), 5000)
+  /*
+   * 初始化资产资料时，用户正停留在专用进度页，2 秒一次的兜底轮询可以更及时地显示 Worker 检查点；
+   * 普通图片生成仍保留 5 秒频率，避免资产较多时给 API 造成不必要的查询压力。
+   * SSE 正常时会更快触发刷新，轮询只负责网络代理不支持事件流时的容错。
+   */
+  const fallbackInterval = workspace.value?.preparation_status === 'preparing' ? 2000 : 5000
+  if (!fallbackPollTimer) fallbackPollTimer = window.setInterval(() => loadWorkspace(true), fallbackInterval)
   if (assetEventSource) return
   const path = `${runtime.public.apiBase}/drama/projects/${props.projectId}/assets/events`
   assetEventSource = new EventSource(normalizeStreamUrl(path))
@@ -1254,7 +1467,109 @@ onBeforeUnmount(() => {
       <button @click="loadWorkspace()">重新加载</button>
     </div>
 
-    <template v-else-if="workspace">
+    <!--
+      用户确认扣点后立即进入资产阶段，在这里查看 Worker 已持久化的真实处理检查点。
+      百分比和当前说明全部来自后端任务，页面不会根据等待时间伪造供应商内部进度。
+    -->
+    <div v-else-if="workspace && workspace.preparation_status === 'preparing'" class="asset-preparation-progress-page">
+      <i class="preparation-orb preparation-orb-one" aria-hidden="true" />
+      <i class="preparation-orb preparation-orb-two" aria-hidden="true" />
+
+      <header class="preparation-progress-header">
+        <div>
+          <span class="preparation-live-badge"><i /> 实时提炼中</span>
+          <h2>正在建立完整资产资料</h2>
+          <p>您可以留在这里观察进度，也可以离开页面；后台任务不会中断。</p>
+        </div>
+        <div class="preparation-run-meta">
+          <span v-if="workspace.preparation_run_id">任务 {{ workspace.preparation_run_id.slice(0, 8) }}</span>
+          <span>{{ workspace.preparation_model || '默认文本模型' }}</span>
+        </div>
+      </header>
+
+      <div class="preparation-progress-grid">
+        <article class="preparation-main-card">
+          <div
+            class="preparation-progress-ring"
+            :style="{ '--preparation-progress': `${preparationProgress * 3.6}deg` }"
+            role="progressbar"
+            :aria-valuenow="preparationProgress"
+            aria-valuemin="0"
+            aria-valuemax="100"
+          >
+            <div><strong>{{ preparationProgress }}</strong><span>%</span></div>
+          </div>
+          <div class="preparation-current-copy">
+            <span>当前正在处理</span>
+            <h3>{{ workspace.preparation_stage_label || '任务已进入队列' }}</h3>
+            <p>{{ workspace.preparation_message || '正在等待后台 Worker 接收任务…' }}</p>
+            <div class="preparation-linear-progress"><i :style="{ width: `${preparationProgress}%` }" /></div>
+            <small><Clock3 :size="13" /> {{ preparationUpdatedLabel }}</small>
+          </div>
+        </article>
+
+        <aside class="preparation-summary-card">
+          <span class="preparation-summary-title">本次资产范围</span>
+          <div class="preparation-count-grid">
+            <div><UserRound :size="18" /><strong>{{ preparationAssetCounts.role }}</strong><span>人物</span></div>
+            <div><Mountain :size="18" /><strong>{{ preparationAssetCounts.scene }}</strong><span>场景</span></div>
+            <div><BriefcaseBusiness :size="18" /><strong>{{ preparationAssetCounts.prop }}</strong><span>道具</span></div>
+          </div>
+          <p><ShieldCheck :size="16" /> 手工修改和已锁定内容会被保护，不会被模型覆盖。</p>
+        </aside>
+      </div>
+
+      <ol class="preparation-step-list" aria-label="资产资料提炼阶段">
+        <li v-for="(step, index) in preparationSteps" :key="step.key" :class="`is-${step.state}`">
+          <div class="preparation-step-marker">
+            <Check v-if="step.state === 'done'" :size="16" />
+            <RefreshCw v-else-if="step.state === 'running'" class="spin" :size="16" />
+            <span v-else>{{ index + 1 }}</span>
+          </div>
+          <div><strong>{{ step.label }}</strong><p>{{ step.detail }}</p></div>
+          <em>{{ step.state === 'done' ? '已完成' : step.state === 'running' ? '进行中' : '等待' }}</em>
+        </li>
+      </ol>
+
+      <div v-if="allAssets.length" class="preparation-candidate-strip">
+        <span>已识别的资产候选</span>
+        <div>
+          <i v-for="profile in allAssets.slice(0, 8)" :key="profile.id" :title="profile.name">{{ profile.name.slice(0, 1) }}</i>
+          <b>{{ allAssets.length }} 项</b>
+        </div>
+      </div>
+
+      <footer class="preparation-progress-footer">
+        <p><RefreshCw :size="14" /> 进度会自动更新，完成后将直接展开资产工作台。</p>
+        <!-- 静默刷新保留当前阶段卡片，避免用户手动刷新时页面突然退回全屏加载态。 -->
+        <button :disabled="loading" @click="loadWorkspace(true)"><RefreshCw :class="{ spin: loading }" :size="15" /> 立即刷新</button>
+      </footer>
+    </div>
+
+    <!-- 历史失败或未确认的深链仍禁止降级使用不完整资料，避免继续污染分镜与成片。 -->
+    <div v-else-if="workspace && workspace.preparation_status !== 'ready'" class="asset-error asset-preparation-blocker">
+      <AlertTriangle :size="24" />
+      <div>
+        <strong>完整资产资料尚未就绪</strong>
+        <p v-if="workspace.preparation_status === 'failed'">{{ preparationFailureMessage }}</p>
+        <p v-else>请返回剧本页确认当前版本，并在费用弹窗中生成完整资产资料后再进入。</p>
+        <p v-if="preparationRetryError" class="preparation-retry-error">{{ preparationRetryError }}</p>
+      </div>
+      <div class="preparation-failure-actions">
+        <button @click="loadWorkspace()">刷新状态</button>
+        <button
+          v-if="workspace.preparation_status === 'failed'"
+          class="preparation-retry-primary"
+          :disabled="Boolean(preparationRetryBusy)"
+          @click="openPreparationRetry"
+        >
+          <RefreshCw :class="{ spin: preparationRetryBusy === 'estimate' }" :size="15" />
+          {{ preparationRetryBusy === 'estimate' ? '正在读取报价…' : '重新提炼' }}
+        </button>
+      </div>
+    </div>
+
+    <template v-else-if="workspace && workspace.preparation_status === 'ready'">
       <div class="asset-overview">
         <header class="visual-bible-card">
           <div class="bible-reference">
@@ -1418,7 +1733,11 @@ onBeforeUnmount(() => {
                   <span class="more-button"><BaseMenu :items="assetMenuItems(profile)" @select="handleAssetMenu(profile, $event)"><template #trigger><UIcon name="i-lucide-ellipsis" class="size-4" /></template></BaseMenu></span>
                 </div>
                 <div class="card-content">
-                  <div class="card-title"><div><h3>{{ profile.name }}</h3><p :title="dataText(profile) || '制作资料待补充'">{{ dataText(profile) || '制作资料待补充' }}</p></div><span v-if="profile.is_required">必需</span></div>
+                  <div class="card-title"><h3>{{ profile.name }}</h3><span v-if="profile.is_required">必需</span></div>
+                  <div v-if="cardFacts(profile).length" class="card-facts" :title="dataText(profile)">
+                    <span v-for="fact in cardFacts(profile)" :key="fact.label"><b>{{ fact.label }}</b><em>{{ fact.value }}</em></span>
+                  </div>
+                  <div v-else class="card-facts card-facts-empty"><span><em>制作资料待补充</em></span></div>
                   <p class="card-description" :title="descriptionText(profile)">{{ descriptionText(profile) }}</p>
                   <div class="tag-row"><span v-for="tag in tags(profile)" :key="String(tag)">{{ tag }}</span><span v-if="profile.data.appearance_source === 'ai_completion'" class="ai-tag">AI 补全</span><span v-if="profile.asset_type === 'role'" class="voice-card-tag"><Volume2 :size="11" />{{ roleVoiceStatus(profile) }}</span></div>
                   <div class="card-status">
@@ -1435,7 +1754,7 @@ onBeforeUnmount(() => {
                     <span v-else :class="`status-${profile.production_status}`">{{ statusLabel(profile.production_status) }}</span>
                     <button class="consistency-tag" :class="`tone-${consistencyTone(profile)}`" @click="openDetail(profile)">{{ consistencyLabel(profile) }}</button>
                   </div>
-                  <div class="card-actions"><UButton color="neutral" variant="outline" size="sm" label="编辑" @click="openDetail(profile)" /><UButton color="neutral" variant="outline" size="sm" :label="profile.production_status === 'failed' ? '免费重试' : '重新生成'" @click="regenerateProfile(profile)" /><BaseTooltip :text="!profile.selected_asset_id ? '请先生成或上传一张资产图片' : ''" align="right"><UButton class="primary" color="primary" variant="solid" size="sm" :label="profile.production_status === 'locked' ? '已锁定' : '确认并锁定'" :disabled="!profile.selected_asset_id" @click="lockProfile(profile, profile.production_status !== 'locked')" /></BaseTooltip></div>
+                  <div class="card-actions"><UButton color="neutral" variant="outline" size="sm" label="编辑" @click="openDetail(profile)" /><UButton color="neutral" variant="outline" size="sm" :label="generationActionState(profile).label" :loading="generationActionState(profile).busy" :disabled="generationActionState(profile).busy" @click="regenerateProfile(profile)" /><BaseTooltip :text="lockDisabledReason(profile)" align="right"><UButton class="primary" color="primary" variant="solid" size="sm" :label="profile.production_status === 'locked' ? '已锁定' : '确认并锁定'" :loading="actionBusy === `lock:${profile.id}` || actionBusy === `select-lock:${profile.id}`" :disabled="!canLockProfile(profile)" @click="lockProfile(profile, profile.production_status !== 'locked')" /></BaseTooltip></div>
                 </div>
               </article>
             </div>
@@ -1609,19 +1928,19 @@ onBeforeUnmount(() => {
               </section>
 
               <!--
-                声音设置默认折叠，避免抢占角色视觉资产的主流程。预设只记录声音方向；
-                自定义音频仍写回既有 analysis.roles[].voice_ref，Wan/Seedance 消费协议保持不变。
+                声音设置默认折叠，避免抢占角色视觉资产的主流程。AI 只可从系统已有枚举中
+                选择默认音色；用户手选或上传的自定义音频仍拥有更高优先级。
               -->
               <details v-if="selectedProfile.asset_type === 'role'" class="voice-settings">
                 <summary><span><Volume2 :size="17" />声音设置</span><b>{{ roleVoiceStatus(selectedProfile) }}</b></summary>
                 <div class="voice-settings-body">
                   <div class="voice-recommendation">
                     <div class="voice-recommendation-icon"><Mic2 :size="18" /></div>
-                    <div><span>AI 推荐声音方向</span><strong>{{ voiceRecommendationText(selectedProfile) }}</strong></div>
+                    <div><span>AI 推荐系统音色</span><strong>{{ voiceRecommendationText(selectedProfile) }}</strong></div>
                   </div>
                   <div class="voice-grid">
-                    <label>预设音色类型<BaseSelect v-model="voicePreset" :options="voiceToneOptions" tone="light" full placeholder="选择声音方向" /></label>
-                    <button class="outline-button voice-save" :disabled="actionBusy.startsWith('voice-')" @click="saveRoleVoicePreset"><RefreshCw v-if="actionBusy.startsWith('voice-save:')" class="spin" :size="14" /><ShieldCheck v-else :size="15" />保存声音方向</button>
+                    <label>系统预设音色<BaseSelect v-model="voicePreset" :options="voiceToneOptions" tone="light" full placeholder="选择系统音色" /></label>
+                    <button class="outline-button voice-save" :disabled="actionBusy.startsWith('voice-')" @click="saveRoleVoicePreset"><RefreshCw v-if="actionBusy.startsWith('voice-save:')" class="spin" :size="14" /><ShieldCheck v-else :size="15" />保存系统音色</button>
                   </div>
                   <div class="voice-audio-card">
                     <div class="voice-audio-heading"><Music2 :size="17" /><div><strong>自定义参考音频</strong><span>支持 MP3、WAV、M4A、AAC，最大 20MB</span></div></div>
@@ -1633,7 +1952,7 @@ onBeforeUnmount(() => {
                       <input ref="voiceUploadInput" class="sr-only" type="file" accept="audio/mpeg,audio/wav,audio/x-wav,audio/mp4,audio/aac,.mp3,.wav,.m4a,.aac" @change="uploadRoleVoice" />
                     </div>
                   </div>
-                  <p class="voice-compatibility">当前预设仅用于记录角色声音方向；上传自定义音频后，Wan 2.7 和 Seedance 可将其作为角色参考音频。Wan 2.6 当前不使用角色参考音频。</p>
+                  <p class="voice-compatibility">系统预设音色会随角色传给后续视频任务；是否由模型原生发声取决于当前视频模型能力。上传自定义音频后，Wan 2.7 和 Seedance 可将其作为角色参考音频。</p>
                 </div>
               </details>
 
@@ -1712,9 +2031,9 @@ onBeforeUnmount(() => {
         <template v-if="selectedProfile" #footer>
           <div class="asset-editor-footer liv-asset-editor-footer">
             <div class="footer-lock-tip"><LockKeyhole :size="16" /><span>{{ selectedProfile.production_status === 'locked' ? '当前资产已锁定；解除后才能调整设定与图片版本。' : '锁定后将作为后续分镜与成片生成的统一引用。' }}</span></div>
-            <LivButton variant="secondary" @click="regenerateProfile(selectedProfile)"><template #icon><RefreshCw :size="16" /></template>{{ selectedProfile.production_status === 'failed' ? '免费重试' : '重新生成' }}</LivButton>
+            <LivButton class="regenerate-action" variant="secondary" :loading="generationActionState(selectedProfile).busy" :disabled="generationActionState(selectedProfile).busy" @click="regenerateProfile(selectedProfile)"><template v-if="!generationActionState(selectedProfile).busy" #icon><RefreshCw :size="16" /></template>{{ generationActionState(selectedProfile).label }}</LivButton>
             <LivButton variant="secondary" :loading="actionBusy === 'save-profile'" @click="saveProfile"><template #icon><ShieldCheck :size="16" /></template>保存资产设定</LivButton>
-            <BaseTooltip :text="!selectedProfile.selected_asset_id ? '请先生成或上传一张资产图片' : ''" align="right"><LivButton variant="primary" :disabled="!selectedProfile.selected_asset_id" @click="lockProfile(selectedProfile, selectedProfile.production_status !== 'locked')"><template #icon><component :is="selectedProfile.production_status === 'locked' ? Unlock : LockKeyhole" :size="16" /></template>{{ selectedProfile.production_status === 'locked' ? '解除锁定' : '确认并锁定' }}</LivButton></BaseTooltip>
+            <BaseTooltip :text="lockDisabledReason(selectedProfile)" align="right"><LivButton variant="primary" :loading="actionBusy === `lock:${selectedProfile.id}` || actionBusy === `select-lock:${selectedProfile.id}`" :disabled="!canLockProfile(selectedProfile)" @click="lockProfile(selectedProfile, selectedProfile.production_status !== 'locked')"><template #icon><component :is="selectedProfile.production_status === 'locked' ? Unlock : LockKeyhole" :size="16" /></template>{{ selectedProfile.production_status === 'locked' ? '解除锁定' : '确认并锁定' }}</LivButton></BaseTooltip>
           </div>
         </template>
       </LivDialog>
@@ -1761,6 +2080,34 @@ onBeforeUnmount(() => {
         <div v-if="lockConfirmError" class="generation-submit-error"><AlertTriangle :size="15" />{{ lockConfirmError }}</div>
       </div>
       <template #footer><LivButton variant="secondary" :disabled="actionBusy === 'batch-lock'" @click="showLockConfirm = false">取消</LivButton><LivButton variant="primary" :loading="Boolean(actionBusy)" @click="applyProfileLocks(pendingLockProfiles, pendingLockState)"><template #icon><component :is="pendingLockState ? LockKeyhole : Unlock" :size="16" /></template>{{ pendingLockState ? (riskyPendingLockProfiles.length ? '确认风险并锁定' : '确认全部锁定') : '确认取消全部锁定' }}</LivButton></template>
+    </LivDialog>
+
+    <!-- 超时或供应商异常已经自动退款；重新执行仍展示最新报价并要求用户明确确认。 -->
+    <LivDialog
+      v-if="preparationRetryEstimate"
+      :open="showPreparationRetry"
+      title="确认重新提炼完整资产资料"
+      description="上一次任务未完成且积分已退回。本次将使用流式长任务通道，提交后可继续在资产页查看真实进度。"
+      width="sm"
+      @update:open="showPreparationRetry = $event"
+    >
+      <div class="cost-box">
+        <div><span>预计消耗</span><CreditAmount :value="preparationRetryEstimate.required_credits" size="md" tone="accent" :show-unit="true" /></div>
+        <div><span>当前余额</span><CreditAmount :value="preparationRetryEstimate.current_balance" size="md" tone="default" :show-unit="true" /></div>
+      </div>
+      <div class="preparation-retry-summary">
+        <ShieldCheck :size="18" />
+        <p>本次处理 {{ preparationRetryEstimate.asset_count }} 项资产；已确认剧本、手工修改和原始证据不会被覆盖。</p>
+      </div>
+      <div v-if="preparationRetryError" class="generation-submit-error"><AlertTriangle :size="15" />{{ preparationRetryError }}</div>
+      <div v-if="!preparationRetryEstimate.sufficient" class="generation-submit-error"><AlertTriangle :size="15" />当前积分不足，请充值后再重试。</div>
+      <template #footer>
+        <LivButton variant="secondary" :disabled="preparationRetryBusy === 'submit'" @click="showPreparationRetry = false">取消</LivButton>
+        <LivButton variant="primary" :loading="preparationRetryBusy === 'submit'" :disabled="!preparationRetryEstimate.sufficient" @click="confirmPreparationRetry">
+          <template #icon><CreditIcon size="md" class="button-credit-icon" /></template>
+          {{ preparationRetryEstimate.sufficient ? `消耗 ${preparationRetryEstimate.required_credits} 点积分 · 重新提炼` : '积分不足' }}
+        </LivButton>
+      </template>
     </LivDialog>
 
     <LivDialog v-if="estimate" :open="showEstimate" :title="generationMode === 'repair' ? (repairMode === 'system_repair' ? '确认系统修正' : '确认生成优化版本') : `确认生成${generationScopeLabel}`" :description="generationMode === 'repair' ? '系统会创建一个新图片版本，原图、原始生成要求与旧报告都会保留。' : `本次将生成 ${estimate.target_count} 项资产，生成后自动进行一次质量检测。`" width="sm" @update:open="showEstimate = $event">
@@ -1844,6 +2191,12 @@ onBeforeUnmount(() => {
 .asset-drawer .issue-list li>span,.asset-drawer .issue-list small{display:block}
 .asset-drawer .issue-list small{margin-top:3px;color:#7d899b}
 .asset-editor-footer{z-index:6;display:flex;align-items:center;justify-content:flex-end;gap:10px;padding:14px 20px;border-top:1px solid var(--line);background:#fff;box-shadow:0 -8px 28px rgba(15,35,65,.04)}.footer-lock-tip{display:flex;align-items:center;gap:8px;margin-right:auto;color:#6f7d90;font-size:12px}.asset-editor-footer .main-action{min-width:166px}.asset-editor-footer .save-button{border-color:#b8ceff;color:var(--blue)}
+/*
+ * 底部操作在“提交中 / 排队中 / 生成中 / 质检中”切换时宽度保持稳定，文案不得折成两行。
+ * Nuxt UI 的 loading 会显示旋转图标；这里仅负责布局，避免小窗口下状态文字把按钮撑成双行。
+ */
+.asset-editor-footer :deep(button){min-width:112px;white-space:nowrap}
+.asset-editor-footer .regenerate-action{min-width:112px}
 /* 抽屉反馈固定在弹窗右上方，不随任意一栏滚动，保存后用户立即可见。 */
 .asset-drawer .drawer-feedback{position:absolute;z-index:8;top:70px;right:28px;margin:0}
 @media(max-width:1200px){.asset-editor-body{grid-template-columns:minmax(260px,32%) minmax(380px,1fr)}.asset-drawer .detail-advice{grid-column:1/-1;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));overflow:visible}.asset-drawer{overflow-y:auto}.asset-editor-body{overflow:visible}.asset-media-column,.asset-drawer .detail-editor{max-height:620px}.asset-editor-footer{position:sticky;bottom:0}}
@@ -1885,10 +2238,8 @@ onBeforeUnmount(() => {
 .select-check{left:7px}.more-button{right:7px}.image-lock{right:38px}
 .card-menu{right:6px;top:37px}
 .card-content{display:flex;min-height:0;flex:1;flex-direction:column;padding:4px 13px 13px}
-.card-title{min-height:58px;align-items:flex-start}
-.card-title>div{min-width:0;flex:1}
+.card-title{min-height:24px;align-items:center}
 .card-title h3{font-size:16px;line-height:23px}
-.card-title p{display:-webkit-box;max-width:246px;overflow:hidden;margin-top:3px;font-size:12px;line-height:18px;-webkit-box-orient:vertical;-webkit-line-clamp:2;white-space:normal}
 .card-title>span{
   /* “必需”是资产属性徽标，不允许随标题宽度压缩成竖排。 */
   flex:0 0 auto;
@@ -1900,7 +2251,16 @@ onBeforeUnmount(() => {
   text-align:center;
   white-space:nowrap;
 }
-.card-description{display:-webkit-box;overflow:hidden;min-height:42px;margin:8px 0;font-size:12px;line-height:21px;-webkit-box-orient:vertical;-webkit-line-clamp:2;white-space:normal}
+/*
+ * 身份摘要采用“标签 + 内容”的胶囊结构，正文则使用轻底色信息块。
+ * 两者建立清晰层级，同时取消旧标题区域强制占位造成的空白行。
+ */
+.card-facts{display:flex;min-height:24px;align-items:center;gap:5px;margin-top:5px;overflow:hidden;white-space:nowrap}
+.card-facts>span{display:inline-flex;min-width:0;align-items:center;overflow:hidden;border:1px solid #e2eaf5;border-radius:6px;background:#f7f9fc;font-size:10px;line-height:18px}
+.card-facts b{flex:0 0 auto;padding:2px 5px;background:#eaf2ff;color:#3970c8;font-weight:700}
+.card-facts em{min-width:0;overflow:hidden;padding:2px 6px;color:#66758b;font-style:normal;text-overflow:ellipsis}
+.card-facts-empty>span{border-style:dashed}.card-facts-empty em{color:#9aa6b7}
+.card-description{display:-webkit-box;overflow:hidden;min-height:40px;margin:6px 0 7px;border-left:3px solid #c7d9fb;border-radius:6px;background:#f7faff;padding:5px 8px;color:#53647b;font-size:11px;line-height:18px;-webkit-box-orient:vertical;-webkit-line-clamp:2;white-space:normal}
 .tag-row{min-height:24px;flex-wrap:nowrap;gap:5px;overflow:hidden}
 .tag-row span{flex:0 0 auto;padding:4px 8px;font-size:10px;line-height:16px}
 .card-status{min-height:20px;margin:8px 0 9px;font-size:12px}
@@ -2162,6 +2522,79 @@ onBeforeUnmount(() => {
 .asset-footer .asset-footer-action span{margin-top:0;color:inherit;font-size:13px}
 .asset-footer-action:disabled{cursor:not-allowed;border-color:#aebbd0!important;background:#aebbd0!important;color:#fff!important;opacity:1!important}
 
+/*
+ * 完整资料提炼使用独立的资产页工作台，不再用一个无法说明进度的遮罩弹窗。
+ * 背景光斑只做轻微漂浮，阶段卡片和进度条则由后端真实检查点驱动，兼顾“活跃感”和信息可信度。
+ */
+.asset-preparation-progress-page{position:relative;isolation:isolate;min-height:650px;overflow:hidden;border:1px solid #d9e6fb;border-radius:22px;background:radial-gradient(circle at 10% 8%,rgba(73,134,255,.12),transparent 30%),radial-gradient(circle at 88% 18%,rgba(126,91,255,.1),transparent 28%),linear-gradient(145deg,#fbfdff 0%,#f5f8ff 48%,#fbf9ff 100%);padding:32px;box-shadow:0 18px 50px rgba(35,71,133,.09)}
+.preparation-orb{position:absolute;z-index:-1;border-radius:999px;filter:blur(2px);opacity:.6;animation:preparation-float 7s ease-in-out infinite}
+.preparation-orb-one{top:88px;right:-70px;width:210px;height:210px;background:radial-gradient(circle,rgba(94,109,255,.22),rgba(94,109,255,0) 70%)}
+.preparation-orb-two{bottom:-75px;left:8%;width:190px;height:190px;background:radial-gradient(circle,rgba(59,198,201,.18),rgba(59,198,201,0) 70%);animation-delay:-3s}
+@keyframes preparation-float{0%,100%{transform:translate3d(0,0,0) scale(1)}50%{transform:translate3d(0,-14px,0) scale(1.04)}}
+.preparation-progress-header{position:relative;display:flex;align-items:flex-start;justify-content:space-between;gap:20px}
+.preparation-live-badge{display:inline-flex;align-items:center;gap:7px;border:1px solid #b9d5ff;border-radius:999px;background:#edf5ff;padding:5px 11px;color:#1768df;font-size:11px;font-weight:750}
+.preparation-live-badge i{width:7px;height:7px;border-radius:50%;background:#1d78ff;box-shadow:0 0 0 0 rgba(29,120,255,.45);animation:preparation-pulse 1.8s ease-out infinite}
+@keyframes preparation-pulse{0%{box-shadow:0 0 0 0 rgba(29,120,255,.45)}70%{box-shadow:0 0 0 7px rgba(29,120,255,0)}100%{box-shadow:0 0 0 0 rgba(29,120,255,0)}}
+.preparation-progress-header h2{margin:13px 0 7px;color:#13213b;font-size:26px;line-height:1.25;letter-spacing:-.5px}
+.preparation-progress-header p{margin:0;color:#70809b;font-size:13px;line-height:21px}
+.preparation-run-meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+.preparation-run-meta span{border:1px solid #e0e8f5;border-radius:8px;background:rgba(255,255,255,.78);padding:7px 10px;color:#75849c;font-size:10px;font-variant-numeric:tabular-nums}
+.preparation-progress-grid{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(280px,.7fr);gap:18px;margin-top:27px}
+.preparation-main-card,.preparation-summary-card{border:1px solid rgba(211,224,244,.9);border-radius:18px;background:rgba(255,255,255,.88);box-shadow:0 12px 28px rgba(50,79,132,.07);backdrop-filter:blur(10px)}
+.preparation-main-card{display:flex;align-items:center;gap:27px;padding:24px 27px}
+.preparation-progress-ring{--preparation-progress:0deg;display:grid;flex:0 0 148px;width:148px;height:148px;place-items:center;border-radius:50%;background:conic-gradient(#176dff var(--preparation-progress),#e9eff8 0);box-shadow:inset 0 0 0 1px rgba(30,110,255,.05),0 12px 28px rgba(36,104,222,.14)}
+.preparation-progress-ring>div{display:flex;align-items:baseline;justify-content:center;width:116px;height:116px;border-radius:50%;background:#fff;box-shadow:inset 0 0 0 1px #edf2fa}
+.preparation-progress-ring strong{align-self:center;color:#1266ec;font-size:35px;line-height:1;font-variant-numeric:tabular-nums}
+.preparation-progress-ring span{align-self:center;margin-top:13px;color:#7691b8;font-size:14px;font-weight:700}
+.preparation-current-copy{min-width:0;flex:1}
+.preparation-current-copy>span,.preparation-summary-title{color:#8190a8;font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase}
+.preparation-current-copy h3{margin:7px 0 6px;color:#17243d;font-size:19px;line-height:1.35}
+.preparation-current-copy p{min-height:21px;margin:0;color:#687995;font-size:12px;line-height:20px}
+.preparation-linear-progress{position:relative;height:8px;overflow:hidden;margin-top:17px;border-radius:99px;background:#e9eff8}
+.preparation-linear-progress i{position:relative;display:block;height:100%;overflow:hidden;border-radius:inherit;background:linear-gradient(90deg,#1f74ff,#6a63ff);transition:width .7s ease}
+.preparation-linear-progress i::after{content:"";position:absolute;inset:0;width:45%;background:linear-gradient(90deg,transparent,rgba(255,255,255,.55),transparent);animation:preparation-shimmer 1.7s linear infinite}
+@keyframes preparation-shimmer{from{transform:translateX(-110%)}to{transform:translateX(270%)}}
+.preparation-current-copy small{display:flex;align-items:center;gap:5px;margin-top:10px;color:#93a0b4;font-size:10px}
+.preparation-summary-card{padding:21px}
+.preparation-count-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:14px}
+.preparation-count-grid div{display:grid;grid-template-columns:auto 1fr;align-items:center;gap:3px 6px;border:1px solid #e7edf7;border-radius:12px;background:#f8faff;padding:12px 10px;color:#4c74b8}
+.preparation-count-grid svg{grid-row:1/3}
+.preparation-count-grid strong{color:#1c2c47;font-size:17px;font-variant-numeric:tabular-nums}
+.preparation-count-grid span{color:#8794a9;font-size:9px}
+.preparation-summary-card>p{display:flex;align-items:flex-start;gap:8px;margin:16px 0 0;border-radius:10px;background:#f0f8f5;padding:10px;color:#4c7d6a;font-size:10px;line-height:17px}
+.preparation-summary-card>p svg{flex:0 0 auto;margin-top:1px;color:#2aaa78}
+.preparation-step-list{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;margin:18px 0 0;padding:0;list-style:none}
+.preparation-step-list li{position:relative;display:grid;grid-template-columns:34px minmax(0,1fr);gap:10px;min-height:102px;border:1px solid #e4ebf6;border-radius:14px;background:rgba(255,255,255,.67);padding:15px 13px;transition:border-color .25s ease,box-shadow .25s ease,transform .25s ease}
+.preparation-step-list li.is-running{transform:translateY(-2px);border-color:#8ab5ff;background:#fff;box-shadow:0 10px 24px rgba(33,105,225,.12)}
+.preparation-step-list li.is-done{border-color:#cbe7dc;background:rgba(248,255,252,.9)}
+.preparation-step-marker{display:grid;width:32px;height:32px;place-items:center;border-radius:10px;background:#eef2f8;color:#8d9aaf;font-size:11px;font-weight:800}
+.is-running .preparation-step-marker{background:#eaf3ff;color:#176cff}
+.is-done .preparation-step-marker{background:#e7f8f1;color:#1e9c6a}
+.preparation-step-list strong{display:block;color:#24334d;font-size:11px;line-height:17px}
+.preparation-step-list p{margin:3px 0 0;color:#8a97aa;font-size:9px;line-height:15px}
+.preparation-step-list em{position:absolute;right:11px;bottom:9px;color:#a1adbd;font-size:9px;font-style:normal}
+.preparation-step-list .is-running em{color:#176cff;font-weight:700}
+.preparation-step-list .is-done em{color:#22966b}
+.preparation-candidate-strip{display:flex;align-items:center;justify-content:space-between;gap:20px;margin-top:18px;border:1px dashed #d6e2f3;border-radius:13px;background:rgba(255,255,255,.55);padding:13px 15px}
+.preparation-candidate-strip>span{color:#78879f;font-size:11px;font-weight:700}
+.preparation-candidate-strip>div{display:flex;align-items:center}
+.preparation-candidate-strip i{display:grid;width:30px;height:30px;margin-left:-5px;place-items:center;border:2px solid #fff;border-radius:50%;background:linear-gradient(145deg,#e6f0ff,#f0eaff);color:#5072a8;font-size:10px;font-style:normal;font-weight:800;box-shadow:0 3px 8px rgba(70,95,138,.12)}
+.preparation-candidate-strip b{margin-left:9px;color:#4f6485;font-size:10px}
+.preparation-progress-footer{display:flex;align-items:center;justify-content:space-between;gap:18px;margin-top:20px;padding:0 2px}
+.preparation-progress-footer p{display:flex;align-items:center;gap:7px;margin:0;color:#8593a8;font-size:10px}
+.preparation-progress-footer button{display:flex;align-items:center;gap:7px;border:1px solid #c9daf4;border-radius:9px;background:#fff;padding:8px 13px;color:#3463a9;font-size:10px;font-weight:700;cursor:pointer}
+.preparation-progress-footer button:disabled{cursor:wait;opacity:.6}
+
+/* 深链或旧页面只能查看失败状态，不能降级使用不完整的基础候选继续生产。 */
+.asset-preparation-blocker p{max-width:620px;line-height:22px}
+.preparation-failure-actions{display:flex;align-items:center;gap:10px}
+.asset-error .preparation-retry-primary{display:inline-flex;align-items:center;gap:7px;border-color:#1768ff;background:#1768ff;color:#fff;font-weight:700;box-shadow:0 8px 20px rgba(23,104,255,.17)}
+.asset-error .preparation-retry-primary:disabled{cursor:wait;opacity:.62}
+.asset-preparation-blocker .preparation-retry-error{margin-top:10px;border-radius:8px;background:#fff2f4;padding:8px 11px;color:#c5374f;font-size:11px}
+.preparation-retry-summary{display:flex;align-items:flex-start;gap:9px;margin:0 0 14px;border:1px solid #cce9dd;border-radius:10px;background:#f2fbf7;padding:12px;color:#487664}
+.preparation-retry-summary svg{flex:0 0 auto;margin-top:1px;color:#21956a}
+.preparation-retry-summary p{margin:0;font-size:11px;line-height:19px}
+
 @media(max-width:1200px){
   .asset-editor-body{height:min(720px,calc(100vh - 170px));grid-template-columns:minmax(260px,32%) minmax(380px,1fr);overflow:auto}
   .asset-editor-body>.detail-advice{grid-column:1/-1;display:grid;height:auto;grid-template-columns:repeat(3,minmax(0,1fr));overflow:visible}
@@ -2183,6 +2616,9 @@ onBeforeUnmount(() => {
   .feature-copy>div{display:none}
 }
 @media(max-width:980px){
+  .asset-preparation-progress-page{padding:24px}
+  .preparation-progress-grid{grid-template-columns:1fr}
+  .preparation-step-list{grid-template-columns:repeat(2,minmax(0,1fr))}
   .visual-bible-card{height:auto;grid-template-columns:70px minmax(0,1fr);overflow:visible}
   .bible-reference{width:70px;height:100px}
   .bible-identity{border-right:0}
@@ -2190,6 +2626,12 @@ onBeforeUnmount(() => {
   .visual-bible-card>.outline-button{grid-column:1/-1;width:100%}
 }
 @media(max-width:680px){
+  .asset-preparation-progress-page{min-height:0;padding:20px 16px}
+  .preparation-progress-header,.preparation-main-card,.preparation-progress-footer{align-items:flex-start;flex-direction:column}
+  .preparation-run-meta{justify-content:flex-start}
+  .preparation-progress-ring{align-self:center}
+  .preparation-step-list{grid-template-columns:1fr}
+  .preparation-candidate-strip{align-items:flex-start;flex-direction:column}
   .bible-feature-grid{grid-template-columns:1fr}
   .asset-image-lightbox{padding:18px}
   .lightbox-content{max-width:100%;max-height:calc(100vh - 36px)}

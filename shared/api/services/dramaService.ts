@@ -67,6 +67,14 @@ export const dramaService = {
     return callApi('drama/getAssetWorkspace', (adapter) => adapter.getDramaAssetWorkspace!(projectId))
   },
 
+  async estimateAssetPreparation(projectId: string) {
+    return callApi('drama/estimateAssetPreparation', (adapter) => adapter.estimateDramaAssetPreparation!(projectId))
+  },
+
+  async prepareAssetWorkspace(projectId: string, force = false) {
+    return callApi('drama/prepareAssetWorkspace', (adapter) => adapter.prepareDramaAssetWorkspace!(projectId, force))
+  },
+
   async createAssetProfile(projectId: string, payload: { asset_type: DramaWorkspaceAssetType; name: string; is_required?: boolean; data?: Record<string, unknown> }) {
     return callApi('drama/createAssetProfile', (adapter) => adapter.createDramaAssetProfile!(projectId, payload))
   },
@@ -266,6 +274,14 @@ export const dramaService = {
 
   async generateStoryboardPrevisualization(projectId: string, rowId: string) {
     return callApi('drama/generateStoryboardPrevisualization', adapter => adapter.generateStoryboardPrevisualization(projectId, rowId))
+  },
+
+  async uploadStoryboardFrameReference(projectId: string, rowId: string, slot: 'first' | 'last', file: File) {
+    return callApi('drama/uploadStoryboardFrameReference', adapter => adapter.uploadStoryboardFrameReference(projectId, rowId, slot, file))
+  },
+
+  async clearStoryboardFrameReference(projectId: string, rowId: string, slot: 'first' | 'last') {
+    return callApi('drama/clearStoryboardFrameReference', adapter => adapter.clearStoryboardFrameReference(projectId, rowId, slot))
   },
 
   async reviewStoryboards(projectId: string, payload: StoryboardReviewBatchPayload) {

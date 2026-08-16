@@ -33,6 +33,13 @@ export default defineNuxtConfig({
   // 这样浏览器首屏绘制就能直接命中正确主题，避免出现“先黑一下再白一下”的闪烁。
   app: {
     head: {
+      // 浏览器标签页统一复用首页导航栏的 Livliv 品牌 Logo。
+      // 查询参数用于刷新浏览器已经缓存的旧 favicon，避免修改后仍显示 Nuxt 默认图标。
+      link: [
+        { rel: 'icon', type: 'image/jpeg', href: '/branding/livliv-logo.jpeg?v=20260815' },
+        { rel: 'shortcut icon', type: 'image/jpeg', href: '/branding/livliv-logo.jpeg?v=20260815' },
+        { rel: 'apple-touch-icon', href: '/branding/livliv-logo.jpeg?v=20260815' }
+      ],
       script: [
         {
           id: 'livliv-theme-bootstrap',

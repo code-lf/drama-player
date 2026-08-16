@@ -58,6 +58,7 @@ import BaseMenu, { type BaseMenuItem } from '~/components/ui/BaseMenu.vue'
 import BaseSelect, { type BaseSelectOption } from '~/components/ui/BaseSelect.vue'
 import CreditAmount from '~/components/ui/CreditAmount.vue'
 import CreditIcon from '~/components/ui/CreditIcon.vue'
+import AnimatedPlaceholder from '~/components/ui/AnimatedPlaceholder.vue'
 // liv-ui 位于自定义目录，显式导入可避免 Nuxt 按目录前缀生成错误组件名。
 import LivButton from '~/components/liv-ui/LivButton.vue'
 import LivDialog from '~/components/liv-ui/LivDialog.vue'
@@ -139,6 +140,16 @@ const managedVoiceUploadInput = ref<HTMLInputElement | null>(null)
 let eventSource: EventSource | null = null
 let pollTimer: number | null = null
 let shotTuningTimer: number | null = null
+
+type StoryboardFrameSlot = 'first' | 'last'
+const frameSlots: StoryboardFrameSlot[] = ['first', 'last']
+
+interface StoryboardFrameReference {
+  asset_id?: string
+  url?: string
+  file_name?: string
+  source?: string
+}
 
 const tuningDraft = reactive<StoryboardTuningPayload>({
   episodeNo: props.episodeNo || 1,
@@ -451,6 +462,29 @@ const allSelectableSelected = computed(() => (
 ))
 const currentRowEstimate = computed(() => selectedRow.value ? rowEstimateCache.value[selectedRow.value.id] || null : null)
 const failedBatchCount = computed(() => Number(workspace.value?.latestBatch.counts.failed || 0))
+
+/**
+ * 顶部批量卡片必须使用同一份报价口径：镜头数、总时长和点数都来自服务端的 eligibleRowIds。
+ * 这样“全剧本 124 秒”和“当前可生成镜头”不会再被混在一起，避免出现 124×60 却显示 1011 点的误导。
+ * 选择模式尚未完成正式估价时，仅临时展示用户已选镜头的数量与时长，点数仍等待服务端核算。
+ */
+const batchPanelEstimate = computed(() => selectionMode.value ? batchEstimate.value : overviewEstimate.value)
+const selectedGenerationRows = computed(() => {
+  const selected = new Set(selectedIds.value)
+  return selectableRows.value.filter(row => selected.has(row.id))
+})
+const batchPanelShotCount = computed(() => (
+  batchPanelEstimate.value?.eligibleRowIds.length
+  ?? (selectionMode.value ? selectedGenerationRows.value.length : 0)
+))
+const batchPanelDurationSec = computed(() => (
+  batchPanelEstimate.value?.totalDurationSec
+  ?? (selectionMode.value
+    ? selectedGenerationRows.value.reduce((total, row) => total + Number(row.durationSec || 0), 0)
+    : 0)
+))
+const batchPanelCredits = computed(() => Number(batchPanelEstimate.value?.estimatedCredits || 0))
+const batchPanelBlockedCount = computed(() => Number(batchPanelEstimate.value?.blocked.length || 0))
 /** 当前工作区里可定位到具体镜头的失败项，用于在重试气泡中展示问题上下文。 */
 const failedStoryboardRows = computed(() => (workspace.value?.rows || []).filter(row => (
   row.videoStatus === 'failed' || row.generationStatus === 'failed'
@@ -663,7 +697,7 @@ function thumbnailFor(row: StoryboardRow): string {
   const extra = row.extra as Record<string, unknown>
   const assets = Array.isArray(extra.bound_assets) ? extra.bound_assets as Array<Record<string, unknown>> : []
   const assetReference = assets.find(item => item.selected_url || item.selectedUrl)
-  // 视频生成成功后必须优先展示当前 take 的真实封面，首帧预演和锁定资产只作为生成前参考。
+  // 视频生成成功后必须优先展示当前 take 的真实封面；旧版预演图和锁定资产仅作为生成前参考图。
   const selectedTakePoster = row.takes.find(take => take.id === row.selectedTakeId)?.posterUrl
     || row.takes.find(take => take.isSelected)?.posterUrl
   return selectedTakePoster
@@ -677,7 +711,7 @@ function failedRowIssueText(row: StoryboardRow): string {
 }
 
 /**
- * 优先使用自动质检抽取的帧作为失败证据，其次使用镜头封面、首帧预演或资产参考图。
+ * 优先使用自动质检抽取的帧作为失败证据，其次使用镜头封面、旧版参考图或资产参考图。
  * 这些地址都来自当前镜头已有数据，不额外发起上传或生成请求。
  */
 function failedRowEvidence(row: StoryboardRow): { url: string; label: string } | null {
@@ -692,7 +726,7 @@ function failedRowEvidence(row: StoryboardRow): { url: string; label: string } |
   }
 
   const thumbnail = thumbnailFor(row)
-  return thumbnail ? { url: thumbnail, label: row.previsualizationUrl ? '首帧预演' : '方案参考图' } : null
+  return thumbnail ? { url: thumbnail, label: '方案参考图' } : null
 }
 
 function boundAssets(row: StoryboardRow): BoundStoryboardAsset[] {
@@ -912,21 +946,6 @@ function riskText(row: StoryboardRow): string {
   return row.riskLevel === 'high' ? '高风险' : row.riskLevel === 'medium' ? '建议检查' : '低风险'
 }
 
-function previsualizationText(row: StoryboardRow): string {
-  if (row.previsualizationStatus === 'succeeded') return '预演已完成'
-  if (row.previsualizationStatus === 'running') return '预演生成中'
-  if (row.previsualizationStatus === 'queued') return '预演排队中'
-  if (row.previsualizationStatus === 'failed') return '预演失败'
-  return '待首帧预演'
-}
-
-function previsualizationActionText(row: StoryboardRow): string {
-  if (row.previsualizationStatus === 'failed') return '重新生成首帧预演'
-  if (row.previsualizationStatus === 'running') return '预演生成中'
-  if (row.previsualizationStatus === 'queued') return '预演排队中'
-  return '生成首帧预演'
-}
-
 function qcStatusText(status: unknown): string {
   if (status === 'manual_required') return '待手动检查'
   if (status === 'passed') return '自动质检通过'
@@ -944,13 +963,13 @@ function formatDuration(seconds: number): string {
 
 function estimateSignature(rows: StoryboardRow[]): string {
   return rows
-    .map(row => `${row.id}:${row.durationSec}:${row.contextHash}:${row.planStatus}:${row.previsualizationStatus}:${row.videoStatus}`)
+    // 首尾帧属于可选生成参考，不再影响视频报价资格，因此不进入报价缓存签名。
+    .map(row => `${row.id}:${row.durationSec}:${row.contextHash}:${row.planStatus}:${row.videoStatus}`)
     .join('|')
 }
 
 function generationPlanHint(row: StoryboardRow): string {
   if (row.planStatus === 'stale') return '时长已变更，导演节奏需要重新编排'
-  if (row.previsualizationStatus !== 'not_required' && row.previsualizationStatus !== 'succeeded') return '可直接生成；建议先做首帧预演以提高资产一致性'
   if (['queued', 'running', 'pending'].includes(row.videoStatus)) return '生成任务已提交，完成后会自动刷新视频版本'
   if (row.planStatus === 'confirmed') return row.videoUrl ? '当前方案已确认，可生成新版本' : '当前方案已确认，可以生成视频'
   return '点击后将先确认当前方案，再核算点数并进入生成'
@@ -959,7 +978,7 @@ function generationPlanHint(row: StoryboardRow): string {
 /**
  * 深度工作台只保留一个主要生成动作。
  * 方案未确认时允许自动确认；只有方案过期或已有任务运行时阻断。
- * 首帧预演是准确性建议，用户确认风险后仍可直接生成视频。
+ * 首帧、尾帧将作为可选参考槽位独立维护，不再形成额外的“预演”前置步骤。
  */
 function canPrepareWorkbenchGeneration(row: StoryboardRow): boolean {
   if (actionBusy.value) return false
@@ -988,6 +1007,67 @@ async function ensureOverviewEstimate(force = false): Promise<void> {
   } catch {
     // 被动估价失败不阻断工作台；用户点击生成时仍会再次执行正式估价并展示错误。
     overviewEstimate.value = null
+    // 失败后同步清掉签名，下一次刷新可以重新请求，不能把失败结果当成有效缓存。
+    overviewEstimateSignature.value = ''
+  }
+}
+
+/** 从分镜扩展字段读取首尾帧；扩展位允许旧项目在无需数据库迁移的情况下立即使用。 */
+function frameReference(row: StoryboardRow, slot: StoryboardFrameSlot): StoryboardFrameReference | null {
+  const references = row.extra.frame_references
+  if (!references || typeof references !== 'object' || Array.isArray(references)) return null
+  const value = (references as Record<string, unknown>)[slot]
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as StoryboardFrameReference
+    : null
+}
+
+function frameReferenceUrl(row: StoryboardRow, slot: StoryboardFrameSlot): string {
+  return String(frameReference(row, slot)?.url || '')
+}
+
+/** 上传完成后接口直接返回整份工作区，页面无需再猜测本地临时 URL。 */
+async function uploadFrameReference(slot: StoryboardFrameSlot, event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  const row = selectedRow.value
+  input.value = ''
+  if (!file || !row) return
+  if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
+    showNotice('首尾帧仅支持 PNG、JPG 或 WEBP 图片。', 'error')
+    return
+  }
+  if (file.size > 20 * 1024 * 1024) {
+    showNotice('首尾帧图片不能超过 20MB。', 'error')
+    return
+  }
+
+  actionBusy.value = `frame-${slot}-${row.id}`
+  try {
+    updateWorkspace(await dramaService.uploadStoryboardFrameReference(props.projectId, row.id, slot, file))
+    rowEstimateCache.value = {}
+    void ensureOverviewEstimate(true)
+    showNotice(`${slot === 'first' ? '首帧' : '尾帧'}参考图已保存，生成视频时会优先传入。`)
+  } catch (error) {
+    showNotice(actionErrorMessage(error, '首尾帧上传失败，请稍后重试。'), 'error')
+  } finally {
+    actionBusy.value = ''
+  }
+}
+
+async function clearFrameReference(slot: StoryboardFrameSlot): Promise<void> {
+  const row = selectedRow.value
+  if (!row || !frameReferenceUrl(row, slot)) return
+  actionBusy.value = `frame-${slot}-${row.id}`
+  try {
+    updateWorkspace(await dramaService.clearStoryboardFrameReference(props.projectId, row.id, slot))
+    rowEstimateCache.value = {}
+    void ensureOverviewEstimate(true)
+    showNotice(`${slot === 'first' ? '首帧' : '尾帧'}参考图已移除。`)
+  } catch (error) {
+    showNotice(actionErrorMessage(error, '首尾帧移除失败，请稍后重试。'), 'error')
+  } finally {
+    actionBusy.value = ''
   }
 }
 
@@ -1127,28 +1207,18 @@ async function reviewRow(
   }
 }
 
-async function generatePrevisualization(row: StoryboardRow): Promise<void> {
-  if (['queued', 'running'].includes(row.previsualizationStatus)) return
-  actionBusy.value = `previsualization-${row.id}`
-  try {
-    updateWorkspace(await dramaService.generateStoryboardPrevisualization(props.projectId, row.id))
-    showNotice(`镜头 ${rowNumber(row)} 已提交首帧预演，完成后会自动刷新。`)
-  } catch (error) {
-    showNotice(actionErrorMessage(error, '首帧预演提交失败，请稍后重试。'), 'error')
-  } finally {
-    actionBusy.value = ''
-  }
-}
-
 /** 进入批量选择态，浏览态不显示卡片复选框。 */
 function enterSelectionMode(): void {
   selectionMode.value = true
+  // 清除上一轮报价，防止新选择暂时沿用旧镜头集合的点数。
+  batchEstimate.value = null
 }
 
 /** 退出选择态并清理已选镜头，避免下次进入带入旧选择。 */
 function exitSelectionMode(): void {
   selectionMode.value = false
   selectedIds.value = []
+  batchEstimate.value = null
 }
 
 /** 在当前筛选结果中全选可生成镜头；再次点击取消全选。 */
@@ -1158,10 +1228,12 @@ function toggleSelectAll(): void {
 
   if (allSelectableSelected.value) {
     selectedIds.value = selectedIds.value.filter(id => !selectableIds.includes(id))
+    batchEstimate.value = null
     return
   }
 
   selectedIds.value = Array.from(new Set([...selectedIds.value, ...selectableIds]))
+  batchEstimate.value = null
 }
 
 function toggleSelection(rowId: string): void {
@@ -1171,6 +1243,7 @@ function toggleSelection(rowId: string): void {
   selectedIds.value = selectedIds.value.includes(rowId)
     ? selectedIds.value.filter(id => id !== rowId)
     : [...selectedIds.value, rowId]
+  batchEstimate.value = null
 }
 
 /** 判断镜头是否已有可供人工审核的视频版本。 */
@@ -1233,6 +1306,8 @@ async function prepareWorkbenchGeneration(): Promise<void> {
 
 async function startGeneration(): Promise<void> {
   if (!batchEstimate.value?.sufficient || !batchEstimate.value.eligibleRowIds.length) return
+  // 退出选择模式会清空本轮报价，因此先保存提交数量供成功提示使用。
+  const submittedCount = batchEstimate.value.eligibleRowIds.length
   actionBusy.value = 'start-batch'
   try {
     await dramaService.createStoryboardVideoBatch(props.projectId, {
@@ -1243,8 +1318,8 @@ async function startGeneration(): Promise<void> {
       idempotencyKey: `${props.projectId}:${currentEpisodeNo.value}:${Date.now()}`
     })
     batchConfirmVisible.value = false
-      exitSelectionMode()
-    showNotice(`已提交 ${batchEstimate.value.eligibleRowIds.length} 个视频片段，任务会在后台继续执行。`)
+    exitSelectionMode()
+    showNotice(`已提交 ${submittedCount} 个视频片段，任务会在后台继续执行。`)
     await loadWorkspace(true)
   } catch (error) {
     showNotice(actionErrorMessage(error, '批量生成提交失败，请稍后重试。'), 'error')
@@ -2011,23 +2086,32 @@ onBeforeUnmount(stopRealtimeTracking)
           <div class="batch-panel">
             <div class="batch-panel__heading">
               <span class="icon-box"><Film :size="19" /></span>
-              <div><strong>批量生成任务</strong><small>使用系统智能匹配的原生音画模型</small></div>
+              <div>
+                <strong>批量生成任务</strong>
+                <small>仅统计当前已确认且可提交的镜头</small>
+              </div>
+              <span class="batch-panel__total-duration">
+                全片总时长 <b>{{ formatDuration(workspace.summary.estimatedDurationSec) }}</b>
+              </span>
             </div>
             <div class="batch-metrics">
               <span class="batch-metric">
-                <b>{{ selectionMode ? selectedIds.length : activeRows.filter(row => row.videoStatus === 'idle').length }}</b>
+                <b>{{ batchPanelShotCount }}</b>
                 <em>个镜头</em>
               </span>
               <span class="batch-metric">
-                <b>{{ formatDuration(workspace.summary.estimatedDurationSec) }}</b>
+                <b>{{ formatDuration(batchPanelDurationSec) }}</b>
                 <em>预计时长</em>
               </span>
               <span class="batch-credit">
                 <em>预计消耗</em>
-                <CreditAmount v-if="(overviewEstimate?.estimatedCredits || workspace.latestBatch.estimatedCredits) > 0" :value="overviewEstimate?.estimatedCredits || workspace.latestBatch.estimatedCredits" size="sm" tone="inherit" show-unit />
+                <CreditAmount v-if="batchPanelCredits > 0" :value="batchPanelCredits" size="sm" tone="inherit" show-unit />
                 <em v-else>确认方案后估算</em>
               </span>
             </div>
+            <small v-if="batchPanelBlockedCount > 0" class="batch-panel__scope-note">
+              另有 {{ batchPanelBlockedCount }} 个镜头尚未满足提交条件，暂不计入时长和点数
+            </small>
           </div>
         </header>
 
@@ -2149,8 +2233,7 @@ onBeforeUnmount(stopRealtimeTracking)
               <BaseMenu :items="shotMenuItems(row)" trigger-class="shot-more" @select="handleShotMenu(row, $event)">
                 <template #trigger><MoreHorizontal :size="16" /></template>
               </BaseMenu>
-              <span v-if="row.previsualizationUrl && !row.videoUrl" class="media-label">首帧预演</span>
-              <span v-else-if="thumbnailFor(row) && !row.videoUrl && !row.directorSegments.length && isStoryboardPlanning" class="media-label media-label--planning"><LoaderCircle :size="12" class="spin" />编排细化中</span>
+              <span v-if="thumbnailFor(row) && !row.videoUrl && !row.directorSegments.length && isStoryboardPlanning" class="media-label media-label--planning"><LoaderCircle :size="12" class="spin" />编排细化中</span>
               <span v-else-if="thumbnailFor(row) && !row.videoUrl && !row.directorSegments.length && planningFailed" class="media-label media-label--interrupted"><AlertTriangle :size="12" />方案未完成</span>
               <span v-else-if="thumbnailFor(row) && !row.videoUrl" class="media-label">方案参考</span>
               <span v-else-if="row.videoUrl" class="media-label media-label--video"><Play :size="12" />视频版本</span>
@@ -2167,7 +2250,6 @@ onBeforeUnmount(stopRealtimeTracking)
                 <span class="status-chip status-chip--plan">{{ planStatusText(row) }}</span>
                 <span class="status-chip" :class="`status-chip--${row.videoStatus}`">{{ videoStatusText(row) }}</span>
                 <span v-if="qaStatusText(row)" class="status-chip" :class="`status-chip--qa-${qaStatusClass(row)}`">{{ qaStatusText(row) }}</span>
-                <span v-if="row.previsualizationStatus !== 'not_required'" class="status-chip status-chip--preview">{{ previsualizationText(row) }}</span>
                 <span v-if="row.riskLevel !== 'low'" class="risk-chip"><AlertTriangle :size="12" />{{ riskText(row) }}</span>
               </div>
             </div>
@@ -2240,16 +2322,72 @@ onBeforeUnmount(stopRealtimeTracking)
               <video v-if="selectedTake?.videoUrl || selectedRow.videoUrl" :src="selectedTake?.videoUrl || selectedRow.videoUrl" controls playsinline />
               <img v-else-if="thumbnailFor(selectedRow)" :src="thumbnailFor(selectedRow)" :alt="`${titleFor(selectedRow)}方案参考`" />
               <div v-else class="viewer__empty"><Film :size="36" /><strong>等待生成视频</strong><span>导演方案和锁定资产已准备完成。</span></div>
-              <span class="viewer__badge">{{ selectedTake?.videoUrl || selectedRow.videoUrl ? '当前视频版本' : selectedRow.previsualizationUrl ? '首帧预演' : '方案参考' }}</span>
+              <span class="viewer__badge">{{ selectedTake?.videoUrl || selectedRow.videoUrl ? '当前视频版本' : '方案参考' }}</span>
               <button v-if="thumbnailFor(selectedRow)" class="viewer__expand" type="button" title="全屏预览"><Maximize2 :size="18" /></button>
             </div>
+
+            <section class="frame-reference-section">
+              <div class="section-heading">
+                <div>
+                  <strong>首帧 / 尾帧</strong>
+                  <span>可选参考；上传后生成视频会优先使用，未上传也可正常生成</span>
+                </div>
+              </div>
+              <div class="frame-reference-grid">
+                <article v-for="slot in frameSlots" :key="slot" class="frame-reference-card">
+                  <!-- 空槽位整个小卡片都是上传入口，避免再放一个重复的“上传”按钮。 -->
+                  <label
+                    v-if="!frameReferenceUrl(selectedRow, slot)"
+                    class="frame-reference-card__preview frame-reference-card__preview--upload"
+                    :class="{ disabled: actionBusy === `frame-${slot}-${selectedRow.id}` }"
+                  >
+                    <div class="frame-reference-card__empty">
+                      <LoaderCircle v-if="actionBusy === `frame-${slot}-${selectedRow.id}`" :size="20" class="spin" />
+                      <Upload v-else :size="20" />
+                      <span>{{ actionBusy === `frame-${slot}-${selectedRow.id}` ? '上传中…' : '点击上传' }}</span>
+                    </div>
+                    <b>{{ slot === 'first' ? '首帧' : '尾帧' }}</b>
+                    <input
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp"
+                      :disabled="actionBusy === `frame-${slot}-${selectedRow.id}`"
+                      @change="uploadFrameReference(slot, $event)"
+                    />
+                  </label>
+                  <div v-else class="frame-reference-card__preview">
+                    <img :src="frameReferenceUrl(selectedRow, slot)" :alt="slot === 'first' ? '首帧参考图' : '尾帧参考图'" />
+                    <b>{{ slot === 'first' ? '首帧' : '尾帧' }}</b>
+                  </div>
+                  <div v-if="frameReferenceUrl(selectedRow, slot)" class="frame-reference-card__actions">
+                    <label :class="{ disabled: actionBusy === `frame-${slot}-${selectedRow.id}` }">
+                      <LoaderCircle v-if="actionBusy === `frame-${slot}-${selectedRow.id}`" :size="14" class="spin" />
+                      <Upload v-else :size="14" />替换
+                      <input
+                        type="file"
+                        accept="image/png,image/jpeg,image/webp"
+                        :disabled="actionBusy === `frame-${slot}-${selectedRow.id}`"
+                        @change="uploadFrameReference(slot, $event)"
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      :disabled="actionBusy === `frame-${slot}-${selectedRow.id}`"
+                      @click="clearFrameReference(slot)"
+                    >
+                      <Trash2 :size="14" />移除
+                    </button>
+                  </div>
+                </article>
+              </div>
+            </section>
 
             <section class="take-section">
               <div class="section-heading"><div><strong>镜头版本</strong><span>每次生成都会保留新版本</span></div></div>
               <div v-if="selectedRow.takes.length" class="take-list">
                 <button v-for="take in selectedRow.takes" :key="take.id" type="button" class="take-card" :class="{ selected: take.isSelected || take.id === selectedRow.selectedTakeId }" @click="selectTake(take)">
                   <img v-if="take.posterUrl" :src="take.posterUrl" :alt="`版本 ${take.versionNo}`" />
-                  <div v-else class="take-card__empty"><Film :size="20" /></div>
+                  <!-- 视频尚未返回封面时复用全站动态图片占位组件，排队、生成中和失败态都不再显示空白灰块。 -->
+                  <AnimatedPlaceholder v-else class="take-card__empty" />
                   <span>版本 {{ take.versionNo }}</span>
                   <b>{{ takeStatusText(take.status) }}</b>
                   <CheckCircle2 v-if="take.isSelected || take.id === selectedRow.selectedTakeId" :size="17" />
@@ -2390,14 +2528,6 @@ onBeforeUnmount(stopRealtimeTracking)
                 </div>
                 <div class="generation-actions">
                   <LivButton
-                    v-if="selectedRow.previsualizationStatus !== 'not_required' && !selectedRow.videoUrl"
-                    variant="secondary"
-                    :disabled="['queued', 'running'].includes(selectedRow.previsualizationStatus) || actionBusy === `previsualization-${selectedRow.id}`"
-                    @click="generatePrevisualization(selectedRow)"
-                  >
-                    <template #icon><LoaderCircle v-if="['queued', 'running'].includes(selectedRow.previsualizationStatus)" :size="16" class="spin" /><ImageIcon v-else :size="16" /></template>{{ previsualizationActionText(selectedRow) }}
-                  </LivButton>
-                  <LivButton
                     class="generation-primary-action"
                     variant="primary"
                     :loading="actionBusy === `review-${selectedRow.id}` || actionBusy === 'estimate-batch'"
@@ -2432,10 +2562,9 @@ onBeforeUnmount(stopRealtimeTracking)
           <section><h4>镜头目的</h4><p>{{ normalizeVisibleTimelineText(selectedRow.sceneDescription) }}</p></section>
           <section><h4>导演方案</h4><ol><li v-for="segment in selectedRow.directorSegments" :key="segment.id"><span>{{ (segment.startMs / 1000).toFixed(1) }}–{{ (segment.endMs / 1000).toFixed(1) }}秒</span>{{ segment.shotSize }} · {{ segment.cameraMotion }} · {{ normalizeVisibleTimelineText(segment.actionDesc) }}</li></ol></section>
           <section><h4>使用资产</h4><div class="review-assets"><span v-for="asset in boundAssets(selectedRow)" :key="`${asset.type}-${asset.name}`">{{ assetTypeLabel(asset.type) }} · {{ asset.name }}</span><span v-if="!boundAssets(selectedRow).length" class="warning-text">资产尚未就绪</span></div></section>
-          <section><h4>制作预检</h4><div class="preflight-list"><div><CheckCircle2 :size="15" />视频片段时长 {{ selectedRow.durationSec }} 秒</div><div><CheckCircle2 :size="15" />镜头内节奏 {{ selectedRow.directorSegments.length }} 段</div><div :class="{ warning: selectedRow.riskLevel !== 'low' }"><AlertTriangle v-if="selectedRow.riskLevel !== 'low'" :size="15" /><CheckCircle2 v-else :size="15" />{{ riskText(selectedRow) }}</div><div v-if="selectedRow.previsualizationStatus !== 'not_required'" :class="{ warning: selectedRow.previsualizationStatus !== 'succeeded' }"><ImageIcon :size="15" />{{ previsualizationText(selectedRow) }}</div></div></section>
+          <section><h4>制作预检</h4><div class="preflight-list"><div><CheckCircle2 :size="15" />视频片段时长 {{ selectedRow.durationSec }} 秒</div><div><CheckCircle2 :size="15" />镜头内节奏 {{ selectedRow.directorSegments.length }} 段</div><div :class="{ warning: selectedRow.riskLevel !== 'low' }"><AlertTriangle v-if="selectedRow.riskLevel !== 'low'" :size="15" /><CheckCircle2 v-else :size="15" />{{ riskText(selectedRow) }}</div></div></section>
         </div>
         <template #footer>
-          <LivButton v-if="selectedRow.previsualizationStatus !== 'not_required' && !selectedRow.previsualizationUrl" variant="secondary" :disabled="['queued', 'running'].includes(selectedRow.previsualizationStatus)" @click="generatePrevisualization(selectedRow)"><template #icon><ImageIcon :size="16" /></template>{{ previsualizationActionText(selectedRow) }}</LivButton>
           <LivButton variant="secondary" @click="reviewRow('needs_revision')">需要修改</LivButton>
           <LivButton variant="secondary" @click="openWorkbench(selectedRow)">进入深度编辑</LivButton>
           <LivButton variant="primary" @click="reviewRow('passed', true)"><template #icon><Check :size="16" /></template>确认并下一个</LivButton>
@@ -2867,6 +2996,9 @@ onBeforeUnmount(stopRealtimeTracking)
 .batch-panel__heading { display: flex; grid-column: 1 / -1; gap: 10px; align-items: center; }
 .batch-panel__heading div { display: flex; flex-direction: column; }
 .batch-panel__heading small, .section-heading span { margin-top: 3px; color: var(--sb-muted); font-size: 11px; }
+.batch-panel__total-duration { margin-left: auto; padding: 4px 8px; border: 1px solid #cdddf6; border-radius: 999px; background: rgba(255,255,255,.76); color: #667085; font-size: 11px; white-space: nowrap; }
+.batch-panel__total-duration b { margin-left: 3px; color: #245fae; font-size: 12px; }
+.batch-panel__scope-note { grid-column: 1 / -1; color: #8a6116; font-size: 11px; line-height: 1.45; }
 .icon-box, .dialog-icon { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 8px; background: var(--sb-blue-soft); color: var(--sb-blue); }
 .batch-metrics { display: grid; grid-column: 1 / -1; grid-template-columns: repeat(3, max-content); align-items: center; justify-content: space-between; column-gap: 18px; margin: 0; padding-top: 10px; border-top: 1px solid #dbe7f8; color: var(--sb-muted); font-size: 13px; }
 .batch-metric, .batch-credit { display: inline-flex; align-items: center; gap: 4px; min-height: 20px; white-space: nowrap; }
@@ -3004,6 +3136,22 @@ onBeforeUnmount(stopRealtimeTracking)
 .viewer__empty { color: #d0d5dd; }
 .viewer__badge { position: absolute; left: 12px; top: 12px; padding: 5px 8px; border: 1px solid rgba(255,255,255,.38); border-radius: 4px; background: rgba(16,24,40,.62); color: white; font-size: 11px; }
 .viewer__expand { position: absolute; right: 12px; top: 12px; width: 34px; height: 34px; display: grid; place-items: center; border: 1px solid rgba(255,255,255,.38); border-radius: 4px; background: rgba(16,24,40,.62); color: white; }
+.frame-reference-section { margin-top: 10px; padding: 10px; border: 1px solid var(--sb-line); border-radius: 8px; background: #fff; }
+.frame-reference-grid { display: grid; grid-template-columns: repeat(2, minmax(150px, 220px)); gap: 8px; margin-top: 8px; }
+.frame-reference-card { min-width: 0; overflow: hidden; border: 1px solid #dbe4f0; border-radius: 7px; background: #f8faff; }
+.frame-reference-card__preview { position: relative; aspect-ratio: 16 / 9; overflow: hidden; background: #edf2f8; }
+.frame-reference-card__preview--upload { display: block; cursor: pointer; }
+.frame-reference-card__preview--upload.disabled { cursor: not-allowed; opacity: .65; }
+.frame-reference-card__preview img { width: 100%; height: 100%; object-fit: cover; }
+.frame-reference-card__preview > b { position: absolute; left: 7px; top: 7px; padding: 3px 6px; border-radius: 4px; background: rgba(16,24,40,.68); color: #fff; font-size: 10px; }
+.frame-reference-card__empty { width: 100%; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; color: #6680a4; font-size: 11px; }
+.frame-reference-card__preview--upload:hover .frame-reference-card__empty { color: var(--sb-blue); background: #f1f6ff; }
+.frame-reference-card__preview input { position: absolute; width: 1px; height: 1px; overflow: hidden; opacity: 0; pointer-events: none; }
+.frame-reference-card__actions { min-height: 34px; display: flex; align-items: center; justify-content: flex-end; gap: 5px; padding: 5px 7px; }
+.frame-reference-card__actions label, .frame-reference-card__actions button { min-height: 26px; display: inline-flex; align-items: center; justify-content: center; gap: 4px; padding: 0 7px; border: 1px solid #cbd8eb; border-radius: 5px; background: #fff; color: #245fae; font-size: 11px; cursor: pointer; }
+.frame-reference-card__actions label.disabled, .frame-reference-card__actions button:disabled { cursor: not-allowed; opacity: .55; }
+.frame-reference-card__actions label input { position: absolute; width: 1px; height: 1px; overflow: hidden; opacity: 0; pointer-events: none; }
+.frame-reference-card__actions button { color: #b42318; }
 .take-section, .filmstrip-section, .detail-section { margin-top: 10px; padding: 12px; border: 1px solid var(--sb-line); border-radius: 8px; background: white; }
 .detail-column .detail-section:first-child { margin-top: 0; }
 .section-heading { display: flex; justify-content: space-between; gap: 12px; align-items: center; margin-bottom: 12px; }
@@ -3375,5 +3523,6 @@ onBeforeUnmount(stopRealtimeTracking)
   .tuning-field, .shot-tuning-form { grid-template-columns: 1fr; }
   .tuning-preview--liv { grid-template-columns: 1fr 1fr; gap: 10px 0; }
   .tuning-preview--liv > div:nth-child(2) { border-right: 0; }
+  .frame-reference-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 </style>

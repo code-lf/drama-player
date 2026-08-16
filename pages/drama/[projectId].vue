@@ -3540,7 +3540,7 @@ function selectStep(step: WorkflowStepKey): void {
   // 流程页按步骤推进：只能回看已确认步骤，未来步骤必须通过底部确认按钮逐步进入。
   if (!canVisitStep(step)) {
     if (step === 'setting' && isScriptAnalysisReady.value && !hasConfirmedScriptVersion.value) {
-      infoMessage.value = '请先在剧本页确认当前剧本版本，系统会冻结资产制作所需的结构化快照。'
+      infoMessage.value = '请先在剧本页确认当前版本并完成资产资料提炼，再进入资产制作。'
     }
     return
   }
@@ -3574,8 +3574,8 @@ async function goNextStep(confirmedDetail?: DramaProjectDetail): Promise<void> {
   if (!nextStep) return
 
   if (confirmedDetail) {
-    // 剧本确认接口返回的是已经冻结快照的完整详情，先写入本地状态再切步，
-    // 保证资产工作台首帧就能拿到角色、场景和道具候选。
+    // 剧本页会在“快照已冻结 + 提炼任务已安全入队（或缓存已就绪）”后调用本方法；
+    // 先写入确认接口返回的最新详情，保证资产页进度首帧与本次任务绑定同一剧本版本。
     projectDetail.value = confirmedDetail
     syncSelectionsFromAnalysis(confirmedDetail)
   }
@@ -3597,7 +3597,7 @@ async function goNextStep(confirmedDetail?: DramaProjectDetail): Promise<void> {
 
   confirmedStepIndex.value = Math.max(confirmedStepIndex.value, currentIndex + 1)
   persistConfirmedStepIndex()
-  // 剧本确认接口已经原子完成候选整理和快照冻结，接口成功后直接切入资产，
+  // 计费确认与任务入队已经由剧本页完成，因此这里直接切步；后续提炼进度由资产页展示，
   // 不再等待父级轮询先更新 hasConfirmedScriptVersion 才允许导航。
   if (currentStep === 'script' && nextStep === 'setting') {
     activeStep.value = nextStep
