@@ -39,10 +39,13 @@ import {
 } from '@lucide/vue'
 import type {
   StoryboardDirectorSegment,
+  StoryboardMicroEdit,
+  StoryboardMicroEditEstimate,
   StoryboardQualityPolicy,
   StoryboardRow,
   StoryboardTake,
-  StoryboardWorkspace
+  StoryboardWorkspace,
+  StoryboardVideoInputMode
 } from '~/entities/storyboard/types'
 import type { PublicVideoCapabilities } from '~/entities/drama/types'
 import type {
@@ -50,6 +53,7 @@ import type {
   DramaAssetWorkspace,
   DramaWorkspaceAssetType,
   StoryboardBatchEstimate,
+  StoryboardMicroEditPayload,
   StoryboardTuningPayload
 } from '~/shared/api/types'
 import { dramaService } from '~/shared/api/services/dramaService'
@@ -108,6 +112,46 @@ const searchKeyword = ref('')
 const displayMode = ref<'grid' | 'list'>('grid')
 const qualityPolicy = ref<StoryboardQualityPolicy>('smart')
 const actionBusy = ref('')
+/**
+ * 视频输入模式：全能参考模式发送角色/场景/道具资产；首尾帧模式只发送首帧、尾帧。
+ * 两套协议在火山模型侧不能混用，因此这里必须作为工作台的显式状态保存，
+ * 不能仅靠“有没有上传图片”来猜测，否则用户切换后容易出现资产被静默丢弃。
+ */
+const videoInputMode = ref<StoryboardVideoInputMode>('universal_reference')
+// 微剪辑弹窗的状态：范围和框选坐标都使用毫秒/0~1 归一化值，后端不依赖浏览器窗口尺寸。
+const microEditVisible = ref(false)
+const microEditRow = ref<StoryboardRow | null>(null)
+const microEditTake = ref<StoryboardTake | null>(null)
+const microEditMode = ref<'local_trim' | 'ai_edit'>('local_trim')
+const microEditInMs = ref(0)
+const microEditOutMs = ref(5000)
+const microEditDurationMs = ref(5000)
+const microEditPrompt = ref('')
+const microEditPreserve = ref('')
+const microEditReferences = ref<Array<{ url: string; label: string; mimeType: string }>>([])
+// 框选区域使用 0~1 的归一化坐标保存，既能适配不同分辨率，也能直接传给后端模型配置。
+const microEditRegion = reactive({ x: 0, y: 0, width: 1, height: 1 })
+// 区域框选预览优先使用当前版本封面；把 url 拼接放到 script 中，避免 Vue 模板属性
+// 同时包含模板字符串和引号时被编译器误解析。
+const microEditRegionPreviewStyle = computed(() => ({
+  backgroundImage: microEditTake.value?.posterUrl ? `url("${microEditTake.value.posterUrl}")` : undefined
+}))
+// 时间轴缩略条复用当前视频封面，先提供可识别的画面参照；真正的截取仍由两个
+// 毫秒端点值精确控制，端点值通过时间轴上的圆形手柄修改，不暴露原生滑块。
+const microEditTimelineStyle = computed(() => ({
+  backgroundImage: microEditTake.value?.posterUrl ? `url("${microEditTake.value.posterUrl}")` : undefined
+}))
+const microEditEstimate = ref<StoryboardMicroEditEstimate | null>(null)
+const microEditTask = ref<StoryboardMicroEdit | null>(null)
+const microEditUploading = ref(false)
+const microEditSubmitting = ref(false)
+let microEditPollTimer: number | null = null
+const microEditFileInput = ref<HTMLInputElement | null>(null)
+// 区域框选拖拽的清理函数。统一保存清理入口，保证弹窗关闭或页面卸载时不会遗留
+// window/DOM 事件监听，避免下一次打开微剪辑时出现“拖一次移动多次”的问题。
+let microEditRegionDragCleanup: (() => void) | null = null
+// 时间轴圆点和选区拖拽也使用 window 级监听，保证指针拖到轨道外仍能顺利收尾。
+let microEditTimelineDragCleanup: (() => void) | null = null
 const quickReviewAll = ref(false)
 const tuningVisible = ref(false)
 const tuningPreview = ref<Awaited<ReturnType<typeof dramaService.previewStoryboardTuning>> | null>(null)
@@ -492,6 +536,49 @@ const failedStoryboardRows = computed(() => (workspace.value?.rows || []).filter
 const managedAssets = computed(() => (assetWorkspace.value?.assets || []).filter(profile => profile.asset_type === assetManagerType.value))
 
 const projectResolution = computed(() => String(props.resolution || '720p').toLowerCase())
+
+/** 从镜头扩展字段恢复模式，兼容后端历史数据使用的 snake_case 字段。 */
+function inputModeFor(row: StoryboardRow | null | undefined): StoryboardVideoInputMode {
+  const value = row?.extra?.videoInputMode || row?.extra?.video_input_mode
+  return value === 'first_last_frame' ? 'first_last_frame' : 'universal_reference'
+}
+
+/** 批量生成必须保证一批镜头使用同一协议；混合模式时回退到安全的全能参考模式。 */
+function inputModeForRows(rows: StoryboardRow[]): StoryboardVideoInputMode {
+  if (!rows.length) return videoInputMode.value
+  const modes = new Set(rows.map(row => inputModeFor(row)))
+  return modes.size === 1 ? Array.from(modes)[0] : 'universal_reference'
+}
+
+/**
+ * 持久化当前镜头的模式选择。模式切换不会删除已经上传的素材，
+ * 只改变下一次请求发送哪一组参考图，避免用户误以为切换会丢资产。
+ */
+async function setVideoInputMode(mode: StoryboardVideoInputMode): Promise<void> {
+  const row = selectedRow.value
+  if (!row || videoInputMode.value === mode || actionBusy.value === `mode-${row.id}`) return
+  const previous = inputModeFor(row)
+  videoInputMode.value = mode
+  row.extra = { ...(row.extra || {}), videoInputMode: mode, video_input_mode: mode }
+  actionBusy.value = `mode-${row.id}`
+  try {
+    await dramaService.updateStoryboard(props.projectId, row.id, {
+      extra: { ...(row.extra || {}), videoInputMode: mode, video_input_mode: mode }
+    })
+    rowEstimateCache.value = {}
+    overviewEstimateSignature.value = ''
+    void ensureOverviewEstimate(true)
+    void ensureRowEstimate(row)
+    showNotice(`已切换为${mode === 'first_last_frame' ? '首尾帧模式' : '全能参考模式'}。已保存的图片不会被删除。`)
+  } catch (error) {
+    videoInputMode.value = previous
+    row.extra = { ...(row.extra || {}), videoInputMode: previous, video_input_mode: previous }
+    showNotice(actionErrorMessage(error, '视频输入模式保存失败，请稍后重试。'), 'error')
+  } finally {
+    actionBusy.value = ''
+  }
+}
+
 const durationOptions = computed<BaseSelectOption[]>(() => {
   // 时长选项完全由管理端当前默认视频模型的 limits_json 生成。
   // 能力接口尚未返回时保持空列表，避免短暂展示一套写死的 4-15 秒假配置。
@@ -963,8 +1050,8 @@ function formatDuration(seconds: number): string {
 
 function estimateSignature(rows: StoryboardRow[]): string {
   return rows
-    // 首尾帧属于可选生成参考，不再影响视频报价资格，因此不进入报价缓存签名。
-    .map(row => `${row.id}:${row.durationSec}:${row.contextHash}:${row.planStatus}:${row.videoStatus}`)
+    // 模式会影响供应商请求协议和费用资格，必须进入缓存签名，不能复用另一模式的旧报价。
+    .map(row => `${row.id}:${row.durationSec}:${row.contextHash}:${row.planStatus}:${row.videoStatus}:${inputModeFor(row)}`)
     .join('|')
 }
 
@@ -1002,7 +1089,8 @@ async function ensureOverviewEstimate(force = false): Promise<void> {
       episodeNo: currentEpisodeNo.value,
       rowIds: rows.map(row => row.id),
       qualityPolicy: 'smart',
-      resolution: projectResolution.value
+      resolution: projectResolution.value,
+      videoInputMode: inputModeForRows(rows)
     })
   } catch {
     // 被动估价失败不阻断工作台；用户点击生成时仍会再次执行正式估价并展示错误。
@@ -1047,7 +1135,7 @@ async function uploadFrameReference(slot: StoryboardFrameSlot, event: Event): Pr
     updateWorkspace(await dramaService.uploadStoryboardFrameReference(props.projectId, row.id, slot, file))
     rowEstimateCache.value = {}
     void ensureOverviewEstimate(true)
-    showNotice(`${slot === 'first' ? '首帧' : '尾帧'}参考图已保存，生成视频时会优先传入。`)
+    showNotice(`${slot === 'first' ? '首帧' : '尾帧'}参考图已保存；切换到首尾帧模式后才会作为边界帧发送。`)
   } catch (error) {
     showNotice(actionErrorMessage(error, '首尾帧上传失败，请稍后重试。'), 'error')
   } finally {
@@ -1078,7 +1166,8 @@ async function ensureRowEstimate(row: StoryboardRow): Promise<void> {
       episodeNo: currentEpisodeNo.value,
       rowIds: [row.id],
       qualityPolicy: 'smart',
-      resolution: projectResolution.value
+      resolution: projectResolution.value,
+      videoInputMode: inputModeFor(row)
     })
     rowEstimateCache.value = { ...rowEstimateCache.value, [row.id]: estimate }
   } catch {
@@ -1107,6 +1196,8 @@ function actionErrorMessage(error: unknown, fallback: string): string {
 
 function updateWorkspace(next: StoryboardWorkspace): void {
   workspace.value = next
+  // 工作区刷新后以服务端保存的模式为准，避免异步刷新把用户刚选的模式覆盖成旧值。
+  if (selectedRow.value) videoInputMode.value = inputModeFor(selectedRow.value)
   selectedIds.value = selectedIds.value.filter(id => next.rows.some(row => row.id === id))
   syncRealtimeTracking()
 }
@@ -1154,6 +1245,7 @@ function closeQuickReview(): void {
 }
 
 function openWorkbench(row: StoryboardRow): void {
+  videoInputMode.value = inputModeFor(row)
   setQuery({ view: 'workbench', review: undefined, shot: row.id })
 }
 
@@ -1278,7 +1370,8 @@ async function prepareGeneration(rowIds: string[]): Promise<void> {
       episodeNo: currentEpisodeNo.value,
       rowIds,
       qualityPolicy: qualityPolicy.value,
-      resolution: projectResolution.value
+      resolution: projectResolution.value,
+      videoInputMode: inputModeForRows((workspace.value?.rows || []).filter(row => rowIds.includes(row.id)))
     })
     batchConfirmVisible.value = true
   } catch (error) {
@@ -1315,6 +1408,7 @@ async function startGeneration(): Promise<void> {
       rowIds: pendingGenerationIds.value,
       qualityPolicy: qualityPolicy.value,
       resolution: projectResolution.value,
+      videoInputMode: inputModeForRows((workspace.value?.rows || []).filter(row => pendingGenerationIds.value.includes(row.id))),
       idempotencyKey: `${props.projectId}:${currentEpisodeNo.value}:${Date.now()}`
     })
     batchConfirmVisible.value = false
@@ -1354,6 +1448,8 @@ function shotMenuItems(row: StoryboardRow): BaseMenuItem[] {
   const index = rows.findIndex(item => item.id === row.id)
   return [
     { key: 'edit', label: '进入深度编辑', icon: Pencil },
+    // 没有成功视频时不提供微剪辑，避免用户进入后才看到不可编辑的空版本。
+    { key: 'micro-edit', label: '微剪辑', icon: Film, disabled: !row.takes.some(take => take.status === 'succeeded' && Boolean(take.videoUrl)) },
     { key: 'up', label: '上移', icon: ArrowUp, disabled: index <= 0 },
     { key: 'down', label: '下移', icon: ArrowDown, disabled: index < 0 || index >= rows.length - 1 },
     { key: 'copy', label: '复制镜头', icon: Copy },
@@ -1362,6 +1458,12 @@ function shotMenuItems(row: StoryboardRow): BaseMenuItem[] {
 }
 
 async function handleShotMenu(row: StoryboardRow, item: BaseMenuItem): Promise<void> {
+  if (item.key === 'micro-edit') {
+    const take = row.takes.find(item => item.id === row.selectedTakeId && item.status === 'succeeded' && item.videoUrl)
+      || row.takes.find(item => item.status === 'succeeded' && item.videoUrl)
+    if (take) openMicroEdit(row, take)
+    return
+  }
   if (item.key === 'edit') {
     openWorkbench(row)
     return
@@ -1953,7 +2055,333 @@ onMounted(async () => {
   await nextTick()
   window.scrollTo({ top: 0, behavior: 'auto' })
 })
-onBeforeUnmount(stopRealtimeTracking)
+onBeforeUnmount(() => {
+  stopRealtimeTracking()
+  // 弹窗关闭或页面卸载时清理轮询，避免后台任务完成后还触发旧页面刷新。
+  stopMicroEditPolling()
+  stopMicroEditRegionDrag()
+  stopMicroEditTimelineDrag()
+})
+
+function stopMicroEditPolling(): void {
+  if (microEditPollTimer) window.clearInterval(microEditPollTimer)
+  microEditPollTimer = null
+}
+
+function stopMicroEditRegionDrag(): void {
+  microEditRegionDragCleanup?.()
+  microEditRegionDragCleanup = null
+}
+
+function stopMicroEditTimelineDrag(): void {
+  microEditTimelineDragCleanup?.()
+  microEditTimelineDragCleanup = null
+}
+
+function closeMicroEdit(): void {
+  if (microEditSubmitting.value) return
+  stopMicroEditRegionDrag()
+  stopMicroEditTimelineDrag()
+  microEditVisible.value = false
+}
+
+type MicroEditRegionHandle = 'move' | 'draw' | 'nw' | 'ne' | 'sw' | 'se'
+
+/**
+ * 通过时间轴上的两个圆点调整起止时间。
+ * 不再把浏览器原生 range 控件暴露给用户，避免“看不出哪个滑块对应哪一端”的问题。
+ */
+function startMicroEditTimelineHandleDrag(kind: 'in' | 'out', event: PointerEvent): void {
+  if (microEditSubmitting.value) return
+  const track = (event.currentTarget as HTMLElement | null)?.parentElement
+  if (!track) return
+  event.preventDefault()
+  stopMicroEditTimelineDrag()
+  const bounds = track.getBoundingClientRect()
+  const startIn = microEditInMs.value
+  const startOut = microEditOutMs.value
+  const duration = Math.max(1000, microEditDurationMs.value)
+  const startX = event.clientX
+  const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value))
+  const move = (moveEvent: PointerEvent) => {
+    const delta = ((moveEvent.clientX - startX) / Math.max(1, bounds.width)) * duration
+    if (kind === 'in') microEditInMs.value = Math.round(clamp(startIn + delta, 0, startOut - 100))
+    else microEditOutMs.value = Math.round(clamp(startOut + delta, startIn + 100, duration))
+  }
+  const end = () => {
+    window.removeEventListener('pointermove', move)
+    window.removeEventListener('pointerup', end)
+    window.removeEventListener('pointercancel', end)
+    microEditTimelineDragCleanup = null
+    void estimateMicroEdit()
+  }
+  window.addEventListener('pointermove', move)
+  window.addEventListener('pointerup', end)
+  window.addEventListener('pointercancel', end)
+  microEditTimelineDragCleanup = end
+}
+
+/** 拖动蓝色选区整体移动，保持选中时长不变。 */
+function startMicroEditTimelineDrag(event: PointerEvent): void {
+  if (microEditSubmitting.value) return
+  const track = event.currentTarget as HTMLElement | null
+  if (!track) return
+  const target = event.target as HTMLElement
+  if (target.closest('.micro-edit-handle')) return
+  event.preventDefault()
+  stopMicroEditTimelineDrag()
+  const bounds = track.getBoundingClientRect()
+  const duration = Math.max(1000, microEditDurationMs.value)
+  const span = microEditOutMs.value - microEditInMs.value
+  const startX = event.clientX
+  const startIn = microEditInMs.value
+  const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value))
+  const move = (moveEvent: PointerEvent) => {
+    const delta = ((moveEvent.clientX - startX) / Math.max(1, bounds.width)) * duration
+    const nextIn = clamp(startIn + delta, 0, duration - span)
+    microEditInMs.value = Math.round(nextIn)
+    microEditOutMs.value = Math.round(nextIn + span)
+  }
+  const end = () => {
+    window.removeEventListener('pointermove', move)
+    window.removeEventListener('pointerup', end)
+    window.removeEventListener('pointercancel', end)
+    microEditTimelineDragCleanup = null
+    void estimateMicroEdit()
+  }
+  window.addEventListener('pointermove', move)
+  window.addEventListener('pointerup', end)
+  window.addEventListener('pointercancel', end)
+  microEditTimelineDragCleanup = end
+}
+
+/**
+ * 画面区域直接拖动或四角缩放。坐标仅作为内部归一化参数保存，用户不需要手工填写坐标。
+ */
+function startMicroEditRegionInteraction(event: PointerEvent, handle: MicroEditRegionHandle = 'move'): void {
+  if (microEditSubmitting.value) return
+  const preview = (event.currentTarget as HTMLElement | null)?.closest('.micro-edit-region-preview') as HTMLElement | null
+  if (!preview) return
+  event.preventDefault()
+  stopMicroEditRegionDrag()
+  const bounds = preview.getBoundingClientRect()
+  const startX = event.clientX
+  const startY = event.clientY
+  const start = { ...microEditRegion }
+  // 画布空白处直接拖拽时进入“重新框选”模式；用户不需要看坐标，也不用先清空旧框。
+  // 蓝框会拦截自身范围内的事件；点击其它空白画布才会落到 preview，从而进入重新框选。
+  let interaction = handle
+  if (handle === 'move' && event.target === preview) interaction = 'draw'
+  const minSize = 0.08
+  const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value))
+  const point = (clientX: number, clientY: number) => ({
+    x: clamp((clientX - bounds.left) / Math.max(1, bounds.width), 0, 1),
+    y: clamp((clientY - bounds.top) / Math.max(1, bounds.height), 0, 1)
+  })
+  const origin = point(startX, startY)
+  if (interaction === 'draw') {
+    // 用户刚按下空白画布时先建立一个最小框，避免尚未移动时仍显示上一轮的全屏框。
+    microEditRegion.x = origin.x
+    microEditRegion.y = origin.y
+    microEditRegion.width = minSize
+    microEditRegion.height = minSize
+  }
+  const move = (moveEvent: PointerEvent) => {
+    const dx = (moveEvent.clientX - startX) / Math.max(1, bounds.width)
+    const dy = (moveEvent.clientY - startY) / Math.max(1, bounds.height)
+    if (interaction === 'draw') {
+      const current = point(moveEvent.clientX, moveEvent.clientY)
+      const left = Math.min(origin.x, current.x)
+      const top = Math.min(origin.y, current.y)
+      const right = Math.max(origin.x, current.x)
+      const bottom = Math.max(origin.y, current.y)
+      microEditRegion.x = left
+      microEditRegion.y = top
+      microEditRegion.width = Math.max(minSize, Math.min(1 - left, right - left))
+      microEditRegion.height = Math.max(minSize, Math.min(1 - top, bottom - top))
+      return
+    }
+    if (interaction === 'move') {
+      microEditRegion.x = clamp(start.x + dx, 0, 1 - start.width)
+      microEditRegion.y = clamp(start.y + dy, 0, 1 - start.height)
+      return
+    }
+    const left = interaction.includes('w') ? clamp(start.x + dx, 0, start.x + start.width - minSize) : start.x
+    const right = interaction.includes('e') ? clamp(start.x + start.width + dx, start.x + minSize, 1) : start.x + start.width
+    const top = interaction.includes('n') ? clamp(start.y + dy, 0, start.y + start.height - minSize) : start.y
+    const bottom = interaction.includes('s') ? clamp(start.y + start.height + dy, start.y + minSize, 1) : start.y + start.height
+    microEditRegion.x = left
+    microEditRegion.y = top
+    microEditRegion.width = Math.max(minSize, right - left)
+    microEditRegion.height = Math.max(minSize, bottom - top)
+  }
+  const end = () => {
+    window.removeEventListener('pointermove', move)
+    window.removeEventListener('pointerup', end)
+    window.removeEventListener('pointercancel', end)
+    microEditRegionDragCleanup = null
+    void estimateMicroEdit()
+  }
+  window.addEventListener('pointermove', move)
+  window.addEventListener('pointerup', end)
+  window.addEventListener('pointercancel', end)
+  microEditRegionDragCleanup = end
+}
+
+/** 滚轮围绕画面中心放大/缩小框选区域，适合精细调整而不暴露坐标。 */
+function zoomMicroEditRegion(event: WheelEvent): void {
+  if (microEditSubmitting.value) return
+  const factor = event.deltaY < 0 ? 0.9 : 1.1
+  const nextWidth = Math.min(1, Math.max(0.08, microEditRegion.width * factor))
+  const nextHeight = Math.min(1, Math.max(0.08, microEditRegion.height * factor))
+  const centerX = microEditRegion.x + microEditRegion.width / 2
+  const centerY = microEditRegion.y + microEditRegion.height / 2
+  microEditRegion.width = nextWidth
+  microEditRegion.height = nextHeight
+  microEditRegion.x = Math.min(1 - nextWidth, Math.max(0, centerX - nextWidth / 2))
+  microEditRegion.y = Math.min(1 - nextHeight, Math.max(0, centerY - nextHeight / 2))
+  void estimateMicroEdit()
+}
+
+function openMicroEdit(row: StoryboardRow, take: StoryboardTake): void {
+  if (take.status !== 'succeeded' || !take.videoUrl) {
+    showNotice('请先生成成功的视频版本，再进行微剪辑。', 'error')
+    return
+  }
+  microEditRow.value = row
+  microEditTake.value = take
+  microEditMode.value = 'local_trim'
+  microEditInMs.value = 0
+  microEditDurationMs.value = Math.max(1000, Number(row.videoDurationSec || row.durationSec || 5) * 1000)
+  microEditOutMs.value = microEditDurationMs.value
+  microEditPrompt.value = ''
+  microEditPreserve.value = '保持角色身份、服装、场景风格和镜头画幅不变。'
+  microEditReferences.value = []
+  microEditRegion.x = 0
+  microEditRegion.y = 0
+  microEditRegion.width = 1
+  microEditRegion.height = 1
+  microEditEstimate.value = null
+  microEditTask.value = null
+  microEditVisible.value = true
+}
+
+function buildMicroEditPayload(): StoryboardMicroEditPayload | null {
+  if (!microEditRow.value || !microEditTake.value) return null
+  // 幂等键必须包含完整编辑参数：同一份请求重复点击只能创建一次，
+  // 但用户修改了提示词、参考图或框选区域后，应当被识别为新的编辑意图。
+  const fingerprintSource = JSON.stringify({
+    mode: microEditMode.value,
+    trimInMs: microEditInMs.value,
+    trimOutMs: microEditOutMs.value,
+    region: microEditRegion,
+    prompt: microEditPrompt.value,
+    preserveContent: microEditPreserve.value,
+    references: microEditReferences.value.map(item => item.url)
+  })
+  let fingerprint = 2166136261
+  for (let index = 0; index < fingerprintSource.length; index += 1) {
+    fingerprint ^= fingerprintSource.charCodeAt(index)
+    fingerprint = Math.imul(fingerprint, 16777619)
+  }
+  return {
+    mode: microEditMode.value,
+    trimInMs: microEditInMs.value,
+    trimOutMs: microEditOutMs.value,
+    region: { ...microEditRegion },
+    prompt: microEditPrompt.value,
+    preserveContent: microEditPreserve.value,
+    referenceAssets: microEditReferences.value,
+    idempotencyKey: `micro-edit-${microEditRow.value.id}-${microEditTake.value.id}-${(fingerprint >>> 0).toString(36)}`
+  }
+}
+
+async function estimateMicroEdit(): Promise<void> {
+  const payload = buildMicroEditPayload()
+  if (!payload || !microEditRow.value || !microEditTake.value) return
+
+  // 切换到 AI 模式时不要立刻用“空提示词”请求费用预估。
+  // 后端会正确拒绝没有修改意图的 AI 请求，但用户此时只是选择了模式，
+  // 还没有开始填写内容；如果继续请求，就会把正常的交互误显示成“接口返回失败”。
+  // 等用户填写提示词或上传参考图后，输入框失焦/上传流程会再次触发预估。
+  if (payload.mode === 'ai_edit' && !payload.prompt.trim() && payload.referenceAssets.length === 0) {
+    microEditEstimate.value = null
+    return
+  }
+  try {
+    const response = await dramaService.estimateStoryboardMicroEdit(props.projectId, microEditRow.value.id, microEditTake.value.id, payload)
+    microEditEstimate.value = response.data
+  } catch (error) {
+    showNotice(actionErrorMessage(error, '微剪辑费用预估失败，请检查时间范围。'), 'error')
+  }
+}
+
+async function uploadMicroEditReferences(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file || !microEditRow.value || !microEditTake.value) return
+  if (microEditReferences.value.length >= 5) {
+    showNotice('最多上传 5 张参考图。', 'error')
+    input.value = ''
+    return
+  }
+  microEditUploading.value = true
+  try {
+    const response = await dramaService.uploadStoryboardMicroEditReference(props.projectId, microEditRow.value.id, microEditTake.value.id, file)
+    microEditReferences.value.push(...response.data)
+    await estimateMicroEdit()
+  } catch (error) {
+    showNotice(actionErrorMessage(error, '参考图上传失败，请稍后重试。'), 'error')
+  } finally {
+    microEditUploading.value = false
+    input.value = ''
+  }
+}
+
+async function submitMicroEdit(): Promise<void> {
+  const payload = buildMicroEditPayload()
+  if (!payload || !microEditRow.value || !microEditTake.value || microEditSubmitting.value) return
+  if (microEditMode.value === 'ai_edit' && microEditEstimate.value && !microEditEstimate.value.sufficient) {
+    showNotice('当前余额不足，请充值后再提交 AI 微剪辑。', 'error')
+    return
+  }
+  microEditSubmitting.value = true
+  try {
+    const response = await dramaService.createStoryboardMicroEdit(props.projectId, microEditRow.value.id, microEditTake.value.id, payload)
+    microEditTask.value = response.data.edit
+    showNotice(response.data.pricing.estimatedCredits ? `已提交微剪辑，预计消耗 ${response.data.pricing.estimatedCredits} 点。` : '已提交本地微剪辑，免费处理。')
+    startMicroEditPolling(response.data.edit.id)
+  } catch (error) {
+    showNotice(actionErrorMessage(error, '微剪辑提交失败，请稍后重试。'), 'error')
+    microEditSubmitting.value = false
+  }
+}
+
+function startMicroEditPolling(editId: string): void {
+  stopMicroEditPolling()
+  const poll = async () => {
+    if (!microEditRow.value) return
+    try {
+      const response = await dramaService.getStoryboardMicroEdit(props.projectId, microEditRow.value.id, editId)
+      microEditTask.value = response.data
+      if (['succeeded', 'failed'].includes(response.data.status)) {
+        stopMicroEditPolling()
+        microEditSubmitting.value = false
+        if (response.data.status === 'succeeded') {
+          microEditVisible.value = false
+          showNotice('微剪辑完成，已新增视频版本，原版本仍然保留。')
+          await loadWorkspace(true)
+        } else {
+          showNotice(response.data.errorMessage || '微剪辑失败，点数已按规则退款。', 'error')
+        }
+      }
+    } catch (error) {
+      console.warn('[livliv] 微剪辑状态暂时无法读取，将继续重试。', error)
+    }
+  }
+  void poll()
+  if (import.meta.client) microEditPollTimer = window.setInterval(poll, 2000)
+}
 </script>
 
 <template>
@@ -2322,18 +2750,65 @@ onBeforeUnmount(stopRealtimeTracking)
               <video v-if="selectedTake?.videoUrl || selectedRow.videoUrl" :src="selectedTake?.videoUrl || selectedRow.videoUrl" controls playsinline />
               <img v-else-if="thumbnailFor(selectedRow)" :src="thumbnailFor(selectedRow)" :alt="`${titleFor(selectedRow)}方案参考`" />
               <div v-else class="viewer__empty"><Film :size="36" /><strong>等待生成视频</strong><span>导演方案和锁定资产已准备完成。</span></div>
-              <span class="viewer__badge">{{ selectedTake?.videoUrl || selectedRow.videoUrl ? '当前视频版本' : '方案参考' }}</span>
+              <!--
+                视频操作统一放在左上角：当前版本和“微剪辑”属于同一语义组，
+                这样不会压住播放器右下角的音量、全屏和更多操作控件。
+              -->
+              <div class="viewer__top-tools">
+                <span class="viewer__badge">{{ selectedTake?.videoUrl || selectedRow.videoUrl ? '当前视频版本' : '方案参考' }}</span>
+                <button
+                  v-if="selectedTake?.status === 'succeeded' && selectedTake.videoUrl"
+                  class="viewer__micro-edit"
+                  type="button"
+                  title="微剪辑当前视频版本"
+                  @click="openMicroEdit(selectedRow, selectedTake)"
+                >
+                  <Film :size="15" />微剪辑
+                </button>
+              </div>
               <button v-if="thumbnailFor(selectedRow)" class="viewer__expand" type="button" title="全屏预览"><Maximize2 :size="18" /></button>
             </div>
 
             <section class="frame-reference-section">
               <div class="section-heading">
                 <div>
-                  <strong>首帧 / 尾帧</strong>
-                  <span>可选参考；上传后生成视频会优先使用，未上传也可正常生成</span>
+                  <strong>视频输入方式</strong>
+                  <span>两种模式对应火山模型的两套参考协议，请按本镜头的连续性需求选择。</span>
                 </div>
               </div>
-              <div class="frame-reference-grid">
+              <div class="video-input-mode-switch" role="tablist" aria-label="视频输入方式">
+                <button
+                  type="button"
+                  role="tab"
+                  :aria-selected="videoInputMode === 'universal_reference'"
+                  :class="{ active: videoInputMode === 'universal_reference' }"
+                  :disabled="Boolean(actionBusy)"
+                  @click="setVideoInputMode('universal_reference')"
+                >
+                  <Package :size="15" />
+                  <span><b>全能参考模式</b><small>自动发送角色、场景、道具资产</small></span>
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  :aria-selected="videoInputMode === 'first_last_frame'"
+                  :class="{ active: videoInputMode === 'first_last_frame' }"
+                  :disabled="Boolean(actionBusy)"
+                  @click="setVideoInputMode('first_last_frame')"
+                >
+                  <Film :size="15" />
+                  <span><b>首尾帧模式</b><small>只发送首帧 / 尾帧边界图片</small></span>
+                </button>
+              </div>
+              <div v-if="videoInputMode === 'universal_reference'" class="video-input-mode-note">
+                <Package :size="15" />
+                <span>当前为全能参考模式。首尾帧图片仍可保存，但不会混入本次请求；需要边界控制时请切换到首尾帧模式。</span>
+              </div>
+              <div v-else class="video-input-mode-note video-input-mode-note--warning">
+                <AlertTriangle :size="15" />
+                <span>当前为首尾帧模式，本次只会发送下方首帧 / 尾帧。角色、场景、道具资产不会与首尾帧混发；切换模式不会删除已保存素材。</span>
+              </div>
+              <div v-if="videoInputMode === 'first_last_frame'" class="frame-reference-grid">
                 <article v-for="slot in frameSlots" :key="slot" class="frame-reference-card">
                   <!-- 空槽位整个小卡片都是上传入口，避免再放一个重复的“上传”按钮。 -->
                   <label
@@ -2927,6 +3402,109 @@ onBeforeUnmount(stopRealtimeTracking)
             <template v-else><LivButton variant="secondary" @click="assetManagerMode = 'list'">返回列表</LivButton><LivButton variant="primary" :loading="actionBusy === 'save-managed-asset'" @click="saveManagedAsset"><template #icon><Check :size="16" /></template>保存资产资料</LivButton></template>
           </template>
       </LivDialog>
+
+      <!--
+        微剪辑工作台：本地截取和 AI 修改共用同一套时间轴/区域参数。
+        原视频版本只读展示，提交后后端一定会创建新的 StoryboardTake，避免覆盖用户已经确认的版本。
+      -->
+      <LivDialog
+        v-if="microEditRow && microEditTake"
+        :open="microEditVisible"
+        title="镜头微剪辑"
+        description="调整范围和画面区域，原视频版本会保留；AI 修改提交前会先显示费用预估。"
+        width="xl"
+        @update:open="value => !value && closeMicroEdit()"
+      >
+        <template #icon><Film :size="20" /></template>
+        <div class="micro-edit-dialog">
+          <div class="micro-edit-editor">
+            <section class="micro-edit-panel micro-edit-panel--preview">
+              <div class="micro-edit-panel__heading">
+                <div><strong>视频预览</strong><span>版本 {{ microEditTake.versionNo }} · 原视频不会被覆盖</span></div>
+                <UBadge label="成功版本" color="success" variant="soft" size="sm" />
+              </div>
+              <video class="micro-edit-video" :src="microEditTake.videoUrl || undefined" controls playsinline />
+              <div class="micro-edit-timeline">
+                <div class="micro-edit-timeline__strip" :style="microEditTimelineStyle">
+                  <span class="micro-edit-timeline__selection" :style="{ left: `${(microEditInMs / microEditDurationMs) * 100}%`, width: `${((microEditOutMs - microEditInMs) / microEditDurationMs) * 100}%` }" />
+                </div>
+                <div class="micro-edit-timeline__track micro-edit-timeline__track--interactive" title="拖动圆点调整起止时间；拖动蓝色选区可整体移动" @pointerdown="startMicroEditTimelineDrag">
+                  <span class="micro-edit-timeline__fill" :style="{ left: `${(microEditInMs / microEditDurationMs) * 100}%`, width: `${((microEditOutMs - microEditInMs) / microEditDurationMs) * 100}%` }" />
+                  <button class="micro-edit-handle micro-edit-handle--in" type="button" aria-label="拖动起点" :style="{ left: `${(microEditInMs / microEditDurationMs) * 100}%` }" @pointerdown.stop="startMicroEditTimelineHandleDrag('in', $event)"><span /></button>
+                  <button class="micro-edit-handle micro-edit-handle--out" type="button" aria-label="拖动终点" :style="{ left: `${(microEditOutMs / microEditDurationMs) * 100}%` }" @pointerdown.stop="startMicroEditTimelineHandleDrag('out', $event)"><span /></button>
+                </div>
+                <div class="micro-edit-timeline__hint"><span class="micro-edit-timeline__hint-dot" />拖动两侧圆点调整起止；拖动蓝色选区可整体移动</div>
+                <div class="micro-edit-timeline__values"><span>起点 {{ (microEditInMs / 1000).toFixed(1) }} 秒</span><span>终点 {{ (microEditOutMs / 1000).toFixed(1) }} 秒</span><small>选中片段：{{ Math.max(0, (microEditOutMs - microEditInMs) / 1000).toFixed(1) }} 秒</small></div>
+              </div>
+            </section>
+
+            <section class="micro-edit-panel micro-edit-panel--region">
+              <div class="micro-edit-panel__heading"><div><strong>画面区域</strong><span>直接在画面上拖拽框选；AI 模式可限定修改区域。</span></div></div>
+              <div
+                class="micro-edit-region-preview"
+                :style="microEditRegionPreviewStyle"
+                title="拖动蓝框移动，拖动四角缩放；滚轮可放大或缩小"
+                @pointerdown="startMicroEditRegionInteraction($event, 'move')"
+                @wheel.prevent="zoomMicroEditRegion"
+              >
+                <!--
+                  整个蓝框都是可拖动区域，而不是只让中间文字可拖动。
+                  四个角单独拦截 pointerdown，交给对应方向的缩放逻辑处理。
+                -->
+                <div
+                  class="micro-edit-region-box"
+                  :style="{ left: `${microEditRegion.x * 100}%`, top: `${microEditRegion.y * 100}%`, width: `${microEditRegion.width * 100}%`, height: `${microEditRegion.height * 100}%` }"
+                  @pointerdown.stop="startMicroEditRegionInteraction($event, 'move')"
+                >
+                  <button class="micro-edit-region-handle micro-edit-region-handle--nw" type="button" aria-label="调整左上角" @pointerdown.stop="startMicroEditRegionInteraction($event, 'nw')" />
+                  <button class="micro-edit-region-handle micro-edit-region-handle--ne" type="button" aria-label="调整右上角" @pointerdown.stop="startMicroEditRegionInteraction($event, 'ne')" />
+                  <button class="micro-edit-region-handle micro-edit-region-handle--sw" type="button" aria-label="调整左下角" @pointerdown.stop="startMicroEditRegionInteraction($event, 'sw')" />
+                  <button class="micro-edit-region-handle micro-edit-region-handle--se" type="button" aria-label="调整右下角" @pointerdown.stop="startMicroEditRegionInteraction($event, 'se')" />
+                </div>
+              </div>
+              <div class="micro-edit-region-hint"><SlidersHorizontal :size="14" />空白处拖拽重新框选，框内任意位置拖动移动，四角调整大小；滚轮可缩放</div>
+            </section>
+          </div>
+
+          <aside class="micro-edit-options">
+            <section class="micro-edit-panel">
+              <div class="micro-edit-panel__heading"><div><strong>编辑方式</strong><span>本地处理免费，内容修改走 AI 视频编辑模型。</span></div></div>
+              <div class="micro-edit-mode-grid">
+                <button type="button" :class="{ active: microEditMode === 'local_trim' }" :disabled="microEditSubmitting" @click="microEditMode = 'local_trim'; estimateMicroEdit()"><Film :size="16" /><span>截取片段<small>本地 FFmpeg · 0 点</small></span></button>
+                <button type="button" :class="{ active: microEditMode === 'ai_edit' }" :disabled="microEditSubmitting" @click="microEditMode = 'ai_edit'; estimateMicroEdit()"><WandSparkles :size="16" /><span>AI 智能修改<small>人物、道具、画面内容</small></span></button>
+              </div>
+            </section>
+
+            <section v-if="microEditMode === 'ai_edit'" class="micro-edit-panel">
+              <label class="micro-edit-field"><strong>AI 修改提示词</strong><UTextarea v-model="microEditPrompt" :rows="4" placeholder="例如：让角色抬头看向镜头，保持人物身份、服装和场景风格不变。" @blur="estimateMicroEdit" /></label>
+              <label class="micro-edit-field"><strong>保持不变的内容</strong><UTextarea v-model="microEditPreserve" :rows="3" placeholder="角色身份、服装、场景、镜头比例等必须保持的内容" @blur="estimateMicroEdit" /></label>
+              <div class="micro-edit-reference-head"><strong>参考图片（最多 5 张）</strong><label class="micro-edit-upload"><Upload :size="14" />{{ microEditUploading ? '上传中…' : '添加参考图' }}<input ref="microEditFileInput" type="file" accept="image/png,image/jpeg,image/webp" :disabled="microEditUploading || microEditReferences.length >= 5" @change="uploadMicroEditReferences" /></label></div>
+              <div v-if="microEditReferences.length" class="micro-edit-reference-list"><div v-for="(reference, index) in microEditReferences" :key="reference.url"><img :src="reference.url" :alt="reference.label" /><span>{{ reference.label || `参考图 ${index + 1}` }}</span></div></div>
+            </section>
+
+            <section class="micro-edit-panel micro-edit-cost">
+              <div class="micro-edit-cost__row"><span>预计消耗</span><strong>{{ microEditMode === 'local_trim' ? '0' : (microEditEstimate?.estimatedCredits ?? '—') }} <small>点</small></strong></div>
+              <!-- 后端报价接口返回 currentBalance；这里不能读取不存在的 balance，
+                   否则用户会一直看到“—”，无法判断是否有足够余额提交 AI 编辑。 -->
+              <div class="micro-edit-cost__row"><span>当前余额</span><strong>{{ microEditEstimate?.currentBalance ?? '—' }} <small>点</small></strong></div>
+              <p v-if="microEditMode === 'local_trim'">截取、裁剪和封面抽帧使用本地 FFmpeg，不产生 AI 扣点。</p>
+              <p v-else>提交时服务端会重新校验模型价格和余额；失败且没有结果时自动退款。</p>
+            </section>
+
+            <section v-if="microEditTask" class="micro-edit-progress">
+              <div><strong>处理进度</strong><b>{{ microEditTask.progress }}%</b></div>
+              <div class="micro-edit-progress__bar"><span :style="{ width: `${microEditTask.progress}%` }" /></div>
+              <p>{{ microEditTask.status === 'queued' ? '已排队，等待处理' : microEditTask.status === 'running' ? '模型/本地任务处理中' : microEditTask.status === 'succeeded' ? '生成完成，正在刷新版本列表' : '处理失败，点数已按规则退款' }}</p>
+            </section>
+          </aside>
+        </div>
+        <template #footer>
+          <LivButton variant="secondary" :disabled="microEditSubmitting" @click="closeMicroEdit">取消</LivButton>
+          <LivButton variant="primary" :loading="microEditSubmitting" :disabled="microEditOutMs <= microEditInMs || (microEditMode === 'ai_edit' && (!microEditPrompt.trim() || microEditEstimate?.sufficient === false))" @click="submitMicroEdit">
+            <template #icon><WandSparkles :size="16" /></template>{{ microEditMode === 'local_trim' ? '生成截取版本（免费）' : '确认并生成新版本' }}
+          </LivButton>
+        </template>
+      </LivDialog>
     </template>
   </section>
 </template>
@@ -3134,9 +3712,20 @@ onBeforeUnmount(stopRealtimeTracking)
 .viewer { position: relative; width: 100%; height: clamp(248px, 30dvh, 300px); overflow: hidden; border-radius: 8px; background: #101828; }
 .viewer video { object-fit: contain; }
 .viewer__empty { color: #d0d5dd; }
-.viewer__badge { position: absolute; left: 12px; top: 12px; padding: 5px 8px; border: 1px solid rgba(255,255,255,.38); border-radius: 4px; background: rgba(16,24,40,.62); color: white; font-size: 11px; }
+/* 左上角视频工具组：业务标识与微剪辑入口并排，不遮挡浏览器原生视频控件。 */
+.viewer__top-tools { position: absolute; z-index: 3; top: 12px; left: 12px; display: flex; gap: 8px; align-items: center; }
+.viewer__badge { padding: 5px 8px; border: 1px solid rgba(255,255,255,.38); border-radius: 4px; background: rgba(16,24,40,.62); color: white; font-size: 11px; }
 .viewer__expand { position: absolute; right: 12px; top: 12px; width: 34px; height: 34px; display: grid; place-items: center; border: 1px solid rgba(255,255,255,.38); border-radius: 4px; background: rgba(16,24,40,.62); color: white; }
 .frame-reference-section { margin-top: 10px; padding: 10px; border: 1px solid var(--sb-line); border-radius: 8px; background: #fff; }
+.video-input-mode-switch { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 9px; }
+.video-input-mode-switch button { display: flex; gap: 8px; align-items: flex-start; min-width: 0; padding: 9px 10px; border: 1px solid #dbe5f3; border-radius: 7px; background: #fbfcfe; color: #50627d; text-align: left; cursor: pointer; }
+.video-input-mode-switch button.active { border-color: #79a9ff; background: #eff5ff; color: #145dcc; box-shadow: 0 0 0 2px rgba(23,104,255,.08); }
+.video-input-mode-switch button:disabled { cursor: not-allowed; opacity: .6; }
+.video-input-mode-switch span { display: grid; gap: 3px; min-width: 0; }
+.video-input-mode-switch b { font-size: 12px; }
+.video-input-mode-switch small { color: #7b8799; font-size: 10px; font-weight: 500; line-height: 1.4; }
+.video-input-mode-note { display: flex; gap: 6px; align-items: flex-start; margin-top: 8px; padding: 8px 9px; border: 1px solid #d7e6ff; border-radius: 6px; background: #f5f9ff; color: #3d5d8a; font-size: 11px; line-height: 1.5; }
+.video-input-mode-note--warning { border-color: #f3d19c; background: #fff9ed; color: #8b5b13; }
 .frame-reference-grid { display: grid; grid-template-columns: repeat(2, minmax(150px, 220px)); gap: 8px; margin-top: 8px; }
 .frame-reference-card { min-width: 0; overflow: hidden; border: 1px solid #dbe4f0; border-radius: 7px; background: #f8faff; }
 .frame-reference-card__preview { position: relative; aspect-ratio: 16 / 9; overflow: hidden; background: #edf2f8; }
@@ -3414,6 +4003,74 @@ onBeforeUnmount(stopRealtimeTracking)
   .generation-target { flex-direction: column; gap: 10px; }
 }
 
+/* 微剪辑弹窗采用“左预览、右参数”的工作台布局，窄屏时自动堆叠，方便在笔记本上使用。 */
+.micro-edit-dialog { display: grid; gap: 14px; max-height: min(720px, 72vh); overflow-y: auto; padding-right: 2px; }
+.micro-edit-editor { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(250px, .85fr); gap: 14px; }
+.micro-edit-options { display: grid; gap: 12px; align-content: start; }
+.micro-edit-panel { min-width: 0; padding: 13px; border: 1px solid #dbe5f3; border-radius: 9px; background: #fff; }
+.micro-edit-panel--preview { grid-row: span 2; }
+.micro-edit-panel__heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+.micro-edit-panel__heading > div { min-width: 0; display: grid; gap: 3px; }
+.micro-edit-panel__heading strong { color: #182230; font-size: 14px; }
+.micro-edit-panel__heading span { color: #7b8799; font-size: 11px; line-height: 1.5; }
+.micro-edit-video { width: 100%; max-height: 300px; display: block; border-radius: 7px; background: #101828; object-fit: contain; }
+.micro-edit-timeline { display: grid; gap: 9px; margin-top: 12px; }
+.micro-edit-timeline__strip { position: relative; height: 48px; overflow: hidden; border: 1px solid #cddbf0; border-radius: 6px; background-color: #e9eef5; background-position: center; background-size: cover; }
+.micro-edit-timeline__strip::after { position: absolute; inset: 0; background: linear-gradient(90deg, rgba(16,24,40,.18), transparent 45%, rgba(16,24,40,.18)); content: ''; pointer-events: none; }
+.micro-edit-timeline__selection { position: absolute; z-index: 1; inset-block: 0; border-inline: 2px solid #1768ff; background: rgba(23,104,255,.18); box-shadow: 0 0 0 999px rgba(16,24,40,.24); }
+.micro-edit-timeline__track { position: relative; height: 10px; border-radius: 999px; background: #e9eef5; }
+.micro-edit-timeline__track--interactive { cursor: ew-resize; touch-action: none; }
+.micro-edit-timeline__fill { position: absolute; inset-block: 0; border-radius: inherit; background: #1768ff; }
+.micro-edit-handle { position: absolute; z-index: 2; top: 50%; width: 22px; height: 28px; padding: 0; border: 0; transform: translate(-50%, -50%); background: transparent; cursor: ew-resize; }
+.micro-edit-handle span { display: block; width: 14px; height: 14px; margin: 7px auto; border: 3px solid #fff; border-radius: 50%; background: #1768ff; box-shadow: 0 1px 4px rgba(14, 54, 123, .36); }
+.micro-edit-handle:hover span, .micro-edit-handle:focus-visible span { width: 18px; height: 18px; margin: 5px auto; background: #0b56dd; }
+.micro-edit-timeline__hint { display: flex; align-items: center; gap: 6px; color: #5f6f86; font-size: 11px; }
+.micro-edit-timeline__hint-dot { width: 7px; height: 7px; border-radius: 50%; background: #1768ff; box-shadow: 0 0 0 3px #e5efff; }
+.micro-edit-timeline__values { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; color: #526078; font-size: 11px; }
+.micro-edit-timeline__values small { color: #1768ff; font-size: 12px; font-weight: 700; }
+/* 斜纹只表达“AI 可修改区域”，不可拦截鼠标事件，避免影响画布重新框选。 */
+.micro-edit-region-preview { position: relative; aspect-ratio: 16 / 9; overflow: hidden; border-radius: 7px; background: linear-gradient(135deg, #dce7f5, #9db6d4); background-position: center; background-size: cover; cursor: crosshair; touch-action: none; }
+.micro-edit-region-preview::before { position: absolute; inset: 0; pointer-events: none; background: repeating-linear-gradient(45deg, rgba(255,255,255,.14) 0 8px, transparent 8px 16px); content: ''; }
+/* 蓝框没有中间文案；鼠标进入框内任意位置即可移动，四角交给手柄缩放。 */
+.micro-edit-region-box { position: absolute; z-index: 1; min-width: 30px; min-height: 24px; border: 2px solid #1768ff; background: rgba(23,104,255,.12); cursor: move; touch-action: none; }
+.micro-edit-region-handle { position: absolute; z-index: 2; width: 12px; height: 12px; padding: 0; border: 2px solid #fff; border-radius: 50%; background: #1768ff; box-shadow: 0 1px 4px rgba(14, 54, 123, .42); pointer-events: auto; }
+.micro-edit-region-handle--nw { top: -7px; left: -7px; cursor: nwse-resize; }
+.micro-edit-region-handle--ne { top: -7px; right: -7px; cursor: nesw-resize; }
+.micro-edit-region-handle--sw { bottom: -7px; left: -7px; cursor: nesw-resize; }
+.micro-edit-region-handle--se { right: -7px; bottom: -7px; cursor: nwse-resize; }
+.micro-edit-region-hint { display: flex; gap: 5px; align-items: center; margin-top: 9px; color: #5f6f86; font-size: 11px; }
+.micro-edit-field { display: grid; gap: 5px; color: #526078; font-size: 11px; font-weight: 700; }
+.micro-edit-mode-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.micro-edit-mode-grid button { min-width: 0; display: flex; gap: 8px; align-items: flex-start; padding: 10px; border: 1px solid #dbe5f3; border-radius: 7px; background: #fbfcfe; color: #4b5f7b; text-align: left; cursor: pointer; }
+.micro-edit-mode-grid button.active { border-color: #79a9ff; background: #eff5ff; color: #145dcc; box-shadow: 0 0 0 2px rgba(23,104,255,.08); }
+.micro-edit-mode-grid button:disabled { cursor: not-allowed; opacity: .55; }
+.micro-edit-mode-grid span { display: grid; gap: 3px; font-size: 12px; font-weight: 700; }
+.micro-edit-mode-grid small { color: #8491a5; font-size: 10px; font-weight: 500; }
+.micro-edit-field { margin-top: 11px; }
+.micro-edit-field :deep(textarea) { font-size: 12px; line-height: 1.55; }
+.micro-edit-reference-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 12px; color: #526078; font-size: 11px; }
+.micro-edit-upload { position: relative; display: inline-flex; gap: 4px; align-items: center; color: #1768ff; cursor: pointer; }
+.micro-edit-upload input { position: absolute; inset: 0; width: 100%; height: 100%; cursor: pointer; opacity: 0; }
+.micro-edit-reference-list { display: flex; gap: 7px; margin-top: 8px; overflow-x: auto; }
+.micro-edit-reference-list > div { flex: 0 0 58px; display: grid; gap: 3px; color: #667085; font-size: 9px; text-align: center; }
+.micro-edit-reference-list img { width: 58px; height: 44px; object-fit: cover; border-radius: 5px; border: 1px solid #dbe5f3; }
+.micro-edit-cost { display: grid; gap: 8px; background: #f7faff; }
+.micro-edit-cost__row { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: #526078; font-size: 12px; }
+.micro-edit-cost__row strong { color: #1768ff; font-size: 18px; }
+.micro-edit-cost__row small { color: #667085; font-size: 11px; font-weight: 500; }
+.micro-edit-cost p { margin: 0; color: #7b8799; font-size: 11px; line-height: 1.55; }
+.micro-edit-progress { display: grid; gap: 7px; padding: 11px 13px; border: 1px solid #bfd5ff; border-radius: 8px; background: #eff5ff; color: #28558e; }
+.micro-edit-progress > div:first-child { display: flex; justify-content: space-between; gap: 10px; font-size: 12px; }
+.micro-edit-progress b { color: #1768ff; }
+.micro-edit-progress__bar { height: 7px; overflow: hidden; border-radius: 999px; background: #dbe7fb; }
+.micro-edit-progress__bar span { display: block; height: 100%; border-radius: inherit; background: #1768ff; transition: width .25s ease; }
+.micro-edit-progress p { margin: 0; color: #61728b; font-size: 11px; }
+.viewer__micro-edit { display: inline-flex; gap: 5px; align-items: center; padding: 5px 8px; border: 1px solid rgba(255,255,255,.35); border-radius: 4px; background: rgba(16,24,40,.78); color: white; font-size: 11px; cursor: pointer; }
+.viewer__micro-edit:hover { background: #1768ff; }
+@media (max-width: 820px) {
+  .micro-edit-editor { grid-template-columns: 1fr; }
+  .micro-edit-panel--preview { grid-row: auto; }
+}
 .asset-manager-shell { z-index: 95; }
 .asset-manager-dialog { width: min(1120px, 96vw); height: min(760px, 92vh); overflow: hidden; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; border-radius: 8px; background: white; box-shadow: 0 28px 80px rgba(15, 23, 42, .26); }
 .asset-manager-head { display: flex; gap: 16px; align-items: flex-start; padding: 20px 22px 16px; border-bottom: 1px solid var(--sb-line); }

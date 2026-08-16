@@ -27,11 +27,17 @@ import type {
   StoryboardContinuationPolicy,
   StoryboardContinuityState,
   StoryboardDirectorSegment,
+  StoryboardMicroEdit,
+  StoryboardMicroEditEstimate,
+  StoryboardMicroEditMode,
+  StoryboardMicroEditReference,
   StoryboardPromptLoad,
   StoryboardQualityPolicy,
   StoryboardReferenceBinding,
   StoryboardRetryReason,
   StoryboardRow,
+  StoryboardTake,
+  StoryboardVideoInputMode,
   StoryboardWorkspace
 } from '~/entities/storyboard/types'
 
@@ -177,6 +183,7 @@ export interface DramaCreditPreviewPayload {
   forceReanalyze?: boolean
   durationSec?: number
   resolution?: string
+  videoInputMode?: StoryboardVideoInputMode
   audio?: boolean
   overwrite?: boolean
   shotCount?: number
@@ -298,11 +305,14 @@ export interface StoryboardVideoGeneratePayload {
   model?: string
   durationSec?: number
   resolution?: string
+  /** 资产全能参考或首尾帧边界参考；两种模式不会混发。 */
+  videoInputMode?: StoryboardVideoInputMode
   referenceUrls?: string[]
   referenceBindings?: StoryboardReferenceBinding[]
   continuationFromRowId?: string
   continuationPolicy?: StoryboardContinuationPolicy
   retryReason?: StoryboardRetryReason
+  /** 默认 preserve_original 对应火山 generate_audio=true；none/silent 才明确静音。 */
   audioMode?: 'preserve_original' | 'drive_video' | 'none' | 'sound' | 'silent'
   audioAssetId?: string
   audioTrimStartMs?: number
@@ -315,6 +325,7 @@ export interface StoryboardVideoPromptGeneratePayload {
   model?: string
   durationSec?: number
   resolution?: string
+  videoInputMode?: StoryboardVideoInputMode
   referenceBindings?: StoryboardReferenceBinding[]
   continuationFromRowId?: string
   continuationPolicy?: StoryboardContinuationPolicy
@@ -347,6 +358,8 @@ export interface StoryboardVideoBatchPayload {
   model?: string
   durationSec?: number
   resolution?: string
+  videoInputMode?: StoryboardVideoInputMode
+  /** 默认 preserve_original 对应火山 generate_audio=true；none/silent 才明确静音。 */
   audioMode?: 'preserve_original' | 'drive_video' | 'none' | 'sound' | 'silent'
   audioAssetId?: string
   audioTrimStartMs?: number
@@ -566,6 +579,24 @@ export interface DramaAssetWorkspace {
   }
 }
 
+export interface StoryboardMicroEditPayload {
+  mode: StoryboardMicroEditMode
+  trimInMs: number
+  trimOutMs: number
+  region?: { x?: number; y?: number; width?: number; height?: number }
+  prompt?: string
+  preserveContent?: string
+  referenceAssets?: StoryboardMicroEditReference[]
+  model?: string
+  idempotencyKey?: string
+}
+
+export interface StoryboardMicroEditCreateResult {
+  edit: StoryboardMicroEdit
+  outputTake: StoryboardTake
+  pricing: StoryboardMicroEditEstimate
+}
+
 /** 资产专用提炼只在用户确认本报价后调用模型；确认剧本和加载工作台均不扣点。 */
 export interface DramaAssetPreparationEstimate {
   status: 'local_ready' | 'preparing' | 'ready' | 'failed'
@@ -743,6 +774,11 @@ export interface ApiAdapter {
   createStoryboardVideoBatch(projectId: string, payload: StoryboardVideoBatchPayload): Promise<ApiResponse<StoryboardVideoBatchResult>>
   retryFailedStoryboardVideoBatch(projectId: string, batchId: string): Promise<ApiResponse<StoryboardVideoBatchResult>>
   selectStoryboardTake(projectId: string, rowId: string, takeId: string, payload?: { reviewStatus?: 'unreviewed' | 'passed' | 'needs_revision' }): Promise<ApiResponse<StoryboardWorkspace>>
+  uploadStoryboardMicroEditReference(projectId: string, rowId: string, takeId: string, file: File): Promise<ApiResponse<StoryboardMicroEditReference[]>>
+  estimateStoryboardMicroEdit(projectId: string, rowId: string, takeId: string, payload: StoryboardMicroEditPayload): Promise<ApiResponse<StoryboardMicroEditEstimate>>
+  createStoryboardMicroEdit(projectId: string, rowId: string, takeId: string, payload: StoryboardMicroEditPayload): Promise<ApiResponse<StoryboardMicroEditCreateResult>>
+  getStoryboardMicroEdit(projectId: string, rowId: string, editId: string): Promise<ApiResponse<StoryboardMicroEdit>>
+  retryStoryboardMicroEdit(projectId: string, rowId: string, editId: string): Promise<ApiResponse<StoryboardMicroEditCreateResult>>
   createDramaStoryboard(projectId: string, payload: StoryboardCreatePayload): Promise<ApiResponse<DramaProjectDetail>>
   updateDramaStoryboard(projectId: string, rowId: string, payload: StoryboardUpdatePayload): Promise<ApiResponse<DramaProjectDetail>>
   copyDramaStoryboard(projectId: string, rowId: string): Promise<ApiResponse<DramaProjectDetail>>

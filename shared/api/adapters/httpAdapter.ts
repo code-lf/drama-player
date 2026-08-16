@@ -27,6 +27,9 @@ import type {
   StoryboardContinuationPolicy,
   StoryboardContinuityState,
   StoryboardDirectorSegment,
+  StoryboardMicroEdit,
+  StoryboardMicroEditEstimate,
+  StoryboardMicroEditReference,
   StoryboardPlanVersion,
   StoryboardPromptLoad,
   StoryboardQualityPolicy,
@@ -70,6 +73,8 @@ import type {
   StoryboardBatchEstimate,
   StoryboardCreatePayload,
   StoryboardDirectorSegmentsPayload,
+  StoryboardMicroEditPayload,
+  StoryboardMicroEditCreateResult,
   StoryboardGeneratePayload,
   StoryboardReviewBatchPayload,
   StoryboardTuningPayload,
@@ -220,6 +225,55 @@ interface BackendStoryboardTake {
   qc?: Record<string, unknown>
   is_selected?: boolean
   created_at?: string
+}
+
+interface BackendStoryboardMicroEditReference {
+  url?: string
+  label?: string
+  mime_type?: string
+}
+
+interface BackendStoryboardMicroEdit {
+  id: string
+  project_id: string
+  storyboard_row_id: string
+  source_take_id: string
+  output_take_id?: string
+  mode: 'local_trim' | 'ai_edit'
+  trim_in_ms: number
+  trim_out_ms: number
+  region?: Record<string, unknown>
+  prompt?: string
+  preserve_content?: string
+  reference_assets?: BackendStoryboardMicroEditReference[]
+  provider?: string
+  model_code?: string
+  provider_task_id?: string
+  status: string
+  progress?: number
+  charged_credits?: number
+  estimated_credits?: number
+  error_message?: string
+  created_at?: string
+  updated_at?: string
+}
+
+interface BackendStoryboardMicroEditEstimate {
+  mode: 'local_trim' | 'ai_edit'
+  provider?: string
+  model_code?: string
+  model_name?: string
+  estimated_credits?: number
+  current_balance?: number
+  sufficient?: boolean
+  expires_at?: string
+  pricing_snapshot?: Record<string, unknown>
+}
+
+interface BackendStoryboardMicroEditCreateResponse {
+  edit: BackendStoryboardMicroEdit
+  output_take: BackendStoryboardTake
+  pricing: BackendStoryboardMicroEditEstimate
 }
 
 interface BackendStoryboardGenerateResponse {
@@ -1462,6 +1516,7 @@ function mapStoryboardContinuityState(raw?: Record<string, unknown>): Storyboard
 function mapStoryboardRuntimeExtra(raw?: Record<string, unknown>) {
   return {
     ...raw,
+    videoInputMode: String(raw?.video_input_mode || raw?.videoInputMode || 'universal_reference') as 'universal_reference' | 'first_last_frame',
     clipContract: mapStoryboardClipContract((raw?.clip_contract as Record<string, unknown> | undefined) || (raw?.clipContract as Record<string, unknown> | undefined)),
     referenceBindings: mapStoryboardReferenceBindings((raw?.reference_bindings as Array<Record<string, unknown>> | undefined) || (raw?.referenceBindings as Array<Record<string, unknown>> | undefined)),
     continuityState: mapStoryboardContinuityState((raw?.continuity_state as Record<string, unknown> | undefined) || (raw?.continuityState as Record<string, unknown> | undefined)),
@@ -1508,6 +1563,24 @@ function mapStoryboardTakes(rows?: BackendStoryboardTake[]): StoryboardTake[] {
     isSelected: Boolean(item.is_selected),
     createdAt: item.created_at || ''
   }))
+}
+
+function mapStoryboardMicroEditReference(item: BackendStoryboardMicroEditReference): StoryboardMicroEditReference {
+  return { url: item.url || '', label: item.label || '', mimeType: item.mime_type || 'image/*' }
+}
+
+function mapStoryboardMicroEdit(item: BackendStoryboardMicroEdit): StoryboardMicroEdit {
+  return {
+    id: item.id || '', projectId: item.project_id || '', storyboardRowId: item.storyboard_row_id || '', sourceTakeId: item.source_take_id || '', outputTakeId: item.output_take_id || '', mode: item.mode || 'local_trim', trimInMs: Number(item.trim_in_ms || 0), trimOutMs: Number(item.trim_out_ms || 0), region: (item.region || {}) as StoryboardMicroEdit['region'], prompt: item.prompt || '', preserveContent: item.preserve_content || '', referenceAssets: (item.reference_assets || []).map(mapStoryboardMicroEditReference), provider: item.provider || '', modelCode: item.model_code || '', providerTaskId: item.provider_task_id || '', status: item.status || 'queued', progress: Number(item.progress || 0), chargedCredits: Number(item.charged_credits || 0), estimatedCredits: Number(item.estimated_credits || 0), errorMessage: item.error_message || '', createdAt: item.created_at || '', updatedAt: item.updated_at || ''
+  }
+}
+
+function mapStoryboardMicroEditEstimate(item: BackendStoryboardMicroEditEstimate): StoryboardMicroEditEstimate {
+  return { mode: item.mode || 'local_trim', provider: item.provider || '', modelCode: item.model_code || '', modelName: item.model_name || '', estimatedCredits: Number(item.estimated_credits || 0), currentBalance: Number(item.current_balance || 0), sufficient: Boolean(item.sufficient ?? true), expiresAt: item.expires_at || '', pricingSnapshot: item.pricing_snapshot || {} }
+}
+
+function buildMicroEditPayload(payload: StoryboardMicroEditPayload) {
+  return { mode: payload.mode, trim_in_ms: payload.trimInMs, trim_out_ms: payload.trimOutMs, region: payload.region || {}, prompt: payload.prompt || '', preserve_content: payload.preserveContent || '', reference_assets: (payload.referenceAssets || []).map(item => ({ url: item.url, label: item.label, mime_type: item.mimeType })), model: payload.model || '', idempotency_key: payload.idempotencyKey || '' }
 }
 
 function mapStoryboardPlan(raw?: Record<string, unknown>): StoryboardPlanVersion {
@@ -1691,6 +1764,7 @@ function buildStoryboardVideoBatchPayload(payload: StoryboardVideoBatchPayload) 
     model: payload.model || '',
     duration_sec: payload.durationSec,
     resolution: payload.resolution || '720p',
+    video_input_mode: payload.videoInputMode || 'universal_reference',
     audio: audioMode !== 'none',
     audio_mode: audioMode,
     audio_asset_id: payload.audioAssetId || '',
@@ -2713,6 +2787,7 @@ export const httpAdapter: ApiAdapter = {
         model: payload.model || '',
         provider: payload.provider || 'alibaba',
         resolution: payload.resolution || '',
+        video_input_mode: payload.videoInputMode || 'universal_reference',
         style: payload.style || '',
         camera_preset: payload.cameraPreset || '',
         script_input_mode: payload.scriptInputMode || 'plot'
@@ -3061,6 +3136,7 @@ export const httpAdapter: ApiAdapter = {
         shot_count: payload.shotCount || 12,
         episode_nos: payload.episodeNos || [],
         row_id: payload.rowId || '',
+        video_input_mode: payload.videoInputMode || 'universal_reference',
         role_keys: payload.roleKeys || [],
         scene_keys: payload.sceneKeys || [],
         prop_keys: payload.propKeys || [],
@@ -3461,6 +3537,33 @@ export const httpAdapter: ApiAdapter = {
     return ok(mapStoryboardWorkspace(response))
   },
 
+  async uploadStoryboardMicroEditReference(projectId: string, rowId: string, takeId: string, file: File) {
+    const body = new FormData()
+    body.append('file', file)
+    const response = await request<{ references: BackendStoryboardMicroEditReference[] }>(`/drama/projects/${projectId}/storyboards/${rowId}/takes/${takeId}/micro-edits/references`, { method: 'POST', body })
+    return ok((response.references || []).map(mapStoryboardMicroEditReference))
+  },
+
+  async estimateStoryboardMicroEdit(projectId: string, rowId: string, takeId: string, payload: StoryboardMicroEditPayload) {
+    const response = await request<BackendStoryboardMicroEditEstimate>(`/drama/projects/${projectId}/storyboards/${rowId}/takes/${takeId}/micro-edits/estimate`, { method: 'POST', body: buildMicroEditPayload(payload) })
+    return ok(mapStoryboardMicroEditEstimate(response))
+  },
+
+  async createStoryboardMicroEdit(projectId: string, rowId: string, takeId: string, payload: StoryboardMicroEditPayload) {
+    const response = await request<BackendStoryboardMicroEditCreateResponse>(`/drama/projects/${projectId}/storyboards/${rowId}/takes/${takeId}/micro-edits`, { method: 'POST', body: buildMicroEditPayload(payload) })
+    return ok({ edit: mapStoryboardMicroEdit(response.edit), outputTake: mapStoryboardTakes([response.output_take])[0], pricing: mapStoryboardMicroEditEstimate(response.pricing) })
+  },
+
+  async getStoryboardMicroEdit(projectId: string, rowId: string, editId: string) {
+    const response = await request<BackendStoryboardMicroEdit>(`/drama/projects/${projectId}/storyboards/${rowId}/micro-edits/${editId}`)
+    return ok(mapStoryboardMicroEdit(response))
+  },
+
+  async retryStoryboardMicroEdit(projectId: string, rowId: string, editId: string) {
+    const response = await request<BackendStoryboardMicroEditCreateResponse>(`/drama/projects/${projectId}/storyboards/${rowId}/micro-edits/${editId}/retry`, { method: 'POST' })
+    return ok({ edit: mapStoryboardMicroEdit(response.edit), outputTake: mapStoryboardTakes([response.output_take])[0], pricing: mapStoryboardMicroEditEstimate(response.pricing) })
+  },
+
   async createDramaStoryboard(projectId: string, payload: StoryboardCreatePayload) {
     const response = await request<BackendDramaDetailResponse>(`/drama/projects/${projectId}/storyboards`, {
       method: 'POST',
@@ -3522,6 +3625,7 @@ export const httpAdapter: ApiAdapter = {
         model: payload?.model || '',
         duration_sec: payload?.durationSec || 5,
         resolution: payload?.resolution || '720p',
+        video_input_mode: payload?.videoInputMode || 'universal_reference',
         reference_bindings: payload?.referenceBindings || [],
         continuation_from_row_id: payload?.continuationFromRowId || '',
         continuation_policy: payload?.continuationPolicy || 'auto',
@@ -3551,6 +3655,7 @@ export const httpAdapter: ApiAdapter = {
         model: payload?.model || '',
         duration_sec: payload?.durationSec,
         resolution: payload?.resolution || '720p',
+        video_input_mode: payload?.videoInputMode || 'universal_reference',
         reference_urls: payload?.referenceUrls || [],
         reference_bindings: payload?.referenceBindings || [],
         continuation_from_row_id: payload?.continuationFromRowId || '',

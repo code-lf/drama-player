@@ -7,6 +7,52 @@ export type StoryboardVideoPromptSource = 'system' | 'user' | 'adapted'
 export type StoryboardQualityPolicy = 'smart' | 'economy' | 'quality'
 export type StoryboardPlanStatus = 'draft' | 'preflight_running' | 'review_required' | 'confirmed' | 'stale'
 export type StoryboardReviewStatus = 'unreviewed' | 'passed' | 'needs_revision'
+export type StoryboardMicroEditMode = 'local_trim' | 'ai_edit'
+/** 视频生成的参考输入模式：资产参考与首尾帧是供应商互斥的两种协议。 */
+export type StoryboardVideoInputMode = 'universal_reference' | 'first_last_frame'
+
+export interface StoryboardMicroEditReference {
+  url: string
+  label: string
+  mimeType: string
+}
+
+export interface StoryboardMicroEditEstimate {
+  mode: StoryboardMicroEditMode
+  provider: string
+  modelCode: string
+  modelName: string
+  estimatedCredits: number
+  currentBalance: number
+  sufficient: boolean
+  expiresAt: string
+  pricingSnapshot: Record<string, unknown>
+}
+
+export interface StoryboardMicroEdit {
+  id: string
+  projectId: string
+  storyboardRowId: string
+  sourceTakeId: string
+  outputTakeId: string
+  mode: StoryboardMicroEditMode
+  trimInMs: number
+  trimOutMs: number
+  region: { x?: number; y?: number; width?: number; height?: number }
+  prompt: string
+  preserveContent: string
+  referenceAssets: StoryboardMicroEditReference[]
+  provider: string
+  modelCode: string
+  providerTaskId: string
+  status: string
+  progress: number
+  chargedCredits: number
+  estimatedCredits: number
+  errorMessage: string
+  createdAt: string
+  updatedAt: string
+}
 
 export interface StoryboardDirectorSegment {
   id: string
@@ -91,6 +137,9 @@ export interface StoryboardContinuityState {
 }
 
 export interface StoryboardRuntimeExtra {
+  /** 当前镜头生成时采用的参考输入模式，刷新工作区后仍保留用户选择。 */
+  videoInputMode?: StoryboardVideoInputMode
+  video_input_mode?: StoryboardVideoInputMode
   /** 分层导演管线使用的稳定镜头标识；镜头编号变化时仍用于合并质检补丁。 */
   shotKey?: string
   shot_key?: string

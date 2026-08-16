@@ -23,6 +23,7 @@ import type {
   DramaSuggestionSourceRangePayload,
   DramaStoryboardGeneratePayload,
   StoryboardDirectorSegmentsPayload,
+  StoryboardMicroEditPayload,
   StoryboardReviewBatchPayload,
   StoryboardTuningPayload,
   StoryboardShotTuningPayload,
@@ -310,6 +311,26 @@ export const dramaService = {
 
   async selectStoryboardTake(projectId: string, rowId: string, takeId: string, reviewStatus: 'unreviewed' | 'passed' | 'needs_revision' = 'passed') {
     return callApi('drama/selectStoryboardTake', adapter => adapter.selectStoryboardTake(projectId, rowId, takeId, { reviewStatus }))
+  },
+
+  async uploadStoryboardMicroEditReference(projectId: string, rowId: string, takeId: string, file: File) {
+    return callApi('drama/uploadStoryboardMicroEditReference', adapter => adapter.uploadStoryboardMicroEditReference(projectId, rowId, takeId, file))
+  },
+
+  async estimateStoryboardMicroEdit(projectId: string, rowId: string, takeId: string, payload: StoryboardMicroEditPayload) {
+    return callApi('drama/estimateStoryboardMicroEdit', adapter => adapter.estimateStoryboardMicroEdit(projectId, rowId, takeId, payload))
+  },
+
+  async createStoryboardMicroEdit(projectId: string, rowId: string, takeId: string, payload: StoryboardMicroEditPayload) {
+    return callApi('drama/createStoryboardMicroEdit', adapter => adapter.createStoryboardMicroEdit(projectId, rowId, takeId, payload))
+  },
+
+  async getStoryboardMicroEdit(projectId: string, rowId: string, editId: string) {
+    return callApi('drama/getStoryboardMicroEdit', adapter => adapter.getStoryboardMicroEdit(projectId, rowId, editId))
+  },
+
+  async retryStoryboardMicroEdit(projectId: string, rowId: string, editId: string) {
+    return callApi('drama/retryStoryboardMicroEdit', adapter => adapter.retryStoryboardMicroEdit(projectId, rowId, editId))
   },
 
   async createStoryboard(projectId: string, payload: StoryboardCreatePayload) {
