@@ -466,8 +466,25 @@ function generationFailureText(profile: DramaAssetProfile): string {
 function dataText(profile: DramaAssetProfile): string {
   const data = profile.data || {}
   if (profile.asset_type === 'role') return [data.identity, data.age, data.role_label].filter(Boolean).join(' · ')
-  if (profile.asset_type === 'scene') return [data.canonical_location, ...(data.time_states || [])].filter(Boolean).join(' · ')
+  if (profile.asset_type === 'scene') return [data.canonical_location, data.scene_plate_label, ...(data.time_states || [])].filter(Boolean).join(' · ')
   return [data.owner, data.material, data.plot_significance].filter(Boolean).join(' · ')
+}
+
+/**
+ * 场景视图是“剧本实际会拍到的空间”，不是给每栋建筑固定套一张屋内和一张屋外。
+ * 旧项目没有该字段时保持空值，页面仍按原来的单场景档案展示。
+ */
+function scenePlateLabel(profile: DramaAssetProfile): string {
+  if (profile.asset_type !== 'scene') return ''
+  const data = profile.data || {}
+  if (data.scene_plate_type === 'legacy_mixed') return '旧版混合视图'
+  return String(data.scene_plate_label || '')
+}
+
+/** 将后端的硬性可见元素转成短列表，用于详情页解释这张场景图为什么存在。 */
+function sceneRequiredElements(profile: DramaAssetProfile): string[] {
+  if (profile.asset_type !== 'scene') return []
+  return (profile.data?.required_visible_elements || []).map((item: unknown) => String(item || '').trim()).filter(Boolean)
 }
 
 /**
@@ -486,6 +503,7 @@ function cardFacts(profile: DramaAssetProfile): Array<{ label: string, value: st
   if (profile.asset_type === 'scene') {
     return [
       { label: '地点', value: String(data.canonical_location || '') },
+      { label: '视图', value: String(data.scene_plate_label || '') },
       { label: '时间', value: (data.time_states || []).filter(Boolean).join('、') },
     ].filter(item => item.value.trim())
   }
@@ -505,7 +523,11 @@ function descriptionText(profile: DramaAssetProfile): string {
 function tags(profile: DramaAssetProfile): string[] {
   const data = profile.data || {}
   if (profile.asset_type === 'role') return [...(data.traits || []), data.role_label].filter(Boolean).slice(0, 4)
-  if (profile.asset_type === 'scene') return [...(data.time_states || []), ...(data.emotion_states || []), ...(data.style_keywords || [])].filter(Boolean).slice(0, 4)
+  if (profile.asset_type === 'scene') return [
+    data.scene_plate_label,
+    ...(data.required_visible_elements || []).slice(0, 2),
+    ...(data.time_states || []),
+  ].filter(Boolean).slice(0, 4)
   return [data.owner, data.material, ...(data.state_variants || [])].filter(Boolean).slice(0, 4)
 }
 
@@ -1908,6 +1930,21 @@ onBeforeUnmount(() => {
                 <h3>{{ selectedProfile.asset_type === 'role' ? '角色设定' : selectedProfile.asset_type === 'scene' ? '场景设定' : '道具设定' }}</h3>
                 <div class="field-grid" v-if="selectedProfile.asset_type === 'role'"><label>固定外貌<UTextarea v-model="editDraft.stable_features" class="w-full" :rows="4" /></label><label>服装与配饰<UTextarea v-model="editDraft.costume" class="w-full" :rows="4" /></label><label>性格外化<UTextarea v-model="editDraft.personality" class="w-full" :rows="3" /></label><label>核心动机<UTextarea v-model="editDraft.motivation" class="w-full" :rows="3" /></label><label class="wide">核心冲突<UTextarea v-model="editDraft.conflict" class="w-full" :rows="3" /></label></div>
                 <div class="field-grid" v-else-if="selectedProfile.asset_type === 'scene'">
+                  <!--
+                    同一地点只有在确认剧本确实会拍到不同空间时才拆分视图。这个说明卡把
+                    后端的按需提炼结果直接告诉用户，避免误解成“所有房屋固定内外各一张”。
+                  -->
+                  <div v-if="scenePlateLabel(selectedProfile)" class="scene-plate-contract wide">
+                    <div class="scene-plate-contract__head">
+                      <div><span>按剧情使用需求生成</span><strong>{{ scenePlateLabel(selectedProfile) }}</strong></div>
+                      <em v-if="selectedProfile.data.demand_evidence?.length">{{ selectedProfile.data.demand_evidence.length }} 处剧本依据</em>
+                    </div>
+                    <p>该图片只负责当前空间视图；人物、动作和对白由后续导演方案与分镜视频承担，不会烘焙进可复用场景底图。</p>
+                    <div v-if="sceneRequiredElements(selectedProfile).length" class="scene-plate-required">
+                      <b>画面必须具备</b>
+                      <span v-for="item in sceneRequiredElements(selectedProfile)" :key="item">{{ item }}</span>
+                    </div>
+                  </div>
                   <label class="wide">场景描述<UTextarea v-model="editDraft.description" class="w-full" :rows="4" /></label>
                   <label>空间结构<UTextarea v-model="editDraft.spatial_layout" class="w-full" :rows="4" /></label>
                   <label>材质语言<UTextarea v-model="editDraft.materials" class="w-full" :rows="4" /></label>
@@ -2181,6 +2218,14 @@ onBeforeUnmount(() => {
 .asset-media-column,.asset-drawer .detail-editor,.asset-drawer .detail-advice{min-width:0;overflow-y:auto;border:1px solid var(--line);border-radius:14px;background:#fff}
 .asset-media-column{padding:16px}.asset-media-column>h3,.media-version-head h3,.editor-section>h3{font-size:14px;font-weight:750}.asset-media-column .hero-image{height:340px;margin-top:14px}.asset-media-column .hero-image.media-role{height:390px}.asset-media-column .hero-image.media-prop{height:320px}.media-version-head{display:flex;align-items:center;gap:6px;margin:18px 0 10px}.media-version-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px}.media-version{position:relative;height:92px;display:flex;align-items:center;justify-content:center;overflow:hidden;border:1px dashed #cfd9e8;border-radius:10px;background:#f8faff;color:#7b899e}.media-version.active{border:2px solid var(--blue);background:#f2f6ff}.media-version img{width:100%;height:100%;object-fit:cover}.media-version span{position:absolute;right:0;bottom:0;left:0;padding:4px 3px;background:linear-gradient(transparent,rgba(15,27,45,.76));color:#fff;font-size:9px;text-align:center}.media-version>svg:last-child{position:absolute;top:4px;right:4px;border-radius:50%;background:var(--blue);padding:2px;color:#fff}.media-version.create-version{flex-direction:column;gap:8px}.media-version.create-version span{position:static;background:none;color:#66768d;font-size:10px}
 .asset-drawer .detail-editor{padding:0}.editor-section{padding:16px 18px;border-bottom:1px solid #edf1f6}.editor-section:last-child{border-bottom:0}.editor-section>.base-fields,.editor-section>.field-grid{margin-top:14px}.asset-drawer .base-fields label,.asset-drawer .field-grid label{font-size:12px}.asset-drawer .base-fields input,.asset-drawer .base-fields select,.asset-drawer .field-grid input,.asset-drawer .field-grid textarea{font-size:13px;line-height:20px;background:#fff}.asset-drawer .field-grid{margin-top:14px}.source-section .evidence-box{margin-top:10px}.source-section .evidence-box:first-of-type{margin-top:12px}
+/*
+ * 场景视图契约展示“为什么需要此图”以及剧本要求必须出现的固定结构。
+ * 蓝色用于说明系统按需编译结果，橙色小标签突出不可被图片模型遗漏的硬约束。
+ */
+.scene-plate-contract{display:flex;flex-direction:column;gap:10px;border:1px solid #cfe0ff;border-radius:12px;background:linear-gradient(135deg,#f4f8ff,#fbfdff);padding:13px 14px}
+.scene-plate-contract__head{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.scene-plate-contract__head>div{display:flex;align-items:center;gap:8px}.scene-plate-contract__head span{color:#6f7f96;font-size:10px}.scene-plate-contract__head strong{border-radius:6px;background:#1768ff;padding:4px 8px;color:#fff;font-size:11px}.scene-plate-contract__head em{color:#4776c7;font-size:10px;font-style:normal}
+.scene-plate-contract>p{margin:0;color:#60728d;font-size:11px;line-height:18px}.scene-plate-required{display:flex;align-items:center;flex-wrap:wrap;gap:6px}.scene-plate-required b{margin-right:2px;color:#334967;font-size:10px}.scene-plate-required span{border:1px solid #ffdca2;border-radius:6px;background:#fff8ea;padding:4px 7px;color:#9b640d;font-size:10px;line-height:16px}
 .asset-drawer .detail-advice{display:flex;grid-column:auto;padding:12px;background:#fbfcfe}.asset-drawer .detail-advice section{flex:none;background:#fff}.asset-drawer .detail-advice .consistency-report{min-height:260px}.version-lock-copy>div{display:flex;align-items:center;justify-content:space-between}.version-lock-copy>div>svg{color:var(--blue)}
 /* 质检问题使用“中文优先级 + 制作项 + 说明”的结构，彻底取代 [medium] 与内部字段路径。 */
 .asset-drawer .issue-list{display:flex;flex-direction:column;gap:8px;margin:12px 0;color:#59677c;list-style:none}
