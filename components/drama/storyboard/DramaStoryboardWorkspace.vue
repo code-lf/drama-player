@@ -3397,7 +3397,8 @@ function startMicroEditPolling(editId: string): void {
             </aside>
 
             <main v-if="assetManagerMode === 'list'" class="asset-manager-list">
-              <div class="asset-manager-list__heading"><div><strong>选择本镜头使用的{{ assetTypeLabel(assetManagerType) }}</strong><span>当前选择会写入镜头方案快照，不改变其他镜头。</span></div><LivButton variant="primary" size="sm" @click="startCreateAsset(assetManagerType)"><template #icon><Plus :size="15" /></template>新增{{ assetTypeLabel(assetManagerType) }}</LivButton></div>
+              <!-- 勾选状态就是当前镜头的真实绑定快照，避免用户误以为还要进入二级页面确认。 -->
+              <div class="asset-manager-list__heading"><div><strong>选择本镜头使用的{{ assetTypeLabel(assetManagerType) }}</strong><span>已勾选的项目就是当前镜头已绑定资产；修改只影响当前镜头，不改变其他镜头。</span></div><LivButton variant="primary" size="sm" @click="startCreateAsset(assetManagerType)"><template #icon><Plus :size="15" /></template>新增{{ assetTypeLabel(assetManagerType) }}</LivButton></div>
               <div v-if="managedAssets.length" class="asset-choice-grid">
                 <article v-for="profile in managedAssets" :key="profile.id" :class="{ selected: assetIsBound(profile) }">
                   <div class="asset-choice-main">
@@ -3476,7 +3477,7 @@ function startMicroEditPolling(editId: string): void {
           </div>
 
           <template #footer>
-            <template v-if="assetManagerMode === 'list'"><LivButton variant="secondary" @click="closeAssetManager">取消</LivButton><LivButton variant="primary" :loading="actionBusy === 'save-asset-bindings'" @click="saveAssetBindings"><template #icon><Check :size="16" /></template>保存镜头资产</LivButton></template>
+            <template v-if="assetManagerMode === 'list'"><LivButton variant="secondary" @click="closeAssetManager">取消</LivButton><LivButton variant="primary" :loading="actionBusy === 'save-asset-bindings'" @click="saveAssetBindings"><template #icon><Check :size="16" /></template>绑定资产</LivButton></template>
             <template v-else><LivButton variant="secondary" @click="assetManagerMode = 'list'">返回列表</LivButton><LivButton variant="primary" :loading="actionBusy === 'save-managed-asset'" @click="saveManagedAsset"><template #icon><Check :size="16" /></template>保存资产资料</LivButton></template>
           </template>
       </LivDialog>
