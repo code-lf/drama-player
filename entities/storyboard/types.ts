@@ -136,6 +136,39 @@ export interface StoryboardContinuityState {
   nextBeat: string
 }
 
+/**
+ * AI 在导演方案不应被降级、但现有场景资产又无法承载该镜头时给出的补充建议。
+ * 这里保存的是“建议制作什么资产”，不是让前端或服务端根据关键词自行猜选资产。
+ */
+export interface StoryboardAssetGapSuggestedContent {
+  description: string
+  spatialLayout: string
+  requiredVisibleElements: string[]
+  continuityAnchors: string[]
+}
+
+/**
+ * 单镜头资产缺口。manual_required 只暂停当前镜头，其他已确认镜头仍可继续生成；
+ * retryPolicy=manual_only 表示必须由用户补充/调整资产后再复核，禁止自动循环重试。
+ */
+export interface StoryboardAssetGap {
+  status: 'none' | 'manual_required'
+  assetType: string
+  category: string
+  canonicalSceneKey: string
+  suggestedName: string
+  viewDimension: string
+  reason: string
+  suggestedContent: StoryboardAssetGapSuggestedContent
+  sourceSceneIds: string[]
+  sourceBlockIds: string[]
+  validationIssues: string[]
+  blocksCurrentShot: boolean
+  blocksWholePlan: boolean
+  retryPolicy: string
+  recommendedAction: string
+}
+
 export interface StoryboardRuntimeExtra {
   /** 当前镜头生成时采用的参考输入模式，刷新工作区后仍保留用户选择。 */
   videoInputMode?: StoryboardVideoInputMode
@@ -173,6 +206,10 @@ export interface StoryboardRuntimeExtra {
   repairRevision?: number
   lastRetryReason?: StoryboardRetryReason | ''
   videoPromptSource?: StoryboardVideoPromptSource
+  /** 当前镜头缺少合适资产时的结构化人工处理建议。 */
+  assetGap?: StoryboardAssetGap
+  /** 兼容后端和历史缓存中的 snake_case 原始字段。 */
+  asset_gap?: Record<string, unknown>
   [key: string]: unknown
 }
 

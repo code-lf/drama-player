@@ -1514,6 +1514,42 @@ function mapStoryboardContinuityState(raw?: Record<string, unknown>): Storyboard
 }
 
 function mapStoryboardRuntimeExtra(raw?: Record<string, unknown>) {
+  const rawAssetGap = (raw?.asset_gap || raw?.assetGap) as Record<string, unknown> | undefined
+  const rawSuggestedContent = (rawAssetGap?.suggested_content || rawAssetGap?.suggestedContent) as Record<string, unknown> | undefined
+  // asset_gap 由分镜 AI 产生、后端只做确定性校验。适配层在这里统一字段风格，
+  // 页面无需到处兼容 snake_case，也不会因后端新增建议字段而丢失原始数据。
+  const assetGap = rawAssetGap ? {
+    status: String(rawAssetGap.status || 'none') as 'none' | 'manual_required',
+    assetType: String(rawAssetGap.asset_type || rawAssetGap.assetType || ''),
+    category: String(rawAssetGap.category || ''),
+    canonicalSceneKey: String(rawAssetGap.canonical_scene_key || rawAssetGap.canonicalSceneKey || ''),
+    suggestedName: String(rawAssetGap.suggested_name || rawAssetGap.suggestedName || ''),
+    viewDimension: String(rawAssetGap.view_dimension || rawAssetGap.viewDimension || ''),
+    reason: String(rawAssetGap.reason || ''),
+    suggestedContent: {
+      description: String(rawSuggestedContent?.description || ''),
+      spatialLayout: String(rawSuggestedContent?.spatial_layout || rawSuggestedContent?.spatialLayout || ''),
+      requiredVisibleElements: Array.isArray(rawSuggestedContent?.required_visible_elements)
+        ? rawSuggestedContent.required_visible_elements.map(String)
+        : (Array.isArray(rawSuggestedContent?.requiredVisibleElements) ? rawSuggestedContent.requiredVisibleElements.map(String) : []),
+      continuityAnchors: Array.isArray(rawSuggestedContent?.continuity_anchors)
+        ? rawSuggestedContent.continuity_anchors.map(String)
+        : (Array.isArray(rawSuggestedContent?.continuityAnchors) ? rawSuggestedContent.continuityAnchors.map(String) : [])
+    },
+    sourceSceneIds: Array.isArray(rawAssetGap.source_scene_ids)
+      ? rawAssetGap.source_scene_ids.map(String)
+      : (Array.isArray(rawAssetGap.sourceSceneIds) ? rawAssetGap.sourceSceneIds.map(String) : []),
+    sourceBlockIds: Array.isArray(rawAssetGap.source_block_ids)
+      ? rawAssetGap.source_block_ids.map(String)
+      : (Array.isArray(rawAssetGap.sourceBlockIds) ? rawAssetGap.sourceBlockIds.map(String) : []),
+    validationIssues: Array.isArray(rawAssetGap.validation_issues)
+      ? rawAssetGap.validation_issues.map(String)
+      : (Array.isArray(rawAssetGap.validationIssues) ? rawAssetGap.validationIssues.map(String) : []),
+    blocksCurrentShot: Boolean(rawAssetGap.blocks_current_shot ?? rawAssetGap.blocksCurrentShot),
+    blocksWholePlan: Boolean(rawAssetGap.blocks_whole_plan ?? rawAssetGap.blocksWholePlan),
+    retryPolicy: String(rawAssetGap.retry_policy || rawAssetGap.retryPolicy || ''),
+    recommendedAction: String(rawAssetGap.recommended_action || rawAssetGap.recommendedAction || '')
+  } : undefined
   return {
     ...raw,
     videoInputMode: String(raw?.video_input_mode || raw?.videoInputMode || 'universal_reference') as 'universal_reference' | 'first_last_frame',
@@ -1531,7 +1567,8 @@ function mapStoryboardRuntimeExtra(raw?: Record<string, unknown>) {
     acceptedSummary: String(raw?.accepted_summary || raw?.acceptedSummary || ''),
     repairPatchSummary: String(raw?.repair_patch_summary || raw?.repairPatchSummary || ''),
     repairRevision: Number(raw?.repair_revision || raw?.repairRevision || 0),
-    lastRetryReason: String(raw?.last_retry_reason || raw?.lastRetryReason || '')
+    lastRetryReason: String(raw?.last_retry_reason || raw?.lastRetryReason || ''),
+    assetGap
   }
 }
 

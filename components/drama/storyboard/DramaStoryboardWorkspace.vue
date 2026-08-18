@@ -39,6 +39,7 @@ import {
 } from '@lucide/vue'
 import type {
   StoryboardDirectorSegment,
+  StoryboardAssetGap,
   StoryboardMicroEdit,
   StoryboardMicroEditEstimate,
   StoryboardQualityPolicy,
@@ -379,7 +380,10 @@ const activeRows = computed(() => {
       || (statusFilter.value === 'done' && ['success', 'succeeded'].includes(row.videoStatus))
       || (statusFilter.value === 'failed' && row.videoStatus === 'failed')
     const riskMatches = riskFilter.value === 'all' || row.riskLevel === riskFilter.value
-    const searchable = `${row.shotNo} ${row.sceneDescription} ${row.roleName} ${row.actionDesc} ${row.roleKeys.join(' ')} ${row.sceneKeys.join(' ')}`.toLowerCase()
+    const gap = assetGapFor(row)
+    // 资产缺口的建议名称、缺失原因和必要元素也参与搜索，方便制作人员直接定位
+    // “缺门”“缺特定状态视图”等待人工处理的镜头。
+    const searchable = `${row.shotNo} ${row.sceneDescription} ${row.roleName} ${row.actionDesc} ${row.roleKeys.join(' ')} ${row.sceneKeys.join(' ')} ${gap?.suggestedName || ''} ${gap?.reason || ''} ${gap?.suggestedContent.requiredVisibleElements.join(' ') || ''}`.toLowerCase()
     return statusMatches && riskMatches && (!keyword || searchable.includes(keyword))
   })
 })
@@ -408,6 +412,8 @@ const hasVideoTasks = computed(() => (workspace.value?.rows || []).some(row =>
 ))
 
 const selectedRow = computed(() => currentRow.value)
+/** 当前工作台镜头的人工资产缺口；none 状态不参与界面展示。 */
+const selectedAssetGap = computed(() => assetGapFor(selectedRow.value))
 const selectedDirectorPlanPending = computed(() => Boolean(
   selectedRow.value
   && !selectedRow.value.directorSegments.length
@@ -1053,6 +1059,44 @@ function estimateSignature(rows: StoryboardRow[]): string {
     // 模式会影响供应商请求协议和费用资格，必须进入缓存签名，不能复用另一模式的旧报价。
     .map(row => `${row.id}:${row.durationSec}:${row.contextHash}:${row.planStatus}:${row.videoStatus}:${inputModeFor(row)}`)
     .join('|')
+}
+
+/**
+ * 读取后端已规范化的单镜头资产缺口。
+ * 正常情况下适配层会产出 camelCase；这里仍兼容未经适配的 snake_case，
+ * 让旧缓存、Mock 数据和热更新中的历史响应不会突然丢失人工处理提示。
+ */
+function assetGapFor(row: StoryboardRow | null | undefined): StoryboardAssetGap | null {
+  if (!row) return null
+  const normalized = row.extra?.assetGap
+  if (normalized?.status === 'manual_required') return normalized
+
+  const raw = row.extra?.asset_gap as Record<string, any> | undefined
+  if (!raw || String(raw.status || '') !== 'manual_required') return null
+  const content = (raw.suggested_content || raw.suggestedContent || {}) as Record<string, any>
+  const stringList = (value: unknown) => Array.isArray(value) ? value.map(String).filter(Boolean) : []
+  return {
+    status: 'manual_required',
+    assetType: String(raw.asset_type || raw.assetType || 'scene'),
+    category: String(raw.category || ''),
+    canonicalSceneKey: String(raw.canonical_scene_key || raw.canonicalSceneKey || ''),
+    suggestedName: String(raw.suggested_name || raw.suggestedName || '待补充场景资产'),
+    viewDimension: String(raw.view_dimension || raw.viewDimension || ''),
+    reason: String(raw.reason || '现有资产无法完整承载当前导演方案。'),
+    suggestedContent: {
+      description: String(content.description || ''),
+      spatialLayout: String(content.spatial_layout || content.spatialLayout || ''),
+      requiredVisibleElements: stringList(content.required_visible_elements || content.requiredVisibleElements),
+      continuityAnchors: stringList(content.continuity_anchors || content.continuityAnchors)
+    },
+    sourceSceneIds: stringList(raw.source_scene_ids || raw.sourceSceneIds),
+    sourceBlockIds: stringList(raw.source_block_ids || raw.sourceBlockIds),
+    validationIssues: stringList(raw.validation_issues || raw.validationIssues),
+    blocksCurrentShot: Boolean(raw.blocks_current_shot ?? raw.blocksCurrentShot ?? true),
+    blocksWholePlan: Boolean(raw.blocks_whole_plan ?? raw.blocksWholePlan ?? false),
+    retryPolicy: String(raw.retry_policy || raw.retryPolicy || 'manual_only'),
+    recommendedAction: String(raw.recommended_action || raw.recommendedAction || '补充或调整场景资产后，仅重新复核当前镜头')
+  }
 }
 
 function generationPlanHint(row: StoryboardRow): string {
@@ -2674,6 +2718,10 @@ function startMicroEditPolling(editId: string): void {
                 <span v-for="key in row.sceneKeys.slice(0, 1)" :key="`scene-${key}`">场景 {{ assetLabel(row, 'scene', key) }}</span>
                 <span v-for="key in row.propKeys.slice(0, 1)" :key="`prop-${key}`">道具 {{ assetLabel(row, 'prop', key) }}</span>
               </div>
+              <div v-if="assetGapFor(row)" class="shot-card__asset-gap">
+                <AlertTriangle :size="12" />
+                <span><b>资产待补</b>{{ assetGapFor(row)?.suggestedName || '请人工补充匹配资产' }}</span>
+              </div>
               <div class="shot-statuses">
                 <span class="status-chip status-chip--plan">{{ planStatusText(row) }}</span>
                 <span class="status-chip" :class="`status-chip--${row.videoStatus}`">{{ videoStatusText(row) }}</span>
@@ -2943,6 +2991,29 @@ function startMicroEditPolling(editId: string): void {
               <div v-else class="inline-empty inline-empty--warning"><AlertTriangle :size="16" />当前镜头没有可用的锁定资产，请返回资产阶段补全。</div>
             </section>
 
+            <section v-if="selectedAssetGap" class="detail-section asset-gap-panel">
+              <div class="asset-gap-panel__heading">
+                <span class="asset-gap-panel__icon"><AlertTriangle :size="18" /></span>
+                <div>
+                  <strong>当前镜头缺少匹配资产</strong>
+                  <span>仅暂停本镜头 · 其他合格镜头继续制作 · 不会自动循环重试</span>
+                </div>
+                <LivButton variant="secondary" size="sm" @click="openAssetManager()"><template #icon><Pencil :size="14" /></template>处理资产</LivButton>
+              </div>
+              <div class="asset-gap-panel__summary">
+                <div><small>建议补充</small><b>{{ selectedAssetGap.suggestedName || '新的场景视图' }}</b></div>
+                <div v-if="selectedAssetGap.viewDimension"><small>不可互换维度</small><b>{{ selectedAssetGap.viewDimension }}</b></div>
+              </div>
+              <p class="asset-gap-panel__reason">{{ selectedAssetGap.reason }}</p>
+              <dl class="asset-gap-panel__details">
+                <div v-if="selectedAssetGap.suggestedContent.description"><dt>静态场景描述</dt><dd>{{ selectedAssetGap.suggestedContent.description }}</dd></div>
+                <div v-if="selectedAssetGap.suggestedContent.spatialLayout"><dt>空间结构</dt><dd>{{ selectedAssetGap.suggestedContent.spatialLayout }}</dd></div>
+                <div v-if="selectedAssetGap.suggestedContent.requiredVisibleElements.length"><dt>必须可见</dt><dd><span v-for="item in selectedAssetGap.suggestedContent.requiredVisibleElements" :key="item">{{ item }}</span></dd></div>
+                <div v-if="selectedAssetGap.suggestedContent.continuityAnchors.length"><dt>连续性锚点</dt><dd><span v-for="item in selectedAssetGap.suggestedContent.continuityAnchors" :key="item">{{ item }}</span></dd></div>
+              </dl>
+              <div class="asset-gap-panel__action"><CheckCircle2 :size="14" />{{ selectedAssetGap.recommendedAction || '补齐资产后，仅重新复核当前镜头' }}</div>
+            </section>
+
             <section class="detail-section">
         <div class="section-heading"><div><div class="section-heading__title-row"><strong>连续性检查</strong><span v-if="selectedRow.riskReasons.includes('包含原生对白')" class="native-dialogue-badge"><Volume2 :size="13" />包含原生对白</span></div><span>根据前后镜头状态、锁定资产与生成视频检查</span></div><span class="qc-status" :class="`qc-status--${String(selectedTakeQc.status || 'pending')}`">{{ qcStatusText(selectedTakeQc.status) }}</span></div>
               <div class="continuity-grid">
@@ -3037,12 +3108,19 @@ function startMicroEditPolling(editId: string): void {
           <section><h4>镜头目的</h4><p>{{ normalizeVisibleTimelineText(selectedRow.sceneDescription) }}</p></section>
           <section><h4>导演方案</h4><ol><li v-for="segment in selectedRow.directorSegments" :key="segment.id"><span>{{ (segment.startMs / 1000).toFixed(1) }}–{{ (segment.endMs / 1000).toFixed(1) }}秒</span>{{ segment.shotSize }} · {{ segment.cameraMotion }} · {{ normalizeVisibleTimelineText(segment.actionDesc) }}</li></ol></section>
           <section><h4>使用资产</h4><div class="review-assets"><span v-for="asset in boundAssets(selectedRow)" :key="`${asset.type}-${asset.name}`">{{ assetTypeLabel(asset.type) }} · {{ asset.name }}</span><span v-if="!boundAssets(selectedRow).length" class="warning-text">资产尚未就绪</span></div></section>
+          <section v-if="selectedAssetGap" class="review-asset-gap">
+            <h4><AlertTriangle :size="15" />当前镜头资产待人工处理</h4>
+            <strong>{{ selectedAssetGap.suggestedName || '待补充匹配资产' }}</strong>
+            <p>{{ selectedAssetGap.reason }}</p>
+            <div v-if="selectedAssetGap.suggestedContent.requiredVisibleElements.length" class="review-assets"><span v-for="item in selectedAssetGap.suggestedContent.requiredVisibleElements" :key="item">必须可见 · {{ item }}</span></div>
+            <small>只影响当前镜头，其他镜头继续；系统不会自动整批重做。</small>
+          </section>
           <section><h4>制作预检</h4><div class="preflight-list"><div><CheckCircle2 :size="15" />视频片段时长 {{ selectedRow.durationSec }} 秒</div><div><CheckCircle2 :size="15" />镜头内节奏 {{ selectedRow.directorSegments.length }} 段</div><div :class="{ warning: selectedRow.riskLevel !== 'low' }"><AlertTriangle v-if="selectedRow.riskLevel !== 'low'" :size="15" /><CheckCircle2 v-else :size="15" />{{ riskText(selectedRow) }}</div></div></section>
         </div>
         <template #footer>
           <LivButton variant="secondary" @click="reviewRow('needs_revision')">需要修改</LivButton>
           <LivButton variant="secondary" @click="openWorkbench(selectedRow)">进入深度编辑</LivButton>
-          <LivButton variant="primary" @click="reviewRow('passed', true)"><template #icon><Check :size="16" /></template>确认并下一个</LivButton>
+          <LivButton variant="primary" @click="reviewRow('passed', true)"><template #icon><Check :size="16" /></template>{{ selectedAssetGap ? '已人工处理，确认并下一个' : '确认并下一个' }}</LivButton>
         </template>
       </LivDrawer>
 
@@ -3539,6 +3617,11 @@ function startMicroEditPolling(editId: string): void {
 .episode-copy p { display: -webkit-box; overflow: hidden; -webkit-line-clamp: 3; -webkit-box-orient: vertical; margin: 0; color: var(--sb-muted); font-size: 13px; line-height: 1.7; }
 .context-tags, .asset-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
 .context-tags span, .asset-tags span { padding: 3px 7px; border: 1px solid var(--sb-line); border-radius: 4px; background: #fafcff; color: #667085; font-size: 11px; }
+/* 卡片只放一行人工处理摘要，完整建议在镜头工作台展开，避免六列布局被长文撑乱。 */
+.shot-card__asset-gap { min-width: 0; display: flex; align-items: center; gap: 5px; margin-top: 8px; padding: 6px 7px; border: 1px solid #f2c98c; border-radius: 5px; background: #fff8eb; color: #9a5b08; font-size: 10px; }
+.shot-card__asset-gap svg { flex: 0 0 auto; }
+.shot-card__asset-gap span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.shot-card__asset-gap b { margin-right: 5px; color: #b25f00; }
 .context-tags .warning { border-color: #f8c98e; color: #b45309; background: #fff8eb; }
 .production-summary { display: grid; grid-template-columns: repeat(5, minmax(66px, 1fr)); gap: 8px; align-content: center; }
 .production-summary > .summary-item { min-height: 86px; display: grid; grid-template-columns: auto auto; grid-template-rows: auto auto; column-gap: 6px; align-content: center; justify-content: center; border: 1px solid var(--sb-line); border-radius: 8px; background: var(--sb-soft); }
@@ -3800,6 +3883,27 @@ function startMicroEditPolling(editId: string): void {
 .bound-assets em { overflow: hidden; color: #8a5b00; font-size: 10px; font-style: normal; text-overflow: ellipsis; white-space: nowrap; }
 .bound-assets :deep(.base-menu-trigger svg) { color: #667085; }
 .attention { background: #fff3df; color: #b25f00; }
+/*
+  资产缺口是“单镜头待办”，不是整批失败。橙色面板将 AI 建议、证据和人工动作
+  放在同一处，同时明确 row_only/manual_only，避免用户误点整集重做形成死循环。
+*/
+.asset-gap-panel { border-color: #efc681; background: linear-gradient(135deg, #fffcf5, #fff7e8); }
+.asset-gap-panel__heading { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 9px; align-items: center; }
+.asset-gap-panel__icon { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 7px; background: #fff0d2; color: #b25f00; }
+.asset-gap-panel__heading > div { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.asset-gap-panel__heading strong { color: #7a4300; font-size: 14px; }
+.asset-gap-panel__heading span { color: #8a6116; font-size: 11px; line-height: 1.45; }
+.asset-gap-panel__summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 11px; }
+.asset-gap-panel__summary > div { min-width: 0; display: flex; flex-direction: column; gap: 3px; padding: 8px 9px; border: 1px solid #f0d9b1; border-radius: 6px; background: rgba(255,255,255,.72); }
+.asset-gap-panel__summary small { color: #8a6a35; font-size: 10px; }
+.asset-gap-panel__summary b { overflow: hidden; color: #5f430f; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.asset-gap-panel__reason { margin: 9px 0 0; color: #754d0b; font-size: 12px; line-height: 1.6; }
+.asset-gap-panel__details { display: grid; gap: 7px; margin: 9px 0 0; }
+.asset-gap-panel__details > div { display: grid; grid-template-columns: 82px minmax(0, 1fr); gap: 8px; align-items: start; }
+.asset-gap-panel__details dt { color: #93601a; font-size: 11px; font-weight: 700; }
+.asset-gap-panel__details dd { display: flex; flex-wrap: wrap; gap: 5px; margin: 0; color: #5d4a2d; font-size: 11px; line-height: 1.55; }
+.asset-gap-panel__details dd span { padding: 2px 6px; border: 1px solid #efd7ad; border-radius: 4px; background: #fff; }
+.asset-gap-panel__action { display: flex; align-items: center; gap: 6px; margin-top: 10px; padding-top: 9px; border-top: 1px solid #efd7ad; color: #8a5b0a; font-size: 11px; font-weight: 600; }
 .continuity-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .continuity-check { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 3px 7px; align-items: center; min-height: 76px; padding: 10px; border: 1px solid #cdebd7; border-radius: 6px; background: #f5fbf7; color: #16844b; }
 .continuity-check > span { min-width: 0; color: #344054; font-size: 12px; font-weight: 600; }
@@ -3876,6 +3980,11 @@ function startMicroEditPolling(editId: string): void {
 .quick-review-content li span { display: inline-block; width: 72px; color: var(--sb-blue); }
 .review-assets { display: flex; flex-wrap: wrap; gap: 6px; }
 .review-assets span { padding: 5px 7px; border-radius: 4px; background: var(--sb-soft); color: #475467; font-size: 11px; }
+.review-asset-gap { margin-top: 4px; padding: 11px !important; border: 1px solid #efc681 !important; border-radius: 7px; background: #fff8eb; }
+.review-asset-gap h4 { display: flex; align-items: center; gap: 6px; color: #9a5b08; }
+.review-asset-gap > strong { display: block; color: #694200; font-size: 12px; }
+.review-asset-gap > p { margin-top: 5px; color: #7a561b; }
+.review-asset-gap > small { display: block; margin-top: 8px; color: #9a6a1d; font-size: 11px; }
 .warning-text { color: #b25f00 !important; background: #fff5e6 !important; }
 .preflight-list { display: grid; gap: 7px; }
 .preflight-list div { display: flex; align-items: center; gap: 7px; color: #16844b; font-size: 12px; }
