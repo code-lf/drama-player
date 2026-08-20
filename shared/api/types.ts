@@ -366,6 +366,8 @@ export interface StoryboardVideoBatchPayload {
   audioTrimEndMs?: number | null
   audioMixMode?: 'replace' | 'mix'
   qualityPolicy?: StoryboardQualityPolicy
+  /** 用户已在生成确认弹窗中接受“无参考图生成”的一致性风险。 */
+  allowMissingReferences?: boolean
   rowIds?: string[]
   idempotencyKey?: string
 }

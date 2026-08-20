@@ -365,6 +365,10 @@ interface BackendCreditPackageResponse {
   credits_amount: number
   price_amount: number
   original_price: number
+  promotion_type: 'standard' | 'new_customer'
+  promotion_label: string
+  eligible: boolean
+  eligibility_reason: string
   is_active: boolean
   sort_order: number
   meta_json: Record<string, unknown>
@@ -1165,6 +1169,10 @@ function mapCreditPackage(raw: BackendCreditPackageResponse): CreditPackage {
     creditsAmount: raw.credits_amount,
     priceAmount: Number(raw.price_amount || 0),
     originalPrice: Number(raw.original_price || 0),
+    promotionType: raw.promotion_type || 'standard',
+    promotionLabel: raw.promotion_label || '',
+    eligible: raw.eligible !== false,
+    eligibilityReason: raw.eligibility_reason || '',
     isActive: raw.is_active,
     sortOrder: raw.sort_order || 100,
     metaJson: raw.meta_json || {},
@@ -1809,6 +1817,7 @@ function buildStoryboardVideoBatchPayload(payload: StoryboardVideoBatchPayload) 
     audio_trim_end_ms: payload.audioTrimEndMs ?? null,
     audio_mix_mode: payload.audioMixMode || 'replace',
     quality_policy: payload.qualityPolicy || 'smart',
+    allow_missing_references: Boolean(payload.allowMissingReferences),
     row_ids: payload.rowIds || [],
     idempotency_key: payload.idempotencyKey || ''
   }

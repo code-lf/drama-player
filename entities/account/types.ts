@@ -18,6 +18,10 @@ export interface CreditPackage {
   creditsAmount: number
   priceAmount: number
   originalPrice: number
+  promotionType: 'standard' | 'new_customer'
+  promotionLabel: string
+  eligible: boolean
+  eligibilityReason: string
   isActive: boolean
   sortOrder: number
   metaJson: Record<string, unknown>

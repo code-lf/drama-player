@@ -737,6 +737,11 @@ const warningSummary = computed(() => {
   return [...counts.entries()].map(([reason, count]) => ({ reason, count }))
 })
 
+/** 无参考图属于用户可接受的降级风险，按钮需要明确表达这是一次强制生成。 */
+const hasMissingReferenceWarning = computed(() =>
+  (batchEstimate.value?.warnings || []).some(item => item.reason.includes('没有可用参考图'))
+)
+
 function titleFor(row: StoryboardRow): string {
   const extra = row.extra as Record<string, unknown>
   const explicitTitle = String(extra.shot_title || extra.shotTitle || '').trim()
@@ -1134,7 +1139,9 @@ async function ensureOverviewEstimate(force = false): Promise<void> {
       rowIds: rows.map(row => row.id),
       qualityPolicy: 'smart',
       resolution: projectResolution.value,
-      videoInputMode: inputModeForRows(rows)
+      videoInputMode: inputModeForRows(rows),
+      // 被动报价也要把缺图作为风险而非失败，真正提交仍需用户在确认弹窗中点击确认。
+      allowMissingReferences: true
     })
   } catch {
     // 被动估价失败不阻断工作台；用户点击生成时仍会再次执行正式估价并展示错误。
@@ -1211,7 +1218,8 @@ async function ensureRowEstimate(row: StoryboardRow): Promise<void> {
       rowIds: [row.id],
       qualityPolicy: 'smart',
       resolution: projectResolution.value,
-      videoInputMode: inputModeFor(row)
+      videoInputMode: inputModeFor(row),
+      allowMissingReferences: true
     })
     rowEstimateCache.value = { ...rowEstimateCache.value, [row.id]: estimate }
   } catch {
@@ -1415,7 +1423,9 @@ async function prepareGeneration(rowIds: string[]): Promise<void> {
       rowIds,
       qualityPolicy: qualityPolicy.value,
       resolution: projectResolution.value,
-      videoInputMode: inputModeForRows((workspace.value?.rows || []).filter(row => rowIds.includes(row.id)))
+      videoInputMode: inputModeForRows((workspace.value?.rows || []).filter(row => rowIds.includes(row.id))),
+      // 这里仅生成报价与风险确认内容，不会直接创建供应商任务。
+      allowMissingReferences: true
     })
     batchConfirmVisible.value = true
   } catch (error) {
@@ -1453,6 +1463,8 @@ async function startGeneration(): Promise<void> {
       qualityPolicy: qualityPolicy.value,
       resolution: projectResolution.value,
       videoInputMode: inputModeForRows((workspace.value?.rows || []).filter(row => pendingGenerationIds.value.includes(row.id))),
+      // 只有确认弹窗确实展示过缺图风险，才允许正式提交降级为纯提示词生成。
+      allowMissingReferences: hasMissingReferenceWarning.value,
       idempotencyKey: `${props.projectId}:${currentEpisodeNo.value}:${Date.now()}`
     })
     batchConfirmVisible.value = false
@@ -3355,7 +3367,7 @@ function startMicroEditPolling(editId: string): void {
         <template #footer>
           <LivButton variant="secondary" @click="batchConfirmVisible = false">{{ batchEstimate.eligibleRowIds.length ? '取消' : '返回检查' }}</LivButton>
           <LivButton v-if="batchEstimate.eligibleRowIds.length" variant="primary" :loading="actionBusy === 'start-batch'" :disabled="!batchEstimate.sufficient" @click="startGeneration">
-            <template #icon><CreditIcon size="lg" class="generation-credit-icon" /></template>确认并生成视频
+            <template #icon><CreditIcon size="lg" class="generation-credit-icon" /></template>{{ hasMissingReferenceWarning ? '确认风险并强制生成' : '确认并生成视频' }}
           </LivButton>
         </template>
       </LivDialog>

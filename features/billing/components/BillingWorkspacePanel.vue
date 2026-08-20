@@ -162,12 +162,20 @@ function getPackageBonus(pkg: CreditPackage): number {
 }
 
 function getPackageTag(pkg: CreditPackage): string {
+  if (pkg.promotionType === 'new_customer') return pkg.promotionLabel || '新客专享'
   if (pkg.creditsAmount >= 20000) return '专业创作'
   if (pkg.creditsAmount >= 5000) return '推荐'
   return ''
 }
 
 function getPackageDescription(pkg: CreditPackage): string[] {
+  if (pkg.promotionType === 'new_customer') {
+    return [
+      '限从未成功充值的新用户购买',
+      '每位用户仅享一次新客优惠',
+      `到账 ${formatNumber(pkg.creditsAmount)} 积分`
+    ]
+  }
   if (pkg.creditsAmount >= 20000) return ['约可生成角色图 1,500 次', '或分镜视频 120 次', `赠送 ${formatNumber(getPackageBonus(pkg))} 积分`]
   if (pkg.creditsAmount >= 5000) return ['约可生成角色图 250 次', '或分镜视频 20 次', `赠送 ${formatNumber(getPackageBonus(pkg))} 积分`]
   return ['约可生成角色图 40 次', '或分镜视频 3 次']
@@ -179,6 +187,7 @@ function selectBillingPackage(packageId: string): void {
 
 function openPurchaseDialog(packageId?: string): void {
   const target = props.billingPackages.find((pkg) => pkg.id === packageId) || selectedBillingPackage.value || props.billingPackages[0]
+  if (target && !target.eligible) return
   purchaseDialogPackageId.value = target?.id || ''
   paymentSuccessPackageId.value = ''
   purchaseNotice.value = ''
@@ -492,7 +501,10 @@ function closeSuccessPage(): void {
           v-for="pkg in billingPackages"
           :key="pkg.id"
           class="relative flex min-h-[292px] cursor-pointer flex-col rounded-[16px] border bg-white px-5 py-5 transition hover:-translate-y-0.5 hover:shadow-[0_16px_34px_rgba(15,23,42,0.09)]"
-          :class="selectedBillingPackageId === pkg.id ? 'border-[#0d63ff] shadow-[0_0_0_1px_rgba(13,99,255,0.18)]' : 'border-[#e2eaf5]'"
+          :class="[
+            selectedBillingPackageId === pkg.id ? 'border-[#0d63ff] shadow-[0_0_0_1px_rgba(13,99,255,0.18)]' : 'border-[#e2eaf5]',
+            !pkg.eligible ? 'cursor-not-allowed opacity-60' : ''
+          ]"
           @click="selectBillingPackage(pkg.id)"
         >
           <span v-if="getPackageTag(pkg)" class="absolute right-0 top-0 rounded-bl-[9px] rounded-tr-[15px] bg-[#0d63ff] px-3 py-1 text-[10px] font-black text-white">{{ getPackageTag(pkg) }}</span>
@@ -510,7 +522,7 @@ function closeSuccessPage(): void {
               {{ description }}
             </p>
           </div>
-          <button class="mt-4 h-10 w-full rounded-[9px] text-[12px] font-black transition" :class="selectedBillingPackageId === pkg.id ? 'bg-[#075fff] text-white shadow-[0_8px_18px_rgba(0,95,254,0.2)]' : 'bg-[#eff4fc] text-[#075fff] hover:bg-[#e1ecff]'" type="button" @click.stop="openPurchaseDialog(pkg.id)">立即购买</button>
+          <button class="mt-4 h-10 w-full rounded-[9px] text-[12px] font-black transition disabled:cursor-not-allowed disabled:bg-[#edf1f6] disabled:text-[#9aa7b8]" :class="selectedBillingPackageId === pkg.id && pkg.eligible ? 'bg-[#075fff] text-white shadow-[0_8px_18px_rgba(0,95,254,0.2)]' : 'bg-[#eff4fc] text-[#075fff] hover:bg-[#e1ecff]'" type="button" :disabled="!pkg.eligible" :title="pkg.eligibilityReason" @click.stop="openPurchaseDialog(pkg.id)">{{ pkg.eligible ? '立即购买' : '仅限新客' }}</button>
         </article>
       </div>
 
