@@ -2511,6 +2511,13 @@ export const httpAdapter: ApiAdapter = {
     return ok(mapCreditLedgerPage(response))
   },
 
+  async getPaymentChannels() {
+    // 用户端只消费 channel + ready；后端的 missing_fields 是管理诊断信息，
+    // 不向页面业务层继续传播，避免前端依赖具体密钥字段名称。
+    const response = await request<Array<{ channel: 'wechat' | 'alipay'; ready: boolean }>>('/account/payment-channels')
+    return ok((response || []).map(item => ({ channel: item.channel, ready: Boolean(item.ready) })))
+  },
+
   async createPaymentOrder(payload) {
     const response = await request<BackendPaymentOrderResponse>('/account/payment-orders', {
       method: 'POST',

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import QRCode from 'qrcode'
 import type { CreditLedgerItem, CreditPackage, PaymentOrder } from '~/entities/account/types'
 import CreditAmount from '~/components/ui/CreditAmount.vue'
@@ -27,18 +27,33 @@ const purchaseDialogPackageId = ref('')
 const paymentSuccessPackageId = ref('')
 const selectedLedgerFilter = ref<LedgerFilter>('all')
 const selectedPaymentMethod = ref<PaymentMethod>('wechat')
+// 这里只保存后端判定为“启用且配置完整”的渠道；被后台停用的渠道不会进入渲染列表。
+const availablePaymentMethods = ref<Array<{ value: PaymentMethod; label: string }>>([])
+const isLoadingPaymentMethods = ref(false)
 const isLedgerDrawerOpen = ref(false)
 const purchaseNotice = ref('')
 const paymentOrders = ref<PaymentOrder[]>([])
 const pendingPaymentOrder = ref<PaymentOrder | null>(null)
 const paymentQrDataUrl = ref('')
 const isCreatingPayment = ref(false)
+const isRetryingPayment = ref(false)
 const isLoadingOrders = ref(false)
+const paymentCountdownSeconds = ref(0)
+const paymentQrNotice = ref('')
 let paymentPollTimer: ReturnType<typeof setInterval> | undefined
+let paymentCountdownTimer: ReturnType<typeof setInterval> | undefined
 
 const selectedBillingPackage = computed(() => props.billingPackages.find((pkg) => pkg.id === selectedBillingPackageId.value) || props.billingPackages[0] || null)
 const purchaseDialogPackage = computed(() => props.billingPackages.find((pkg) => pkg.id === purchaseDialogPackageId.value) || null)
 const paymentSuccessPackage = computed(() => props.billingPackages.find((pkg) => pkg.id === paymentSuccessPackageId.value) || null)
+const isPaymentQrExpired = computed(() => Boolean(pendingPaymentOrder.value) && paymentCountdownSeconds.value <= 0)
+const isAlipayCashier = computed(() => pendingPaymentOrder.value?.channel === 'alipay')
+const paymentCountdownLabel = computed(() => {
+  const seconds = Math.max(0, paymentCountdownSeconds.value)
+  const minutesPart = Math.floor(seconds / 60).toString().padStart(2, '0')
+  const secondsPart = (seconds % 60).toString().padStart(2, '0')
+  return `${minutesPart}:${secondsPart}`
+})
 
 /**
  * 顶部账户卡中的统计全部从已加载流水推导，避免前端再维护一份可能过期的余额。
@@ -76,6 +91,11 @@ watch(activeBillingView, (view) => {
 
 onBeforeUnmount(() => {
   if (paymentPollTimer) clearInterval(paymentPollTimer)
+  if (paymentCountdownTimer) clearInterval(paymentCountdownTimer)
+})
+
+onMounted(() => {
+  void loadPaymentMethods()
 })
 
 // 顶部 Popover 的“查看全部流水”通过 URL 参数打开，刷新页面后仍能恢复对应状态。
@@ -162,6 +182,37 @@ function openPurchaseDialog(packageId?: string): void {
   purchaseDialogPackageId.value = target?.id || ''
   paymentSuccessPackageId.value = ''
   purchaseNotice.value = ''
+  // 每次打开购买弹窗都刷新一次，管理员刚刚停用渠道后，用户无需刷新整个页面即可看到最新状态。
+  void loadPaymentMethods()
+}
+
+/**
+ * 从服务端读取可用支付方式。这里采用“失败时不展示”的保守策略：
+ * 如果接口异常，不继续显示旧渠道，避免管理员已停用渠道但前端因缓存仍允许用户点击。
+ */
+async function loadPaymentMethods(): Promise<void> {
+  isLoadingPaymentMethods.value = true
+  availablePaymentMethods.value = []
+  try {
+    const channels = await accountService.getPaymentChannels()
+    const labels: Record<PaymentMethod, string> = {
+      wechat: '微信支付',
+      alipay: '支付宝支付'
+    }
+    availablePaymentMethods.value = channels
+      .filter((item) => item.ready)
+      .map((item) => ({ value: item.channel, label: labels[item.channel] }))
+
+    // 当前选项被管理员停用时，自动选中第一种仍可用的渠道，防止提交已隐藏的旧值。
+    if (!availablePaymentMethods.value.some((item) => item.value === selectedPaymentMethod.value)) {
+      selectedPaymentMethod.value = availablePaymentMethods.value[0]?.value || 'wechat'
+    }
+  } catch (error) {
+    console.error('[billing] 支付渠道加载失败', error)
+    purchaseNotice.value = '支付方式加载失败，请稍后重试。'
+  } finally {
+    isLoadingPaymentMethods.value = false
+  }
 }
 
 function closePurchaseDialog(): void {
@@ -190,6 +241,11 @@ function openBillingView(view: BillingView): void {
  */
 async function confirmPurchase(): Promise<void> {
   if (!purchaseDialogPackage.value) return
+  // 除了隐藏按钮，提交前再检查一次列表；真正创建订单时后端还会做最终的渠道启用校验。
+  if (!availablePaymentMethods.value.some((item) => item.value === selectedPaymentMethod.value)) {
+    purchaseNotice.value = '当前没有可用的支付方式，请稍后再试。'
+    return
+  }
   isCreatingPayment.value = true
   purchaseNotice.value = ''
   try {
@@ -210,14 +266,47 @@ async function confirmPurchase(): Promise<void> {
 
 async function applyPaymentOrder(order: PaymentOrder): Promise<void> {
   if (!order.checkoutUrl) {
-    purchaseNotice.value = order.failureMessage || '支付渠道暂未就绪，尚未生成收款二维码。'
+    purchaseNotice.value = order.failureMessage || '支付渠道暂未就绪，尚未生成支付入口。'
     return
   }
-  // 二维码在浏览器本地生成，不把支付链接发送给第三方二维码服务。
-  paymentQrDataUrl.value = await QRCode.toDataURL(order.checkoutUrl, { width: 280, margin: 1, errorCorrectionLevel: 'M' })
   pendingPaymentOrder.value = order
+  paymentQrNotice.value = ''
   purchaseDialogPackageId.value = ''
-  startPaymentPolling(order.orderNo)
+  // 先根据服务端 expiresAt 初始化倒计时，再判断能否打开收银台；否则初始秒数为 0
+  // 会被误判成“订单已过期”，导致第一次点击无法弹出支付宝页面。
+  startPaymentCountdown()
+
+  if (order.channel === 'alipay') {
+    // “电脑网站支付”必须进入支付宝官方收银台。二维码或登录方式由支付宝页面决定，
+    // 本站不能再把 page.pay 地址自行编码成“当面付”二维码，否则产品能力会错配。
+    paymentQrDataUrl.value = ''
+    openAlipayCashier(order.checkoutUrl)
+  } else {
+    // 微信 Native 支付仍在浏览器本地生成二维码，支付链接不会发送给第三方二维码服务。
+    paymentQrDataUrl.value = await QRCode.toDataURL(order.checkoutUrl, { width: 280, margin: 1, errorCorrectionLevel: 'M' })
+  }
+
+  if (!isPaymentQrExpired.value) startPaymentPolling(order.orderNo)
+}
+
+/**
+ * 只允许打开支付宝官方生产/沙箱网关，防止服务端配置错误时把用户重定向到陌生站点。
+ * 若浏览器拦截异步弹窗，订单弹窗会保留“打开支付宝收银台”按钮供用户再次点击。
+ */
+function openAlipayCashier(checkoutUrl?: string): void {
+  if (!checkoutUrl || isPaymentQrExpired.value) return
+  try {
+    const target = new URL(checkoutUrl, window.location.origin)
+    const allowedHosts = new Set(['openapi.alipay.com', 'openapi-sandbox.dl.alipaydev.com'])
+    if (target.protocol !== 'https:' || !allowedHosts.has(target.hostname)) {
+      paymentQrNotice.value = '支付地址不是支付宝官方网关，已阻止打开。请联系管理员检查渠道配置。'
+      return
+    }
+    const cashierWindow = window.open(target.toString(), '_blank', 'noopener,noreferrer')
+    if (!cashierWindow) paymentQrNotice.value = '浏览器阻止了新窗口，请点击“打开支付宝收银台”继续。'
+  } catch {
+    paymentQrNotice.value = '支付宝收银台地址格式无效，请联系管理员检查渠道配置。'
+  }
 }
 
 async function loadPaymentOrders(): Promise<void> {
@@ -235,18 +324,52 @@ function startPaymentPolling(orderNo: string): void {
   paymentPollTimer = setInterval(() => { void refreshPendingPayment(orderNo) }, 3000)
 }
 
+/**
+ * 倒计时必须基于后端返回的绝对过期时间计算，不能在前端简单从 15:00 递减。
+ * 这样即使浏览器标签页休眠、电脑时间片被系统暂停，重新唤醒后也不会多显示可支付时间。
+ */
+function syncPaymentCountdown(): void {
+  const expiresAt = pendingPaymentOrder.value?.expiresAt
+  const expiresTimestamp = expiresAt ? new Date(expiresAt).getTime() : Number.NaN
+  paymentCountdownSeconds.value = Number.isFinite(expiresTimestamp)
+    ? Math.max(0, Math.ceil((expiresTimestamp - Date.now()) / 1000))
+    : 0
+
+  if (paymentCountdownSeconds.value > 0) return
+
+  // 页面到期后停止无意义的轮询，同时保留订单号，方便用户重新发起支付。
+  if (paymentCountdownTimer) clearInterval(paymentCountdownTimer)
+  paymentCountdownTimer = undefined
+  if (paymentPollTimer) clearInterval(paymentPollTimer)
+  paymentPollTimer = undefined
+}
+
+function startPaymentCountdown(): void {
+  if (paymentCountdownTimer) clearInterval(paymentCountdownTimer)
+  paymentCountdownTimer = undefined
+  syncPaymentCountdown()
+  if (paymentCountdownSeconds.value <= 0) return
+  paymentCountdownTimer = setInterval(syncPaymentCountdown, 1000)
+}
+
 async function refreshPendingPayment(orderNo: string): Promise<void> {
   try {
     const page = await accountService.getPaymentOrders(1, 50)
     paymentOrders.value = page.items
     const latest = page.items.find(order => order.orderNo === orderNo)
     if (!latest) return
+    const previousExpiresAt = pendingPaymentOrder.value?.expiresAt
     pendingPaymentOrder.value = latest
     if (latest.status === 'paid') {
       if (paymentPollTimer) clearInterval(paymentPollTimer)
       paymentPollTimer = undefined
+      if (paymentCountdownTimer) clearInterval(paymentCountdownTimer)
+      paymentCountdownTimer = undefined
       paymentQrDataUrl.value = ''
       paymentSuccessPackageId.value = purchaseDialogPackage.value?.id || selectedBillingPackage.value?.id || ''
+    } else if (latest.expiresAt !== previousExpiresAt) {
+      // 服务端重试支付入口会刷新 expires_at，前端同步重启倒计时。
+      startPaymentCountdown()
     }
   } catch (error) {
     // 轮询短暂失败不清空二维码，用户可手动刷新状态；连续失败会由 API 客户端输出诊断日志。
@@ -254,11 +377,32 @@ async function refreshPendingPayment(orderNo: string): Promise<void> {
   }
 }
 
+/** 支付入口到期后复用原订单重试，避免产生一批无意义的新订单。 */
+async function retryExpiredPayment(): Promise<void> {
+  const orderNo = pendingPaymentOrder.value?.orderNo
+  if (!orderNo || isRetryingPayment.value) return
+  isRetryingPayment.value = true
+  paymentQrNotice.value = ''
+  try {
+    const order = await accountService.retryPaymentCheckout(orderNo)
+    await applyPaymentOrder(order)
+    await loadPaymentOrders()
+  } catch (error) {
+    paymentQrNotice.value = error instanceof Error ? error.message : '支付入口重新生成失败，请稍后重试。'
+  } finally {
+    isRetryingPayment.value = false
+  }
+}
+
 function closePaymentQr(): void {
   if (paymentPollTimer) clearInterval(paymentPollTimer)
   paymentPollTimer = undefined
+  if (paymentCountdownTimer) clearInterval(paymentCountdownTimer)
+  paymentCountdownTimer = undefined
   pendingPaymentOrder.value = null
   paymentQrDataUrl.value = ''
+  paymentCountdownSeconds.value = 0
+  paymentQrNotice.value = ''
 }
 
 function paymentStatusLabel(status: string): string {
@@ -446,11 +590,15 @@ function closeSuccessPage(): void {
           <div class="mt-2 flex items-center justify-between rounded-[10px] bg-[#f4f7fc] px-4 py-3"><div class="flex items-center gap-2"><CreditAmount :value="purchaseDialogPackage.creditsAmount" size="md" tone="inherit" /><span class="text-[11px] font-bold text-[#77869c]">积分 + 赠送 {{ formatNumber(getPackageBonus(purchaseDialogPackage)) }} 积分</span></div><span class="text-[15px] font-black">¥ {{ formatMoney(purchaseDialogPackage.priceAmount) }}</span></div>
           <p class="mt-5 text-[11px] font-black text-[#7d8ba0]">应付金额</p><p class="mt-1 text-[22px] font-black">¥ {{ formatMoney(purchaseDialogPackage.priceAmount) }}</p>
           <p class="mt-5 text-[11px] font-black text-[#7d8ba0]">支付方式</p>
-          <div class="mt-2 space-y-2">
-            <button v-for="method in ([['wechat', '微信支付'], ['alipay', '支付宝支付']] as const)" :key="method[0]" class="flex h-10 w-full items-center justify-between rounded-[9px] border px-3 text-left text-[12px] font-bold transition" :class="selectedPaymentMethod === method[0] ? 'border-[#0d63ff] bg-[#f5f9ff] text-[#26344b]' : 'border-[#e2eaf5] text-[#66758c] hover:border-[#b8d0ff]'" type="button" @click="selectedPaymentMethod = method[0]"><span>{{ method[1] }}</span><span class="h-4 w-4 rounded-full border-2" :class="selectedPaymentMethod === method[0] ? 'border-[#0d63ff] bg-[#0d63ff] shadow-[inset_0_0_0_3px_white]' : 'border-[#c4d0df]'" /></button>
+          <div v-if="isLoadingPaymentMethods" class="mt-2 rounded-[9px] bg-[#f5f8fc] px-3 py-3 text-[11px] font-semibold text-[#8998ac]">
+            正在读取可用支付方式…
           </div>
+          <div v-else-if="availablePaymentMethods.length" class="mt-2 space-y-2">
+            <button v-for="method in availablePaymentMethods" :key="method.value" class="flex h-10 w-full items-center justify-between rounded-[9px] border px-3 text-left text-[12px] font-bold transition" :class="selectedPaymentMethod === method.value ? 'border-[#0d63ff] bg-[#f5f9ff] text-[#26344b]' : 'border-[#e2eaf5] text-[#66758c] hover:border-[#b8d0ff]'" type="button" @click="selectedPaymentMethod = method.value"><span>{{ method.label }}</span><span class="h-4 w-4 rounded-full border-2" :class="selectedPaymentMethod === method.value ? 'border-[#0d63ff] bg-[#0d63ff] shadow-[inset_0_0_0_3px_white]' : 'border-[#c4d0df]'" /></button>
+          </div>
+          <div v-else class="mt-2 rounded-[9px] bg-[#fff6e8] px-3 py-3 text-[11px] font-semibold text-[#b26b00]">当前暂无可用支付方式，请联系管理员或稍后再试。</div>
           <p v-if="purchaseNotice" class="mt-3 rounded-[9px] bg-[#fff6e8] px-3 py-2 text-[11px] font-semibold leading-5 text-[#b26b00]">{{ purchaseNotice }}</p>
-          <div class="mt-5 flex gap-3"><button class="h-10 flex-1 rounded-[9px] border border-[#e0e8f3] text-[12px] font-black text-[#6b7a90]" type="button" @click="closePurchaseDialog">取消</button><button class="h-10 flex-1 rounded-[9px] bg-[#075fff] text-[12px] font-black text-white shadow-[0_10px_20px_rgba(0,95,254,0.2)] disabled:cursor-not-allowed disabled:bg-[#9abbf5]" type="button" :disabled="isCreatingPayment" @click="confirmPurchase">{{ isCreatingPayment ? '正在创建订单…' : '生成支付二维码' }}</button></div>
+          <div class="mt-5 flex gap-3"><button class="h-10 flex-1 rounded-[9px] border border-[#e0e8f3] text-[12px] font-black text-[#6b7a90]" type="button" @click="closePurchaseDialog">取消</button><button class="h-10 flex-1 rounded-[9px] bg-[#075fff] text-[12px] font-black text-white shadow-[0_10px_20px_rgba(0,95,254,0.2)] disabled:cursor-not-allowed disabled:bg-[#9abbf5]" type="button" :disabled="isCreatingPayment || isLoadingPaymentMethods || !availablePaymentMethods.length" @click="confirmPurchase">{{ isCreatingPayment ? '正在创建订单…' : !availablePaymentMethods.length ? '暂无可用支付方式' : selectedPaymentMethod === 'alipay' ? '前往支付宝支付' : '生成支付二维码' }}</button></div>
           <p class="mt-3 text-center text-[10px] font-semibold text-[#a0adbc]">付款成功仅以服务端验签回调或主动查单结果为准。</p>
         </div>
       </div>
@@ -459,11 +607,29 @@ function closeSuccessPage(): void {
     <Teleport to="body">
       <div v-if="pendingPaymentOrder" class="fixed inset-0 z-[140] flex items-center justify-center bg-slate-950/40 px-4 backdrop-blur-[2px]" @click.self="closePaymentQr">
         <div class="w-full max-w-[390px] rounded-[18px] bg-white px-7 py-6 text-center shadow-[0_30px_90px_rgba(15,23,42,0.25)]">
-          <div class="flex items-center justify-between"><div class="text-left"><h3 class="text-[19px] font-black">请扫码支付</h3><p class="mt-1 text-[11px] font-semibold text-[#7c8ba0]">订单 {{ pendingPaymentOrder.orderNo }}</p></div><button class="text-[#7d8ba0]" type="button" aria-label="关闭支付二维码" @click="closePaymentQr">×</button></div>
-          <img v-if="paymentQrDataUrl" :src="paymentQrDataUrl" class="mx-auto mt-5 h-[250px] w-[250px] rounded-[12px] border border-[#e6edf6] p-2" alt="支付二维码">
+          <div class="flex items-center justify-between"><div class="text-left"><h3 class="text-[19px] font-black">{{ isAlipayCashier ? '请完成支付宝支付' : '请扫码支付' }}</h3><p class="mt-1 text-[11px] font-semibold text-[#7c8ba0]">订单 {{ pendingPaymentOrder.orderNo }}</p></div><button class="text-[#7d8ba0]" type="button" aria-label="关闭支付窗口" @click="closePaymentQr">×</button></div>
+          <div v-if="isAlipayCashier" class="mx-auto mt-5 flex h-[180px] w-full flex-col items-center justify-center rounded-[12px] border border-[#dce9ff] bg-[#f6f9ff] px-6">
+            <div class="flex h-14 w-14 items-center justify-center rounded-2xl bg-[#1677ff] text-2xl font-black text-white">支</div>
+            <p class="mt-4 text-[14px] font-black text-[#26344b]">支付宝官方收银台已在新窗口打开</p>
+            <p class="mt-2 text-[11px] font-semibold leading-5 text-[#8998ac]">请在官方页面扫码或登录付款；本站不会仿制支付宝二维码。</p>
+          </div>
+          <div v-else class="relative mx-auto mt-5 h-[250px] w-[250px] overflow-hidden rounded-[12px] border border-[#e6edf6] bg-white p-2">
+            <img v-if="paymentQrDataUrl" :src="paymentQrDataUrl" class="h-full w-full" :class="isPaymentQrExpired ? 'blur-[2px] opacity-30' : ''" alt="支付二维码">
+            <div v-if="isPaymentQrExpired" class="absolute inset-0 flex flex-col items-center justify-center bg-white/75 px-5">
+              <p class="text-[15px] font-black text-[#39475e]">二维码已过期</p>
+              <p class="mt-1 text-[11px] font-semibold text-[#8998ac]">请重新生成后再扫码</p>
+            </div>
+          </div>
           <p class="mt-4 text-[13px] font-black text-[#26344b]">¥ {{ formatMoney(pendingPaymentOrder.amount) }}</p>
+          <p class="mt-2 text-[12px] font-black" :class="isPaymentQrExpired ? 'text-[#e05252]' : 'text-[#075fff]'">
+            {{ isPaymentQrExpired ? '支付时间已结束' : `支付剩余 ${paymentCountdownLabel}` }}
+          </p>
           <p class="mt-2 text-[11px] font-semibold text-[#8998ac]">付款后系统会自动验签到账，请勿手动上传支付截图。</p>
-          <button class="mt-4 h-10 w-full rounded-[9px] border border-[#d8e5f8] text-[12px] font-black text-[#075fff]" type="button" @click="refreshPendingPayment(pendingPaymentOrder.orderNo)">我已支付，刷新状态</button>
+          <p v-if="paymentQrNotice" class="mt-3 rounded-[9px] bg-[#fff6e8] px-3 py-2 text-[11px] font-semibold leading-5 text-[#b26b00]">{{ paymentQrNotice }}</p>
+          <button v-if="isPaymentQrExpired" class="mt-4 h-10 w-full rounded-[9px] bg-[#075fff] text-[12px] font-black text-white disabled:cursor-not-allowed disabled:bg-[#9abbf5]" type="button" :disabled="isRetryingPayment" @click="retryExpiredPayment">{{ isRetryingPayment ? '正在重新发起…' : '重新发起支付' }}</button>
+          <button v-else-if="isAlipayCashier" class="mt-4 h-10 w-full rounded-[9px] bg-[#1677ff] text-[12px] font-black text-white" type="button" @click="openAlipayCashier(pendingPaymentOrder.checkoutUrl)">打开支付宝收银台</button>
+          <button v-else class="mt-4 h-10 w-full rounded-[9px] border border-[#d8e5f8] text-[12px] font-black text-[#075fff]" type="button" @click="refreshPendingPayment(pendingPaymentOrder.orderNo)">我已支付，刷新状态</button>
+          <button v-if="isAlipayCashier && !isPaymentQrExpired" class="mt-2 h-9 w-full rounded-[9px] border border-[#d8e5f8] text-[11px] font-black text-[#075fff]" type="button" @click="refreshPendingPayment(pendingPaymentOrder.orderNo)">我已支付，刷新状态</button>
         </div>
       </div>
     </Teleport>

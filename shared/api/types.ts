@@ -686,6 +686,7 @@ export interface ApiAdapter {
   changeAccountPassword?(payload: { newPassword: string; newPasswordConfirmation: string; verificationCode: string }): Promise<ApiResponse<{ status: string }>>
   getAccountCreditPackages(): Promise<ApiResponse<CreditPackage[]>>
   getAccountCreditLedgers(page?: number, pageSize?: number): Promise<ApiResponse<CreditLedgerPage>>
+  getPaymentChannels?(): Promise<ApiResponse<Array<{ channel: 'wechat' | 'alipay'; ready: boolean }>>>
   createPaymentOrder?(payload: { packageId: string; channel: 'wechat' | 'alipay'; idempotencyKey: string }): Promise<ApiResponse<PaymentOrder>>
   retryPaymentCheckout?(orderNo: string): Promise<ApiResponse<PaymentOrder>>
   getPaymentOrders?(page?: number, pageSize?: number): Promise<ApiResponse<PaymentOrderPage>>

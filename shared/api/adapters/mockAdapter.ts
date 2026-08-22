@@ -694,6 +694,16 @@ export const mockAdapter: ApiAdapter = {
     return ok(ledgerPage)
   },
 
+  async getPaymentChannels() {
+    await sleep(80)
+    // Mock 模式没有后台支付设置，因此默认返回两种渠道都可用，保证本地纯前端演示可继续操作。
+    // 真正的 HTTP 模式会读取后端渠道/凭据启用状态，不能用这里的结果替代生产环境判断。
+    return ok([
+      { channel: 'wechat' as const, ready: true },
+      { channel: 'alipay' as const, ready: true }
+    ])
+  },
+
   async createPaymentOrder(payload) {
     await sleep(120)
     const order: PaymentOrder = {

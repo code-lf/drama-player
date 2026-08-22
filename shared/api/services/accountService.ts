@@ -55,6 +55,13 @@ export const accountService = {
     return callApi('account/creditLedgers', (adapter) => adapter.getAccountCreditLedgers(page, pageSize))
   },
 
+  async getPaymentChannels() {
+    return callApi('account/paymentChannels', async (adapter) => {
+      if (!adapter.getPaymentChannels) throw new Error('当前接口适配器未实现支付渠道查询。')
+      return adapter.getPaymentChannels()
+    })
+  },
+
   async createPaymentOrder(payload: { packageId: string; channel: 'wechat' | 'alipay'; idempotencyKey: string }) {
     return callApi('account/paymentOrders/create', async (adapter) => {
       if (!adapter.createPaymentOrder) throw new Error('当前接口适配器未实现支付订单创建。')
