@@ -1,15 +1,12 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1254 1254" fill="none">
   <title>积分</title>
+  <!--
+    积分图标使用 SVG symbol，CreditIcon 通过 <use> 在任意尺寸和主题下复用。
+    文件必须位于 Nuxt 的 public/icons 目录：这样浏览器会以 /icons/credit-star.svg
+    直接静态访问，避免开发服务器把它误判成待编译的模块。
+  -->
   <symbol id="credit-star-icon" viewBox="0 0 1254 1254">
-    <!-- 依据原 PNG 的透明边界和双星轮廓重建，保留 currentColor 以支持主题换色。 -->
-    <path
-      fill="currentColor"
-      d="M626 245C633 404 677 534 897 628C726 647 652 713 626 993C601 721 526 648 355 628C568 537 618 411 626 245Z"
-    />
-    <path
-      fill="currentColor"
-      d="M823 296C828 339 847 362 881 370C848 378 828 400 823 443C817 400 797 378 768 370C798 362 817 339 823 296Z"
-    />
+    <path fill="currentColor" d="M626 245C633 404 677 534 897 628C726 647 652 713 626 993C601 721 526 648 355 628C568 537 618 411 626 245Z"/>
+    <path fill="currentColor" d="M823 296C828 339 847 362 881 370C848 378 828 400 823 443C817 400 797 378 768 370C798 362 817 339 823 296Z"/>
   </symbol>
-  <use href="#credit-star-icon" />
 </svg>

@@ -18,6 +18,13 @@ const defaultApiBase = process.env.NUXT_PUBLIC_API_BASE || (isProductionBuild ? 
 // 这里要显式带上 `/api` 前缀，否则浏览器请求 `/api/config/runtime` 时会被转发成后端的 `/config/runtime`，
 // 最终命中不到 FastAPI 已挂载的 `/api` 路由树。
 const localApiProxyTarget = process.env.NUXT_LOCAL_API_PROXY_TARGET || 'http://127.0.0.1:8000/api'
+// 支付宝异步通知在本地联调时会先经过 cpolar，再由 Nuxt 的 /api 代理转给 FastAPI。
+// Vite 默认拒绝未知 Host，因此只允许当前明确配置的隧道域名；不要使用 allowedHosts: true，
+// 否则会放大 DNS rebinding 风险。域名变化时可用逗号分隔的环境变量覆盖。
+const devAllowedHosts = (process.env.NUXT_DEV_ALLOWED_HOSTS || '7f40049f.r33.cpolar.top')
+  .split(',')
+  .map(host => host.trim())
+  .filter(Boolean)
 
 export default defineNuxtConfig({
   // Nuxt UI v4 需要 Nuxt 4，但现有项目仍采用 Nuxt 3 的根目录结构。
@@ -121,6 +128,9 @@ export default defineNuxtConfig({
   vite: isProductionBuild
     ? undefined
     : {
+        server: {
+          allowedHosts: devAllowedHosts
+        },
         resolve: {
           alias: {
             '#app-manifest': devAppManifestPath
