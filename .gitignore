@@ -17,6 +17,8 @@ node_modules
 # 本机 pnpm 缓存和 Codex 视觉验收产物，不属于应用源代码。
 .pnpm-store/
 .codex/
+# 本机运行日志、打包暂存和验证文件，不属于应用源代码。
+.codex-runtime/
 /artifacts/design-qa/
 # 日志
 logs
