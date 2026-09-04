@@ -54,5 +54,6 @@ coverage
 /artifacts/edge-profile-assets/
 
 # 其他打包文件
+/artifacts/releases/
 dist
 *.local
