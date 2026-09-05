@@ -16,6 +16,8 @@ const router = useRouter()
 const route = useRoute()
 const authStore = useAuthStore()
 const accountStore = useAccountStore()
+// 登录页静态图统一走 OSS 素材前缀；配置读取失败时会自动回退本地 public 路径。
+const { $siteAsset: siteAsset } = useNuxtApp()
 
 type AuthMode = 'login' | 'register'
 type LoginMethod = 'password' | 'sms'
@@ -260,14 +262,14 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <main class="login-page">
+  <main class="login-page" :style="{ '--login-background-image': `url(${siteAsset('/login/login-bg.png')})` }">
     <section class="login-hero">
       <div class="hero-bg" />
       <div class="hero-vignette" />
 
       <div class="hero-content">
         <NuxtLink class="brand" to="/">
-          <img class="brand-logo" src="/login/login-logo.png" alt="Livliv" />
+          <img class="brand-logo" :src="siteAsset('/login/login-logo.png')" alt="Livliv" />
           <span class="brand-name">{{ websiteInfo.brandName }}</span>
           <span class="brand-subtitle">{{ websiteInfo.brandSubtitle }}</span>
         </NuxtLink>
@@ -285,7 +287,7 @@ onBeforeUnmount(() => {
 
         <div class="feature-row">
           <article v-for="item in featureItems" :key="item.title" class="feature-card">
-            <img :src="item.image" :alt="item.title" />
+            <img :src="siteAsset(item.image)" :alt="item.title" decoding="async" />
             <div>
               <strong>{{ item.title }}</strong>
               <span>{{ item.desc }}</span>
@@ -317,7 +319,7 @@ onBeforeUnmount(() => {
       </div>
 
       <aside class="login-panel">
-        <img class="qr-corner" src="/login/qr-corner.png" alt="" />
+        <img class="qr-corner" :src="siteAsset('/login/qr-corner.png')" alt="" />
 
         <div class="panel-tabs">
           <button
@@ -469,7 +471,7 @@ onBeforeUnmount(() => {
   /* 背景图本身保持清晰，只加极轻的左侧压暗，避免遮罩让图片发灰发糊。 */
   background:
     linear-gradient(90deg, rgba(2, 12, 35, 0.38) 0%, rgba(5, 35, 87, 0.16) 36%, rgba(35, 112, 207, 0) 68%),
-    url('/login/login-bg.png') center / cover no-repeat;
+    var(--login-background-image) center / cover no-repeat;
 }
 
 .hero-vignette {

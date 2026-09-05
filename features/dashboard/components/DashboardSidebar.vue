@@ -1,9 +1,10 @@
 <script setup lang="ts">
+const { $siteAsset: siteAsset } = useNuxtApp()
 import CreditIcon from '~/components/ui/CreditIcon.vue'
 
 interface Props {
   activeMenu: 'drama' | 'product' | 'product-video' | 'none'
-  activeWorkspaceView: 'console' | 'projects' | 'billing' | 'announcements' | 'help'
+  activeWorkspaceView: 'console' | 'projects' | 'exports' | 'billing' | 'announcements' | 'help'
   billingView: 'recharge' | 'orders'
   currentCreditBalance: number | string
   loggedIn: boolean
@@ -55,7 +56,7 @@ const toolMenuItems = [
     <NuxtLink to="/dashboard" class="flex items-center gap-3">
       <div class="flex h-12 w-12 items-center justify-center overflow-hidden rounded-[12px] bg-[#005FFE] shadow-[0_14px_28px_rgba(0,95,254,0.24)]">
         <!-- Logo 原图是带黑色外边画布的 JPEG，因此放大裁切后只保留蓝色品牌图标。 -->
-        <img src="/branding/livliv-logo.jpeg" alt="Livliv Logo" class="h-full w-full scale-[1.28] object-cover" />
+        <img :src="siteAsset('/branding/livliv-logo.jpeg')" alt="Livliv Logo" class="h-full w-full scale-[1.28] object-cover" />
       </div>
       <div>
         <p class="dashboard-brand-title text-[21px] font-black leading-none tracking-[-0.04em] text-[#111827]">Livliv</p>
@@ -166,6 +167,14 @@ const toolMenuItems = [
           <path d="M4 7.5A2.5 2.5 0 0 1 6.5 5H10l2 2.5h5.5A2.5 2.5 0 0 1 20 10v7a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 17V7.5Z" stroke-linejoin="round" />
         </svg>
         <span>我的项目</span>
+      </NuxtLink>
+      <NuxtLink
+        to="/dashboard-exports"
+        class="group mt-3 flex h-[48px] items-center gap-3 rounded-[13px] px-5 text-[15px] font-bold transition"
+        :class="activeWorkspaceView === 'exports' ? 'bg-[#f0f4ff] text-[#005FFE]' : 'text-[#53627c] hover:bg-[#f6f8fc] hover:text-[#005FFE]'"
+      >
+        <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 19h14" stroke-linecap="round" stroke-linejoin="round" /></svg>
+        <span>我的导出</span>
       </NuxtLink>
     </div>
 

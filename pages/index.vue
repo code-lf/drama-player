@@ -18,6 +18,8 @@ import {
 const authStore = useAuthStore()
 const accountStore = useAccountStore()
 const router = useRouter()
+// 页面只传相对路径；真实 OSS 域名和位图 WebP 后缀由全局素材服务统一处理。
+const { $siteAsset: siteAsset } = useNuxtApp()
 
 const isUserMenuOpen = ref(false)
 const userMenuRef = ref<HTMLElement | null>(null)
@@ -269,12 +271,15 @@ watch(
 </script>
 
 <template>
-  <main class="landing-page min-h-screen bg-[#f5f8ff] text-[#081333] selection:bg-[#005ffe]/20 selection:text-[#005ffe]">
+  <main
+    class="landing-page min-h-screen bg-[#f5f8ff] text-[#081333] selection:bg-[#005ffe]/20 selection:text-[#005ffe]"
+    :style="{ '--landing-hero-image': `url(${siteAsset('/landing/hero-console.png')})` }"
+  >
     <header class="sticky top-0 z-50 border-b border-[#dce6f7] bg-white/90 backdrop-blur-2xl">
       <div class="mx-auto flex h-[78px] w-full max-w-[1320px] items-center justify-between px-5 lg:px-6">
         <NuxtLink to="/" class="flex items-center gap-3" aria-label="Livliv AI 首页">
           <span class="flex h-9 w-9 items-center justify-center overflow-hidden rounded-[10px] bg-[#0866ff] shadow-[0_12px_24px_rgba(0,95,254,0.22)]">
-            <img src="/branding/livliv-logo.jpeg" alt="Livliv Logo" class="h-full w-full scale-[1.28] object-cover" />
+            <img :src="siteAsset('/branding/livliv-logo.jpeg')" alt="Livliv Logo" class="h-full w-full scale-[1.28] object-cover" />
           </span>
           <span class="text-[23px] font-black leading-none tracking-[-0.01em] text-[#07142e]">Livliv AI</span>
         </NuxtLink>
@@ -434,7 +439,7 @@ watch(
           >
             <h3 class="text-[17px] font-black text-[#102044]">{{ item.title }}</h3>
             <p class="mt-2 min-h-[48px] text-[13px] font-medium leading-[1.65] text-[#65738f]">{{ item.desc }}</p>
-            <img class="mx-auto mt-4 h-[92px] w-[112px] object-contain" :src="item.image" :alt="item.title" />
+            <img class="mx-auto mt-4 h-[92px] w-[112px] object-contain" :src="siteAsset(item.image)" :alt="item.title" loading="lazy" decoding="async" />
           </article>
         </div>
       </div>
@@ -455,7 +460,7 @@ watch(
               class="mx-auto flex h-[86px] w-[86px] items-center justify-center rounded-full bg-[#f1f6ff] shadow-[inset_0_0_0_1px_#d7e5ff,0_12px_30px_rgba(48,108,214,0.12)]"
               :class="{ 'workflow-node--purple': index === workflowSteps.length - 1 }"
             >
-              <img class="workflow-art h-16 w-16 object-contain" :src="step.image" :alt="step.title" />
+              <img class="workflow-art h-16 w-16 object-contain" :src="siteAsset(step.image)" :alt="step.title" loading="lazy" decoding="async" />
             </div>
             <div class="mt-4 flex justify-center">
               <span class="mr-2 flex h-5 w-5 items-center justify-center rounded-full bg-[#1c74ff] text-xs font-black text-white">{{ index + 1 }}</span>
@@ -487,7 +492,7 @@ watch(
           >
             <div class="relative overflow-hidden rounded-[10px] bg-[#eef5ff]">
               <span v-if="item.hot" class="absolute left-2 top-2 z-10 rounded-md bg-[#0b6dff] px-2 py-1 text-xs font-black text-white">热门</span>
-              <img class="h-[128px] w-full object-cover" :src="item.image" :alt="item.title" />
+              <img class="h-[128px] w-full object-cover" :src="siteAsset(item.image)" :alt="item.title" loading="lazy" decoding="async" />
             </div>
             <div class="px-2 py-3">
               <h3 class="text-center text-[16px] font-black">{{ item.title }}</h3>
@@ -518,7 +523,7 @@ watch(
             class="overflow-hidden rounded-[14px] border border-[#dce6f5] bg-white shadow-[0_14px_34px_rgba(23,58,111,0.08)] transition hover:-translate-y-1 hover:border-[#a9c7ff]"
           >
             <div class="relative h-[156px] overflow-hidden">
-              <img class="h-full w-full object-cover" :src="item.image" :alt="item.title" />
+              <img class="h-full w-full object-cover" :src="siteAsset(item.image)" :alt="item.title" loading="lazy" decoding="async" />
               <div class="absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-black/72 to-transparent" />
               <span class="absolute left-3 top-3 rounded-md bg-[#0b6dff] px-2.5 py-1 text-xs font-black text-white">{{ item.tag }}</span>
               <div class="absolute bottom-4 left-4 text-white">
@@ -545,7 +550,7 @@ watch(
             :key="item.title"
             class="flex min-h-[112px] items-center gap-4 rounded-[14px] border border-[#dce6f5] bg-white px-5 py-4 shadow-[0_10px_28px_rgba(28,62,112,0.05)]"
           >
-            <img class="icon-art h-[54px] w-[54px] shrink-0 object-contain" :src="item.image" :alt="item.title" />
+            <img class="icon-art h-[54px] w-[54px] shrink-0 object-contain" :src="siteAsset(item.image)" :alt="item.title" loading="lazy" decoding="async" />
             <div>
               <div class="text-[27px] font-black leading-none text-[#245bff]">{{ item.value }}</div>
               <h3 class="mt-2 text-[15px] font-black text-[#102044]">{{ item.title }}</h3>
@@ -647,7 +652,7 @@ watch(
 
 .hero-shell {
   /* 首屏大图只保留原始素材，避免渐变蒙层影响控制台清晰度和对比度。 */
-  background-image: url('/landing/hero-console.png');
+  background-image: var(--landing-hero-image);
   /* 首屏加高后保留控制台顶部，避免面板从导航下方直接被截断。 */
   background-position: center 46%;
   background-size: cover;

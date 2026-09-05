@@ -11,7 +11,7 @@ import type {
   DramaRuntimeConfig,
   PublicVideoCapabilities
 } from '~/entities/drama/types'
-import type { EpisodeCutDraft, EpisodeCutSavePayload, EpisodeCutTask } from '~/entities/drama/episodeCutTypes'
+import type { EpisodeCutDraft, EpisodeCutSavePayload, EpisodeCutTask, EpisodeCutTaskList } from '~/entities/drama/episodeCutTypes'
 import type { Project } from '~/entities/project/types'
 import type { FeedbackPage, FeedbackSubmitPayload, RedeemCodeResult, SupportCenter, UserFeedback, WebsiteInfo } from '~/entities/support/types'
 import type {
@@ -793,9 +793,10 @@ export interface ApiAdapter {
   saveEpisodeCut(projectId: string, episodeNo: number, payload: EpisodeCutSavePayload): Promise<ApiResponse<EpisodeCutDraft>>
   uploadEpisodeBgm(projectId: string, episodeNo: number, file: File): Promise<ApiResponse<EpisodeCutDraft>>
   generateEpisodeCaptions(projectId: string, episodeNo: number): Promise<ApiResponse<EpisodeCutTask>>
-  renderEpisodeCut(projectId: string, episodeNo: number): Promise<ApiResponse<EpisodeCutTask>>
+  renderEpisodeCut(projectId: string, episodeNo: number, renderMode?: 'fast' | 'standard'): Promise<ApiResponse<EpisodeCutTask>>
   exportEpisodeEditorPackage(projectId: string, episodeNo: number): Promise<ApiResponse<EpisodeCutTask>>
   getEpisodeCutTask(projectId: string, episodeNo: number, taskId: string): Promise<ApiResponse<EpisodeCutTask>>
+  listEpisodeExports(params?: { status?: string; page?: number; pageSize?: number }): Promise<ApiResponse<EpisodeCutTaskList>>
   listProductImageTemplates(params?: { category?: string; featured?: boolean }): Promise<ApiResponse<ProductImageTemplate[]>>
   previewProductImageCredits(payload: Pick<ProductImageGeneratePayload, 'count' | 'model' | 'prompt' | 'splitSellingPoints' | 'templateId'>): Promise<ApiResponse<ProductImageCreditPreview>>
   splitProductSellingPoints(payload: { prompt: string; count: number }): Promise<ApiResponse<ProductSellingPoint[]>>

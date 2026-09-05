@@ -40,6 +40,9 @@ const loading = ref(true)
 const savingState = ref<'idle' | 'saving' | 'saved' | 'error'>('idle')
 const actionMessage = ref('')
 const currentTask = ref<EpisodeCutTask | null>(null)
+const exportMode = ref<'fast' | 'standard'>('fast')
+const exportHistory = ref<EpisodeCutTask[]>([])
+const exportHistoryLoading = ref(false)
 const playerRef = ref<HTMLVideoElement | null>(null)
 const playbackSeconds = ref(0)
 const isSequencePlaying = ref(false)
@@ -98,6 +101,7 @@ const activeCaptionPositionClass = computed(() => ({
   bottom: 'bottom-[10%]'
 }[String(subtitleStyle.value.position || 'bottom')] || 'bottom-[10%]'))
 const taskDownloadLabel = computed(() => currentTask.value?.taskType === 'editor_package' ? '下载剪辑交接包' : '下载 MP4')
+const currentTaskStageLabel = computed(() => formatTaskStage(currentTask.value?.stage || 'queued'))
 
 const qualityIssues = computed(() => {
   const issues: Array<{
@@ -196,6 +200,29 @@ async function loadDraft(): Promise<void> {
     loading.value = false
     await nextTick()
     isHydrating = false
+    // 草稿与导出任务分开加载；导出失败不能阻止用户继续编辑当前草稿。
+    void loadExportHistory(true)
+  }
+}
+
+async function loadExportHistory(resumeRunningTask = false): Promise<void> {
+  exportHistoryLoading.value = true
+  try {
+    const result = await dramaService.listEpisodeExports({ page: 1, pageSize: 50 })
+    exportHistory.value = result.items.filter(
+      task => task.projectId === props.projectId && task.episodeNo === props.episodeNo
+    )
+    const activeTask = exportHistory.value.find(task => ['queued', 'running'].includes(task.status))
+    // 页面刷新后只恢复当前集最新的一项运行任务，避免重复启动多个轮询循环。
+    if (resumeRunningTask && activeTask) void pollTask(activeTask)
+    else if (!currentTask.value && exportHistory.value[0]) currentTask.value = exportHistory.value[0]
+  } catch (error) {
+    // 导出历史属于辅助能力，失败时保留成片编辑能力，只给出可见提示。
+    if (!actionMessage.value) {
+      actionMessage.value = error instanceof Error ? error.message : '导出记录加载失败。'
+    }
+  } finally {
+    exportHistoryLoading.value = false
   }
 }
 
@@ -206,9 +233,9 @@ function scheduleSave(): void {
   saveTimer = setTimeout(() => void saveDraft(), 650)
 }
 
-async function saveDraft(): Promise<void> {
+async function saveDraft(): Promise<boolean> {
   const payload = createPayload()
-  if (!payload) return
+  if (!payload) return false
   savingState.value = 'saving'
   try {
     const saved = await dramaService.saveEpisodeCut(props.projectId, props.episodeNo, payload)
@@ -219,9 +246,11 @@ async function saveDraft(): Promise<void> {
       draft.value.versionNo = saved.versionNo
     }
     savingState.value = 'saved'
+    return true
   } catch (error) {
     savingState.value = 'error'
     actionMessage.value = error instanceof Error ? error.message : '自动保存失败，请稍后重试。'
+    return false
   }
 }
 
@@ -233,10 +262,11 @@ function selectClip(rowId: string): void {
 function resolveClipVideoUrl(rowId: string, takeId = ''): string {
   const row = rowMap.value.get(rowId)
   if (!row) return ''
-  // 分镜行地址是平台持久化后的稳定地址，优先级高于可能过期的供应商 take 地址。
-  if (row.videoUrl) return row.videoUrl
+  // 成片草稿明确保存了 take_id 时必须优先显示该版本，否则预览会展示分镜当前版本，
+  // 而后台按草稿 take 导出，形成“预览和导出不是同一个视频”的严重误导。
   return row.takes?.find(item => item.id === takeId)?.videoUrl
     || row.takes?.find(item => item.id === row.selectedTakeId)?.videoUrl
+    || row.videoUrl
     || ''
 }
 
@@ -383,6 +413,8 @@ function handleDrop(targetRowId: string): void {
 function updateSelectedTake(takeId: string): void {
   if (!selectedClip.value) return
   selectedClip.value.takeId = takeId
+  // 选回分镜页当前版本时恢复自动跟随；选择其他版本则记录为成片页的明确覆盖。
+  selectedClip.value.followStoryboardSelection = !takeId || takeId === selectedRow.value?.selectedTakeId
   actionMessage.value = '已更换镜头版本，请复核裁切点和字幕时间。'
 }
 
@@ -451,10 +483,12 @@ async function pollTask(task: EpisodeCutTask): Promise<void> {
   } else if (currentTask.value) {
     actionMessage.value = currentTask.value.errorMessage || '任务未完成，请检查服务配置。'
   }
+  // 把最终状态同步到历史列表，用户无需刷新整个成片工作台。
+  void loadExportHistory(false)
 }
 
 async function generateCaptions(): Promise<void> {
-  await saveDraft()
+  if (!await saveDraft()) return
   actionMessage.value = '字幕识别任务已提交。'
   try {
     await pollTask(await dramaService.generateEpisodeCaptions(props.projectId, props.episodeNo))
@@ -464,21 +498,25 @@ async function generateCaptions(): Promise<void> {
 }
 
 async function renderEpisode(): Promise<void> {
-  await saveDraft()
+  // 必须等待本次草稿（尤其 take_id）真正保存成功后再创建任务快照。
+  // 保存失败时直接停止，不能继续使用数据库里的旧版本进行导出。
+  if (!await saveDraft()) return
   if (hardBlockCount.value) {
     actionMessage.value = '仍有阻断问题，请先处理后再导出。'
     return
   }
-  actionMessage.value = '正式成片任务已提交，页面可以继续停留等待。'
+  actionMessage.value = exportMode.value === 'fast'
+    ? '快速导出已进入后台队列，可以离开本页，完成后再回来下载。'
+    : '标准成片已进入后台队列，可以离开本页，字幕与效果合成会更久。'
   try {
-    await pollTask(await dramaService.renderEpisodeCut(props.projectId, props.episodeNo))
+    await pollTask(await dramaService.renderEpisodeCut(props.projectId, props.episodeNo, exportMode.value))
   } catch (error) {
     actionMessage.value = error instanceof Error ? error.message : '渲染任务提交失败。'
   }
 }
 
 async function exportEditorPackage(): Promise<void> {
-  await saveDraft()
+  if (!await saveDraft()) return
   actionMessage.value = '正在整理镜头、BGM、字幕和时间轴清单。'
   try {
     await pollTask(await dramaService.exportEpisodeEditorPackage(props.projectId, props.episodeNo))
@@ -494,8 +532,41 @@ function formatTime(milliseconds: number): string {
   return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
 }
 
+function formatTaskStage(stage: string): string {
+  if (stage.startsWith('normalizing_clip_')) return `处理镜头 ${stage.replace('normalizing_clip_', '')}`
+  return ({
+    queued: '等待渲染 Worker',
+    preparing: '准备素材',
+    downloading: '下载源视频',
+    joining: '拼接镜头',
+    rendering: '合成字幕与音频',
+    uploading: '上传到 OSS',
+    completed: '已完成',
+    failed: '失败',
+    blocked: '暂不可用'
+  } as Record<string, string>)[stage] || stage || '处理中'
+}
+
+function formatTaskDate(value: string): string {
+  if (!value) return '--'
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString('zh-CN', { hour12: false })
+}
+
+function formatFileSize(bytes: number): string {
+  if (!bytes) return '--'
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+}
+
 watch(draft, scheduleSave, { deep: true })
-watch(() => [props.projectId, props.episodeNo], () => void loadDraft())
+watch(() => [props.projectId, props.episodeNo], () => {
+  // 切换项目或集数时终止旧任务轮询，避免旧集完成后覆盖新集界面。
+  pollGeneration += 1
+  currentTask.value = null
+  exportHistory.value = []
+  void loadDraft()
+})
 
 onMounted(() => void loadDraft())
 onBeforeUnmount(() => {
@@ -604,6 +675,13 @@ onBeforeUnmount(() => {
               <span class="rounded-lg bg-[#eff6ff] px-2.5 py-1 text-xs font-bold text-[#2563eb]">MP4</span>
             </div>
             <div class="mt-3 grid grid-cols-2 gap-2">
+              <label class="compact-setting col-span-2">
+                <span>导出方式</span>
+                <select v-model="exportMode" class="compact-select">
+                  <option value="fast">快速导出（推荐，不烧字幕）</option>
+                  <option value="standard">标准成片（字幕/水印/BGM）</option>
+                </select>
+              </label>
               <label class="compact-setting">
                 <span>清晰度</span>
                 <select class="compact-select" :value="exportSettings.resolution || '720p'" @change="updateExportSetting('resolution', ($event.target as HTMLSelectElement).value)">
@@ -621,6 +699,11 @@ onBeforeUnmount(() => {
                 <input type="checkbox" :checked="Boolean(exportSettings.watermark)" class="h-4 w-4" @change="updateExportSetting('watermark', ($event.target as HTMLInputElement).checked)">
               </label>
             </div>
+            <p class="mt-3 rounded-xl bg-[#f8fafc] px-3 py-2 text-xs leading-5 text-[#64748b]">
+              {{ exportMode === 'fast'
+                ? '快速导出优先复用原视频流；仅在尺寸或编码不一致时逐镜头标准化，适合低配置服务器。'
+                : '标准成片会把字幕、BGM 和水印重新编码进视频，耗时通常是视频时长的数倍。' }}
+            </p>
           </section>
           </div>
 
@@ -859,6 +942,44 @@ onBeforeUnmount(() => {
               <input type="color" :value="String(subtitleStyle.color || '#ffffff')" class="h-8 w-12 rounded border border-[#dce4ef]" @input="updateSubtitleStyle('color', ($event.target as HTMLInputElement).value)">
             </label>
           </section>
+
+          <section class="rounded-[24px] border border-[#e3e9f2] bg-white p-5 shadow-[0_12px_40px_rgba(15,23,42,0.05)]">
+            <div class="flex items-center justify-between gap-3">
+              <div>
+                <h3 class="text-[17px] font-bold text-[#0f172a]">本集导出记录</h3>
+                <p class="mt-1 text-xs text-[#94a3b8]">离开页面后任务仍在服务器运行</p>
+              </div>
+              <button type="button" class="icon-action" title="刷新导出记录" @click="loadExportHistory(false)">
+                <RefreshCw class="h-4 w-4" :class="exportHistoryLoading ? 'animate-spin' : ''" />
+              </button>
+            </div>
+            <div v-if="exportHistory.length" class="mt-4 space-y-2">
+              <div v-for="task in exportHistory.slice(0, 5)" :key="task.id" class="rounded-xl border border-[#e8edf4] bg-[#f8fafc] p-3">
+                <div class="flex items-start justify-between gap-3">
+                  <div class="min-w-0">
+                    <p class="text-sm font-bold text-[#1e293b]">
+                      {{ task.taskType === 'editor_package' ? '剪辑交接包' : task.renderMode === 'fast' ? '快速 MP4' : '标准成片' }}
+                    </p>
+                    <p class="mt-1 text-xs text-[#64748b]">
+                      {{ formatTaskDate(task.createdAt) }} · {{ formatTaskStage(task.stage) }}
+                    </p>
+                  </div>
+                  <span class="shrink-0 rounded-full px-2 py-1 text-[11px] font-bold" :class="task.status === 'completed' ? 'bg-[#dcfce7] text-[#15803d]' : task.status === 'failed' ? 'bg-[#fee2e2] text-[#b91c1c]' : 'bg-[#dbeafe] text-[#1d4ed8]'">
+                    {{ task.status === 'completed' ? '已完成' : task.status === 'failed' ? '失败' : `${task.progress}%` }}
+                  </span>
+                </div>
+                <div class="mt-2 flex items-center justify-between text-xs text-[#94a3b8]">
+                  <span>{{ formatFileSize(task.outputSizeBytes) }}</span>
+                  <a v-if="task.outputUrl" :href="task.outputUrl" target="_blank" rel="noopener" class="font-semibold text-[#2563eb]">下载</a>
+                  <button v-else-if="['queued', 'running'].includes(task.status)" type="button" class="font-semibold text-[#2563eb]" @click="pollTask(task)">查看进度</button>
+                </div>
+                <p v-if="task.errorMessage" class="mt-2 line-clamp-2 text-xs leading-5 text-[#b91c1c]">{{ task.errorMessage }}</p>
+              </div>
+            </div>
+            <p v-else class="mt-4 rounded-xl border border-dashed border-[#dbe4f0] py-5 text-center text-xs text-[#94a3b8]">
+              {{ exportHistoryLoading ? '正在读取导出记录…' : '本集还没有导出任务' }}
+            </p>
+          </section>
         </aside>
       </div>
 
@@ -869,6 +990,9 @@ onBeforeUnmount(() => {
           <div v-if="currentTask && ['queued', 'running'].includes(currentTask.status)" class="mt-2 h-1.5 w-72 max-w-full overflow-hidden rounded-full bg-[#e2e8f0]">
             <div class="h-full rounded-full bg-[#2563eb] transition-all" :style="{ width: `${Math.max(8, currentTask.progress)}%` }" />
           </div>
+          <p v-if="currentTask && ['queued', 'running'].includes(currentTask.status)" class="mt-1 text-xs text-[#94a3b8]">
+            {{ currentTaskStageLabel }} · 关闭页面不会取消任务
+          </p>
         </div>
         <div class="flex items-center gap-3">
           <button type="button" class="footer-secondary" :disabled="currentTask?.status === 'running'" @click="generateCaptions">
@@ -889,7 +1013,7 @@ onBeforeUnmount(() => {
           <button type="button" class="footer-primary" :disabled="hardBlockCount > 0 || ['queued', 'running'].includes(currentTask?.status || '')" @click="renderEpisode">
             <LoaderCircle v-if="['queued', 'running'].includes(currentTask?.status || '')" class="h-4 w-4 animate-spin" />
             <Download v-else class="h-4 w-4" />
-            {{ ['queued', 'running'].includes(currentTask?.status || '') ? `处理中 ${currentTask?.progress || 0}%` : '合成并导出' }}
+            {{ ['queued', 'running'].includes(currentTask?.status || '') ? `处理中 ${currentTask?.progress || 0}%` : exportMode === 'fast' ? '快速导出' : '导出标准成片' }}
           </button>
         </div>
       </div>

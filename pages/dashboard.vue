@@ -8,6 +8,7 @@ import AccountProfileDialog from '~/features/account/components/AccountProfileDi
 import AccountSecurityDialog from '~/features/account/components/AccountSecurityDialog.vue'
 import DashboardAnnouncementCenter from '~/features/dashboard/components/DashboardAnnouncementCenter.vue'
 import DashboardSidebar from '~/features/dashboard/components/DashboardSidebar.vue'
+import ExportCenterPanel from '~/features/dashboard/components/ExportCenterPanel.vue'
 import FeedbackDrawer from '~/features/support/components/FeedbackDrawer.vue'
 import HelpCenterPanel from '~/features/support/components/HelpCenterPanel.vue'
 import RedeemCodeDialog from '~/features/support/components/RedeemCodeDialog.vue'
@@ -19,9 +20,10 @@ import { useAccountStore } from '~/features/billing/store/useAccountStore'
 import { useThemeStore } from '~/features/ui/store/useThemeStore'
 import { useAuthStore } from '~/features/auth/store/useAuthStore'
 import { dramaService } from '~/shared/api/services/dramaService'
+import type { EpisodeCutTask } from '~/entities/drama/episodeCutTypes'
 
 type DashboardMenuKey = 'drama' | 'product' | 'product-video' | 'billing' | 'none'
-type DashboardWorkspaceView = 'console' | 'projects' | 'billing' | 'announcements' | 'help'
+type DashboardWorkspaceView = 'console' | 'projects' | 'exports' | 'billing' | 'announcements' | 'help'
 type CreativeIntent = 'drama' | 'ad' | 'general'
 type ScriptInputMode = 'text' | 'file'
 type DramaSubmissionStage = 'idle' | 'creating' | 'uploading' | 'starting' | 'navigating'
@@ -61,6 +63,8 @@ const route = useRoute()
 const accountStore = useAccountStore()
 const themeStore = useThemeStore()
 const authStore = useAuthStore()
+// 工作台推荐卡片沿用相对路径，统一由素材服务追加当前 OSS 公共前缀。
+const { $siteAsset: siteAsset } = useNuxtApp()
 
 const activeMenu = ref<DashboardMenuKey>('drama')
 const activeWorkspaceView = ref<DashboardWorkspaceView>('console')
@@ -83,6 +87,10 @@ const errorMessage = ref('')
 const infoMessage = ref('')
 const isDraggingFile = ref(false)
 const projectItems = ref<DramaProjectCard[]>([])
+const exportTasks = ref<EpisodeCutTask[]>([])
+const exportTasksLoading = ref(false)
+const exportTasksError = ref('')
+let exportPollTimer: ReturnType<typeof setInterval> | null = null
 const projectTotalCount = ref(0)
 const isCreatingWorkspaceProject = ref(false)
 const isBatchSelectingProjects = ref(false)
@@ -732,6 +740,9 @@ async function bootstrapDashboard(): Promise<void> {
     if (activeWorkspaceView.value === 'billing') {
       await loadBillingData()
     }
+    if (activeWorkspaceView.value === 'exports') {
+      await loadExportTasks()
+    }
     loadingText.value = '输入剧本后即可开始生成短剧项目。'
   } catch (error) {
     // eslint-disable-next-line no-console
@@ -992,11 +1003,32 @@ function openDramaProject(projectId: string): void {
   router.push(`/drama/${encodeURIComponent(projectId)}?from=dashboard-projects`)
 }
 
+async function loadExportTasks(): Promise<void> {
+  // 防止网络较慢时定时刷新与手动刷新叠加，造成同一列表重复请求。
+  if (exportTasksLoading.value) return
+  exportTasksLoading.value = true
+  exportTasksError.value = ''
+  try {
+    const result = await dramaService.listEpisodeExports({ page: 1, pageSize: 100 })
+    exportTasks.value = result.items
+  } catch (error) {
+    exportTasksError.value = error instanceof Error ? error.message : '导出任务加载失败。'
+  } finally {
+    exportTasksLoading.value = false
+  }
+}
+
 function syncWorkspaceRouteState(path: string): void {
   // 根据当前路由恢复左侧菜单高亮与主内容区，保证浏览器刷新后仍停在原页面。
   if (path === '/dashboard-projects') {
     activeMenu.value = 'none'
     activeWorkspaceView.value = 'projects'
+    return
+  }
+
+  if (path === '/dashboard-exports') {
+    activeMenu.value = 'none'
+    activeWorkspaceView.value = 'exports'
     return
   }
 
@@ -1082,8 +1114,16 @@ watch(
 watch(
   () => activeWorkspaceView.value,
   async (view) => {
-    if (view !== 'billing') return
-    await loadBillingData()
+    if (exportPollTimer) {
+      clearInterval(exportPollTimer)
+      exportPollTimer = null
+    }
+    if (view === 'billing') await loadBillingData()
+    if (view === 'exports') {
+      await loadExportTasks()
+      // 只有导出中心可见时才轮询；离开页面立即停止，避免后台产生无意义请求。
+      exportPollTimer = setInterval(() => void loadExportTasks(), 5000)
+    }
   }
 )
 
@@ -1121,10 +1161,15 @@ onMounted(async () => {
   authStore.hydrate()
   document.addEventListener('click', handleDashboardDocumentClick)
   await bootstrapDashboard()
+  // 首次直接打开 /dashboard-exports 时，路由状态早于 watcher 建立；在鉴权恢复后补上轮询。
+  if (activeWorkspaceView.value === 'exports' && !exportPollTimer) {
+    exportPollTimer = setInterval(() => void loadExportTasks(), 5000)
+  }
 })
 
 onBeforeUnmount(() => {
   if (entryCreditPreviewTimer) clearTimeout(entryCreditPreviewTimer)
+  if (exportPollTimer) clearInterval(exportPollTimer)
   document.removeEventListener('click', handleDashboardDocumentClick)
 })
 </script>
@@ -1313,6 +1358,15 @@ onBeforeUnmount(() => {
             @toggle-select-all="toggleSelectAllProjects"
           />
 
+          <ExportCenterPanel
+            v-else-if="activeWorkspaceView === 'exports'"
+            :tasks="exportTasks"
+            :loading="exportTasksLoading"
+            :error-message="exportTasksError"
+            @refresh="loadExportTasks"
+            @open-project="openDramaProject"
+          />
+
           <ProductImageWorkspacePanel
             v-else-if="activeMenu === 'product'"
             :current-credit-balance="currentCreditBalance"
@@ -1470,7 +1524,7 @@ onBeforeUnmount(() => {
                           type="button"
                           @click="selectCreativeIntent(item.value)"
                         >
-                          <img :src="item.image" :alt="item.label" class="h-[112px] w-full object-cover" />
+                          <img :src="siteAsset(item.image)" :alt="item.label" class="h-[112px] w-full object-cover" loading="lazy" decoding="async" />
                           <div class="px-3 py-2.5">
                             <div class="flex items-center justify-between gap-2">
                               <span class="text-[13px] font-black text-[#18243a]">{{ item.label }}</span>
@@ -1510,7 +1564,7 @@ onBeforeUnmount(() => {
                           type="button"
                           @click="selectVisualStyle(item.value)"
                         >
-                          <img :src="item.image" :alt="item.label" class="h-[100px] w-full object-cover" />
+                          <img :src="siteAsset(item.image)" :alt="item.label" class="h-[100px] w-full object-cover" loading="lazy" decoding="async" />
                           <div class="px-3 py-2.5">
                             <div class="flex items-center justify-between gap-2">
                               <span class="truncate text-[12px] font-black text-[#18243a]">{{ item.label }}</span>

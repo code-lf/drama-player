@@ -42,6 +42,8 @@ export const useAuthStore = defineStore('auth', {
         }
       } catch (error) {
         console.error('Failed to parse auth session from localStorage', error)
+        // 缓存损坏与过期 token 一样都不能继续保留“已登录”假状态。
+        this.logout()
       }
     },
     setLoginStatus(status: WechatLoginStatus) {

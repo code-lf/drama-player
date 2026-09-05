@@ -1,4 +1,5 @@
 <script setup lang="ts">
+const { $siteAsset: siteAsset } = useNuxtApp()
 import type { Component } from 'vue'
 import { ChevronDown, ChevronUp, CircleHelp, Download, History, Image as ImageIcon, ImageUp, Lightbulb, PanelsTopLeft, Plus, Sparkles, SquarePen, WandSparkles } from '@lucide/vue'
 import type { ProductImageCreditPreview, ProductImageGenerateResult, ProductImageReference, ProductImageTemplate, ProductSellingPoint } from '~/entities/product-image/types'
@@ -333,7 +334,7 @@ function downloadResult(item = activeResult.value): void {
             <p class="form-section__title">热门模板 <UTooltip text="模板会预设视觉风格与画幅比例，仍可在快速设置中调整。"><CircleHelp :size="14" /></UTooltip></p>
             <div class="template-strip">
               <button v-for="template in templates.slice(0, 8)" :key="template.id" class="template-card" :class="{ 'template-card--active': selectedTemplateId === template.id }" type="button" @click="selectTemplate(template)">
-                <img :src="template.coverUrl || '/landing/tool-product.png'" :alt="template.name">
+                <img :src="siteAsset(template.coverUrl || '/landing/tool-product.png')" :alt="template.name">
                 <span>{{ template.name }}</span><small>{{ template.styleName }}</small>
               </button>
             </div>

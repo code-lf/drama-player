@@ -1,6 +1,8 @@
 export interface EpisodeCutClip {
   storyboardRowId: string
   takeId: string
+  // 默认跟随分镜页确认版本；成片页手动换版后改为 false，避免下次读取覆盖用户选择。
+  followStoryboardSelection: boolean
   sortIndex: number
   trimInMs: number
   trimOutMs: number
@@ -34,9 +36,26 @@ export type EpisodeCutSavePayload = Omit<EpisodeCutDraft, 'id' | 'episodeNo' | '
 
 export interface EpisodeCutTask {
   id: string
+  projectId: string
+  episodeNo: number
   taskType: 'captions' | 'render' | 'editor_package'
+  renderMode: 'fast' | 'standard' | 'package' | string
   status: 'queued' | 'running' | 'completed' | 'failed' | 'blocked' | string
+  stage: string
   progress: number
   outputUrl: string
+  outputSizeBytes: number
+  sourceDurationMs: number
+  estimatedSeconds: number
   errorMessage: string
+  createdAt: string
+  startedAt: string
+  finishedAt: string
+}
+
+export interface EpisodeCutTaskList {
+  items: EpisodeCutTask[]
+  total: number
+  page: number
+  pageSize: number
 }

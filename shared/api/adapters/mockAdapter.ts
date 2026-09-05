@@ -2249,24 +2249,44 @@ export const mockAdapter: ApiAdapter = {
     await sleep(80)
     const task: EpisodeCutTask = {
       id: `mock-caption-${Date.now()}`,
+      projectId,
+      episodeNo,
       taskType: 'captions',
+      renderMode: 'standard',
       status: 'blocked',
+      stage: 'blocked',
       progress: 0,
       outputUrl: '',
-      errorMessage: 'Mock 环境未配置语音识别服务。'
+      outputSizeBytes: 0,
+      sourceDurationMs: 0,
+      estimatedSeconds: 0,
+      errorMessage: 'Mock 环境未配置语音识别服务。',
+      createdAt: new Date().toISOString(),
+      startedAt: '',
+      finishedAt: ''
     }
     return ok(task)
   },
 
-  async renderEpisodeCut(projectId: string, episodeNo: number) {
+  async renderEpisodeCut(projectId: string, episodeNo: number, renderMode: 'fast' | 'standard' = 'fast') {
     await sleep(80)
     const task: EpisodeCutTask = {
       id: `mock-render-${Date.now()}`,
+      projectId,
+      episodeNo,
       taskType: 'render',
+      renderMode,
       status: 'blocked',
+      stage: 'blocked',
       progress: 0,
       outputUrl: '',
-      errorMessage: 'Mock 环境不执行正式 MP4 渲染。'
+      outputSizeBytes: 0,
+      sourceDurationMs: 0,
+      estimatedSeconds: 0,
+      errorMessage: 'Mock 环境不执行正式 MP4 渲染。',
+      createdAt: new Date().toISOString(),
+      startedAt: '',
+      finishedAt: ''
     }
     return ok(task)
   },
@@ -2275,11 +2295,21 @@ export const mockAdapter: ApiAdapter = {
     await sleep(80)
     return ok({
       id: `mock-editor-package-${Date.now()}`,
+      projectId,
+      episodeNo,
       taskType: 'editor_package',
+      renderMode: 'package',
       status: 'blocked',
+      stage: 'blocked',
       progress: 0,
       outputUrl: '',
-      errorMessage: 'Mock 环境不下载真实镜头素材。'
+      outputSizeBytes: 0,
+      sourceDurationMs: 0,
+      estimatedSeconds: 0,
+      errorMessage: 'Mock 环境不下载真实镜头素材。',
+      createdAt: new Date().toISOString(),
+      startedAt: '',
+      finishedAt: ''
     } as EpisodeCutTask)
   },
 
@@ -2287,11 +2317,26 @@ export const mockAdapter: ApiAdapter = {
     await sleep(50)
     return ok({
       id: taskId,
+      projectId: _projectId,
+      episodeNo: _episodeNo,
       taskType: taskId.includes('caption') ? 'captions' : taskId.includes('editor-package') ? 'editor_package' : 'render',
+      renderMode: taskId.includes('editor-package') ? 'package' : 'standard',
       status: 'blocked',
+      stage: 'blocked',
       progress: 0,
       outputUrl: '',
-      errorMessage: 'Mock 环境未连接异步 Worker。'
+      outputSizeBytes: 0,
+      sourceDurationMs: 0,
+      estimatedSeconds: 0,
+      errorMessage: 'Mock 环境未连接异步 Worker。',
+      createdAt: new Date().toISOString(),
+      startedAt: '',
+      finishedAt: ''
     } as EpisodeCutTask)
+  },
+
+  async listEpisodeExports(params = {}) {
+    await sleep(50)
+    return ok({ items: [], total: 0, page: params.page || 1, pageSize: params.pageSize || 20 })
   }
 }

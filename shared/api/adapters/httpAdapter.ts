@@ -104,6 +104,7 @@ interface BackendEpisodeCut {
   clips: Array<{
     storyboard_row_id: string
     take_id: string
+    follow_storyboard_selection?: boolean
     sort_index: number
     trim_in_ms: number
     trim_out_ms: number
@@ -126,11 +127,28 @@ interface BackendEpisodeCut {
 
 interface BackendEpisodeCutTask {
   id: string
+  project_id?: string
+  episode_no?: number
   task_type: 'captions' | 'render' | 'editor_package'
+  render_mode?: string
   status: string
+  stage?: string
   progress: number
   output_url: string
+  output_size_bytes?: number
+  source_duration_ms?: number
+  estimated_seconds?: number
   error_message: string
+  created_at?: string | null
+  started_at?: string | null
+  finished_at?: string | null
+}
+
+interface BackendEpisodeCutTaskList {
+  items: BackendEpisodeCutTask[]
+  total: number
+  page: number
+  page_size: number
 }
 
 interface BackendProjectListResponse {
@@ -2292,6 +2310,7 @@ function mapEpisodeCut(raw: BackendEpisodeCut): EpisodeCutDraft {
     clips: (raw.clips || []).map(clip => ({
       storyboardRowId: clip.storyboard_row_id,
       takeId: clip.take_id || '',
+      followStoryboardSelection: clip.follow_storyboard_selection !== false,
       sortIndex: clip.sort_index,
       trimInMs: clip.trim_in_ms,
       trimOutMs: clip.trim_out_ms,
@@ -2316,11 +2335,21 @@ function mapEpisodeCut(raw: BackendEpisodeCut): EpisodeCutDraft {
 function mapEpisodeCutTask(raw: BackendEpisodeCutTask): EpisodeCutTask {
   return {
     id: raw.id,
+    projectId: raw.project_id || '',
+    episodeNo: raw.episode_no || 1,
     taskType: raw.task_type,
+    renderMode: raw.render_mode || 'standard',
     status: raw.status,
+    stage: raw.stage || 'queued',
     progress: raw.progress || 0,
     outputUrl: raw.output_url || '',
-    errorMessage: raw.error_message || ''
+    outputSizeBytes: raw.output_size_bytes || 0,
+    sourceDurationMs: raw.source_duration_ms || 0,
+    estimatedSeconds: raw.estimated_seconds || 0,
+    errorMessage: raw.error_message || '',
+    createdAt: raw.created_at || '',
+    startedAt: raw.started_at || '',
+    finishedAt: raw.finished_at || ''
   }
 }
 
@@ -2329,6 +2358,7 @@ function buildEpisodeCutPayload(payload: EpisodeCutSavePayload) {
     clips: payload.clips.map(clip => ({
       storyboard_row_id: clip.storyboardRowId,
       take_id: clip.takeId,
+      follow_storyboard_selection: clip.followStoryboardSelection,
       sort_index: clip.sortIndex,
       trim_in_ms: clip.trimInMs,
       trim_out_ms: clip.trimOutMs,
@@ -2372,10 +2402,33 @@ async function request<T>(path: string, options?: Parameters<typeof $fetch<T>>[1
 
   // 网络请求必须只执行一次。此前请求也位于上面的 try/catch 中，业务错误会被误判为
   // Pinia 初始化失败并再次发送无鉴权请求，最终把明确的后端错误覆盖成“网络异常”。
-  return $fetch<T>(`${baseUrl}${path}`, {
-    ...options,
-    headers
-  })
+  try {
+    return await $fetch<T>(`${baseUrl}${path}`, {
+      ...options,
+      headers
+    })
+  } catch (error) {
+    const fetchError = error as {
+      status?: number
+      statusCode?: number
+      response?: { status?: number; statusCode?: number }
+    }
+    const status = Number(
+      fetchError.statusCode
+      || fetchError.status
+      || fetchError.response?.statusCode
+      || fetchError.response?.status
+      || 0
+    )
+    // 只有带着已有 token 仍返回 401，才属于“登录已过期”。公开接口本身的 401
+    // 不应误清理其他页面状态。跳转和提示交给全局插件统一处理，避免并发请求重复弹窗。
+    if (import.meta.client && status === 401 && accessToken) {
+      const authStore = useAuthStore()
+      authStore.logout()
+      window.dispatchEvent(new CustomEvent('livliv:auth-expired'))
+    }
+    throw error
+  }
 }
 
 export const httpAdapter: ApiAdapter = {
@@ -3768,9 +3821,11 @@ export const httpAdapter: ApiAdapter = {
     return ok(mapEpisodeCutTask(response))
   },
 
-  async renderEpisodeCut(projectId: string, episodeNo: number) {
+  async renderEpisodeCut(projectId: string, episodeNo: number, renderMode: 'fast' | 'standard' = 'fast') {
     const response = await request<BackendEpisodeCutTask>(`/drama/projects/${projectId}/episodes/${episodeNo}/cut/render`, {
-      method: 'POST'
+      method: 'POST',
+      // 快速导出不烧录字幕，标准导出保留字幕/BGM/水印等最终效果。
+      body: { render_mode: renderMode }
     })
     return ok(mapEpisodeCutTask(response))
   },
@@ -3785,5 +3840,19 @@ export const httpAdapter: ApiAdapter = {
   async getEpisodeCutTask(projectId: string, episodeNo: number, taskId: string) {
     const response = await request<BackendEpisodeCutTask>(`/drama/projects/${projectId}/episodes/${episodeNo}/cut/tasks/${taskId}`)
     return ok(mapEpisodeCutTask(response))
+  },
+
+  async listEpisodeExports(params = {}) {
+    const query = new URLSearchParams()
+    if (params.status) query.set('status', params.status)
+    query.set('page', String(params.page || 1))
+    query.set('page_size', String(params.pageSize || 20))
+    const response = await request<BackendEpisodeCutTaskList>(`/drama/exports?${query.toString()}`)
+    return ok({
+      items: (response.items || []).map(mapEpisodeCutTask),
+      total: response.total || 0,
+      page: response.page || 1,
+      pageSize: response.page_size || 20
+    })
   }
 }

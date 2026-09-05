@@ -108,6 +108,9 @@ export default defineNuxtConfig({
   // - 默认指向本地后端 `ai-create-video-api`
   // - 通过环境变量可切换 mock/http，联调时无需改业务代码
   runtimeConfig: {
+    // 服务端渲染首页时直接请求 FastAPI，确保首屏输出的就是 OSS 图片地址。
+    // 生产环境可用 NUXT_API_SERVER_BASE 指向容器内 API 地址，浏览器不会看到该配置。
+    apiServerBase: process.env.NUXT_API_SERVER_BASE || localApiProxyTarget,
     public: {
       apiBase: defaultApiBase,
       apiAdapter: process.env.NUXT_PUBLIC_API_ADAPTER || 'http',
@@ -139,19 +142,14 @@ export default defineNuxtConfig({
         }
       },
 
-  // Nitro 也同步一份，避免服务端构建链在极端重启时走到另一套解析逻辑。
+  // Nitro 只需要同步开发期的模块别名。
+  // `/api` 转发已经统一放到 server/routes/api/[...path].ts，开发服务、preview 和生产包
+  // 都会走同一份代理逻辑，避免之前“本地开发正常、直接启动生产包却 404”的环境差异。
   nitro: isProductionBuild
     ? undefined
     : {
         alias: {
           '#app-manifest': devAppManifestPath
-        },
-        // 开发期把同源 `/api` 请求代理到本地 FastAPI，避免浏览器因为端口不同反复做 CORS 预检。
-        devProxy: {
-          '/api': {
-            target: localApiProxyTarget,
-            changeOrigin: true
-          }
         }
       },
 

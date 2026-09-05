@@ -1,4 +1,5 @@
 <script setup lang="ts">
+const { $siteAsset: siteAsset } = useNuxtApp()
 import { computed, ref } from 'vue'
 import {
   Check,
@@ -231,7 +232,7 @@ function openProject(project: DramaProjectCard): void {
     </div>
 
     <div v-if="workspaceProjectCards.length === 0" class="project-empty-state">
-      <img src="/dashboard/project-empty.png" alt="暂无项目" />
+      <img :src="siteAsset('/dashboard/project-empty.png')" alt="暂无项目" loading="lazy" decoding="async" />
       <h3>还没有项目</h3>
       <p>你还没有创建任何项目，点击右上角“新建项目”开始你的创作之旅吧</p>
     </div>

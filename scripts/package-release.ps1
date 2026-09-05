@@ -72,15 +72,18 @@ function Invoke-Build {
 
 function Copy-ApiSources {
     param([string]$Root, [string]$Destination)
-    # 只复制 Git 管理的部署代码，不复制数据库快照、运行数据、密钥和虚拟环境。
-    $files = @(& git -C $Root -c core.quotepath=false ls-files)
+    # 收集当前工作区中“已跟踪文件 + 未被 .gitignore 排除的新文件”。
+    # API 的迁移脚本经常先完成开发、验证后再提交；如果这里只读取已跟踪文件，发布包会静默漏掉
+    # 新增的 Alembic 版本和服务文件，最终出现代码已更新但线上数据库无法升级的问题。
+    # --exclude-standard 会继续遵守 .gitignore，因此 .env、虚拟环境、缓存和运行数据不会被纳入。
+    $files = @(& git -C $Root -c core.quotepath=false ls-files --cached --others --exclude-standard)
     if ($LASTEXITCODE -ne 0) { throw '无法读取 API Git 文件清单' }
     foreach ($file in $files) {
         if ($file -notmatch '^(app/|alembic/|scripts/|alembic\.ini$|pyproject\.toml$|uv\.lock$|requirements[^/]*\.txt$|README\.md$|CONFIGURATION\.md$|\.env\.example$)') { continue }
         if ($file -match '(^|/)(\.env(\..*)?|__pycache__|node_modules|\.venv)(/|$)' -and $file -ne '.env.example') { continue }
         if ($file -match '\.(pyc|log|dump|zip)$') { continue }
         $source = Join-Path $Root $file
-        if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { throw "已跟踪文件缺失：$file" }
+        if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { throw "待打包源码文件缺失：$file" }
         $dest = Join-Path $Destination $file
         $null = New-Item -ItemType Directory -Path (Split-Path -Parent $dest) -Force
         Copy-Item -LiteralPath $source -Destination $dest
@@ -95,7 +98,10 @@ try {
         $changes = @(& git -C $root status --porcelain)
         if ($LASTEXITCODE -ne 0) { throw "无法读取工作区状态：$root" }
         $manifest.repositories[$target] = @{ commit = "$commit"; dirty = $changes.Count -gt 0 }
-        if ($changes.Count) { Write-Warning "$target 有本地修改，本次使用当前工作区；API 仅包含已跟踪文件。" }
+        if ($changes.Count) {
+            # dirty 只表示发布内容尚未形成 Git 提交；API 的未忽略新源码也会按下方白名单进入包内。
+            Write-Warning "$target 有本地修改，本次使用当前工作区；发布清单会记录 dirty=true。"
+        }
         $dest = Join-Path $stage $target
         $null = New-Item -ItemType Directory -Path $dest -Force
         Write-Host "正在打包 $target ..."

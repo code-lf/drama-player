@@ -377,8 +377,8 @@ export const dramaService = {
     return callApi('drama/generateEpisodeCaptions', adapter => adapter.generateEpisodeCaptions(projectId, episodeNo))
   },
 
-  async renderEpisodeCut(projectId: string, episodeNo: number) {
-    return callApi('drama/renderEpisodeCut', adapter => adapter.renderEpisodeCut(projectId, episodeNo))
+  async renderEpisodeCut(projectId: string, episodeNo: number, renderMode: 'fast' | 'standard' = 'fast') {
+    return callApi('drama/renderEpisodeCut', adapter => adapter.renderEpisodeCut(projectId, episodeNo, renderMode))
   },
 
   async exportEpisodeEditorPackage(projectId: string, episodeNo: number) {
@@ -387,5 +387,9 @@ export const dramaService = {
 
   async getEpisodeCutTask(projectId: string, episodeNo: number, taskId: string) {
     return callApi('drama/getEpisodeCutTask', adapter => adapter.getEpisodeCutTask(projectId, episodeNo, taskId))
+  },
+
+  async listEpisodeExports(params?: { status?: string; page?: number; pageSize?: number }) {
+    return callApi('drama/listEpisodeExports', adapter => adapter.listEpisodeExports(params))
   }
 }
