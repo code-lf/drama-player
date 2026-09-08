@@ -79,6 +79,13 @@ const scriptFileInputRef = ref<HTMLInputElement | null>(null)
 const entryCreditPreview = ref<DramaCreditPreview | null>(null)
 const entryCreditPreviewLoading = ref(false)
 const entryCreditPreviewError = ref('')
+const isEntryCostConfirmOpen = ref(false)
+const isEntryFailureOpen = ref(false)
+const entryFailureMessage = ref('')
+const entryIdempotencyKey = ref('')
+const entryProjectId = ref('')
+const entryResumeStage = ref<'creating' | 'uploading' | 'starting'>('creating')
+const showCreationSettings = ref(false)
 const loadingText = ref('正在准备控制台...')
 const busyKey = ref('')
 // 创建、上传和启动解析属于同一次不可分割的用户操作；独立锁避免阶段切换瞬间按钮重新可点。
@@ -338,6 +345,13 @@ const canSubmitCreativeInput = computed(() => {
   if (scriptInputMode.value === 'file') return Boolean(selectedScriptFile.value)
   return Boolean(scriptDraft.value.trim()) && !scriptCharacterExceeded.value
 })
+const entryPrimaryActionDisabled = computed(() => !hasEntryCreditPreviewSource.value || isBusy.value || isDramaSubmissionLocked.value || entryCreditPreviewLoading.value)
+const entryPrimaryActionLabel = computed(() => {
+  if (isDramaSubmissionLocked.value) return dramaSubmissionCopy.value.title
+  if (entryCreditPreviewError.value || (!entryCreditPreviewLoading.value && !entryCreditPreview.value && hasEntryCreditPreviewSource.value)) return '重新获取费用'
+  if (entryCreditPreview.value && !entryCreditPreview.value.sufficient) return '去充值'
+  return heroCopy.value.cta
+})
 const hasEntryCreditPreviewSource = computed(() => {
   if (scriptInputMode.value === 'file') return Boolean(selectedScriptFile.value)
   return Boolean(scriptDraft.value.trim()) && !scriptCharacterExceeded.value
@@ -375,6 +389,7 @@ function formatProjectUpdatedAt(value: string): string {
 }
 
 function recentProjectProgress(project: DramaProjectCard): number {
+  if (project.workflowSummary) return project.workflowSummary.progressPercent
   // 项目卡展示的是“四阶段总进度”，不能只拿分镜完成率代替总进度。
   // 每完成一个主阶段记 25%；进入分镜后，再把真实镜头完成率映射到 50%～75%。
   // 这样已经确认剧本、正在制作资产的项目不会再错误显示为 0%。
@@ -396,6 +411,7 @@ function recentProjectProgress(project: DramaProjectCard): number {
 }
 
 function recentProjectProgressLabel(project: DramaProjectCard): string {
+  if (project.workflowSummary) return project.workflowSummary.progressLabel
   const stage = String(project.currentStage || '').toLowerCase()
   if (['video', 'videos', 'completed', 'success'].includes(stage) || project.status === 'completed') return '成片制作完成'
   if (stage === 'storyboards') {
@@ -520,7 +536,7 @@ async function refreshEntryCreditPreview(requestSequence: number): Promise<void>
     entryCreditPreviewError.value = ''
   } catch (error) {
     if (requestSequence !== entryCreditPreviewSequence) return
-    // 入口预估失败只影响提示，不阻断用户创建；真正扣点仍以后端执行时校验为准。
+    // 费用无法确认时禁止启动任何付费解析，用户可通过主按钮重新获取费用。
     console.warn('[livliv] 首页入口积分预估失败', error)
     entryCreditPreview.value = null
     entryCreditPreviewError.value = '暂未完成积分预估'
@@ -796,12 +812,51 @@ async function ingestAndAnalyze(): Promise<void> {
     return
   }
 
+  if (!entryCreditPreview.value || entryCreditPreviewError.value) {
+    scheduleEntryCreditPreview()
+    return
+  }
+  if (!entryCreditPreview.value.sufficient) {
+    await router.push('/dashboard-billing')
+    return
+  }
+
+  isEntryCostConfirmOpen.value = true
+}
+
+function createEntryIdempotencyKey(): string {
+  // 浏览器原生 UUID 可在断网重试时稳定复用；旧浏览器使用时间戳与随机数组合兜底。
+  return globalThis.crypto?.randomUUID?.() || `entry-${Date.now()}-${Math.random().toString(36).slice(2)}`
+}
+
+function resetEntryCreationAttempt(): void {
+  // 用户修改了剧本或创作设置后应视为一次全新的创建，避免复用旧幂等键返回上一份草稿。
+  if (isDramaSubmissionLocked.value) return
+  entryIdempotencyKey.value = ''
+  entryProjectId.value = ''
+  entryResumeStage.value = 'creating'
+  dramaSubmissionStage.value = 'idle'
+  isEntryFailureOpen.value = false
+}
+
+async function confirmEntryCostAndStart(): Promise<void> {
+  if (!entryCreditPreview.value?.sufficient || isDramaSubmissionLocked.value) return
+  isEntryCostConfirmOpen.value = false
+  if (!entryIdempotencyKey.value) entryIdempotencyKey.value = createEntryIdempotencyKey()
+  await continueEntryCreation()
+}
+
+async function continueEntryCreation(): Promise<void> {
   errorMessage.value = ''
   infoMessage.value = ''
-  dramaSubmissionStage.value = 'creating'
+  isEntryFailureOpen.value = false
+  dramaSubmissionStage.value = entryResumeStage.value
   busyKey.value = 'create-drama'
   try {
-    const created = await dramaService.createProject({
+    if (!entryProjectId.value) {
+      entryResumeStage.value = 'creating'
+      dramaSubmissionStage.value = 'creating'
+      const created = await dramaService.createProject({
         title: buildDramaProjectTitle(),
         themeMode: themeStore.mode,
         entryIntent: selectedCreativeIntent.value,
@@ -809,23 +864,30 @@ async function ingestAndAnalyze(): Promise<void> {
         aspectRatio: selectedAspectRatio.value,
         resolution: selectedResolution.value,
         // 首页已移除集数选择，第一版统一按单项目解析；后端仍保留默认值兼容旧接口。
-        episodeCount: 1
+        episodeCount: 1,
+        idempotencyKey: entryIdempotencyKey.value
       })
-
-    dramaSubmissionStage.value = 'uploading'
-    busyKey.value = 'ingest'
-    if (scriptInputMode.value === 'file' && selectedScriptFile.value) {
-      await dramaService.ingestScriptFile(created.projectId, selectedScriptFile.value)
-    } else {
-      await dramaService.ingestScript(created.projectId, {
-        content: scriptDraft.value.trim(),
-        fileName: scriptFileName.value
-      })
+      entryProjectId.value = created.projectId
     }
 
+    if (entryResumeStage.value !== 'starting') {
+      entryResumeStage.value = 'uploading'
+      dramaSubmissionStage.value = 'uploading'
+      busyKey.value = 'ingest'
+      if (scriptInputMode.value === 'file' && selectedScriptFile.value) {
+        await dramaService.ingestScriptFile(entryProjectId.value, selectedScriptFile.value)
+      } else {
+        await dramaService.ingestScript(entryProjectId.value, {
+          content: scriptDraft.value.trim(),
+          fileName: scriptFileName.value
+        })
+      }
+    }
+
+    entryResumeStage.value = 'starting'
     dramaSubmissionStage.value = 'starting'
     busyKey.value = 'analyze'
-    const analyzing = await dramaService.analyze(created.projectId, {
+    const analyzing = await dramaService.analyze(entryProjectId.value, {
         aspectRatio: selectedAspectRatio.value,
         resolution: selectedResolution.value,
         style: effectiveVisualStyle.value
@@ -836,7 +898,7 @@ async function ingestAndAnalyze(): Promise<void> {
     busyKey.value = 'navigate-drama'
     infoMessage.value = '剧本解析已启动，正在进入流程页。'
     await router.push({
-      path: `/drama/${created.projectId}`,
+      path: `/drama/${entryProjectId.value}`,
       query: {
         aspectRatio: selectedAspectRatio.value,
         style: effectiveVisualStyle.value,
@@ -847,11 +909,30 @@ async function ingestAndAnalyze(): Promise<void> {
     // 记录当前失败阶段，后续若再次出现可直接从浏览器日志判断卡在创建、上传还是启动解析。
     // eslint-disable-next-line no-console
     console.error('[livliv] 创建剧本项目流程失败', { stage: dramaSubmissionStage.value, error })
-    errorMessage.value = error instanceof Error ? error.message : '创建项目失败，请稍后重试'
+    entryFailureMessage.value = error instanceof Error ? error.message : '当前步骤未完成，请稍后重试'
+    isEntryFailureOpen.value = true
   } finally {
     busyKey.value = ''
     dramaSubmissionStage.value = 'idle'
   }
+}
+
+async function handleEntryPrimaryAction(): Promise<void> {
+  if (entryCreditPreviewError.value || !entryCreditPreview.value) {
+    scheduleEntryCreditPreview()
+    return
+  }
+  if (!entryCreditPreview.value.sufficient) {
+    await router.push('/dashboard-billing')
+    return
+  }
+  await ingestAndAnalyze()
+}
+
+async function openEntryProjectDraft(): Promise<void> {
+  if (!entryProjectId.value) return
+  isEntryFailureOpen.value = false
+  await router.push(`/drama/${entryProjectId.value}`)
 }
 
 async function generateRoleAssets(): Promise<void> {
@@ -1083,9 +1164,15 @@ watch(resolutionOptions, () => {
 watch(
   [scriptInputMode, scriptDraft, selectedScriptFile, selectedTextModel],
   () => {
+    resetEntryCreationAttempt()
     scheduleEntryCreditPreview()
   },
   { immediate: true }
+)
+
+watch(
+  [selectedCreativeIntent, effectiveVisualStyle, selectedAspectRatio, selectedResolution],
+  () => resetEntryCreationAttempt()
 )
 
 watch(
@@ -1495,8 +1582,8 @@ onBeforeUnmount(() => {
                   </span>
                 </div>
 
-                <div class="dashboard-input-toolbar mt-5 grid grid-cols-1 gap-3 md:grid-cols-[1fr_1.45fr_1fr_1fr]">
-                  <div class="relative z-[90]" @click.stop>
+                <div class="dashboard-input-toolbar mt-5 grid grid-cols-1 gap-3" :class="showCreationSettings ? 'md:grid-cols-[1fr_1.45fr_1fr_1fr]' : 'md:grid-cols-[1fr_auto]'">
+                  <div v-if="showCreationSettings" class="relative z-[90]" @click.stop>
                     <button
                       class="dashboard-select-trigger flex h-[60px] w-full items-center justify-between rounded-[12px] border bg-white px-4 text-left transition hover:border-[#005FFE]/45"
                       :class="isCreativeIntentMenuOpen ? 'border-[#005FFE] shadow-[0_0_0_1px_rgba(0,95,254,0.1)]' : 'border-[#dfe7f2]'"
@@ -1580,16 +1667,25 @@ onBeforeUnmount(() => {
                   </div>
 
                   <!-- 比例与清晰度的图标独占左侧一列，标题和值保持与前两个入口参数一致的纵向层级。 -->
-                  <UiBaseSelect v-model="selectedAspectRatio" :options="aspectRatioOptions" label="画面比例" placeholder="画面比例" leading-icon="aspect-ratio" tone="dashboard" size="sm" class="min-w-0" />
-                  <UiBaseSelect v-model="selectedResolution" :options="resolutionOptions" label="清晰度" placeholder="清晰度" leading-icon="resolution" tone="dashboard" size="sm" class="min-w-0" />
+                  <UiBaseSelect v-if="showCreationSettings" v-model="selectedAspectRatio" :options="aspectRatioOptions" label="画面比例" placeholder="画面比例" leading-icon="aspect-ratio" tone="dashboard" size="sm" class="min-w-0" />
+                  <UiBaseSelect v-if="showCreationSettings" v-model="selectedResolution" :options="resolutionOptions" label="清晰度" placeholder="清晰度" leading-icon="resolution" tone="dashboard" size="sm" class="min-w-0" />
+                  <button
+                    v-if="!showCreationSettings"
+                    class="h-[60px] rounded-[12px] border border-[#dfe7f2] bg-white px-6 text-[14px] font-black text-[#60718d] hover:border-[#005FFE]/45 hover:text-[#005FFE]"
+                    type="button"
+                    @click="showCreationSettings = true"
+                  >
+                    创作设置 · 推荐配置
+                  </button>
                 </div>
+                <button v-if="showCreationSettings" class="mt-3 text-[13px] font-bold text-[#7b8aa3] hover:text-[#005FFE]" type="button" @click="showCreationSettings = false">收起创作设置</button>
               </div>
 
               <div class="mt-6 flex flex-col items-center">
                 <button
                   class="group flex h-[50px] min-w-[410px] items-center justify-center gap-3 rounded-[12px] bg-[#005FFE] px-9 text-[16px] font-black text-white shadow-[0_18px_42px_rgba(0,95,254,0.26)] transition hover:bg-[#0054E0] disabled:cursor-not-allowed disabled:bg-[#005FFE]/65 disabled:shadow-none"
-                  :disabled="!canSubmitCreativeInput"
-                  @click="ingestAndAnalyze"
+                  :disabled="entryPrimaryActionDisabled"
+                  @click="handleEntryPrimaryAction"
                 >
                   <svg v-if="isDramaSubmissionLocked" class="h-5 w-5 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                     <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
@@ -1599,7 +1695,7 @@ onBeforeUnmount(() => {
                     <path d="M12 2.8 14.1 8 19.2 10.1 14.1 12.2 12 17.2 9.9 12.2 4.8 10.1 9.9 8 12 2.8Z" />
                     <path d="M18.2 14.2 19.1 16.3 21.2 17.2 19.1 18.1 18.2 20.2 17.3 18.1 15.2 17.2 17.3 16.3 18.2 14.2Z" opacity=".8" />
                   </svg>
-                  <span>{{ isDramaSubmissionLocked ? dramaSubmissionCopy.title : heroCopy.cta }}</span>
+                  <span>{{ entryPrimaryActionLabel }}</span>
                 </button>
                 <span
                   v-if="entryCreditPreviewVisible"
@@ -1609,10 +1705,7 @@ onBeforeUnmount(() => {
                   {{ entryCreditPreviewLabel }}
                 </span>
                 <!-- 普通用户只需要确认总积分和余额，不展示内部 Token 估算与子任务拆分。 -->
-                <button class="mt-5 text-[17px] font-black text-[#005FFE]" type="button">
-                  没有剧本？AI 帮我创作
-                  <span class="ml-2">→</span>
-                </button>
+                <span class="mt-5 cursor-not-allowed text-[15px] font-black text-[#94a3b8]">AI 创作剧本 · 敬请期待</span>
               </div>
 
               <section class="mx-auto mt-8 max-w-[1180px]">
@@ -1972,6 +2065,34 @@ onBeforeUnmount(() => {
     <FeedbackDrawer :open="isFeedbackDrawerOpen" @close="isFeedbackDrawerOpen = false" @submitted="infoMessage = '反馈已提交，可在帮助中心查看处理进度。'" />
     <AccountProfileDialog :open="isProfileDialogOpen" @close="isProfileDialogOpen = false" @updated="accountStore.refreshProfile()" />
     <AccountSecurityDialog :open="isAccountSecurityDialogOpen" @close="isAccountSecurityDialogOpen = false" />
+
+    <div v-if="isEntryCostConfirmOpen" class="fixed inset-0 z-[140] flex items-center justify-center bg-[#0f172a]/48 px-4 backdrop-blur-sm" @click.self="isEntryCostConfirmOpen = false">
+      <div class="w-full max-w-[520px] rounded-[24px] border border-borderSoft bg-white p-7 shadow-[0_30px_80px_rgba(15,23,42,0.24)]">
+        <h3 class="text-[20px] font-black text-[#111827]">确认解析剧本</h3>
+        <p class="mt-2 text-[13px] leading-6 text-[#64748b]">本次服务包含剧本结构解析、人物与场景识别和基础剧本体检。资产图片、视频片段与成片导出将在后续操作前另行报价。</p>
+        <div class="mt-5 grid grid-cols-3 gap-3 rounded-[16px] bg-[#f5f8fd] p-4 text-center">
+          <div><span class="block text-[12px] text-[#7b8aa3]">预计费用</span><strong class="mt-1 block text-[18px] text-[#111827]">{{ entryCreditPreview?.requiredCredits || 0 }}</strong></div>
+          <div><span class="block text-[12px] text-[#7b8aa3]">当前余额</span><strong class="mt-1 block text-[18px] text-[#111827]">{{ entryCreditPreview?.currentBalance ?? currentCreditBalance }}</strong></div>
+          <div><span class="block text-[12px] text-[#7b8aa3]">扣后余额</span><strong class="mt-1 block text-[18px] text-[#005FFE]">{{ entryCreditPreview?.balanceAfter || 0 }}</strong></div>
+        </div>
+        <div class="mt-6 flex justify-end gap-3">
+          <button class="rounded-[10px] border border-[#dfe7f2] px-5 py-2.5 text-[14px] font-bold text-[#64748b]" type="button" @click="isEntryCostConfirmOpen = false">取消</button>
+          <button class="rounded-[10px] bg-[#005FFE] px-6 py-2.5 text-[14px] font-black text-white" type="button" @click="confirmEntryCostAndStart">确认并开始解析</button>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="isEntryFailureOpen" class="fixed inset-0 z-[140] flex items-center justify-center bg-[#0f172a]/48 px-4 backdrop-blur-sm" @click.self="isEntryFailureOpen = false">
+      <div class="w-full max-w-[500px] rounded-[24px] border border-borderSoft bg-white p-7 shadow-[0_30px_80px_rgba(15,23,42,0.24)]">
+        <h3 class="text-[20px] font-black text-[#111827]">当前步骤未完成</h3>
+        <p class="mt-3 text-[14px] leading-7 text-[#64748b]">{{ entryFailureMessage }}</p>
+        <p class="mt-2 text-[13px] text-[#16a34a]">已经完成的步骤和项目草稿均已保留，重试不会重复创建项目。</p>
+        <div class="mt-6 flex flex-wrap justify-end gap-3">
+          <button v-if="entryProjectId" class="rounded-[10px] border border-[#dfe7f2] px-5 py-2.5 text-[14px] font-bold text-[#64748b]" type="button" @click="openEntryProjectDraft">进入项目草稿</button>
+          <button class="rounded-[10px] bg-[#005FFE] px-6 py-2.5 text-[14px] font-black text-white" type="button" @click="continueEntryCreation">重试当前步骤</button>
+        </div>
+      </div>
+    </div>
 
     <div
       v-if="deleteDialogVisible"

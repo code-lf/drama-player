@@ -394,7 +394,21 @@ export interface DramaStoryboardRunState {
   model: string
   style: string
   errorMessage: string
+  errorCode: string
+  userMessage: string
+  retryable: boolean
+  retryAction: string
+  preservedRows: number
   updatedAt: string
+}
+
+export interface DramaWorkflowSummary {
+  stage: 'input' | 'analysis' | 'script' | 'assets' | 'storyboard' | 'video' | 'export'
+  state: 'idle' | 'running' | 'needs_action' | 'failed' | 'completed'
+  progressPercent: number
+  progressLabel: string
+  nextAction: string
+  needsAttention: boolean
 }
 
 export interface DramaAnalysis {
@@ -469,6 +483,7 @@ export interface DramaProjectCard {
   completedStoryboards: number
   totalStoryboards: number
   analysisProgress: number
+  workflowSummary?: DramaWorkflowSummary
   updatedAt: string
   createdAt: string
 }

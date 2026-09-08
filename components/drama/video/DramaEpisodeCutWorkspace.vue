@@ -41,6 +41,7 @@ const savingState = ref<'idle' | 'saving' | 'saved' | 'error'>('idle')
 const actionMessage = ref('')
 const currentTask = ref<EpisodeCutTask | null>(null)
 const exportMode = ref<'fast' | 'standard'>('fast')
+const workspaceMode = ref<'quick' | 'advanced'>('quick')
 const exportHistory = ref<EpisodeCutTask[]>([])
 const exportHistoryLoading = ref(false)
 const playerRef = ref<HTMLVideoElement | null>(null)
@@ -505,11 +506,17 @@ async function renderEpisode(): Promise<void> {
     actionMessage.value = '仍有阻断问题，请先处理后再导出。'
     return
   }
-  actionMessage.value = exportMode.value === 'fast'
+  // 快速成片开启 BGM 或字幕时必须走标准合成，否则界面选择会被快速渲染静默忽略。
+  const requestedMode = workspaceMode.value === 'quick'
+    && (Boolean(exportSettings.value.includeBgm ?? exportSettings.value.include_bgm)
+      || Boolean(exportSettings.value.burnSubtitle ?? exportSettings.value.burn_subtitle))
+    ? 'standard'
+    : exportMode.value
+  actionMessage.value = requestedMode === 'fast'
     ? '快速导出已进入后台队列，可以离开本页，完成后再回来下载。'
     : '标准成片已进入后台队列，可以离开本页，字幕与效果合成会更久。'
   try {
-    await pollTask(await dramaService.renderEpisodeCut(props.projectId, props.episodeNo, exportMode.value))
+    await pollTask(await dramaService.renderEpisodeCut(props.projectId, props.episodeNo, requestedMode))
   } catch (error) {
     actionMessage.value = error instanceof Error ? error.message : '渲染任务提交失败。'
   }
@@ -583,6 +590,13 @@ onBeforeUnmount(() => {
     </div>
 
     <div v-else-if="draft" class="space-y-5">
+      <div class="flex items-center justify-between rounded-[18px] border border-[#dbe4f0] bg-white p-2 shadow-[0_10px_32px_rgba(15,23,42,0.05)]">
+        <div class="flex items-center gap-2">
+          <button type="button" class="rounded-[12px] px-5 py-2.5 text-sm font-bold" :class="workspaceMode === 'quick' ? 'bg-[#005FFE] text-white' : 'text-[#64748b]'" @click="workspaceMode = 'quick'">快速成片</button>
+          <button type="button" class="rounded-[12px] px-5 py-2.5 text-sm font-bold" :class="workspaceMode === 'advanced' ? 'bg-[#eef5ff] text-[#005FFE]' : 'text-[#64748b]'" @click="workspaceMode = 'advanced'">精细剪辑</button>
+        </div>
+        <span class="pr-3 text-xs text-[#94a3b8]">切换模式不会丢失当前草稿</span>
+      </div>
       <div class="grid gap-4 2xl:grid-cols-[minmax(0,1fr)_390px]">
         <main class="min-w-0 space-y-4 min-[1180px]:grid min-[1180px]:grid-cols-[minmax(360px,460px)_minmax(0,1fr)] min-[1180px]:items-start min-[1180px]:gap-4 min-[1180px]:space-y-0">
           <div class="preview-column min-w-0 space-y-4">
@@ -675,22 +689,26 @@ onBeforeUnmount(() => {
               <span class="rounded-lg bg-[#eff6ff] px-2.5 py-1 text-xs font-bold text-[#2563eb]">MP4</span>
             </div>
             <div class="mt-3 grid grid-cols-2 gap-2">
-              <label class="compact-setting col-span-2">
+              <label v-if="workspaceMode === 'advanced'" class="compact-setting col-span-2">
                 <span>导出方式</span>
                 <select v-model="exportMode" class="compact-select">
                   <option value="fast">快速导出（推荐，不烧字幕）</option>
                   <option value="standard">标准成片（字幕/水印/BGM）</option>
                 </select>
               </label>
-              <label class="compact-setting">
+              <label v-if="workspaceMode === 'advanced'" class="compact-setting">
                 <span>清晰度</span>
                 <select class="compact-select" :value="exportSettings.resolution || '720p'" @change="updateExportSetting('resolution', ($event.target as HTMLSelectElement).value)">
                   <option value="720p">720P</option>
                   <option value="1080p">1080P</option>
                 </select>
               </label>
-              <div class="compact-setting"><span>格式</span><strong>H.264/AAC</strong></div>
+              <div v-if="workspaceMode === 'advanced'" class="compact-setting"><span>格式</span><strong>H.264/AAC</strong></div>
               <label class="compact-setting">
+                <span>BGM</span>
+                <input type="checkbox" :checked="exportSettings.includeBgm !== false" class="h-4 w-4" @change="updateExportSetting('includeBgm', ($event.target as HTMLInputElement).checked)">
+              </label>
+              <label v-if="workspaceMode === 'advanced'" class="compact-setting">
                 <span>烧录字幕</span>
                 <input type="checkbox" :checked="exportSettings.burnSubtitles !== false" class="h-4 w-4" @change="updateExportSetting('burnSubtitles', ($event.target as HTMLInputElement).checked)">
               </label>
@@ -707,7 +725,7 @@ onBeforeUnmount(() => {
           </section>
           </div>
 
-          <div class="min-w-0 space-y-4">
+          <div v-if="workspaceMode === 'advanced'" class="min-w-0 space-y-4">
             <section class="overflow-hidden rounded-[24px] border border-[#e3e9f2] bg-white shadow-[0_12px_40px_rgba(15,23,42,0.05)]">
             <div class="flex flex-wrap items-center justify-between gap-3 border-b border-[#edf1f6] px-5 py-4">
               <div>
@@ -864,7 +882,7 @@ onBeforeUnmount(() => {
         </main>
 
         <aside class="space-y-4">
-          <section class="rounded-[24px] border border-[#e3e9f2] bg-white p-5 shadow-[0_12px_40px_rgba(15,23,42,0.05)]">
+          <section v-if="workspaceMode === 'advanced'" class="rounded-[24px] border border-[#e3e9f2] bg-white p-5 shadow-[0_12px_40px_rgba(15,23,42,0.05)]">
             <div class="flex items-center justify-between">
               <div>
                 <h3 class="text-[17px] font-bold text-[#0f172a]">AI 成片质检</h3>
@@ -896,7 +914,7 @@ onBeforeUnmount(() => {
             </div>
           </section>
 
-          <section class="rounded-[24px] border border-[#e3e9f2] bg-white p-5 shadow-[0_12px_40px_rgba(15,23,42,0.05)]">
+          <section v-if="workspaceMode === 'advanced'" class="rounded-[24px] border border-[#e3e9f2] bg-white p-5 shadow-[0_12px_40px_rgba(15,23,42,0.05)]">
             <h3 class="text-[17px] font-bold text-[#0f172a]">BGM 设置</h3>
             <input ref="bgmInputRef" type="file" accept="audio/*" class="hidden" @change="uploadBgm">
             <button type="button" class="mt-4 flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-[#93c5fd] bg-[#eff6ff] px-4 py-3 text-sm font-semibold text-[#2563eb]" @click="bgmInputRef?.click()">
@@ -995,17 +1013,18 @@ onBeforeUnmount(() => {
           </p>
         </div>
         <div class="flex items-center gap-3">
-          <button type="button" class="footer-secondary" :disabled="currentTask?.status === 'running'" @click="generateCaptions">
+          <button v-if="workspaceMode === 'advanced'" type="button" class="footer-secondary" :disabled="currentTask?.status === 'running'" @click="generateCaptions">
             <Captions class="h-4 w-4" /> 语音识别字幕
           </button>
           <button
+            v-if="workspaceMode === 'advanced'"
             type="button"
             class="footer-secondary"
             :disabled="hardBlockCount > 0 || ['queued', 'running'].includes(currentTask?.status || '')"
             :title="hardBlockCount > 0 ? '请先修复不可用镜头，再导出完整交接包' : '导出通用素材、字幕与时间轴清单'"
             @click="exportEditorPackage"
           >
-            <PackageOpen class="h-4 w-4" /> 导出到剪映/编辑器
+            <PackageOpen class="h-4 w-4" /> 更多导出方式
           </button>
           <a v-if="currentTask?.outputUrl" :href="currentTask.outputUrl" target="_blank" rel="noopener" class="footer-secondary">
             <Download class="h-4 w-4" /> {{ taskDownloadLabel }}
@@ -1013,7 +1032,7 @@ onBeforeUnmount(() => {
           <button type="button" class="footer-primary" :disabled="hardBlockCount > 0 || ['queued', 'running'].includes(currentTask?.status || '')" @click="renderEpisode">
             <LoaderCircle v-if="['queued', 'running'].includes(currentTask?.status || '')" class="h-4 w-4 animate-spin" />
             <Download v-else class="h-4 w-4" />
-            {{ ['queued', 'running'].includes(currentTask?.status || '') ? `处理中 ${currentTask?.progress || 0}%` : exportMode === 'fast' ? '快速导出' : '导出标准成片' }}
+            {{ ['queued', 'running'].includes(currentTask?.status || '') ? `处理中 ${currentTask?.progress || 0}%` : workspaceMode === 'quick' ? '导出视频' : exportMode === 'fast' ? '快速导出' : '导出标准成片' }}
           </button>
         </div>
       </div>

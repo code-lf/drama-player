@@ -320,6 +320,11 @@ interface BackendStoryboardRowsResponse {
     model: string
     style: string
     error_message: string
+    error_code?: string
+    user_message?: string
+    retryable?: boolean
+    retry_action?: string
+    preserved_rows?: number
     updated_at: string
   }
 }
@@ -1107,6 +1112,14 @@ interface BackendDramaProjectCardResponse {
   completed_storyboards: number
   total_storyboards: number
   analysis_progress?: number
+  workflow_summary?: {
+    stage: 'input' | 'analysis' | 'script' | 'assets' | 'storyboard' | 'video' | 'export'
+    state: 'idle' | 'running' | 'needs_action' | 'failed' | 'completed'
+    progress_percent: number
+    progress_label: string
+    next_action: string
+    needs_attention: boolean
+  }
   updated_at: string
   created_at: string
 }
@@ -1150,6 +1163,14 @@ function mapDramaProjectCard(raw: BackendDramaProjectCardResponse): DramaProject
     completedStoryboards: Number(raw.completed_storyboards || 0),
     totalStoryboards: Number(raw.total_storyboards || 0),
     analysisProgress: Math.max(0, Math.min(100, Number(raw.analysis_progress || 0))),
+    workflowSummary: raw.workflow_summary ? {
+      stage: raw.workflow_summary.stage,
+      state: raw.workflow_summary.state,
+      progressPercent: Number(raw.workflow_summary.progress_percent || 0),
+      progressLabel: raw.workflow_summary.progress_label || '',
+      nextAction: raw.workflow_summary.next_action || '',
+      needsAttention: Boolean(raw.workflow_summary.needs_attention)
+    } : undefined,
     updatedAt: raw.updated_at || '',
     createdAt: raw.created_at || ''
   }
@@ -1748,6 +1769,11 @@ function mapStoryboardRun(run?: BackendStoryboardRowsResponse['run']): Storyboar
     expectedCounts: run?.expected_counts || {},
     style: run?.style || '',
     errorMessage: run?.error_message || '',
+    errorCode: run?.error_code || '',
+    userMessage: run?.user_message || '',
+    retryable: Boolean(run?.retryable),
+    retryAction: run?.retry_action || '',
+    preservedRows: Number(run?.preserved_rows || 0),
     updatedAt: run?.updated_at || ''
   }
 }
@@ -2265,6 +2291,11 @@ function mapDramaDetail(raw: BackendDramaDetailResponse): DramaProjectDetail {
       model: raw.storyboard_run?.model || '',
       style: raw.storyboard_run?.style || '',
       errorMessage: raw.storyboard_run?.error_message || '',
+      errorCode: raw.storyboard_run?.error_code || '',
+      userMessage: raw.storyboard_run?.user_message || '',
+      retryable: Boolean(raw.storyboard_run?.retryable),
+      retryAction: raw.storyboard_run?.retry_action || '',
+      preservedRows: Number(raw.storyboard_run?.preserved_rows || 0),
       updatedAt: raw.storyboard_run?.updated_at || ''
     },
     storyboards: mapStoryboardRows(raw.project_id, `drama-${raw.project_id}`, raw.storyboards || [])
@@ -2943,7 +2974,8 @@ export const httpAdapter: ApiAdapter = {
         style: payload.style || '东方玄幻 · 电影写实',
         aspect_ratio: payload.aspectRatio || '16:9',
         resolution: payload.resolution || '720p',
-        episode_count: payload.episodeCount || 1
+        episode_count: payload.episodeCount || 1,
+        idempotency_key: payload.idempotencyKey || undefined
       }
     })
     return ok(mapDramaDetail(response), 'created')
@@ -3512,6 +3544,11 @@ export const httpAdapter: ApiAdapter = {
         model: response.run?.model || '',
         style: response.run?.style || '',
         errorMessage: response.run?.error_message || '',
+        errorCode: response.run?.error_code || '',
+        userMessage: response.run?.user_message || '',
+        retryable: Boolean(response.run?.retryable),
+        retryAction: response.run?.retry_action || '',
+        preservedRows: Number(response.run?.preserved_rows || 0),
         updatedAt: response.run?.updated_at || ''
       }
     })

@@ -79,55 +79,6 @@ const removeConfirmTarget = ref<DramaAssetProfile | null>(null)
 // 大图预览单独使用全局遮罩，不嵌在抽屉滚动区内，避免图片被三栏布局裁切。
 const previewImageUrl = ref('')
 const previewImageAlt = ref('')
-// 资产工作台首次进入仅展示一次操作引导；不提供常驻入口，避免工具栏文案堆叠。
-const assetGuideSteps = [
-  { target: '#asset-guide-select-current', title: '勾选当前资产', description: '可逐项勾选，也可全选当前分类、筛选与搜索结果。', side: 'bottom' },
-  { target: '#asset-guide-generate-all', title: '生成全部待生成资产', description: '生成前会汇总全部待生成项，并在确认弹窗中展示积分消耗。', side: 'bottom' },
-  { target: '#asset-guide-tabs', title: '切换资产分类', description: '角色、场景、道具需分别检查；必需资产优先完成并确认锁定。', side: 'bottom' },
-  { target: '#asset-guide-enter-storyboard', title: '确认进入分镜', description: '全部必需资产锁定后即可进入分镜；按钮不可用时悬停可查看原因。', side: 'top' },
-]
-const assetGuideTour = useTour(assetGuideSteps, {
-  // 引导切换至底部确认操作时保持目标可见，避免气泡脱离控件。
-  scrollIntoView: { behavior: 'smooth', block: 'center', inline: 'nearest' },
-})
-const assetGuideStep = computed(() => assetGuideTour.current.value)
-type AssetGuideTargetRect = { top: number; left: number; width: number; height: number }
-const assetGuideTargetRect = ref<AssetGuideTargetRect | null>(null)
-const assetGuidePopoverStyle = computed<Record<string, string>>(() => {
-  const rect = assetGuideTargetRect.value
-  if (!rect || !import.meta.client) return {}
-  const panelWidth = Math.min(340, window.innerWidth - 32)
-  const panelHeight = 220
-  const edge = 16
-  const gap = 14
-  let top = assetGuideStep.value?.side === 'top' ? rect.top - panelHeight - gap : rect.top + rect.height + gap
-  if (top + panelHeight > window.innerHeight - edge) top = rect.top - panelHeight - gap
-  if (top < edge) top = Math.min(window.innerHeight - panelHeight - edge, rect.top + rect.height + gap)
-  return {
-    left: `${Math.max(edge, Math.min(rect.left + rect.width / 2 - panelWidth / 2, window.innerWidth - panelWidth - edge))}px`,
-    top: `${Math.max(edge, top)}px`,
-  }
-})
-// 遮罩分为四块，保证引导期间目标外区域以及目标自身均不会误触业务按钮。
-const assetGuideMaskPanels = computed<Array<Record<string, string>>>(() => {
-  const rect = assetGuideTargetRect.value
-  if (!rect || !import.meta.client) return [{ inset: '0' }]
-  const edge = 8
-  const top = Math.max(0, rect.top - edge)
-  const left = Math.max(0, rect.left - edge)
-  const right = Math.min(window.innerWidth, rect.left + rect.width + edge)
-  const bottom = Math.min(window.innerHeight, rect.top + rect.height + edge)
-  return [
-    { top: '0', left: '0', width: '100vw', height: `${top}px` },
-    { top: `${bottom}px`, left: '0', width: '100vw', bottom: '0' },
-    { top: `${top}px`, left: '0', width: `${left}px`, height: `${Math.max(0, bottom - top)}px` },
-    { top: `${top}px`, left: `${right}px`, right: '0', height: `${Math.max(0, bottom - top)}px` },
-  ]
-})
-const assetGuideFocusStyle = computed<Record<string, string>>(() => {
-  const rect = assetGuideTargetRect.value
-  return rect ? { top: `${Math.max(0, rect.top - 8)}px`, left: `${Math.max(0, rect.left - 8)}px`, width: `${rect.width + 16}px`, height: `${rect.height + 16}px` } : {}
-})
 const uploadTarget = ref<DramaAssetProfile | null>(null)
 const menuUploadInput = ref<HTMLInputElement | null>(null)
 const voiceUploadInput = ref<HTMLInputElement | null>(null)
@@ -206,11 +157,6 @@ const selectionTargets = computed(() => selectedProfiles.value
 const allGenerationTargets = computed(() => allAssets.value
   .filter(item => ['candidate', 'planned', 'failed', 'stale'].includes(item.production_status))
   .map(profileTarget))
-const lockableSelectedProfiles = computed(() => selectedProfiles.value.filter(item =>
-  Boolean(item.selected_asset_id)
-  && item.production_status !== 'locked'
-  && !['queued', 'generating'].includes(item.production_status)
-))
 const unlockedProfiles = computed(() => allAssets.value.filter(item => item.production_status !== 'locked'))
 const lockedProfiles = computed(() => allAssets.value.filter(item => item.production_status === 'locked'))
 // 顶部“一键锁定”只处理已经具备当前图片、且主生图任务已结束的资产。
@@ -235,15 +181,15 @@ const allLockBlockers = computed(() => {
 const canLockAll = computed(() => lockableAllProfiles.value.length > 0)
 // 只要还有可锁定图片就优先显示锁定；全部可用图片锁完后，按钮自然切换为批量解除锁定。
 const batchLockState = computed(() => lockableAllProfiles.value.length > 0)
-const batchLockLabel = computed(() => batchLockState.value ? '一键锁定已生成' : '一键取消锁定')
+const batchLockLabel = computed(() => batchLockState.value ? '确认全部已生成' : '取消全部确认')
 const batchLockTooltip = computed(() => {
   if (!batchLockState.value) {
-    return lockedProfiles.value.length ? `解除项目内全部 ${lockedProfiles.value.length} 项已锁定资产` : '当前没有可操作资产'
+    return lockedProfiles.value.length ? `取消项目内全部 ${lockedProfiles.value.length} 项已确认资产` : '当前没有可操作资产'
   }
   const skipped = Math.max(0, unlockedProfiles.value.length - lockableAllProfiles.value.length)
   return skipped
-    ? `锁定当前已生成的 ${lockableAllProfiles.value.length} 项；另有 ${skipped} 项未就绪，将自动跳过`
-    : `锁定项目内全部 ${lockableAllProfiles.value.length} 项已生成资产`
+    ? `确认使用当前已生成的 ${lockableAllProfiles.value.length} 项；另有 ${skipped} 项未就绪，将自动跳过`
+    : `确认使用项目内全部 ${lockableAllProfiles.value.length} 项已生成资产`
 })
 const riskyPendingLockProfiles = computed(() => pendingLockProfiles.value.filter(item =>
   item.consistency.status === 'succeeded'
@@ -305,10 +251,58 @@ const preparationFailureMessage = computed(() => {
 })
 const readinessReason = computed(() => {
   if (!workspace.value || workspace.value.readiness.ready) return ''
+  if (workspace.value.readiness.required_total === 0) {
+    return '尚未识别出会在分镜中使用的主要资产，请重新识别资产。'
+  }
+  const pending = allAssets.value.filter(profile => profile.is_required && !(
+    profile.production_status === 'locked'
+    && profile.visual_bible_version_id === workspace.value?.visual_bible.id
+  ))
+  const running = pending.filter(profile => ['queued', 'generating'].includes(profile.production_status))
+  const stale = pending.filter(profile => !running.includes(profile)
+    && profile.visual_bible_version_id !== workspace.value?.visual_bible.id)
+  const missingImage = pending.filter(profile => !running.includes(profile) && !stale.includes(profile) && !hasUsableAssetVersion(profile))
+  const readyToConfirm = pending.filter(profile => !running.includes(profile) && !stale.includes(profile) && hasUsableAssetVersion(profile))
+  const names = (profiles: DramaAssetProfile[]) => profiles.map(profile => profile.name).join('、')
+  const reasons: string[] = []
+  if (running.length) reasons.push(`${names(running)}仍在生成中`)
+  if (missingImage.length) reasons.push(`${names(missingImage)}尚未生成或选择图片`)
+  if (stale.length) reasons.push(`${names(stale)}使用了旧视觉基准，需要重新生成`)
+  if (reasons.length && readyToConfirm.length) reasons.push(`其余 ${readyToConfirm.length} 项图片已准备好，将在全部齐全后自动确认`)
+  if (reasons.length) return reasons.join('；')
+  if (readyToConfirm.length) return `${readyToConfirm.length} 项主要资产图片已准备好，点击后将自动确认并进入分镜。`
   const blockers = workspace.value.readiness.blockers.filter(Boolean)
-  if (blockers.length) return blockers.join('；')
-  return `仍有 ${Math.max(workspace.value.readiness.required_total - workspace.value.readiness.locked_total, 0)} 项必需资产未生成并锁定。`
+  return blockers.join('；') || '主要资产状态尚未就绪，请刷新后重试。'
 })
+// 下一步只关心“分镜必需资产”。非必需资产和一致性检测结果均属于可选优化，不阻塞主流程。
+const incompleteRequiredProfiles = computed(() => allAssets.value.filter(profile => profile.is_required && !(
+  profile.production_status === 'locked'
+  && profile.visual_bible_version_id === workspace.value?.visual_bible.id
+)))
+const autoLockableRequiredProfiles = computed(() => incompleteRequiredProfiles.value.filter(profile =>
+  canLockProfile(profile)
+  && profile.visual_bible_version_id === workspace.value?.visual_bible.id
+))
+const storyboardActionLabel = computed(() => {
+  if (workspace.value?.readiness.ready) return '进入分镜'
+  if (workspace.value?.readiness.required_total === 0) return '重新识别主要资产'
+  const pendingCount = incompleteRequiredProfiles.value.length
+  if (pendingCount > 0 && autoLockableRequiredProfiles.value.length === pendingCount) {
+    return `确认剩余 ${pendingCount} 项并进入分镜`
+  }
+  return `还需完成 ${pendingCount || workspace.value?.readiness.required_total || 0} 项主要资产`
+})
+const primaryAssetChecklist = computed(() => (['role', 'scene', 'prop'] as DramaWorkspaceAssetType[]).map((assetType) => {
+  const required = allAssets.value.filter(profile => profile.asset_type === assetType && profile.is_required)
+  const confirmed = required.filter(profile => profile.production_status === 'locked' && profile.selected_asset_id)
+  return {
+    assetType,
+    label: assetType === 'role' ? '主要角色' : assetType === 'scene' ? '主要场景' : '关键道具',
+    total: required.length,
+    confirmed: confirmed.length,
+    ready: required.length > 0 && confirmed.length === required.length,
+  }
+}))
 const failedTargets = computed(() => allAssets.value
   .filter(item => item.asset_type === activeType.value && ['failed', 'stale'].includes(item.production_status))
   .map(profileTarget))
@@ -388,7 +382,7 @@ const statusOptions: BaseSelectOption[] = [
   { label: '全部状态', value: 'all' },
   { label: '待规划', value: 'candidate' },
   { label: '待确认', value: 'to_confirm' },
-  { label: '已锁定', value: 'locked' },
+  { label: '已确认', value: 'locked' },
   { label: '生成中', value: 'generating' },
   { label: '已过期', value: 'stale' },
   { label: '失败', value: 'failed' },
@@ -443,7 +437,7 @@ function canLockProfile(profile: DramaAssetProfile): boolean {
 
 function lockDisabledReason(profile: DramaAssetProfile): string {
   if (!hasUsableAssetVersion(profile)) return '请先生成或上传一张资产图片'
-  if (['queued', 'generating'].includes(profile.production_status)) return '当前图片仍在生成，完成后即可锁定'
+  if (['queued', 'generating'].includes(profile.production_status)) return '当前图片仍在生成，完成后即可确认使用'
   return ''
 }
 
@@ -454,7 +448,7 @@ function assetImage(profile: DramaAssetProfile): string {
 function statusLabel(status: string): string {
   return ({
     candidate: '待规划', planned: '待生成', queued: '排队中', generating: '生成中',
-    to_confirm: '待确认', locked: '已锁定', stale: '视觉版本已过期', failed: '生成失败', skipped: '已跳过',
+    to_confirm: '待确认', locked: '已确认', stale: '视觉版本已过期', failed: '生成失败', skipped: '已跳过',
   } as Record<string, string>)[status] || status
 }
 
@@ -785,36 +779,11 @@ function toggleSelectAll(): void {
 
 function requestAllAssetGeneration(): void {
   if (!allGenerationTargets.value.length) {
-    showGlobalNotice('当前没有可生成的资产；已锁定或正在生成的资产不会重复提交。', 'error')
+    showGlobalNotice('当前没有可生成的资产；已确认或正在生成的资产不会重复提交。', 'error')
     return
   }
   void requestEstimate(allGenerationTargets.value, '全部待生成资产')
 }
-
-function assetGuideStorageKey(): string {
-  // 引导完成记录按用户和项目隔离，避免切换项目时错误跳过新项目的首次说明。
-  return `livliv:drama:asset-guide:${authStore.user?.id || 'guest'}:${props.projectId}`
-}
-
-function finishAssetGuide(): void {
-  if (import.meta.client) window.localStorage.setItem(assetGuideStorageKey(), '1')
-  assetGuideTour.finish()
-}
-
-function updateAssetGuidePosition(): void {
-  if (!import.meta.client || !assetGuideTour.open.value) return
-  const target = assetGuideStep.value?.target
-  if (typeof target !== 'string') return
-  const element = document.querySelector<HTMLElement>(target)
-  if (!element) return
-  const rect = element.getBoundingClientRect()
-  assetGuideTargetRect.value = { top: rect.top, left: rect.left, width: rect.width, height: rect.height }
-}
-
-watch([() => assetGuideTour.open.value, () => assetGuideTour.index.value], () => {
-  // 目标随分页、筛选和滚动而变化，DOM 提交后测量避免高亮与气泡错位。
-  void nextTick(updateAssetGuidePosition)
-}, { flush: 'post' })
 
 function setStatusFilter(status: string): void {
   statusFilter.value = status
@@ -839,12 +808,7 @@ async function loadWorkspace(silent = false): Promise<void> {
   errorMessage.value = ''
   try {
     workspace.value = await dramaService.getAssetWorkspace(props.projectId)
-    // 仅首次进入且成功获取资产资料后自动显示；页面不再保留重复打开的“操作引导”入口。
-    // 完整资料没有就绪时保持阻断页，不要在阻断页上叠加新手引导。
-    if (!silent && workspace.value.preparation_status === 'ready' && import.meta.client && !window.localStorage.getItem(assetGuideStorageKey())) {
-      await nextTick()
-      assetGuideTour.start(0)
-    }
+    // 页面内任务清单会持续展示缺项，不再用首次全屏遮罩打断用户操作。
     if (selectedProfile.value) {
       const fresh = workspace.value.assets.find(item => item.id === selectedProfile.value?.id)
       selectedProfile.value = fresh || null
@@ -1028,10 +992,24 @@ async function saveProfile(): Promise<void> {
 }
 
 async function chooseVersion(versionId: string): Promise<void> {
-  if (!selectedProfile.value) return
-  workspace.value = await dramaService.updateAssetProfile(props.projectId, selectedProfile.value, { selected_asset_id: versionId })
-  const fresh = workspace.value.assets.find(item => item.id === selectedProfile.value?.id)
-  selectedProfile.value = fresh || null
+  const profile = selectedProfile.value
+  if (!profile || actionBusy.value) return
+  // 选择图片版本即代表用户确认使用它，直接完成锁定，避免“已选中”和“已锁定”两套状态增加理解成本。
+  if (profile.selected_asset_id === versionId && profile.production_status === 'locked') return
+  actionBusy.value = `select-lock:${profile.id}`
+  try {
+    if (profile.selected_asset_id !== versionId) {
+      workspace.value = await dramaService.updateAssetProfile(props.projectId, profile, { selected_asset_id: versionId })
+    }
+    const fresh = workspace.value?.assets.find(item => item.id === profile.id) || profile
+    selectedProfile.value = fresh
+    actionBusy.value = ''
+    await applyProfileLocks([fresh], true)
+  } catch (error: any) {
+    showDrawerFeedback('error', error?.message || '图片版本确认失败，请稍后重试。')
+  } finally {
+    actionBusy.value = ''
+  }
 }
 
 async function requestEstimate(targets = selectionTargets.value, scopeLabel = '选中资产'): Promise<void> {
@@ -1122,7 +1100,7 @@ async function lockProfile(profile: DramaAssetProfile, locked = true): Promise<v
     return
   }
   if (!canLockProfile(profile)) {
-    showDrawerFeedback('error', lockDisabledReason(profile) || '当前资产暂时无法锁定。')
+    showDrawerFeedback('error', lockDisabledReason(profile) || '当前资产暂时无法确认使用。')
     return
   }
 
@@ -1147,13 +1125,9 @@ async function lockProfile(profile: DramaAssetProfile, locked = true): Promise<v
   requestProfileLocks([lockTarget])
 }
 
-function requestBatchLock(): void {
-  requestProfileLocks(lockableSelectedProfiles.value, true)
-}
-
 function requestLockAll(): void {
   if (!canLockAll.value) {
-    showGlobalNotice(allLockBlockers.value.join('；') || '全部资产均已锁定。', 'error')
+    showGlobalNotice(allLockBlockers.value.join('；') || '全部资产均已确认使用。', 'error')
     return
   }
   requestProfileLocks(lockableAllProfiles.value, true)
@@ -1175,13 +1149,13 @@ function requestProfileLocks(profiles: DramaAssetProfile[], locked = true): void
     : profile.production_status === 'locked')
   const missingImageProfiles = candidates.filter(profile => !profile.selected_asset_id)
   if (locked && missingImageProfiles.length) {
-    const message = '请先生成或上传一张资产图片，再确认并锁定。'
+    const message = '请先生成或上传一张资产图片，再确认使用此版本。'
     if (candidates.length === 1 && selectedProfile.value?.id === candidates[0]?.id) showDrawerFeedback('error', message)
     else showGlobalNotice(message, 'error')
     return
   }
   if (!candidates.length) {
-    showGlobalNotice(locked ? '当前资产均已锁定。' : '当前没有已锁定资产。')
+    showGlobalNotice(locked ? '当前资产均已确认使用。' : '当前没有已确认资产。')
     return
   }
 
@@ -1228,14 +1202,14 @@ async function applyProfileLocks(profiles: DramaAssetProfile[], locked = true): 
     }
     if (isBatch) {
       showGlobalNotice(failures.length
-        ? `${locked ? '锁定' : '解除锁定'}失败：${failures.join('；')}`
-        : `已${locked ? '锁定' : '解除锁定'} ${succeededIds.length} 项资产。`, failures.length ? 'error' : 'success')
+        ? `${locked ? '确认使用' : '取消确认'}失败：${failures.join('；')}`
+        : `已${locked ? '确认使用' : '取消确认'} ${succeededIds.length} 项资产。`, failures.length ? 'error' : 'success')
     } else if (failures.length) {
-      const message = failures[0] || '锁定操作失败。'
+      const message = failures[0] || '确认操作失败。'
       if (selectedProfile.value?.id === profiles[0]?.id) showDrawerFeedback('error', message)
       else showGlobalNotice(message, 'error')
     } else if (selectedProfile.value?.id === profiles[0]?.id) {
-      showDrawerFeedback('success', locked ? '资产图片与设定已锁定。' : '已解除锁定。')
+      showDrawerFeedback('success', locked ? '已确认使用当前图片与设定。' : '已取消确认。')
     }
 
     if (showLockConfirm.value && failures.length && !succeededIds.length) {
@@ -1246,7 +1220,7 @@ async function applyProfileLocks(profiles: DramaAssetProfile[], locked = true): 
     pendingLockProfiles.value = []
     lockConfirmError.value = ''
   } catch (error: any) {
-    const message = error?.message || (locked ? '批量锁定失败。' : '批量解除锁定失败。')
+    const message = error?.message || (locked ? '批量确认失败。' : '批量取消确认失败。')
     lockConfirmError.value = message
     showGlobalNotice(message, 'error')
   } finally {
@@ -1349,7 +1323,7 @@ function assetMenuItems(profile: DramaAssetProfile): BaseMenuItem[] {
     },
     {
       key: 'lock',
-      label: profile.production_status === 'locked' ? '解除锁定' : '确认并锁定',
+      label: profile.production_status === 'locked' ? '取消确认' : '使用此版本',
       icon: profile.production_status === 'locked' ? Unlock : LockKeyhole,
       disabled: !canLockProfile(profile),
       disabledReason: lockDisabledReason(profile),
@@ -1423,9 +1397,44 @@ async function saveBible(): Promise<void> {
   }
 }
 
-function enterStoryboard(): void {
-  if (!workspace.value?.readiness.ready) return
-  emit('continue')
+function focusFirstIncompleteRequiredProfile(): void {
+  // 优先定位真正缺图片、生成中或使用旧基准的项目；可自动锁定的项目无需用户逐个处理。
+  const profile = incompleteRequiredProfiles.value.find(item => !autoLockableRequiredProfiles.value.includes(item))
+    || incompleteRequiredProfiles.value[0]
+  if (!profile) return
+  activeType.value = profile.asset_type
+  statusFilter.value = 'all'
+  searchKeyword.value = ''
+  void nextTick(() => {
+    document.querySelector<HTMLElement>(`[data-asset-id="${profile.id}"]`)
+      ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  })
+}
+
+async function enterStoryboard(): Promise<void> {
+  if (!workspace.value || actionBusy.value) return
+  if (workspace.value.readiness.ready) {
+    emit('continue')
+    return
+  }
+
+  if (workspace.value.readiness.required_total === 0) {
+    showGlobalNotice('没有识别出主要资产，请点击“重新识别资产”后再继续。', 'error')
+    return
+  }
+
+  const pending = incompleteRequiredProfiles.value
+  if (pending.length > 0 && autoLockableRequiredProfiles.value.length === pending.length) {
+    // 所有必需图片都已存在时一次性确认，用户不再需要逐张点击“锁定”。
+    await applyProfileLocks(autoLockableRequiredProfiles.value, true)
+    if (workspace.value?.readiness.ready) {
+      emit('continue')
+      return
+    }
+  }
+
+  showGlobalNotice(readinessReason.value || '请先生成主要资产的图片，再进入分镜设计。', 'error')
+  focusFirstIncompleteRequiredProfile()
 }
 
 function normalizeStreamUrl(path: string): string {
@@ -1537,7 +1546,7 @@ onBeforeUnmount(() => {
             <div><Mountain :size="18" /><strong>{{ preparationAssetCounts.scene }}</strong><span>场景</span></div>
             <div><BriefcaseBusiness :size="18" /><strong>{{ preparationAssetCounts.prop }}</strong><span>道具</span></div>
           </div>
-          <p><ShieldCheck :size="16" /> 手工修改和已锁定内容会被保护，不会被模型覆盖。</p>
+          <p><ShieldCheck :size="16" /> 手工修改和已确认内容会被保护，不会被模型覆盖。</p>
         </aside>
       </div>
 
@@ -1647,6 +1656,33 @@ onBeforeUnmount(() => {
           />
         </header>
 
+        <section class="primary-asset-checklist" aria-label="进入分镜前任务清单">
+          <div>
+            <span>进入分镜前</span>
+            <strong>确认会在镜头中使用的主要资产</strong>
+          </div>
+          <button
+            v-for="item in primaryAssetChecklist"
+            :key="item.assetType"
+            type="button"
+            :class="{ ready: item.ready }"
+            @click="switchType(item.assetType)"
+          >
+            <Check v-if="item.ready" :size="15" />
+            <span v-else>{{ item.confirmed }}/{{ item.total }}</span>
+            {{ item.label }}
+          </button>
+          <UButton
+            v-if="workspace.readiness.required_total === 0"
+            color="primary"
+            variant="soft"
+            size="sm"
+            label="重新识别资产"
+            :loading="Boolean(preparationRetryBusy)"
+            @click="openPreparationRetry"
+          />
+        </section>
+
         <div class="workspace-toolbar">
           <div id="asset-guide-tabs" class="asset-tabs">
             <button v-for="(meta, key) in typeMeta" :key="key" :class="{ active: activeType === key }" @click="switchType(key as DramaWorkspaceAssetType)">
@@ -1671,7 +1707,7 @@ onBeforeUnmount(() => {
             </BaseTooltip>
             <!--
               全选必须是工具栏里的明确操作，不能藏在状态筛选行最右侧的小复选框中。
-              全选覆盖当前筛选结果；后续“生成”和“锁定”按钮会各自筛选符合条件的资产，
+              全选覆盖当前筛选结果；后续“生成”和“确认使用”按钮会各自筛选符合条件的资产，
               避免一个选择状态同时承担两套互相冲突的业务规则。
             -->
             <UButton
@@ -1718,7 +1754,7 @@ onBeforeUnmount(() => {
           <button :class="{ active: statusFilter === 'all' }" @click="setStatusFilter('all')">全部 {{ currentStats.total }}</button>
           <button :class="{ active: statusFilter === 'candidate' }" @click="setStatusFilter('candidate')">待生成 {{ currentStats.candidate }}</button>
           <button :class="{ active: statusFilter === 'to_confirm' }" @click="setStatusFilter('to_confirm')">待确认 {{ currentStats.toConfirm }}</button>
-          <button :class="{ active: statusFilter === 'locked' }" @click="setStatusFilter('locked')">已锁定 {{ currentStats.locked }}</button>
+          <button :class="{ active: statusFilter === 'locked' }" @click="setStatusFilter('locked')">已确认使用 {{ currentStats.locked }}</button>
           <button :class="{ active: statusFilter === 'generating' }" @click="setStatusFilter('generating')">生成中 {{ currentStats.generating }}</button>
           <button v-if="currentStats.failed" class="failed-filter" :class="{ active: statusFilter === 'failed' }" @click="setStatusFilter('failed')">失败 {{ currentStats.failed }}</button>
           <button
@@ -1740,7 +1776,7 @@ onBeforeUnmount(() => {
               <ImageIcon :size="34" /><h3>{{ typeMeta[activeType].empty }}</h3><p>资产候选只读取已确认剧本版本，不会使用未采纳的优化建议。</p>
             </div>
             <div v-else class="asset-grid">
-              <article v-for="profile in currentAssets" :key="profile.id" class="asset-card" :class="{ selected: isSelected(profile), stale: profile.production_status === 'stale' }">
+              <article v-for="profile in currentAssets" :key="profile.id" class="asset-card" :data-asset-id="profile.id" :class="{ selected: isSelected(profile), stale: profile.production_status === 'stale' }">
                 <div class="card-image" @click="openDetail(profile)">
                   <FluidImage
                     :src="assetImage(profile)"
@@ -1751,11 +1787,11 @@ onBeforeUnmount(() => {
                   />
                   <div v-if="!assetImage(profile)" class="image-placeholder-label"><ImageIcon :size="25" /><span>{{ statusLabel(profile.production_status) }}</span></div>
                   <UButton class="select-check" :class="{ checked: isSelected(profile) }" icon="i-lucide-check" :color="isSelected(profile) ? 'primary' : 'neutral'" :variant="isSelected(profile) ? 'solid' : 'soft'" size="sm" square :aria-label="isSelected(profile) ? '取消选择' : '选择资产'" @click.stop="toggleSelect(profile)" />
-                  <span v-if="profile.production_status === 'locked'" class="image-lock"><LockKeyhole :size="14" /></span>
+                  <span v-if="profile.production_status === 'locked'" class="image-lock"><Check :size="14" /></span>
                   <span class="more-button"><BaseMenu :items="assetMenuItems(profile)" @select="handleAssetMenu(profile, $event)"><template #trigger><UIcon name="i-lucide-ellipsis" class="size-4" /></template></BaseMenu></span>
                 </div>
                 <div class="card-content">
-                  <div class="card-title"><h3>{{ profile.name }}</h3><span v-if="profile.is_required">必需</span></div>
+                  <div class="card-title"><h3>{{ profile.name }}</h3><span v-if="profile.is_required">主要</span></div>
                   <div v-if="cardFacts(profile).length" class="card-facts" :title="dataText(profile)">
                     <span v-for="fact in cardFacts(profile)" :key="fact.label"><b>{{ fact.label }}</b><em>{{ fact.value }}</em></span>
                   </div>
@@ -1776,7 +1812,7 @@ onBeforeUnmount(() => {
                     <span v-else :class="`status-${profile.production_status}`">{{ statusLabel(profile.production_status) }}</span>
                     <button class="consistency-tag" :class="`tone-${consistencyTone(profile)}`" @click="openDetail(profile)">{{ consistencyLabel(profile) }}</button>
                   </div>
-                  <div class="card-actions"><UButton color="neutral" variant="outline" size="sm" label="编辑" @click="openDetail(profile)" /><UButton color="neutral" variant="outline" size="sm" :label="generationActionState(profile).label" :loading="generationActionState(profile).busy" :disabled="generationActionState(profile).busy" @click="regenerateProfile(profile)" /><BaseTooltip :text="lockDisabledReason(profile)" align="right"><UButton class="primary" color="primary" variant="solid" size="sm" :label="profile.production_status === 'locked' ? '已锁定' : '确认并锁定'" :loading="actionBusy === `lock:${profile.id}` || actionBusy === `select-lock:${profile.id}`" :disabled="!canLockProfile(profile)" @click="lockProfile(profile, profile.production_status !== 'locked')" /></BaseTooltip></div>
+                  <div class="card-actions"><UButton color="neutral" variant="outline" size="sm" label="编辑" @click="openDetail(profile)" /><UButton color="neutral" variant="outline" size="sm" :label="generationActionState(profile).label" :loading="generationActionState(profile).busy" :disabled="generationActionState(profile).busy" @click="regenerateProfile(profile)" /><BaseTooltip :text="lockDisabledReason(profile)" align="right"><UButton class="primary" color="primary" variant="solid" size="sm" :label="profile.production_status === 'locked' ? '已确认使用' : '使用此版本'" :loading="actionBusy === `lock:${profile.id}` || actionBusy === `select-lock:${profile.id}`" :disabled="!canLockProfile(profile)" @click="lockProfile(profile, profile.production_status !== 'locked')" /></BaseTooltip></div>
                 </div>
               </article>
             </div>
@@ -1785,11 +1821,11 @@ onBeforeUnmount(() => {
         </div>
 
         <footer class="asset-footer">
-          <div><strong>已选择 {{ selectedKeys.length }} 项</strong><button class="readiness-link" :title="workspace.readiness.blockers.join('\n')"><ShieldCheck :size="14" /> 已锁定 {{ workspace.readiness.locked_total }}/{{ workspace.readiness.required_total }} 项必需资产</button></div>
+          <div><strong>已选择 {{ selectedKeys.length }} 项</strong><button class="readiness-link" :title="readinessReason"><ShieldCheck :size="14" /> 已确认 {{ workspace.readiness.locked_total }}/{{ workspace.readiness.required_total }} 项主要资产</button></div>
           <UButton
             class="asset-footer-action"
-            color="primary"
-            variant="solid"
+            color="neutral"
+            variant="outline"
             size="md"
             :disabled="!selectionTargets.length"
             :loading="Boolean(actionBusy)"
@@ -1798,78 +1834,24 @@ onBeforeUnmount(() => {
             <CreditIcon size="md" class="asset-generation-credit-icon" />
             <span>生成选中资产</span>
           </UButton>
-          <UButton
-            v-if="lockableSelectedProfiles.length"
-            class="secondary-action batch-lock-action"
-            color="primary"
-            variant="outline"
-            size="md"
-            :loading="Boolean(actionBusy)"
-            @click="requestBatchLock"
-          >
-            <LockKeyhole v-if="!actionBusy" :size="16" />
-            <span>{{ `${allCurrentSelected ? '全部锁定' : '锁定选中'} ${lockableSelectedProfiles.length} 项` }}</span>
-          </UButton>
-          <!-- 禁用按钮外包一层提示容器，保证鼠标悬停时仍能读到具体阻塞原因。 -->
-          <BaseTooltip :text="readinessReason || '全部必需资产已锁定，可以进入分镜设计。'" align="right">
+          <!-- 底部只保留一个主流程按钮；锁定已由版本选择和下一步操作自动完成。 -->
+          <BaseTooltip :text="readinessReason || '全部主要资产已确认，可以进入分镜设计。'" align="right">
             <span id="asset-guide-enter-storyboard" class="asset-footer-action-wrap">
               <UButton
                 class="asset-footer-action"
                 color="primary"
                 variant="solid"
                 size="md"
-                :disabled="!workspace.readiness.ready"
+                :loading="Boolean(actionBusy)"
                 @click="enterStoryboard"
               >
                 <Check :size="16" />
-                <span>确认资产并进入分镜</span>
+                <span>{{ storyboardActionLabel }}</span>
               </UButton>
             </span>
           </BaseTooltip>
         </footer>
       </div>
-
-      <!--
-        引导遮罩必须覆盖整个视窗并拦截其它操作；当前 data-asset-guide 目标通过更高层级突出显示，
-        用户只能跟随本步操作或使用气泡的上一步、下一步与跳过，避免误点其它资产导致状态改变。
-      -->
-      <!-- 传送到 body 避开工作台局部层叠上下文，确保遮罩永远覆盖导航、卡片和底部栏。 -->
-      <Teleport to="body">
-        <template v-if="assetGuideTour.open.value">
-          <div
-            v-for="(panelStyle, panelIndex) in assetGuideMaskPanels"
-            :key="panelIndex"
-            class="asset-guide-mask-panel"
-            :style="panelStyle"
-            aria-hidden="true"
-            @click.prevent.stop
-            @wheel.prevent
-            @touchmove.prevent
-          />
-          <!-- 聚焦框本身是透明点击拦截层：目标仍清晰可见，但引导期间不会意外触发业务操作。 -->
-          <div class="asset-guide-focus-blocker" :style="assetGuideFocusStyle" aria-hidden="true" @click.prevent.stop @wheel.prevent @touchmove.prevent />
-          <section
-            class="asset-guide-popover"
-            :style="assetGuidePopoverStyle"
-            role="dialog"
-            aria-modal="true"
-            aria-live="polite"
-            aria-label="资产准备操作引导"
-          >
-            <div class="asset-guide-popover__head">
-              <span>资产准备引导 · {{ assetGuideTour.index.value + 1 }}/{{ assetGuideTour.total.value }}</span>
-              <UButton color="neutral" variant="link" size="xs" label="跳过" @click="finishAssetGuide" />
-            </div>
-            <h3>{{ assetGuideStep?.title }}</h3>
-            <p>{{ assetGuideStep?.description }}</p>
-            <div class="asset-guide-popover__actions">
-              <UButton v-if="assetGuideTour.hasPrev.value" color="neutral" variant="outline" size="sm" label="上一步" @click="assetGuideTour.prev" />
-              <span v-else />
-              <UButton color="primary" variant="solid" size="sm" :label="assetGuideTour.hasNext.value ? '下一步' : '完成引导'" @click="assetGuideTour.hasNext.value ? assetGuideTour.next() : finishAssetGuide()" />
-            </div>
-          </section>
-        </template>
-      </Teleport>
 
       <LivDialog
         :open="Boolean(selectedProfile)"
@@ -1923,7 +1905,7 @@ onBeforeUnmount(() => {
               </section>
               <section class="editor-section">
                 <h3>基础信息</h3>
-                <div class="base-fields"><label>资产名称<UInput v-model="editDraft.name" class="w-full" /></label><label v-if="selectedProfile.asset_type === 'role'">身份<UInput v-model="editDraft.identity" class="w-full" /></label><label v-if="selectedProfile.asset_type === 'role'">年龄<UInput v-model="editDraft.age" class="w-full" /></label><label>资产定位<BaseSelect v-if="selectedProfile.asset_type === 'role'" v-model="editDraft.role_label" tone="light" full :options="rolePositionOptions" /><UInput v-else v-model="editDraft.canonical_location" class="w-full" /></label><div class="check-line"><UCheckbox v-model="editDraft.is_required" label="分镜必需资产" /><BaseTooltip text="勾选后，该资产必须生成并锁定，项目才能进入分镜；分镜会优先引用当前图片与设定。只有不会在实际镜头中出现的候选资产才建议取消。"><CircleHelp :size="15" /></BaseTooltip></div></div>
+                <div class="base-fields"><label>资产名称<UInput v-model="editDraft.name" class="w-full" /></label><label v-if="selectedProfile.asset_type === 'role'">身份<UInput v-model="editDraft.identity" class="w-full" /></label><label v-if="selectedProfile.asset_type === 'role'">年龄<UInput v-model="editDraft.age" class="w-full" /></label><label>资产定位<BaseSelect v-if="selectedProfile.asset_type === 'role'" v-model="editDraft.role_label" tone="light" full :options="rolePositionOptions" /><UInput v-else v-model="editDraft.canonical_location" class="w-full" /></label><div class="check-line"><UCheckbox v-model="editDraft.is_required" label="将在分镜中使用（高级设置）" /><BaseTooltip text="勾选后，该资产需要先生成并确认使用，分镜会优先引用当前图片与设定。只有不会在实际镜头中出现的候选资产才建议取消。"><CircleHelp :size="15" /></BaseTooltip></div></div>
               </section>
 
               <section class="editor-section">
@@ -2059,7 +2041,7 @@ onBeforeUnmount(() => {
               <div v-else class="panel-empty compact"><ShieldCheck :size="22" /><h4>尚未检测</h4><p>不会显示模拟分数。</p></div>
               <button class="outline-button full" :disabled="!selectedProfile.selected_asset_id || ['queued', 'running'].includes(selectedProfile.consistency.status)" @click="requestConsistency(selectedProfile)"><CreditIcon size="xs" />{{ consistencyActionText(selectedProfile) }}</button>
             </section>
-            <section class="version-lock-copy"><div><h3>版本与锁定</h3><LockKeyhole :size="18" /></div><p>当前视觉基准 v{{ workspace.visual_bible.version_no }}。锁定后分镜优先使用当前图片与设定。</p></section>
+            <section class="version-lock-copy"><div><h3>版本确认</h3><LockKeyhole :size="18" /></div><p>当前视觉基准 v{{ workspace.visual_bible.version_no }}。确认后分镜优先使用当前图片与设定。</p></section>
             </aside>
           </div>
 
@@ -2067,10 +2049,10 @@ onBeforeUnmount(() => {
         </template>
         <template v-if="selectedProfile" #footer>
           <div class="asset-editor-footer liv-asset-editor-footer">
-            <div class="footer-lock-tip"><LockKeyhole :size="16" /><span>{{ selectedProfile.production_status === 'locked' ? '当前资产已锁定；解除后才能调整设定与图片版本。' : '锁定后将作为后续分镜与成片生成的统一引用。' }}</span></div>
+            <div class="footer-lock-tip"><LockKeyhole :size="16" /><span>{{ selectedProfile.production_status === 'locked' ? '当前资产已确认使用；取消确认后可调整设定与图片版本。' : '确认后将作为后续分镜与成片生成的统一引用。' }}</span></div>
             <LivButton class="regenerate-action" variant="secondary" :loading="generationActionState(selectedProfile).busy" :disabled="generationActionState(selectedProfile).busy" @click="regenerateProfile(selectedProfile)"><template v-if="!generationActionState(selectedProfile).busy" #icon><RefreshCw :size="16" /></template>{{ generationActionState(selectedProfile).label }}</LivButton>
             <LivButton variant="secondary" :loading="actionBusy === 'save-profile'" @click="saveProfile"><template #icon><ShieldCheck :size="16" /></template>保存资产设定</LivButton>
-            <BaseTooltip :text="lockDisabledReason(selectedProfile)" align="right"><LivButton variant="primary" :loading="actionBusy === `lock:${selectedProfile.id}` || actionBusy === `select-lock:${selectedProfile.id}`" :disabled="!canLockProfile(selectedProfile)" @click="lockProfile(selectedProfile, selectedProfile.production_status !== 'locked')"><template #icon><component :is="selectedProfile.production_status === 'locked' ? Unlock : LockKeyhole" :size="16" /></template>{{ selectedProfile.production_status === 'locked' ? '解除锁定' : '确认并锁定' }}</LivButton></BaseTooltip>
+            <BaseTooltip :text="lockDisabledReason(selectedProfile)" align="right"><LivButton variant="primary" :loading="actionBusy === `lock:${selectedProfile.id}` || actionBusy === `select-lock:${selectedProfile.id}`" :disabled="!canLockProfile(selectedProfile)" @click="lockProfile(selectedProfile, selectedProfile.production_status !== 'locked')"><template #icon><component :is="selectedProfile.production_status === 'locked' ? Unlock : LockKeyhole" :size="16" /></template>{{ selectedProfile.production_status === 'locked' ? '取消确认' : '使用此版本' }}</LivButton></BaseTooltip>
           </div>
         </template>
       </LivDialog>
@@ -2096,8 +2078,8 @@ onBeforeUnmount(() => {
     <!-- 单项风险确认与批量锁定共用 Reka 弹窗，焦点管理与遮罩行为和分镜阶段一致。 -->
     <LivDialog
       :open="showLockConfirm"
-      :title="pendingLockState ? (pendingLockProfiles.length > 1 ? `确认锁定 ${pendingLockProfiles.length} 项资产` : '确认锁定当前版本') : `确认取消 ${pendingLockProfiles.length} 项资产锁定`"
-      :description="pendingLockState ? (riskyPendingLockProfiles.length ? `其中 ${riskyPendingLockProfiles.length} 项仍存在尚未解决的质量偏差，锁定后可能影响后续分镜一致性。` : '锁定后，当前图片与资产设定将作为后续分镜和视频生成的统一引用。') : '取消后这些资产可重新编辑和生成，后续分镜将不再把它们视为已确认引用。'"
+      :title="pendingLockState ? (pendingLockProfiles.length > 1 ? `确认使用 ${pendingLockProfiles.length} 项资产` : '确认使用当前版本') : `取消确认 ${pendingLockProfiles.length} 项资产`"
+      :description="pendingLockState ? (riskyPendingLockProfiles.length ? `其中 ${riskyPendingLockProfiles.length} 项仍存在尚未解决的质量偏差，确认后可能影响后续分镜一致性。` : '确认后，当前图片与资产设定将作为后续分镜和视频生成的统一引用。') : '取消后这些资产可重新编辑和生成，后续分镜将不再把它们视为已确认引用。'"
       width="sm"
       @update:open="showLockConfirm = $event"
     >
@@ -2108,7 +2090,7 @@ onBeforeUnmount(() => {
           <Unlock v-else-if="!pendingLockState" :size="23" />
         </div>
         <div class="lock-confirm-summary">
-          <span><b>{{ pendingLockProfiles.length }}</b>{{ pendingLockState ? '待锁定' : '待解除' }}</span>
+          <span><b>{{ pendingLockProfiles.length }}</b>{{ pendingLockState ? '待确认' : '待取消' }}</span>
           <span v-if="pendingLockState" :class="{ warning: riskyPendingLockProfiles.length }"><b>{{ riskyPendingLockProfiles.length }}</b>质量风险</span>
         </div>
         <div v-if="pendingLockState && riskyPendingLockProfiles.length" class="lock-risk-list">
@@ -2116,7 +2098,7 @@ onBeforeUnmount(() => {
         </div>
         <div v-if="lockConfirmError" class="generation-submit-error"><AlertTriangle :size="15" />{{ lockConfirmError }}</div>
       </div>
-      <template #footer><LivButton variant="secondary" :disabled="actionBusy === 'batch-lock'" @click="showLockConfirm = false">取消</LivButton><LivButton variant="primary" :loading="Boolean(actionBusy)" @click="applyProfileLocks(pendingLockProfiles, pendingLockState)"><template #icon><component :is="pendingLockState ? LockKeyhole : Unlock" :size="16" /></template>{{ pendingLockState ? (riskyPendingLockProfiles.length ? '确认风险并锁定' : '确认全部锁定') : '确认取消全部锁定' }}</LivButton></template>
+      <template #footer><LivButton variant="secondary" :disabled="actionBusy === 'batch-lock'" @click="showLockConfirm = false">取消</LivButton><LivButton variant="primary" :loading="Boolean(actionBusy)" @click="applyProfileLocks(pendingLockProfiles, pendingLockState)"><template #icon><component :is="pendingLockState ? LockKeyhole : Unlock" :size="16" /></template>{{ pendingLockState ? (riskyPendingLockProfiles.length ? '了解风险并确认' : '确认全部使用') : '确认取消使用' }}</LivButton></template>
     </LivDialog>
 
     <!-- 超时或供应商异常已经自动退款；重新执行仍展示最新报价并要求用户明确确认。 -->
@@ -2174,16 +2156,13 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.primary-asset-checklist { display: flex; align-items: center; gap: 12px; margin: 14px 0; padding: 14px 16px; border: 1px solid #dbe7f7; border-radius: 14px; background: #f8fbff; }
+.primary-asset-checklist > div { margin-right: auto; }
+.primary-asset-checklist > div span { display: block; color: #64748b; font-size: 12px; }
+.primary-asset-checklist > div strong { display: block; margin-top: 3px; color: #172033; font-size: 14px; }
+.primary-asset-checklist > button { display: inline-flex; align-items: center; gap: 6px; min-height: 34px; padding: 0 12px; border: 1px solid #d6e2f1; border-radius: 10px; background: #fff; color: #52637c; font-weight: 700; }
+.primary-asset-checklist > button.ready { border-color: #bbefd2; background: #effbf4; color: #16834d; }
 .asset-workspace{--blue:#1768ff;--line:#e7edf6;--muted:#738096;--ink:#172033;position:relative;color:var(--ink);font-family:Inter,"PingFang SC","Microsoft YaHei",sans-serif}.asset-loading,.asset-error{min-height:420px;display:flex;align-items:center;justify-content:center;gap:12px;border:1px solid var(--line);border-radius:20px;background:#fff;color:var(--muted)}.asset-error{flex-direction:column;text-align:center}.asset-error p{margin:6px 0}.asset-error button,.outline-button{border:1px solid #cbd8ec;background:#fff;border-radius:10px;padding:10px 16px;color:#245fc7}.spin{animation:spin 1s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}.notice-bar{display:flex;align-items:center;gap:8px;margin-bottom:14px;padding:11px 14px;border:1px solid #cfe0ff;border-radius:10px;background:#f4f8ff;color:#3674de;font-size:13px}.notice-bar button{margin-left:auto}.visual-bible-card{display:flex;align-items:center;gap:22px;padding:20px;border:1px solid var(--line);border-radius:16px;background:#fff;box-shadow:0 8px 28px rgba(20,45,90,.035)}.bible-reference{width:176px;height:104px;display:flex;align-items:center;justify-content:center;overflow:hidden;border-radius:12px;background:linear-gradient(135deg,#eaf2ff,#f4f7fb);color:var(--blue)}.bible-reference img{width:100%;height:100%;object-fit:cover}.bible-main{min-width:0;flex:1}.eyebrow{font-size:12px;color:#5270a4}.bible-main h2{margin:5px 0 12px;font-size:20px}.bible-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:20px}.bible-grid div{display:flex;flex-direction:column;gap:4px}.bible-grid span{font-size:12px;color:var(--muted)}.bible-grid b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;font-weight:600}.outline-button{display:inline-flex;align-items:center;justify-content:center;gap:7px;font-weight:600}.workspace-toolbar{display:flex;align-items:center;justify-content:space-between;margin-top:18px;border-bottom:1px solid var(--line)}.asset-tabs{display:flex}.asset-tabs button{display:flex;align-items:center;gap:8px;padding:16px 20px;border-bottom:2px solid transparent;color:#69768b;font-weight:600}.asset-tabs button.active{border-color:var(--blue);color:var(--blue)}.asset-tabs span{font-size:11px}.toolbar-actions{display:flex;align-items:center;gap:10px;padding-bottom:10px}.search-box,.filter-box{height:38px;display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:10px;padding:0 11px;background:#fff;color:#8792a5}.search-box input{width:160px;border:0;outline:0}.filter-box select{appearance:none;border:0;outline:0;background:transparent}.primary-small,.main-action{display:inline-flex;align-items:center;justify-content:center;gap:7px;border-radius:10px;background:var(--blue);padding:10px 16px;color:#fff;font-weight:700}.status-row{display:flex;gap:9px;padding:14px 0}.status-row button{border:1px solid var(--line);border-radius:99px;padding:7px 13px;background:#fff;color:var(--muted);font-size:12px}.status-row button.active{border-color:#bfd3ff;background:#f2f6ff;color:var(--blue)}.workspace-body{display:grid;grid-template-columns:minmax(0,1fr) 246px;gap:16px}.asset-grid-wrap{min-height:450px}.asset-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}.asset-card{min-width:0;border:1px solid var(--line);border-radius:15px;background:#fff;overflow:visible;transition:.2s}.asset-card:hover,.asset-card.selected{border-color:#86adff;box-shadow:0 10px 25px rgba(28,92,210,.08)}.asset-card.stale{border-color:#ffc7c7}.card-image{position:relative;height:190px;margin:9px;overflow:visible;border-radius:11px;background:#f3f6fa;cursor:pointer}.card-image>img{width:100%;height:100%;border-radius:11px;object-fit:cover}.image-empty{width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;border-radius:11px;background:linear-gradient(145deg,#f3f6fb,#eaf0f8);color:#9aa8ba}.select-check,.more-button,.image-lock{position:absolute;top:9px;width:28px;height:28px;display:flex;align-items:center;justify-content:center;border-radius:8px;background:rgba(255,255,255,.92);box-shadow:0 2px 10px rgba(0,0,0,.08)}.select-check{left:9px;color:transparent}.select-check.checked{background:var(--blue);color:#fff}.more-button{right:9px}.image-lock{right:44px;color:#31476a}.more-button.static{position:static}.card-menu{position:absolute;z-index:30;right:8px;top:42px;width:160px;padding:6px;border:1px solid var(--line);border-radius:10px;background:#fff;box-shadow:0 15px 34px rgba(20,35,60,.16)}.card-menu button,.card-menu label{display:flex;width:100%;align-items:center;gap:9px;padding:9px;border-radius:7px;font-size:13px;cursor:pointer}.card-menu button:hover,.card-menu label:hover{background:#f4f7fb}.card-menu input{display:none}.card-menu .danger{color:#df384c}.card-content{padding:5px 14px 14px}.card-title{display:flex;justify-content:space-between;gap:8px}.card-title h3{font-size:16px;font-weight:750}.card-title p{margin-top:4px;color:var(--muted);font-size:12px}.card-title>span{height:21px;border-radius:6px;background:#edf4ff;padding:3px 7px;color:var(--blue);font-size:10px}.card-description{display:-webkit-box;overflow:hidden;-webkit-box-orient:vertical;-webkit-line-clamp:2;min-height:42px;margin:10px 0 8px;color:#606d80;font-size:12px;line-height:21px}.tag-row{display:flex;flex-wrap:wrap;gap:5px;min-height:23px}.tag-row span{border-radius:5px;background:#f2f5f9;padding:4px 7px;color:#6d7889;font-size:10px}.tag-row .ai-tag{background:#fff6e6;color:#b06a00}.card-status{display:flex;align-items:center;justify-content:space-between;margin:11px 0;font-size:11px}.card-status button{color:#4779cc}.status-locked{color:#237957}.status-to_confirm{color:#b66c00}.status-failed,.status-stale{color:#df4054}.status-generating,.status-queued{color:var(--blue)}.card-actions{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}.card-actions button{border:1px solid var(--line);border-radius:8px;padding:8px 5px;font-size:11px;font-weight:600}.card-actions .primary{border-color:var(--blue);background:var(--blue);color:#fff}.card-actions button:disabled{opacity:.45}.consistency-panel{align-self:start;padding:16px;border:1px solid var(--line);border-radius:15px;background:#fff}.panel-title{display:flex;align-items:flex-start;justify-content:space-between}.panel-title h3{font-size:15px}.panel-title p{margin-top:4px;color:var(--muted);font-size:10px}.score-ring{width:118px;height:118px;display:flex;flex-direction:column;align-items:center;justify-content:center;margin:24px auto;border:9px solid #dbe7ff;border-top-color:var(--blue);border-radius:50%}.score-ring strong{font-size:25px;color:var(--blue)}.score-ring span{font-size:10px;color:var(--muted)}.score-list>div{display:flex;justify-content:space-between;padding:9px 0;border-bottom:1px solid #f0f3f7;font-size:12px}.panel-empty{display:flex;flex-direction:column;align-items:center;padding:38px 10px;text-align:center;color:#8190a5}.panel-empty h4{margin:10px 0 5px;color:var(--ink)}.panel-empty p{font-size:11px;line-height:19px}.panel-empty.compact{padding:24px 8px}.readiness-box{margin-top:14px;padding:13px;border-radius:10px;background:#f6f8fc}.readiness-box h4{font-size:13px}.readiness-box p,.readiness-box li{margin-top:7px;color:var(--muted);font-size:10px;line-height:17px}.ready-text{display:flex;align-items:center;gap:6px;margin-top:9px;color:#25805d;font-size:11px}.empty-state{min-height:420px;display:flex;flex-direction:column;align-items:center;justify-content:center;border:1px dashed #d6dfed;border-radius:15px;color:#8996a9}.empty-state h3{margin:12px 0 5px;color:var(--ink)}.empty-state p{font-size:12px}.asset-footer{position:sticky;z-index:20;bottom:0;display:flex;align-items:center;justify-content:flex-end;gap:12px;margin-top:18px;padding:13px 18px;border:1px solid var(--line);border-radius:13px;background:rgba(255,255,255,.96);box-shadow:0 -8px 25px rgba(21,43,80,.07);backdrop-filter:blur(12px)}.asset-footer>div{display:flex;flex-direction:column;margin-right:auto}.asset-footer span{margin-top:3px;color:var(--muted);font-size:11px}.secondary-action{display:flex;align-items:center;gap:7px;border:1px solid #b7ceff;border-radius:10px;padding:10px 16px;color:var(--blue);font-weight:700}.main-action:disabled{cursor:not-allowed;background:#aebbd0}.detail-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:15px}.detail-head>button:first-child{display:flex;align-items:center;gap:6px;color:#5c6d84;font-size:13px}.detail-head>div{display:flex;align-items:center;gap:10px}.detail-head h2{font-size:20px}.detail-layout{display:grid;grid-template-columns:220px minmax(0,1fr) 290px;gap:14px}.detail-list,.detail-editor,.detail-advice section{border:1px solid var(--line);border-radius:15px;background:#fff}.detail-list{padding:10px}.detail-list-title{padding:8px 8px 12px;font-weight:700}.detail-list>button{width:100%;display:flex;align-items:center;gap:10px;margin-bottom:7px;padding:8px;border:1px solid transparent;border-radius:10px;text-align:left}.detail-list>button.active{border-color:#a5c1ff;background:#f3f7ff}.detail-list img,.detail-list>button>span{width:48px;height:48px;display:flex;align-items:center;justify-content:center;border-radius:8px;background:#eef2f7;object-fit:cover}.detail-list strong,.detail-list small{display:block}.detail-list small{margin-top:5px;color:var(--muted);font-size:10px}.detail-editor{padding:18px}.editor-top{display:grid;grid-template-columns:330px 1fr;gap:20px}.hero-image{position:relative;height:270px;overflow:hidden;border-radius:13px;background:#f2f5f9}.hero-image>img{width:100%;height:100%;object-fit:contain}.hero-image>label{position:absolute;bottom:10px;left:10px;display:flex;align-items:center;gap:6px;border-radius:8px;background:rgba(26,38,58,.72);padding:8px 10px;color:#fff;font-size:11px}.hero-image input{display:none}.base-fields,.field-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.base-fields label,.field-grid label{display:flex;flex-direction:column;gap:6px;color:#536177;font-size:11px}.base-fields input,.base-fields select,.field-grid input,.field-grid textarea{width:100%;border:1px solid var(--line);border-radius:8px;padding:10px 11px;outline:none;color:var(--ink);resize:vertical}.check-line{grid-column:1/-1;display:flex!important;flex-direction:row!important;align-items:center}.check-line input{width:auto}.field-grid{margin-top:18px}.field-grid .wide{grid-column:1/-1}.evidence-box{display:flex;justify-content:space-between;gap:15px;margin-top:15px;padding:13px;border:1px solid #e2e9f4;border-radius:10px;background:#f8faff}.evidence-box h4{font-size:12px}.evidence-box p{margin-top:6px;color:var(--muted);font-size:11px;line-height:19px}.evidence-box>span{align-self:flex-start;white-space:nowrap;border-radius:6px;padding:4px 7px;font-size:10px}.source-script{background:#e9f8f1;color:#237957}.source-ai{background:#fff4df;color:#a66a00}.version-strip{margin-top:16px}.version-strip h4{margin-bottom:9px}.version-strip button{position:relative;width:92px;height:74px;margin-right:8px;border:2px solid transparent;border-radius:9px;overflow:hidden}.version-strip button.active{border-color:var(--blue)}.version-strip img{width:100%;height:100%;object-fit:cover}.version-strip span{position:absolute;bottom:0;left:0;right:0;background:rgba(18,31,51,.62);padding:3px;color:#fff;font-size:9px}.editor-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:18px}.detail-advice{display:flex;flex-direction:column;gap:12px}.detail-advice section{padding:16px}.suggestion-copy{margin-top:12px;border-radius:10px;background:#f3f7ff;padding:12px;color:#53647d;font-size:12px;line-height:21px}.detail-advice section>h3{font-size:14px}.detail-advice section>p{margin:8px 0 13px;color:var(--muted);font-size:11px;line-height:19px}.big-score{margin:12px 0;font-size:30px;font-weight:800;color:var(--blue)}.dimension{display:grid;grid-template-columns:64px 1fr 30px;align-items:center;gap:7px;margin:9px 0;font-size:10px}.dimension>div{height:5px;border-radius:5px;background:#edf1f6;overflow:hidden}.dimension i{display:block;height:100%;background:var(--blue)}.issue-list{margin:10px 0;color:#b94b57;font-size:10px;line-height:18px}.full{width:100%}.modal-mask{position:fixed;z-index:120;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(14,25,44,.42);backdrop-filter:blur(3px)}.confirm-modal,.bible-modal{position:relative;width:min(460px,calc(100vw - 32px));border-radius:18px;background:#fff;padding:26px;box-shadow:0 30px 80px rgba(7,20,43,.24)}.bible-modal{width:min(720px,calc(100vw - 32px))}.modal-close{position:absolute;top:15px;right:15px}.modal-icon{color:var(--blue)}.confirm-modal h3,.bible-modal h3{margin:10px 0 6px;font-size:20px}.confirm-modal>p,.bible-modal>p{color:var(--muted);font-size:12px}.cost-box{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:18px 0}.cost-box>div{display:flex;flex-direction:column;gap:5px;border-radius:10px;background:#f5f8fd;padding:13px}.cost-box span{font-size:11px;color:var(--muted)}.cost-box strong{font-size:18px}.confirm-modal ul{margin:0 0 14px;color:#bd4656;font-size:11px}.bible-modal .field-grid{margin:20px 0}.bible-modal .main-action{margin-top:4px}
-/*
-  useTour 只管理步骤状态，不接管遮罩层。这里用全视窗遮罩锁住非当前目标区域，
-  并将当前目标和说明卡片提升到遮罩之上，保证引导期间不会误触其它业务操作。
-*/
-.asset-guide-mask-panel{position:fixed;z-index:10000;background:rgba(29,106,190,.42);backdrop-filter:blur(2px);cursor:default}
-.asset-guide-highlight{position:relative!important;z-index:1!important;border-radius:12px;box-shadow:0 0 0 4px rgba(255,255,255,.9),0 0 0 8px rgba(23,104,255,.48),0 14px 32px rgba(13,65,138,.3);transition:box-shadow .2s ease}
-.asset-guide-focus-blocker{position:fixed;z-index:10001;border:2px solid #fff;border-radius:12px;box-shadow:0 0 0 4px rgba(23,104,255,.58),0 14px 32px rgba(13,65,138,.3);cursor:default}
-.asset-guide-popover{position:fixed;z-index:10002;width:min(340px,calc(100vw - 32px));padding:15px 16px 14px;border:1px solid #bfd5ff;border-radius:16px;background:#fff;box-shadow:0 22px 60px rgba(12,48,100,.25)}
-.asset-guide-popover__head{display:flex;align-items:center;justify-content:space-between;gap:12px;color:#1768ff;font-size:12px;font-weight:700}.asset-guide-popover h3{margin:12px 0 7px;color:#172033;font-size:17px;font-weight:750}.asset-guide-popover p{margin:0;color:#62728a;font-size:13px;line-height:21px}.asset-guide-popover__actions{display:flex;align-items:center;justify-content:space-between;margin-top:15px}
 @media(max-width:1350px){.asset-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.bible-grid{grid-template-columns:1fr 1fr}.detail-layout{grid-template-columns:190px minmax(0,1fr)}.detail-advice{grid-column:1/-1;display:grid;grid-template-columns:repeat(3,1fr)}}@media(max-width:980px){.visual-bible-card{align-items:flex-start;flex-wrap:wrap}.bible-reference{width:140px}.workspace-toolbar{align-items:flex-start;flex-direction:column}.toolbar-actions{width:100%;flex-wrap:wrap}.workspace-body{grid-template-columns:1fr}.consistency-panel{order:-1}.asset-grid{grid-template-columns:1fr}.detail-layout{grid-template-columns:1fr}.detail-list{display:none}.detail-advice{display:flex;grid-column:auto}.editor-top{grid-template-columns:1fr}.asset-footer{flex-wrap:wrap}}
 
 /* 顶部批量操作与底部选中项操作使用相同的 Nuxt 按钮规格，仅通过位置表达范围差异。 */

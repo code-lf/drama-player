@@ -805,7 +805,7 @@ const storyboardProgressTitle = computed(() => {
 })
 const storyboardProgressSubtitle = computed(() => {
   if (currentStoryboardRun.value.status === 'failed') {
-    return currentStoryboardRun.value.errorMessage || '请查看后端日志后重试当前分镜任务。'
+    return currentStoryboardRun.value.userMessage || '分镜规划未能完整完成，已生成内容会继续保留，请重试失败步骤。'
   }
   const currentEpisode = selectedStoryboardEpisode.value
   if (!currentEpisode) return 'Agent 正在进行分镜策划，请耐心等待…'
@@ -3539,9 +3539,12 @@ function goBack(): void {
 function selectStep(step: WorkflowStepKey): void {
   // 流程页按步骤推进：只能回看已确认步骤，未来步骤必须通过底部确认按钮逐步进入。
   if (!canVisitStep(step)) {
-    if (step === 'setting' && isScriptAnalysisReady.value && !hasConfirmedScriptVersion.value) {
-      infoMessage.value = '请先在剧本页确认当前版本并完成资产资料提炼，再进入资产制作。'
-    }
+    if (!isScriptAnalysisReady.value) infoMessage.value = '剧本仍在解析中，完成后才能进入后续制作。'
+    else if (!hasConfirmedScriptVersion.value) infoMessage.value = '请先确认当前剧本版本；确认后系统会准备主要资产。'
+    else if (!areSettingsReady.value) infoMessage.value = '主要资产尚未准备齐全，请完成页面任务清单后再进入分镜。'
+    else if (!hasStoryboards.value) infoMessage.value = '尚未完成分镜规划，请先生成可制作镜头。'
+    else infoMessage.value = '当前步骤仍有待处理内容，请先完成页面中的主操作。'
+    void nextTick(() => document.querySelector<HTMLElement>('[data-current-workflow-panel]')?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
     return
   }
   activeStep.value = step
@@ -3636,6 +3639,13 @@ function stepStatus(step: WorkflowStepKey): 'done' | 'active' | 'locked' {
   if (step === 'storyboard' && hasStoryboards.value) return 'done'
   if (step === 'video' && workflowRunInfo.value?.status === 'success') return 'done'
   return 'locked'
+}
+
+function stepStateLabel(step: WorkflowStepKey): string {
+  const status = stepStatus(step)
+  if (status === 'active') return '进行中'
+  if (status === 'done') return '已完成'
+  return canVisitStep(step) ? '尚未开始' : '需要处理'
 }
 
 function formatVoiceFileSize(sizeBytes: number): string {
@@ -4153,8 +4163,7 @@ onBeforeUnmount(() => {
           <template v-for="(step, index) in workflowSteps" :key="step.key">
             <button
               type="button"
-               class="group flex min-w-[80px] flex-col items-center gap-1 text-center transition disabled:cursor-not-allowed"
-              :disabled="!canVisitStep(step.key)"
+               class="group flex min-w-[80px] flex-col items-center gap-1 text-center transition"
               :class="!canVisitStep(step.key) ? 'opacity-55' : ''"
               @click="selectStep(step.key)"
             >
@@ -4169,7 +4178,7 @@ onBeforeUnmount(() => {
                 {{ index + 1 }}
               </span>
                <span class="text-[14px] font-semibold leading-none">{{ step.label }}</span>
-               <span class="text-[10px] text-textMuted">{{ step.hint }}</span>
+               <span class="text-[10px] text-textMuted">{{ stepStateLabel(step.key) }}</span>
              </button>
 
              <span v-if="index < workflowSteps.length - 1" class="h-px w-6 bg-[#d7dfef] xl:w-10" />
@@ -4219,6 +4228,7 @@ onBeforeUnmount(() => {
         <DramaScriptWorkspace
           ref="scriptWorkspaceRef"
           v-if="activeStep === 'script'"
+          data-current-workflow-panel
           v-model:selected-episode-no="selectedEpisodeNo"
           :project-detail="projectDetail"
           :is-busy="isBusy"
@@ -4515,6 +4525,7 @@ onBeforeUnmount(() => {
 
         <DramaAssetWorkspace
           v-else-if="activeStep === 'setting'"
+          data-current-workflow-panel
           :project-id="currentProjectId"
           :cover-image-url="scriptCoverUrl"
           @continue="enterStoryboardFromAssetWorkspace"
@@ -4914,6 +4925,7 @@ onBeforeUnmount(() => {
 
         <DramaStoryboardWorkspace
           v-else-if="activeStep === 'storyboard'"
+          data-current-workflow-panel
           :project-id="currentProjectId"
           :episode-no="selectedEpisodeNo"
           :episode-count="storyboardEpisodeItems.length"
@@ -5751,6 +5763,7 @@ onBeforeUnmount(() => {
         </section>
 
         <DramaEpisodeCutWorkspace
+          data-current-workflow-panel
           v-else
           :project-id="currentProjectId"
           :episode-no="selectedEpisodeNo"

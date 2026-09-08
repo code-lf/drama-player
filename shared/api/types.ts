@@ -88,6 +88,8 @@ export interface DramaProjectCreatePayload {
   aspectRatio?: string
   resolution?: string
   episodeCount?: number
+  /** 一次首页创建动作稳定复用同一键，避免网络重试产生重复项目。 */
+  idempotencyKey?: string
 }
 
 export interface DramaScriptIngestPayload {

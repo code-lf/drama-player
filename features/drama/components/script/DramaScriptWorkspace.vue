@@ -222,6 +222,13 @@ const emit = defineEmits<{
 }>()
 
 const activeTab = ref<ScriptTabKey>('overview')
+// 普通用户默认只看是否能继续制作；人物关系、分集诊断和优化建议按需展开。
+const showProfessionalAnalysis = ref(false)
+
+function toggleProfessionalAnalysis(): void {
+  showProfessionalAnalysis.value = !showProfessionalAnalysis.value
+  if (!showProfessionalAnalysis.value) activeTab.value = 'overview'
+}
 const characterReviewMode = ref<CharacterReviewMode>('system')
 const episodeListFilter = ref<EpisodeListFilter>('all')
 const episodeReviewScope = ref<EpisodeReviewScope>('season')
@@ -3729,10 +3736,23 @@ defineExpose({ openAllSuggestions })
           <button type="button" class="rounded-[10px] bg-[#f59e0b] px-4 py-2 text-xs font-semibold text-white" :disabled="reReviewQuoteBusy" @click="reReviewConfirmVisible = true">{{ reReviewButtonLabel }}</button>
         </div>
       </div>
-      <div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_520px]">
+      <div class="mb-5 flex flex-wrap items-center justify-between gap-4 rounded-[20px] border border-[#dbeafe] bg-[#f8fbff] px-5 py-4">
+        <div class="flex items-start gap-3">
+          <CheckCircle2 v-if="currentAnalysisRun.structureReady" class="mt-0.5 h-5 w-5 shrink-0 text-[#16a34a]" />
+          <AlertTriangle v-else class="mt-0.5 h-5 w-5 shrink-0 text-[#dc2626]" />
+          <div>
+            <p class="font-semibold text-[#0f172a]">{{ currentAnalysisRun.structureReady ? '可继续制作' : '需要处理后继续' }}</p>
+            <p class="mt-1 text-sm leading-6 text-[#64748b]">{{ currentAnalysisRun.structureReady ? '剧本基础结构已就绪，专业体检不会阻断后续资产制作。' : '请先完成剧本基础解析，已有内容会继续保留。' }}</p>
+          </div>
+        </div>
+        <button type="button" class="rounded-[10px] border border-[#bfdbfe] bg-white px-4 py-2 text-sm font-semibold text-[#0f67ff]" @click="toggleProfessionalAnalysis">
+          {{ showProfessionalAnalysis ? '收起专业分析' : '查看专业分析' }}
+        </button>
+      </div>
+      <div class="grid gap-6" :class="showProfessionalAnalysis ? 'xl:grid-cols-[minmax(0,1fr)_520px]' : 'grid-cols-1'">
         <main class="min-w-0">
           <div class="rounded-[28px] border border-[#dfe8f6] bg-white p-6 shadow-[0_18px_60px_rgba(15,23,42,0.05)]">
-            <div class="border-b border-[#e2e8f0]">
+            <div v-if="showProfessionalAnalysis" class="border-b border-[#e2e8f0]">
               <div class="flex flex-wrap gap-2">
                 <button
                   v-for="tab in tabItems"
@@ -4118,7 +4138,7 @@ defineExpose({ openAllSuggestions })
           </div>
         </main>
 
-        <aside class="space-y-4">
+        <aside v-if="showProfessionalAnalysis" class="space-y-4">
           <div class="sticky top-4 rounded-[30px] border border-[#dfe8f6] bg-white p-7 shadow-[0_18px_60px_rgba(15,23,42,0.05)]">
             <div class="flex items-center justify-between">
               <h3 class="text-xl font-semibold">{{ reviewPanelTitle }}</h3>

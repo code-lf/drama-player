@@ -73,6 +73,7 @@ function isProjectSelected(projectId: string): boolean {
 }
 
 function projectProgress(project: DramaProjectCard): number {
+  if (project.workflowSummary) return project.workflowSummary.progressPercent
   // 项目列表展示四阶段总进度：剧本 25%、资产 50%、分镜 75%、成片 100%。
   // 后端资产阶段沿用 roles/scenes/props 三个历史枚举，必须统一折叠成“资产”，
   // 否则已经进入第二阶段的项目会因为没有分镜数据而错误显示为 0%。
@@ -100,6 +101,10 @@ function projectStatusGroup(project: DramaProjectCard): ProjectStatusFilter {
 
 function projectStatusLabel(project: DramaProjectCard): string {
   if (project.status === 'archived') return '已归档'
+  if (project.workflowSummary?.state === 'completed') return '已完成'
+  if (project.workflowSummary?.state === 'failed') return '需要处理'
+  if (project.workflowSummary?.state === 'running') return '进行中'
+  if (project.workflowSummary?.state === 'needs_action') return '需要处理'
   if (project.status === 'published' || projectProgress(project) === 100) return '已完成'
   if (project.status === 'analyzing') return '解析中'
   if (project.status === 'generating') return '创作中'
@@ -114,6 +119,7 @@ function projectStatusClass(project: DramaProjectCard): string {
 }
 
 function projectProgressLabel(project: DramaProjectCard): string {
+  if (project.workflowSummary) return project.workflowSummary.progressLabel
   const stage = String(project.currentStage || '').toLowerCase()
   if (project.status === 'analyzing') return '剧本解析中'
   if (['analysis', 'script'].includes(stage)) return '剧本解析与确认中'

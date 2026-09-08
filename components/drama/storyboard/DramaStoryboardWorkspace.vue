@@ -505,6 +505,7 @@ function continuityCheckTooltip(kind: ContinuityCheckKind) {
 }
 
 const overviewGenerationRows = computed(() => (workspace.value?.rows || []).filter(row => row.videoStatus === 'idle'))
+const overviewEligibleGenerationRows = computed(() => overviewGenerationRows.value.filter(canPrepareWorkbenchGeneration))
 const selectableRows = computed(() => activeRows.value.filter(row => row.videoStatus === 'idle'))
 const allSelectableSelected = computed(() => (
   selectableRows.value.length > 0
@@ -2596,6 +2597,16 @@ function startMicroEditPolling(editId: string): void {
             <small v-if="batchPanelBlockedCount > 0" class="batch-panel__scope-note">
               另有 {{ batchPanelBlockedCount }} 个镜头尚未满足提交条件，暂不计入时长和点数
             </small>
+            <button
+              class="button button--primary batch-panel__primary-action"
+              type="button"
+              :disabled="!overviewEligibleGenerationRows.length || actionBusy === 'estimate-batch'"
+              @click="prepareGeneration(overviewEligibleGenerationRows.map(row => row.id))"
+            >
+              <LoaderCircle v-if="actionBusy === 'estimate-batch'" :size="15" class="spin" />
+              <CreditIcon v-else size="md" class="button-credit-icon" />
+              生成全部可制作视频片段
+            </button>
           </div>
         </header>
 
@@ -2680,9 +2691,9 @@ function startMicroEditPolling(editId: string): void {
         <div v-if="planningFailed && !workspace.rows.length" class="workspace-state workspace-state--compact workspace-state--error">
           <AlertTriangle :size="25" />
           <strong>{{ planningCanResumeFromDetail ? `第 ${currentEpisodeNo} 集导演规划已恢复` : `第 ${currentEpisodeNo} 集分镜规划失败` }}</strong>
-          <span>{{ currentEpisodeStage.errorMessage || workspace.run.errorMessage || '当前规划任务未完成，可直接重试，不会影响已确认剧本和资产。' }}</span>
+          <span>{{ workspace.run.userMessage || '当前规划任务未完整完成；已完成镜头已保留，可从失败步骤继续。' }}</span>
           <button class="button button--primary" type="button" @click="requestStoryboardPlanning">
-            <RotateCcw :size="16" />{{ planningCanResumeFromDetail ? '继续生成镜头细化' : '重新规划分镜' }}
+            <RotateCcw :size="16" />{{ workspace.run.retryAction || (planningCanResumeFromDetail ? '继续生成镜头细化' : '重试失败步骤') }}
           </button>
         </div>
 
@@ -2771,7 +2782,7 @@ function startMicroEditPolling(editId: string): void {
     <button class="button button--primary" type="button" :disabled="!selectedIds.length || actionBusy === 'estimate-batch'" @click="prepareGeneration(selectedIds)">
       <LoaderCircle v-if="actionBusy === 'estimate-batch'" :size="15" class="spin" />
       <CreditIcon v-else size="md" class="button-credit-icon" />
-      批量生成
+      生成选中视频片段
     </button>
   </div>
 </div>
@@ -3080,7 +3091,7 @@ function startMicroEditPolling(editId: string): void {
                 <div class="generation-bar__summary">
                   <span class="generation-bar__icon"><Film :size="17" /></span>
                   <div>
-                    <strong>生成镜头</strong>
+                    <strong>生成当前视频片段</strong>
                     <small>{{ generationPlanHint(selectedRow) }}</small>
                   </div>
                 </div>
@@ -3092,7 +3103,7 @@ function startMicroEditPolling(editId: string): void {
                     :disabled="!canPrepareWorkbenchGeneration(selectedRow)"
                     @click="prepareWorkbenchGeneration"
                   >
-                    <template #icon><CreditIcon size="lg" class="generation-credit-icon" /></template>生成镜头
+                    <template #icon><CreditIcon size="lg" class="generation-credit-icon" /></template>生成当前视频片段
                   </LivButton>
                 </div>
               </div>
@@ -3673,6 +3684,7 @@ function startMicroEditPolling(editId: string): void {
 .batch-panel__total-duration { margin-left: auto; padding: 4px 8px; border: 1px solid #cdddf6; border-radius: 999px; background: rgba(255,255,255,.76); color: #667085; font-size: 11px; white-space: nowrap; }
 .batch-panel__total-duration b { margin-left: 3px; color: #245fae; font-size: 12px; }
 .batch-panel__scope-note { grid-column: 1 / -1; color: #8a6116; font-size: 11px; line-height: 1.45; }
+.batch-panel__primary-action { grid-column: 1 / -1; width: 100%; }
 .icon-box, .dialog-icon { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 8px; background: var(--sb-blue-soft); color: var(--sb-blue); }
 .batch-metrics { display: grid; grid-column: 1 / -1; grid-template-columns: repeat(3, max-content); align-items: center; justify-content: space-between; column-gap: 18px; margin: 0; padding-top: 10px; border-top: 1px solid #dbe7f8; color: var(--sb-muted); font-size: 13px; }
 .batch-metric, .batch-credit { display: inline-flex; align-items: center; gap: 4px; min-height: 20px; white-space: nowrap; }
