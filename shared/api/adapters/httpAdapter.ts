@@ -17,6 +17,7 @@ import type {
   ProductImageCreditPreview,
   ProductImageGeneratePayload,
   ProductImageGenerateResult,
+  ProductImageHistoryBatch,
   ProductImageResult,
   ProductImageTemplate,
   ProductSellingPoint
@@ -549,6 +550,11 @@ interface BackendProductSellingPointResponse {
   index: number
   title: string
   description: string
+  purpose?: string
+  visual_prompt?: string
+  overlay_text?: string
+  font_style?: string
+  plan_source?: 'ai' | 'fallback'
 }
 
 interface BackendProductImageCreditPreviewResponse {
@@ -571,6 +577,7 @@ interface BackendProductImageResultResponse {
   provider: string
   model: string
   status: string
+  is_favorite?: boolean
 }
 
 interface BackendProductImageGenerateResponse {
@@ -584,6 +591,28 @@ interface BackendProductImageGenerateResponse {
   split_selling_points: boolean
   selling_points: BackendProductSellingPointResponse[]
   results: BackendProductImageResultResponse[]
+}
+
+interface BackendProductImageHistoryBatchResponse {
+  id: string
+  workspace_mode: 'product' | 'poster' | 'edit' | 'free'
+  creation_method: 'single' | 'marketing'
+  source_prompt: string
+  compiled_prompt: string
+  provider: string
+  model: string
+  required_credits: number
+  count: number
+  status: string
+  aspect_ratio: string
+  resolution: string
+  style: string
+  negative_prompt: string
+  reference_names: string[]
+  selling_points: BackendProductSellingPointResponse[]
+  results: BackendProductImageResultResponse[]
+  created_at: string
+  updated_at: string
 }
 
 interface BackendProductImageTemplateResponse {
@@ -1378,7 +1407,12 @@ function mapProductSellingPoint(raw: BackendProductSellingPointResponse): Produc
   return {
     index: raw.index || 1,
     title: raw.title || '',
-    description: raw.description || ''
+    description: raw.description || '',
+    purpose: raw.purpose || '',
+    visualPrompt: raw.visual_prompt || '',
+    overlayText: raw.overlay_text || '',
+    fontStyle: raw.font_style || '',
+    planSource: raw.plan_source || 'fallback'
   }
 }
 
@@ -1404,7 +1438,32 @@ function mapProductImageResult(raw: BackendProductImageResultResponse): ProductI
     sellingPoint: raw.selling_point ? mapProductSellingPoint(raw.selling_point) : null,
     provider: raw.provider || '',
     model: raw.model || '',
-    status: raw.status || ''
+    status: raw.status || '',
+    isFavorite: Boolean(raw.is_favorite)
+  }
+}
+
+function mapProductImageHistoryBatch(raw: BackendProductImageHistoryBatchResponse): ProductImageHistoryBatch {
+  return {
+    id: raw.id || '',
+    workspaceMode: raw.workspace_mode || 'product',
+    creationMethod: raw.creation_method || 'single',
+    sourcePrompt: raw.source_prompt || '',
+    compiledPrompt: raw.compiled_prompt || '',
+    provider: raw.provider || '',
+    model: raw.model || '',
+    requiredCredits: raw.required_credits || 0,
+    count: raw.count || 0,
+    status: raw.status || '',
+    aspectRatio: raw.aspect_ratio || '1:1',
+    resolution: raw.resolution || '1024',
+    style: raw.style || '',
+    negativePrompt: raw.negative_prompt || '',
+    referenceNames: raw.reference_names || [],
+    sellingPoints: (raw.selling_points || []).map(mapProductSellingPoint),
+    results: (raw.results || []).map(mapProductImageResult),
+    createdAt: raw.created_at || '',
+    updatedAt: raw.updated_at || ''
   }
 }
 
@@ -1435,7 +1494,9 @@ function mapProductImageTemplate(raw: BackendProductImageTemplateResponse): Prod
 function buildProductImagePayload(payload: ProductImageGeneratePayload) {
   // 商品图请求统一在这里转成后端 snake_case，页面组件只维护 camelCase。
   return {
+    batch_id: payload.batchId || '',
     prompt: payload.prompt,
+    source_prompt: payload.sourcePrompt || payload.prompt,
     model: payload.model || '',
     template_id: payload.templateId || '',
     count: payload.count,
@@ -1443,7 +1504,26 @@ function buildProductImagePayload(payload: ProductImageGeneratePayload) {
     aspect_ratio: payload.aspectRatio,
     resolution: payload.resolution,
     style: payload.style,
+    // 场景化字段用于后端编译海报文字、营销套图和图片修改的专用提示词。
+    workspace_mode: payload.workspaceMode || 'product',
+    creation_method: payload.creationMethod || 'single',
+    poster_theme: payload.posterTheme || '',
+    poster_title: payload.posterTitle || '',
+    poster_subtitle: payload.posterSubtitle || '',
+    poster_activity: payload.posterActivity || '',
+    poster_font_style: payload.posterFontStyle || '',
+    edit_method: payload.editMethod || '',
     negative_prompt: payload.negativePrompt || '',
+    planned_selling_points: (payload.plannedSellingPoints || []).map(item => ({
+      index: item.index,
+      title: item.title,
+      description: item.description,
+      purpose: item.purpose || '',
+      visual_prompt: item.visualPrompt || '',
+      overlay_text: item.overlayText || '',
+      font_style: item.fontStyle || '',
+      plan_source: item.planSource || 'fallback'
+    })),
     reference_images: (payload.referenceImages || []).map((item) => ({
       name: item.name,
       data_url: item.dataUrl
@@ -2704,7 +2784,13 @@ export const httpAdapter: ApiAdapter = {
   async splitProductSellingPoints(payload) {
     const response = await request<BackendProductSellingPointResponse[]>('/product-image/selling-points', {
       method: 'POST',
-      body: payload
+      body: {
+        batch_id: payload.batchId || '',
+        prompt: payload.prompt,
+        count: payload.count,
+        style: payload.style || '电商主图',
+        aspect_ratio: payload.aspectRatio || '1:1'
+      }
     })
     return ok((response || []).map(mapProductSellingPoint))
   },
@@ -2715,6 +2801,32 @@ export const httpAdapter: ApiAdapter = {
       body: buildProductImagePayload(payload)
     })
     return ok(mapProductImageGenerateResult(response))
+  },
+
+  async listProductImageHistory(params) {
+    const query = new URLSearchParams()
+    if (params?.favoritesOnly) query.set('favorites_only', 'true')
+    if (params?.limit) query.set('limit', String(params.limit))
+    const response = await request<BackendProductImageHistoryBatchResponse[]>(`/product-image/history${query.size ? `?${query.toString()}` : ''}`)
+    return ok((response || []).map(mapProductImageHistoryBatch))
+  },
+
+  async getProductImageHistory(batchId) {
+    const response = await request<BackendProductImageHistoryBatchResponse>(`/product-image/history/${encodeURIComponent(batchId)}`)
+    return ok(mapProductImageHistoryBatch(response))
+  },
+
+  async setProductImageFavorite(batchId, resultId, isFavorite) {
+    const response = await request<BackendProductImageResultResponse>(`/product-image/history/${encodeURIComponent(batchId)}/results/${encodeURIComponent(resultId)}/favorite`, {
+      method: 'PATCH',
+      body: { is_favorite: isFavorite }
+    })
+    return ok(mapProductImageResult(response))
+  },
+
+  async deleteProductImageHistory(batchId) {
+    const response = await request<{ batch_id: string; deleted: boolean }>(`/product-image/history/${encodeURIComponent(batchId)}`, { method: 'DELETE' })
+    return ok({ batchId: response.batch_id || batchId, deleted: Boolean(response.deleted) })
   },
 
   async getProductVideoHome() {

@@ -87,6 +87,8 @@ const voicePreset = ref('')
 const bibleDraft = ref<Omit<DramaVisualBible, 'id' | 'version_no' | 'source_script_version' | 'status'> | null>(null)
 let assetEventSource: EventSource | null = null
 let fallbackPollTimer: number | null = null
+// 资产工作台可能同时收到手动刷新、轮询和 SSE 刷新，只采纳最后一次请求，避免旧响应覆盖新状态。
+let workspaceLoadSequence = 0
 
 /**
  * 页面级任务反馈统一走顶部 Toast，避免横幅占用资产网格的有效工作空间。
@@ -804,10 +806,13 @@ function switchType(type: DramaWorkspaceAssetType): void {
 
 async function loadWorkspace(silent = false): Promise<void> {
   if (!props.projectId) return
+  const requestSequence = ++workspaceLoadSequence
   if (!silent) loading.value = true
   errorMessage.value = ''
   try {
-    workspace.value = await dramaService.getAssetWorkspace(props.projectId)
+    const nextWorkspace = await dramaService.getAssetWorkspace(props.projectId)
+    if (requestSequence !== workspaceLoadSequence) return
+    workspace.value = nextWorkspace
     // 页面内任务清单会持续展示缺项，不再用首次全屏遮罩打断用户操作。
     if (selectedProfile.value) {
       const fresh = workspace.value.assets.find(item => item.id === selectedProfile.value?.id)
@@ -816,9 +821,10 @@ async function loadWorkspace(silent = false): Promise<void> {
     }
     syncRealtimeTracking()
   } catch (error: any) {
+    if (requestSequence !== workspaceLoadSequence) return
     errorMessage.value = error?.message || '资产制作资料加载失败，请确认当前剧本版本已经完成确认。'
   } finally {
-    loading.value = false
+    if (!silent && requestSequence === workspaceLoadSequence) loading.value = false
   }
 }
 
@@ -1474,22 +1480,27 @@ onMounted(() => {
   loadWorkspace()
   // Esc 是桌面端大图预览的标准退出方式，监听只在当前工作台生命周期内存在。
   window.addEventListener('keydown', handlePreviewKeydown)
-  // 引导打开期间窗口缩放或页面滚动都需要重新锚定气泡，避免说明与目标脱节。
-  window.addEventListener('resize', updateAssetGuidePosition)
-  window.addEventListener('scroll', updateAssetGuidePosition, true)
 })
 onBeforeUnmount(() => {
   stopRealtimeTracking()
   window.removeEventListener('keydown', handlePreviewKeydown)
-  window.removeEventListener('resize', updateAssetGuidePosition)
-  window.removeEventListener('scroll', updateAssetGuidePosition, true)
 })
 </script>
 
 <template>
   <section class="asset-workspace">
-    <div v-if="loading" class="asset-loading">
-      <RefreshCw class="spin" :size="22" /> 正在根据已确认剧本编译制作资料…
+    <!-- 首个接口返回前还拿不到后端百分比，因此展示明确的连接步骤而不伪造进度。 -->
+    <div v-if="loading" class="asset-initial-loading" aria-live="polite" aria-busy="true">
+      <div class="initial-loading-icon"><RefreshCw class="spin" :size="28" /></div>
+      <h2>正在连接资产制作任务</h2>
+      <p>正在读取已确认剧本和后台任务状态，首次进入可能需要几秒。</p>
+      <ol>
+        <li class="is-running"><span><RefreshCw class="spin" :size="15" /></span><div><strong>读取任务状态</strong><small>确认后台是否已开始提炼</small></div><em>进行中</em></li>
+        <li><span>2</span><div><strong>恢复实时进度</strong><small>连接 Worker 检查点与自动刷新</small></div><em>等待</em></li>
+        <li><span>3</span><div><strong>展开资产工作台</strong><small>展示人物、场景和道具资料</small></div><em>等待</em></li>
+      </ol>
+      <button type="button" @click="loadWorkspace()"><RefreshCw :size="15" /> 重新连接</button>
+      <small>重新连接只刷新状态，不会重复提交任务或扣除积分。</small>
     </div>
 
     <div v-else-if="errorMessage" class="asset-error">
@@ -1921,7 +1932,7 @@ onBeforeUnmount(() => {
                       <div><span>按剧情使用需求生成</span><strong>{{ scenePlateLabel(selectedProfile) }}</strong></div>
                       <em v-if="selectedProfile.data.demand_evidence?.length">{{ selectedProfile.data.demand_evidence.length }} 处剧本依据</em>
                     </div>
-                    <p>该图片只负责当前空间视图；人物、动作和对白由后续导演方案与分镜视频承担，不会烘焙进可复用场景底图。</p>
+                    <p>该图片只负责当前空间视图；人物、动作和对白由后续镜头方案与分镜视频承担，不会烘焙进可复用场景底图。</p>
                     <div v-if="sceneRequiredElements(selectedProfile).length" class="scene-plate-required">
                       <b>画面必须具备</b>
                       <span v-for="item in sceneRequiredElements(selectedProfile)" :key="item">{{ item }}</span>
@@ -2550,6 +2561,14 @@ onBeforeUnmount(() => {
  * 完整资料提炼使用独立的资产页工作台，不再用一个无法说明进度的遮罩弹窗。
  * 背景光斑只做轻微漂浮，阶段卡片和进度条则由后端真实检查点驱动，兼顾“活跃感”和信息可信度。
  */
+.asset-initial-loading{min-height:560px!important;flex-direction:column!important;padding:48px 24px;text-align:center;background:radial-gradient(circle at 50% 8%,rgba(67,126,255,.11),transparent 30%),linear-gradient(180deg,#fff,#f8fbff)!important}
+.initial-loading-icon{display:flex;width:64px;height:64px;align-items:center;justify-content:center;border:1px solid #cfe0ff;border-radius:20px;background:#edf5ff;color:var(--blue);box-shadow:0 14px 34px rgba(23,104,255,.12)}
+.asset-initial-loading h2{margin:10px 0 0;color:var(--ink);font-size:24px;font-weight:760}.asset-initial-loading>p{margin:0;color:var(--muted);font-size:13px}
+.asset-initial-loading ol{width:min(620px,100%);margin:18px 0 8px;padding:0;border:1px solid #dfe8f6;border-radius:16px;background:rgba(255,255,255,.9);list-style:none;text-align:left;box-shadow:0 12px 32px rgba(35,71,133,.06)}
+.asset-initial-loading li{display:grid;grid-template-columns:36px minmax(0,1fr) auto;align-items:center;gap:12px;padding:14px 16px;border-bottom:1px solid #edf1f7}.asset-initial-loading li:last-child{border-bottom:0}
+.asset-initial-loading li>span{display:flex;width:30px;height:30px;align-items:center;justify-content:center;border-radius:50%;background:#f1f5f9;color:#94a3b8;font-size:12px;font-weight:700}.asset-initial-loading li.is-running>span{background:#eaf2ff;color:var(--blue)}
+.asset-initial-loading li strong,.asset-initial-loading li small{display:block}.asset-initial-loading li strong{color:#273247;font-size:13px}.asset-initial-loading li small{margin-top:3px;color:#8290a4;font-size:11px}.asset-initial-loading li em{color:#94a3b8;font-size:11px;font-style:normal}.asset-initial-loading li.is-running em{color:var(--blue);font-weight:700}
+.asset-initial-loading>button{display:inline-flex;align-items:center;gap:7px;margin-top:8px;border:1px solid #bfd4ff;border-radius:10px;background:#fff;padding:9px 14px;color:var(--blue);font-size:12px;font-weight:700}.asset-initial-loading>small{color:#94a3b8;font-size:10px}
 .asset-preparation-progress-page{position:relative;isolation:isolate;min-height:650px;overflow:hidden;border:1px solid #d9e6fb;border-radius:22px;background:radial-gradient(circle at 10% 8%,rgba(73,134,255,.12),transparent 30%),radial-gradient(circle at 88% 18%,rgba(126,91,255,.1),transparent 28%),linear-gradient(145deg,#fbfdff 0%,#f5f8ff 48%,#fbf9ff 100%);padding:32px;box-shadow:0 18px 50px rgba(35,71,133,.09)}
 .preparation-orb{position:absolute;z-index:-1;border-radius:999px;filter:blur(2px);opacity:.6;animation:preparation-float 7s ease-in-out infinite}
 .preparation-orb-one{top:88px;right:-70px;width:210px;height:210px;background:radial-gradient(circle,rgba(94,109,255,.22),rgba(94,109,255,0) 70%)}

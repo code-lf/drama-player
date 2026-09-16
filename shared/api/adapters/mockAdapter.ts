@@ -4,7 +4,7 @@ import type { AuthSession } from '~/entities/auth/types'
 import type { DramaCreditPreview, DramaProjectCard, DramaProjectDetail, DramaRuntimeConfig, PublicVideoCapabilities } from '~/entities/drama/types'
 import type { EpisodeCutDraft, EpisodeCutSavePayload, EpisodeCutTask } from '~/entities/drama/episodeCutTypes'
 import { defaultWebsiteInfo, type FeedbackPage, type FeedbackSubmitPayload, type RedeemCodeResult, type SupportCenter, type UserFeedback } from '~/entities/support/types'
-import type { ProductImageGeneratePayload, ProductImageTemplate, ProductSellingPoint } from '~/entities/product-image/types'
+import type { ProductImageGeneratePayload, ProductImageHistoryBatch, ProductImageTemplate, ProductSellingPoint } from '~/entities/product-image/types'
 import type { ProductVideoCreatePayload, ProductVideoTask, ProductVideoTemplate } from '~/entities/product-video/types'
 import type { StoryboardClipContract, StoryboardContinuationPolicy, StoryboardContinuityState, StoryboardReferenceBinding, StoryboardWorkspace } from '~/entities/storyboard/types'
 import { defaultNodes } from '~/shared/constants/canvas'
@@ -36,6 +36,7 @@ const mockEpisodeCutMap = new Map<string, EpisodeCutDraft>()
 const mockFeedbackItems: UserFeedback[] = []
 let mockCreditBalance = 12500
 const mockProductVideoTasks = new Map<string, ProductVideoTask>()
+const mockProductImageHistory: ProductImageHistoryBatch[] = []
 
 // Mock 仅用于无后端时走通页面交互；正式环境所有模板和任务都由 product-video 接口返回。
 const mockProductVideoTemplates: ProductVideoTemplate[] = [
@@ -879,10 +880,14 @@ export const mockAdapter: ApiAdapter = {
 
   async generateProductImages(payload) {
     await sleep(700)
-    const sellingPoints = payload.splitSellingPoints ? splitMockProductSellingPoints(payload.prompt, payload.count) : []
+    // Mock 环境也优先复用页面已展示的方案，行为与真实接口保持一致。
+    const sellingPoints = payload.splitSellingPoints
+      ? (payload.plannedSellingPoints?.length === payload.count ? payload.plannedSellingPoints : splitMockProductSellingPoints(payload.prompt, payload.count))
+      : []
     const requiredCredits = Math.max(1, payload.count || 1) * 30
-    return ok({
-      batchId: `mock-product-${Date.now()}`,
+    const batchId = `mock-product-${Date.now()}`
+    const result = {
+      batchId,
       provider: 'alibaba',
       model: payload.model || 'wanx2.1-t2i-turbo',
       requiredCredits,
@@ -895,16 +900,72 @@ export const mockAdapter: ApiAdapter = {
         const sellingPoint = sellingPoints[index] || null
         const title = sellingPoint?.title || `商品图 ${index + 1}`
         return {
-          id: `mock-product-result-${index + 1}`,
+          id: `${batchId}-${index + 1}`,
           imageUrl: buildMockProductImage(payload, index, title),
           prompt: `${payload.prompt}，${payload.style}，${sellingPoint?.description || '按用户需求直接生成变体'}`,
           sellingPoint,
           provider: 'alibaba',
           model: payload.model || 'wanx2.1-t2i-turbo',
-          status: 'mock'
+          status: 'mock',
+          isFavorite: false
         }
       })
+    }
+    // Mock 同样保存历史，便于无后端模式验证刷新前的完整交互。
+    mockProductImageHistory.unshift({
+      id: batchId,
+      workspaceMode: payload.workspaceMode || 'product',
+      creationMethod: payload.creationMethod || 'single',
+      sourcePrompt: payload.sourcePrompt || payload.prompt,
+      compiledPrompt: payload.prompt,
+      provider: result.provider,
+      model: result.model,
+      requiredCredits,
+      count: payload.count,
+      status: 'success',
+      aspectRatio: payload.aspectRatio,
+      resolution: payload.resolution,
+      style: payload.style,
+      negativePrompt: payload.negativePrompt || '',
+      referenceNames: payload.referenceImages.map(item => item.name).filter(Boolean),
+      sellingPoints,
+      results: result.results,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
     })
+    return ok(result)
+  },
+
+  async listProductImageHistory(params) {
+    await sleep(80)
+    const batches = mockProductImageHistory.slice(0, params?.limit || 30).map((batch) => ({
+      ...batch,
+      results: params?.favoritesOnly ? batch.results.filter(item => item.isFavorite) : batch.results
+    })).filter(batch => batch.results.length > 0)
+    return ok(batches)
+  },
+
+  async getProductImageHistory(batchId) {
+    await sleep(60)
+    const batch = mockProductImageHistory.find(item => item.id === batchId)
+    if (!batch) throw new Error('历史记录不存在')
+    return ok(batch)
+  },
+
+  async setProductImageFavorite(batchId, resultId, isFavorite) {
+    const batch = mockProductImageHistory.find(item => item.id === batchId)
+    const result = batch?.results.find(item => item.id === resultId)
+    if (!batch || !result) throw new Error('未找到这张历史图片')
+    result.isFavorite = isFavorite
+    batch.updatedAt = new Date().toISOString()
+    return ok(result)
+  },
+
+  async deleteProductImageHistory(batchId) {
+    const index = mockProductImageHistory.findIndex(item => item.id === batchId)
+    if (index < 0) throw new Error('历史记录不存在')
+    mockProductImageHistory.splice(index, 1)
+    return ok({ batchId, deleted: true })
   },
 
   async getProductVideoHome() {

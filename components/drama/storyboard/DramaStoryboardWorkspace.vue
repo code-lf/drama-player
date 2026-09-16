@@ -156,6 +156,17 @@ let microEditTimelineDragCleanup: (() => void) | null = null
 const quickReviewAll = ref(false)
 const tuningVisible = ref(false)
 const tuningPreview = ref<Awaited<ReturnType<typeof dramaService.previewStoryboardTuning>> | null>(null)
+// 整集级能力统一收进“整集设置”，避免它与批量生成争夺主操作位置。
+const episodeSettingsItems = [
+  {
+    label: '整集统调',
+    icon: SlidersHorizontal,
+    onSelect: () => {
+      tuningPreview.value = null
+      tuningVisible.value = true
+    }
+  }
+]
 const shotTuningVisible = ref(false)
 const shotTuningInstruction = ref('')
 const shotTuningDuration = ref('5')
@@ -242,7 +253,7 @@ const generationAudioSummary = computed(() => {
   if (!voiceRequiredRows.length) {
     return {
       status: '无需角色声音',
-      detail: '本次镜头没有角色对白，将沿用导演方案中的环境音与动作音设计。',
+      detail: '本次镜头没有角色对白，将沿用镜头方案中的环境音与动作音设计。',
       speakers: '无角色对白',
       cueCount,
       warning: false,
@@ -495,10 +506,10 @@ function visualCheckEvidence(...dimensionNames: string[]) {
 function continuityCheckTooltip(kind: ContinuityCheckKind) {
   if (kind === 'role') {
     const evidence = visualCheckEvidence('角色身份', '服装一致性')
-    return `${evidence ? `检测依据：${evidence}\n\n` : ''}检查当前视频首、中、尾帧中的人物身份和服装，与本镜头已锁定角色参考进行比对。`
+    return `${evidence ? `检测依据：${evidence}\n\n` : ''}检查当前视频首、中、尾帧中的人物身份和服装，与本镜头已确认角色参考进行比对。`
   }
   if (kind === 'prop') return selectedRow.value.propKeys.length
-    ? `${visualCheckEvidence('关键道具') ? `检测依据：${visualCheckEvidence('关键道具')}\n\n` : ''}检查当前视频首、中、尾帧中的关键道具，与本镜头已锁定道具参考进行比对。`
+    ? `${visualCheckEvidence('关键道具') ? `检测依据：${visualCheckEvidence('关键道具')}\n\n` : ''}检查当前视频首、中、尾帧中的关键道具，与本镜头已确认道具参考进行比对。`
     : '本镜头没有绑定关键道具，因此不执行道具状态比对。'
   const evidence = visualCheckEvidence('帧间连续性')
   return `${evidence ? `检测依据：${evidence}\n\n` : ''}检查当前视频的首、中、尾帧之间是否存在突兀跳变。跨镜头末帧到首帧的画面比对将在后续质检中单独展示。`
@@ -1088,7 +1099,7 @@ function assetGapFor(row: StoryboardRow | null | undefined): StoryboardAssetGap 
     canonicalSceneKey: String(raw.canonical_scene_key || raw.canonicalSceneKey || ''),
     suggestedName: String(raw.suggested_name || raw.suggestedName || '待补充场景资产'),
     viewDimension: String(raw.view_dimension || raw.viewDimension || ''),
-    reason: String(raw.reason || '现有资产无法完整承载当前导演方案。'),
+    reason: String(raw.reason || '现有资产无法完整承载当前镜头方案。'),
     suggestedContent: {
       description: String(content.description || ''),
       spatialLayout: String(content.spatial_layout || content.spatialLayout || ''),
@@ -1503,10 +1514,11 @@ async function retryFailedBatch(): Promise<void> {
 function shotMenuItems(row: StoryboardRow): BaseMenuItem[] {
   const rows = workspace.value?.rows || []
   const index = rows.findIndex(item => item.id === row.id)
+  const canMicroEdit = row.takes.some(take => take.status === 'succeeded' && Boolean(take.videoUrl))
   return [
-    { key: 'edit', label: '进入深度编辑', icon: Pencil },
-    // 没有成功视频时不提供微剪辑，避免用户进入后才看到不可编辑的空版本。
-    { key: 'micro-edit', label: '微剪辑', icon: Film, disabled: !row.takes.some(take => take.status === 'succeeded' && Boolean(take.videoUrl)) },
+    { key: 'edit', label: '深度编辑（高级）', icon: Pencil },
+    // 只有成功视频才展示调整入口，避免普通用户面对一个暂时不可用的灰色操作。
+    ...(canMicroEdit ? [{ key: 'micro-edit', label: '裁剪与局部修改', icon: Film }] : []),
     { key: 'up', label: '上移', icon: ArrowUp, disabled: index <= 0 },
     { key: 'down', label: '下移', icon: ArrowDown, disabled: index < 0 || index >= rows.length - 1 },
     { key: 'copy', label: '复制镜头', icon: Copy },
@@ -1702,9 +1714,9 @@ async function saveSegments(): Promise<void> {
       segments: segmentDraft.value
     }))
     segmentEditorVisible.value = false
-    showNotice('导演方案已保存，并重新校验镜头时长。')
+    showNotice('镜头方案已保存，并重新校验镜头时长。')
   } catch (error) {
-    showNotice(actionErrorMessage(error, '导演方案保存失败，请检查段落时长。'), 'error')
+    showNotice(actionErrorMessage(error, '镜头方案保存失败，请检查段落时长。'), 'error')
   } finally {
     actionBusy.value = ''
   }
@@ -2302,7 +2314,7 @@ function zoomMicroEditRegion(event: WheelEvent): void {
 
 function openMicroEdit(row: StoryboardRow, take: StoryboardTake): void {
   if (take.status !== 'succeeded' || !take.videoUrl) {
-    showNotice('请先生成成功的视频版本，再进行微剪辑。', 'error')
+    showNotice('请先生成成功的视频版本，再进行裁剪或局部修改。', 'error')
     return
   }
   microEditRow.value = row
@@ -2369,7 +2381,7 @@ async function estimateMicroEdit(): Promise<void> {
     const response = await dramaService.estimateStoryboardMicroEdit(props.projectId, microEditRow.value.id, microEditTake.value.id, payload)
     microEditEstimate.value = response.data
   } catch (error) {
-    showNotice(actionErrorMessage(error, '微剪辑费用预估失败，请检查时间范围。'), 'error')
+    showNotice(actionErrorMessage(error, '裁剪与局部修改费用预估失败，请检查时间范围。'), 'error')
   }
 }
 
@@ -2399,17 +2411,17 @@ async function submitMicroEdit(): Promise<void> {
   const payload = buildMicroEditPayload()
   if (!payload || !microEditRow.value || !microEditTake.value || microEditSubmitting.value) return
   if (microEditMode.value === 'ai_edit' && microEditEstimate.value && !microEditEstimate.value.sufficient) {
-    showNotice('当前余额不足，请充值后再提交 AI 微剪辑。', 'error')
+    showNotice('当前余额不足，请充值后再提交 AI 局部修改。', 'error')
     return
   }
   microEditSubmitting.value = true
   try {
     const response = await dramaService.createStoryboardMicroEdit(props.projectId, microEditRow.value.id, microEditTake.value.id, payload)
     microEditTask.value = response.data.edit
-    showNotice(response.data.pricing.estimatedCredits ? `已提交微剪辑，预计消耗 ${response.data.pricing.estimatedCredits} 点。` : '已提交本地微剪辑，免费处理。')
+    showNotice(response.data.pricing.estimatedCredits ? `已提交局部修改，预计消耗 ${response.data.pricing.estimatedCredits} 点。` : '已提交本地裁剪，免费处理。')
     startMicroEditPolling(response.data.edit.id)
   } catch (error) {
-    showNotice(actionErrorMessage(error, '微剪辑提交失败，请稍后重试。'), 'error')
+    showNotice(actionErrorMessage(error, '裁剪与局部修改提交失败，请稍后重试。'), 'error')
     microEditSubmitting.value = false
   }
 }
@@ -2426,10 +2438,10 @@ function startMicroEditPolling(editId: string): void {
         microEditSubmitting.value = false
         if (response.data.status === 'succeeded') {
           microEditVisible.value = false
-          showNotice('微剪辑完成，已新增视频版本，原版本仍然保留。')
+          showNotice('裁剪与局部修改完成，已新增视频版本，原版本仍然保留。')
           await loadWorkspace(true)
         } else {
-          showNotice(response.data.errorMessage || '微剪辑失败，点数已按规则退款。', 'error')
+          showNotice(response.data.errorMessage || '裁剪与局部修改失败，点数已按规则退款。', 'error')
         }
       }
     } catch (error) {
@@ -2445,7 +2457,7 @@ function startMicroEditPolling(editId: string): void {
   <section class="storyboard-workspace" :class="{ 'storyboard-workspace--workbench': currentView === 'workbench' }">
     <div v-if="loading" class="workspace-state">
       <LoaderCircle :size="24" class="spin" />
-      <strong>正在编译剧本、锁定资产与连续性资料</strong>
+      <strong>正在编译剧本、已确认资产与连续性资料</strong>
       <span>完成后会恢复当前集的真实制作状态。</span>
     </div>
 
@@ -2478,7 +2490,7 @@ function startMicroEditPolling(editId: string): void {
                   @update:model-value="switchEpisode(Number($event))"
                 />
               </div>
-              <p>{{ workspace.sourceSummary || '当前集已继承确认剧本、视觉基准与锁定资产。' }}</p>
+              <p>{{ workspace.sourceSummary || '当前集已继承确认剧本、视觉基准与已确认资产。' }}</p>
               <div class="context-tags">
                 <span>{{ workspace.currentPlan.versionLabel }}</span>
                 <span>{{ workspace.sourceScriptVersion || '已确认剧本' }}</span>
@@ -2683,7 +2695,16 @@ function startMicroEditPolling(editId: string): void {
             </UButton>
             <UTooltip text="网格视图"><UButton color="neutral" :variant="displayMode === 'grid' ? 'soft' : 'outline'" size="sm" square aria-label="网格视图" @click="displayMode = 'grid'"><LayoutGrid :size="16" /></UButton></UTooltip>
             <UTooltip text="列表视图"><UButton color="neutral" :variant="displayMode === 'list' ? 'soft' : 'outline'" size="sm" square aria-label="列表视图" @click="displayMode = 'list'"><List :size="16" /></UButton></UTooltip>
-            <UButton color="neutral" variant="outline" size="sm" @click="tuningVisible = true"><SlidersHorizontal :size="16" />整集统调</UButton>
+            <UDropdownMenu
+              :items="episodeSettingsItems"
+              :content="{ align: 'end', sideOffset: 6, collisionPadding: 12 }"
+              :ui="{ content: 'rounded-md p-1.5 shadow-xl', item: 'rounded-md text-sm' }"
+            >
+              <UButton color="neutral" variant="outline" size="sm" aria-label="打开整集设置">
+                <SlidersHorizontal :size="16" />整集设置<ChevronDown :size="14" />
+              </UButton>
+              <template #item-leading="{ item }"><component :is="item.icon" v-if="item.icon" :size="16" /></template>
+            </UDropdownMenu>
             <UTooltip text="刷新镜头"><UButton color="neutral" variant="outline" size="sm" square aria-label="刷新镜头" :loading="refreshing" @click="loadWorkspace(true)"><RefreshCw v-if="!refreshing" :size="16" /></UButton></UTooltip>
           </div>
         </div>
@@ -2700,7 +2721,7 @@ function startMicroEditPolling(editId: string): void {
         <div v-else-if="!workspace.rows.length && !isStoryboardPlanning" class="workspace-state workspace-state--compact storyboard-empty">
           <Film :size="24" />
           <strong>第 {{ currentEpisodeNo }} 集还没有镜头方案</strong>
-          <span>AI 将读取已确认剧本和锁定资产，动态规划镜头数量、节奏与声音设计。</span>
+          <span>AI 将读取已确认剧本和主要资产，动态规划镜头数量、节奏与声音设计。</span>
           <button class="button button--primary" type="button" @click="requestStoryboardPlanning"><WandSparkles :size="16" />开始规划分镜</button>
         </div>
 
@@ -2820,9 +2841,9 @@ function startMicroEditPolling(editId: string): void {
             <div class="viewer">
               <video v-if="selectedTake?.videoUrl || selectedRow.videoUrl" :src="selectedTake?.videoUrl || selectedRow.videoUrl" controls playsinline />
               <img v-else-if="thumbnailFor(selectedRow)" :src="thumbnailFor(selectedRow)" :alt="`${titleFor(selectedRow)}方案参考`" />
-              <div v-else class="viewer__empty"><Film :size="36" /><strong>等待生成视频</strong><span>导演方案和锁定资产已准备完成。</span></div>
+              <div v-else class="viewer__empty"><Film :size="36" /><strong>等待生成视频</strong><span>镜头方案和主要资产已准备完成。</span></div>
               <!--
-                视频操作统一放在左上角：当前版本和“微剪辑”属于同一语义组，
+                视频操作统一放在左上角：当前版本和“裁剪与局部修改”属于同一语义组，
                 这样不会压住播放器右下角的音量、全屏和更多操作控件。
               -->
               <div class="viewer__top-tools">
@@ -2831,10 +2852,10 @@ function startMicroEditPolling(editId: string): void {
                   v-if="selectedTake?.status === 'succeeded' && selectedTake.videoUrl"
                   class="viewer__micro-edit"
                   type="button"
-                  title="微剪辑当前视频版本"
+                  title="裁剪或局部修改当前视频版本"
                   @click="openMicroEdit(selectedRow, selectedTake)"
                 >
-                  <Film :size="15" />微剪辑
+                  <Film :size="15" />裁剪与局部修改
                 </button>
               </div>
               <button v-if="thumbnailFor(selectedRow)" class="viewer__expand" type="button" title="全屏预览"><Maximize2 :size="18" /></button>
@@ -2963,7 +2984,7 @@ function startMicroEditPolling(editId: string): void {
             <div class="detail-column__scroll">
             <section class="detail-section">
               <div class="section-heading">
-                <div><strong>导演方案</strong><span>{{ selectedDirectorPlanPending ? '编排细化中，完成后展示专业时间轴' : `${selectedRow.directorSegments.length} 段镜头内节奏 · 同一视频片段内连续执行` }}</span></div>
+                <div><strong>镜头方案</strong><span>{{ selectedDirectorPlanPending ? '编排细化中，完成后展示专业时间轴' : `${selectedRow.directorSegments.length} 段镜头内节奏 · 同一视频片段内连续执行` }}</span></div>
                 <div class="section-heading__actions">
                   <LivButton variant="secondary" size="sm" :disabled="selectedDirectorPlanPending" @click="openSegmentEditor"><template #icon><Pencil :size="15" /></template>手工编辑</LivButton>
                   <LivButton variant="primary" size="sm" :disabled="selectedDirectorPlanPending" @click="openShotTuning"><template #icon><WandSparkles :size="15" /></template>调整方案</LivButton>
@@ -2988,7 +3009,7 @@ function startMicroEditPolling(editId: string): void {
                     </div>
                     <p v-if="segment.visualFocus"><b>画面重点</b>{{ normalizeVisibleTimelineText(segment.visualFocus) }}</p>
                     <p v-for="(line, lineIndex) in directorSegmentDialogueLines(selectedRow, segment)" :key="`${segment.id}-dialogue-${lineIndex}`" class="director-dialogue-line"><b>原文台词</b><strong>{{ line.speaker }}</strong>“{{ line.text }}”<em v-if="line.delivery">{{ line.delivery }}</em></p>
-                    <p><b>动作与表演</b>{{ normalizeVisibleTimelineText(segment.actionDesc || segment.visualFocus || '待补充导演动作') }}</p>
+                    <p><b>动作与表演</b>{{ normalizeVisibleTimelineText(segment.actionDesc || segment.visualFocus || '待补充动作设计') }}</p>
                     <p v-if="segment.emotionDesc || selectedRow.moodDesc"><b>情绪表演</b>{{ normalizeVisibleTimelineText(segment.emotionDesc || selectedRow.moodDesc) }}</p>
                     <p v-if="directorSegmentExtra(segment, 'turn', segmentIndex, selectedRow.directorSegments.length)"><b>段落变化</b>{{ normalizeVisibleTimelineText(directorSegmentExtra(segment, 'turn', segmentIndex, selectedRow.directorSegments.length)) }}</p>
                     <p v-if="directorSegmentExtra(segment, 'endpoint', segmentIndex, selectedRow.directorSegments.length)"><b>结束状态</b>{{ normalizeVisibleTimelineText(directorSegmentExtra(segment, 'endpoint', segmentIndex, selectedRow.directorSegments.length)) }}</p>
@@ -3002,7 +3023,7 @@ function startMicroEditPolling(editId: string): void {
             </section>
 
             <section class="detail-section">
-              <div class="section-heading"><div><strong>已绑定资产</strong><span>按角色、场景和道具使用当前锁定版本</span></div><LivButton variant="ghost" size="sm" @click="openAssetManager()"><template #icon><Pencil :size="15" /></template>管理资产</LivButton></div>
+              <div class="section-heading"><div><strong>已绑定资产</strong><span>按角色、场景和道具使用当前确认版本</span></div><LivButton variant="ghost" size="sm" @click="openAssetManager()"><template #icon><Pencil :size="15" /></template>管理资产</LivButton></div>
               <div v-if="boundAssets(selectedRow).length" class="bound-assets">
                 <article v-for="asset in boundAssets(selectedRow)" :key="`${asset.type}-${asset.name}`">
                   <img v-if="asset.selected_url" :src="asset.selected_url" :alt="asset.name" />
@@ -3011,7 +3032,7 @@ function startMicroEditPolling(editId: string): void {
                   <BaseMenu :items="boundAssetMenuItems()" @select="handleBoundAssetMenu(asset, $event)"><template #trigger><MoreHorizontal :size="16" /></template></BaseMenu>
                 </article>
               </div>
-              <div v-else class="inline-empty inline-empty--warning"><AlertTriangle :size="16" />当前镜头没有可用的锁定资产，请返回资产阶段补全。</div>
+              <div v-else class="inline-empty inline-empty--warning"><AlertTriangle :size="16" />当前镜头没有可用的主要资产，请返回资产阶段确认使用版本。</div>
             </section>
 
             <section v-if="selectedAssetGap" class="detail-section asset-gap-panel">
@@ -3038,7 +3059,7 @@ function startMicroEditPolling(editId: string): void {
             </section>
 
             <section class="detail-section">
-        <div class="section-heading"><div><div class="section-heading__title-row"><strong>连续性检查</strong><span v-if="selectedRow.riskReasons.includes('包含原生对白')" class="native-dialogue-badge"><Volume2 :size="13" />包含原生对白</span></div><span>根据前后镜头状态、锁定资产与生成视频检查</span></div><span class="qc-status" :class="`qc-status--${String(selectedTakeQc.status || 'pending')}`">{{ qcStatusText(selectedTakeQc.status) }}</span></div>
+        <div class="section-heading"><div><div class="section-heading__title-row"><strong>连续性检查</strong><span v-if="selectedRow.riskReasons.includes('包含原生对白')" class="native-dialogue-badge"><Volume2 :size="13" />包含原生对白</span></div><span>根据前后镜头状态、已确认资产与生成视频检查</span></div><span class="qc-status" :class="`qc-status--${String(selectedTakeQc.status || 'pending')}`">{{ qcStatusText(selectedTakeQc.status) }}</span></div>
               <div class="continuity-grid">
                 <div class="continuity-check" :class="`continuity-check--${continuityCheckState('role')}`">
                   <AlertTriangle v-if="continuityCheckState('role') === 'warning'" :size="16" />
@@ -3129,7 +3150,7 @@ function startMicroEditPolling(editId: string): void {
             <div v-else><ImageIcon :size="30" /><span>暂无方案参考</span></div>
           </div>
           <section><h4>镜头目的</h4><p>{{ normalizeVisibleTimelineText(selectedRow.sceneDescription) }}</p></section>
-          <section><h4>导演方案</h4><ol><li v-for="segment in selectedRow.directorSegments" :key="segment.id"><span>{{ (segment.startMs / 1000).toFixed(1) }}–{{ (segment.endMs / 1000).toFixed(1) }}秒</span>{{ segment.shotSize }} · {{ segment.cameraMotion }} · {{ normalizeVisibleTimelineText(segment.actionDesc) }}</li></ol></section>
+          <section><h4>镜头方案</h4><ol><li v-for="segment in selectedRow.directorSegments" :key="segment.id"><span>{{ (segment.startMs / 1000).toFixed(1) }}–{{ (segment.endMs / 1000).toFixed(1) }}秒</span>{{ segment.shotSize }} · {{ segment.cameraMotion }} · {{ normalizeVisibleTimelineText(segment.actionDesc) }}</li></ol></section>
           <section><h4>使用资产</h4><div class="review-assets"><span v-for="asset in boundAssets(selectedRow)" :key="`${asset.type}-${asset.name}`">{{ assetTypeLabel(asset.type) }} · {{ asset.name }}</span><span v-if="!boundAssets(selectedRow).length" class="warning-text">资产尚未就绪</span></div></section>
           <section v-if="selectedAssetGap" class="review-asset-gap">
             <h4><AlertTriangle :size="15" />当前镜头资产待人工处理</h4>
@@ -3142,12 +3163,12 @@ function startMicroEditPolling(editId: string): void {
         </div>
         <template #footer>
           <LivButton variant="secondary" @click="reviewRow('needs_revision')">需要修改</LivButton>
-          <LivButton variant="secondary" @click="openWorkbench(selectedRow)">进入深度编辑</LivButton>
+          <LivButton variant="secondary" @click="openWorkbench(selectedRow)">更多调整</LivButton>
           <LivButton variant="primary" @click="reviewRow('passed', true)"><template #icon><Check :size="16" /></template>{{ selectedAssetGap ? '已人工处理，确认并下一个' : '确认并下一个' }}</LivButton>
         </template>
       </LivDrawer>
 
-      <LivDialog v-model:open="tuningVisible" title="整集统一调优" description="批量调整整集镜头方案，快速统一节奏、风格与成本控制。" width="lg">
+      <LivDialog v-model:open="tuningVisible" title="整集统调" description="这是整集级高级设置，会批量调整镜头方案；应用前可先预览影响范围。" width="lg">
         <template #icon><WandSparkles :size="22" /></template>
         <div class="tuning-form tuning-form--liv">
           <div class="tuning-field"><div><label>节奏偏好</label><span>整体镜头节奏与切换频率</span></div><LivRadioCards v-model="tuningDraft.rhythm" :options="tuningOptions.rhythm" /></div>
@@ -3164,7 +3185,7 @@ function startMicroEditPolling(editId: string): void {
         <template #footer><LivButton variant="secondary" @click="tuningVisible = false">取消</LivButton><LivButton variant="secondary" :loading="actionBusy === 'preview-tuning'" @click="previewTuning"><template #icon><Gauge :size="16" /></template>预览调整结果</LivButton><LivButton variant="primary" :loading="actionBusy === 'apply-tuning'" :disabled="!tuningPreview" @click="applyTuning">应用到当前集</LivButton></template>
       </LivDialog>
 
-      <LivDialog v-model:open="shotTuningVisible" :title="selectedRow ? `调整镜头 ${rowNumber(selectedRow)}` : '调整镜头'" description="调整目标时长或补充导演意见，系统将重新编排方案并保留已锁定资产。" width="md">
+      <LivDialog v-model:open="shotTuningVisible" :title="selectedRow ? `调整镜头 ${rowNumber(selectedRow)}` : '调整镜头'" description="调整目标时长或补充制作意见，系统将重新编排方案并保留已确认资产。" width="md">
         <template #icon><WandSparkles :size="22" /></template>
         <div class="shot-tuning-form">
           <label class="shot-tuning-duration"><span>目标时长</span><BaseSelect v-model="shotTuningDuration" :options="durationOptions" tone="light" full :disabled="actionBusy === 'tune-shot'" /></label>
@@ -3186,7 +3207,7 @@ function startMicroEditPolling(editId: string): void {
         <template #footer><LivButton variant="secondary" :disabled="actionBusy === 'tune-shot'" @click="shotTuningVisible = false">取消</LivButton><LivButton variant="primary" :loading="actionBusy === 'tune-shot'" :disabled="actionBusy === 'tune-shot'" @click="tuneSelectedShot"><template #icon><CreditIcon size="md" class="shot-tuning-credit-icon" /></template>{{ actionBusy === 'tune-shot' ? `正在调整 ${shotTuningElapsedSec} 秒` : '生成调整方案' }}</LivButton></template>
       </LivDialog>
 
-      <LivDrawer v-if="selectedRow" v-model:open="segmentEditorVisible" :title="`编辑镜头 ${rowNumber(selectedRow)}`" description="结构化导演方案" width="lg">
+      <LivDrawer v-if="selectedRow" v-model:open="segmentEditorVisible" :title="`编辑镜头 ${rowNumber(selectedRow)}`" description="结构化镜头方案（高级）" width="lg">
         <div class="segment-editor-content">
           <div class="segment-editor-overview">
             <div>
@@ -3313,7 +3334,7 @@ function startMicroEditPolling(editId: string): void {
                 <p v-if="batchEstimate.eligibleRowIds.length === 1">
                   生成 1 个连续视频片段，{{ generationDirectorSegmentCount }} 段镜头内节奏会在片段中依次执行，不会拆成多个视频。
                 </p>
-                <p v-else>按当前已确认的导演方案批量生成，每张分镜卡对应 1 个连续视频片段，并保留独立版本。</p>
+                <p v-else>按当前已确认的镜头方案批量生成，每张分镜卡对应 1 个连续视频片段，并保留独立版本。</p>
               </div>
               <span class="generation-target__badge">方案已确认</span>
             </div>
@@ -3374,7 +3395,7 @@ function startMicroEditPolling(editId: string): void {
             <div v-if="batchEstimate.warnings.length" class="generation-warning-list"><AlertTriangle :size="18" /><div><strong>可以继续生成，但请确认以下风险</strong><p v-for="item in warningSummary" :key="item.reason">{{ item.count }} 个镜头：{{ item.reason }}</p></div></div>
           </div>
           <div v-if="batchEstimate.blocked.length" class="blocked-list"><AlertTriangle :size="18" /><div><strong>{{ batchEstimate.blocked.length }} 个镜头暂不可生成</strong><p v-for="item in blockedSummary" :key="item.reason">{{ item.count }} 个镜头：{{ item.reason }}</p></div></div>
-          <div class="confirm-note"><ShieldCheck :size="17" /><span>任务使用已冻结的剧本、导演方案、资产版本与声音设计；每次生成都会创建独立版本。</span></div>
+          <div class="confirm-note"><ShieldCheck :size="17" /><span>任务使用本次确认的剧本、镜头方案、资产版本与声音设计；每次生成都会创建独立版本。</span></div>
         <template #footer>
           <LivButton variant="secondary" @click="batchConfirmVisible = false">{{ batchEstimate.eligibleRowIds.length ? '取消' : '返回检查' }}</LivButton>
           <LivButton v-if="batchEstimate.eligibleRowIds.length" variant="primary" :loading="actionBusy === 'start-batch'" :disabled="!batchEstimate.sufficient" @click="startGeneration">
@@ -3435,7 +3456,7 @@ function startMicroEditPolling(editId: string): void {
                       </span>
                     </div>
                     <div class="asset-choice-copy">
-                      <div><strong>{{ profile.name }}</strong><UBadge :label="profile.production_status === 'locked' ? '已锁定' : profile.production_status === 'to_confirm' ? '待确认' : '未锁定'" :color="profile.production_status === 'locked' ? 'success' : profile.production_status === 'to_confirm' ? 'warning' : 'neutral'" variant="soft" size="sm" /></div>
+                      <div><strong>{{ profile.name }}</strong><UBadge :label="profile.production_status === 'locked' ? '已确认使用' : profile.production_status === 'to_confirm' ? '待确认' : '未确认'" :color="profile.production_status === 'locked' ? 'success' : profile.production_status === 'to_confirm' ? 'warning' : 'neutral'" variant="soft" size="sm" /></div>
                       <small>{{ profile.data?.identity || profile.data?.description || '资产资料待补充' }}</small>
                       <em v-if="profile.asset_type === 'role'"><Volume2 :size="14" />{{ roleVoiceLabel(profile) }}</em>
                     </div>
@@ -3452,7 +3473,7 @@ function startMicroEditPolling(editId: string): void {
                 <Mountain v-else-if="assetManagerType === 'scene'" :size="28" />
                 <Package v-else :size="28" />
                 <strong>还没有{{ assetTypeLabel(assetManagerType) }}</strong>
-                <span>可在当前弹窗新建，也可回到资产阶段生成并锁定正式图片。</span>
+                <span>可在当前弹窗新建，也可回到资产阶段生成并确认正式图片。</span>
                 <LivButton variant="secondary" @click="startCreateAsset(assetManagerType)"><template #icon><Plus :size="16" /></template>新增{{ assetTypeLabel(assetManagerType) }}</LivButton>
               </div>
             </main>
@@ -3476,7 +3497,7 @@ function startMicroEditPolling(editId: string): void {
                 <label v-if="assetManagerType === 'prop'">材质<UInput v-model="assetDraft.material" class="w-full" /></label>
                 <label v-if="assetManagerType === 'prop'">持有人<UInput v-model="assetDraft.owner" class="w-full" /></label>
                 <label v-if="assetManagerType === 'prop'" class="wide">状态变化<UInput v-model="assetDraft.state_variants_text" class="w-full" placeholder="例如：常态、破损、激活" /></label>
-                <UCheckbox v-model="assetDraft.is_required" class="asset-required wide" label="设为分镜必需资产" />
+                <UCheckbox v-model="assetDraft.is_required" class="asset-required wide" label="设为主要资产（将在分镜中使用）" />
               </div>
 
               <section v-if="assetManagerType === 'role'" class="asset-voice-editor">
@@ -3512,7 +3533,7 @@ function startMicroEditPolling(editId: string): void {
       <LivDialog
         v-if="microEditRow && microEditTake"
         :open="microEditVisible"
-        title="镜头微剪辑"
+        title="裁剪与局部修改"
         description="调整范围和画面区域，原视频版本会保留；AI 修改提交前会先显示费用预估。"
         width="xl"
         @update:open="value => !value && closeMicroEdit()"

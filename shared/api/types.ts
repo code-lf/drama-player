@@ -18,6 +18,8 @@ import type {
   ProductImageCreditPreview,
   ProductImageGeneratePayload,
   ProductImageGenerateResult,
+  ProductImageHistoryBatch,
+  ProductImageResult,
   ProductImageTemplate,
   ProductSellingPoint
 } from '~/entities/product-image/types'
@@ -801,8 +803,12 @@ export interface ApiAdapter {
   listEpisodeExports(params?: { status?: string; page?: number; pageSize?: number }): Promise<ApiResponse<EpisodeCutTaskList>>
   listProductImageTemplates(params?: { category?: string; featured?: boolean }): Promise<ApiResponse<ProductImageTemplate[]>>
   previewProductImageCredits(payload: Pick<ProductImageGeneratePayload, 'count' | 'model' | 'prompt' | 'splitSellingPoints' | 'templateId'>): Promise<ApiResponse<ProductImageCreditPreview>>
-  splitProductSellingPoints(payload: { prompt: string; count: number }): Promise<ApiResponse<ProductSellingPoint[]>>
+  splitProductSellingPoints(payload: { batchId?: string; prompt: string; count: number; style?: string; aspectRatio?: string }): Promise<ApiResponse<ProductSellingPoint[]>>
   generateProductImages(payload: ProductImageGeneratePayload): Promise<ApiResponse<ProductImageGenerateResult>>
+  listProductImageHistory(params?: { favoritesOnly?: boolean; limit?: number }): Promise<ApiResponse<ProductImageHistoryBatch[]>>
+  getProductImageHistory(batchId: string): Promise<ApiResponse<ProductImageHistoryBatch>>
+  setProductImageFavorite(batchId: string, resultId: string, isFavorite: boolean): Promise<ApiResponse<ProductImageResult>>
+  deleteProductImageHistory(batchId: string): Promise<ApiResponse<{ batchId: string; deleted: boolean }>>
   /** 商品视频前台与模板中心共用的运营快照。 */
   getProductVideoHome(): Promise<ApiResponse<ProductVideoHome>>
   listProductVideoTemplates(params?: { category?: string; featured?: boolean }): Promise<ApiResponse<ProductVideoTemplate[]>>

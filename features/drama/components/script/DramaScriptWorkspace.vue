@@ -16,6 +16,7 @@ import type { DramaAssetPreparationEstimate } from '~/shared/api/types'
 import LivButton from '~/components/liv-ui/LivButton.vue'
 import LivDialog from '~/components/liv-ui/LivDialog.vue'
 import LivDrawer from '~/components/liv-ui/LivDrawer.vue'
+import BrandSparkIcon from '~/components/ui/BrandSparkIcon.vue'
 import {
   AlertTriangle,
   ArrowRight,
@@ -222,12 +223,23 @@ const emit = defineEmits<{
 }>()
 
 const activeTab = ref<ScriptTabKey>('overview')
-// 普通用户默认只看是否能继续制作；人物关系、分集诊断和优化建议按需展开。
-const showProfessionalAnalysis = ref(false)
+// 四项剧本能力始终对用户可见；该开关只控制右侧诊断详情，不再隐藏功能入口。
+const showProfessionalAnalysis = ref(true)
+const reviewPanelRef = ref<HTMLElement | null>(null)
 
 function toggleProfessionalAnalysis(): void {
   showProfessionalAnalysis.value = !showProfessionalAnalysis.value
-  if (!showProfessionalAnalysis.value) activeTab.value = 'overview'
+}
+
+/**
+ * 从体检完成通知进入时，统一切回全剧概览并定位右侧体检卡。
+ * 该操作只改变页面展示，不会触发模型调用或生成优化稿。
+ */
+async function revealProfessionalAnalysis(): Promise<void> {
+  activeTab.value = 'overview'
+  showProfessionalAnalysis.value = true
+  await nextTick()
+  reviewPanelRef.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
 const characterReviewMode = ref<CharacterReviewMode>('system')
 const episodeListFilter = ref<EpisodeListFilter>('all')
@@ -469,6 +481,7 @@ const pendingDraftVersion = computed(() => pendingDraftVersionItem.value?.versio
 const pendingOptimizationAnalysis = computed(() => pendingOptimizedDetail.value?.analysis || null)
 const pendingReviewScore = computed(() => pendingOptimizationAnalysis.value?.scriptReviews?.overview?.score || healthScore.value)
 const healthScore = computed(() => analysis.value?.scriptReviews?.overview?.score || 0)
+const overallReviewWarningCount = computed(() => analysis.value?.scriptReviews?.overview?.warnings?.length || 0)
 const projectTitle = computed(() => analysis.value?.title || effectiveProjectDetail.value?.title || '未命名项目')
 const projectGenre = computed(() => analysis.value?.genre || '待解析')
 const projectCover = computed(() => analysis.value?.coverImageUrl || '')
@@ -477,6 +490,17 @@ const scriptReviewsStale = computed(() => Boolean(analysis.value?.scriptReviewsS
 const scriptReviewsSourceVersion = computed(() => analysis.value?.scriptReviewsSourceVersion || '')
 const analysisTags = computed(() => analysis.value?.tags || [])
 const currentAnalysisVersion = computed(() => analysis.value?.currentScriptVersion || '')
+const hasCurrentReviewSummary = computed(() => Boolean(
+  props.currentAnalysisRun.reviewsReady
+  && healthScore.value > 0
+  && !scriptReviewsStale.value
+))
+const reviewNotificationVersion = computed(() => (
+  scriptReviewsSourceVersion.value
+  || currentAnalysisVersion.value
+  || props.currentAnalysisRun.runId
+  || ''
+))
 const isProjectCoverGenerating = computed(() => ['queued', 'running'].includes(props.currentAnalysisRun.coverStatus))
 const hasRealProjectCover = computed(() => props.currentAnalysisRun.coverStatus === 'done' && Boolean(projectCover.value))
 const structureNode = computed(() => props.currentAnalysisRun.nodes?.STRUCTURE_ANALYSIS)
@@ -3609,6 +3633,45 @@ watch(
   { immediate: true }
 )
 
+watch(
+  () => [hasCurrentReviewSummary.value, projectId.value, reviewNotificationVersion.value] as const,
+  ([reviewReady, currentProjectId, reviewVersion]) => {
+    if (!import.meta.client || !reviewReady || currentProjectId === 'unknown' || !reviewVersion) return
+
+    // 同一项目的同一剧本版本只主动提醒一次；新版本完成体检后会使用新键再次提醒。
+    const storageKey = `livliv:script-review-notified:${currentProjectId}:${reviewVersion}`
+    try {
+      if (window.localStorage.getItem(storageKey)) return
+      window.localStorage.setItem(storageKey, '1')
+    } catch (error) {
+      // 浏览器禁用本地存储时仍展示本次通知，但不让存储异常影响剧本工作台。
+      console.warn('[livliv] 无法记录剧本体检提醒状态，本次仍继续展示通知。', error)
+    }
+
+    const warningDescription = overallReviewWarningCount.value > 0
+      ? `本次得分 ${healthScore.value} 分，发现 ${overallReviewWarningCount.value} 项可优化内容。`
+      : `本次得分 ${healthScore.value} 分，当前没有必须处理的问题。`
+    const notice = toast.add({
+      title: 'AI 剧本体检已完成',
+      description: `${warningDescription} 体检不会阻断后续制作。`,
+      color: overallReviewWarningCount.value > 0 ? 'warning' : 'success',
+      icon: overallReviewWarningCount.value > 0 ? 'i-lucide-stethoscope' : 'i-lucide-circle-check',
+      close: true,
+      duration: 9000,
+      actions: [{
+        label: '查看体检',
+        color: 'primary',
+        variant: 'solid',
+        onClick: () => {
+          toast.remove(notice.id)
+          void revealProfessionalAnalysis()
+        },
+      }],
+    })
+  },
+  { immediate: true }
+)
+
 watch(displayCharacterBios, (bios) => {
   if (!bios.length) {
     selectedCharacterKey.value = ''
@@ -3741,18 +3804,29 @@ defineExpose({ openAllSuggestions })
           <CheckCircle2 v-if="currentAnalysisRun.structureReady" class="mt-0.5 h-5 w-5 shrink-0 text-[#16a34a]" />
           <AlertTriangle v-else class="mt-0.5 h-5 w-5 shrink-0 text-[#dc2626]" />
           <div>
-            <p class="font-semibold text-[#0f172a]">{{ currentAnalysisRun.structureReady ? '可继续制作' : '需要处理后继续' }}</p>
-            <p class="mt-1 text-sm leading-6 text-[#64748b]">{{ currentAnalysisRun.structureReady ? '剧本基础结构已就绪，专业体检不会阻断后续资产制作。' : '请先完成剧本基础解析，已有内容会继续保留。' }}</p>
+            <p class="font-semibold text-[#0f172a]">
+              {{ hasCurrentReviewSummary ? `AI 剧本体检 · ${healthScore} 分 · 可继续制作` : currentAnalysisRun.structureReady ? '可继续制作' : '需要处理后继续' }}
+            </p>
+            <p class="mt-1 text-sm leading-6 text-[#64748b]">
+              {{ hasCurrentReviewSummary
+                ? overallReviewWarningCount > 0
+                  ? `发现 ${overallReviewWarningCount} 项可优化内容；体检不会阻断后续资产制作。`
+                  : '当前没有必须处理的问题；体检不会阻断后续资产制作。'
+                : currentAnalysisRun.structureReady
+                  ? '剧本基础结构已就绪，专业体检不会阻断后续资产制作。'
+                  : '请先完成剧本基础解析，已有内容会继续保留。' }}
+            </p>
           </div>
         </div>
         <button type="button" class="rounded-[10px] border border-[#bfdbfe] bg-white px-4 py-2 text-sm font-semibold text-[#0f67ff]" @click="toggleProfessionalAnalysis">
-          {{ showProfessionalAnalysis ? '收起专业分析' : '查看专业分析' }}
+          {{ showProfessionalAnalysis ? '收起体检详情' : '展开体检详情' }}
         </button>
       </div>
       <div class="grid gap-6" :class="showProfessionalAnalysis ? 'xl:grid-cols-[minmax(0,1fr)_520px]' : 'grid-cols-1'">
         <main class="min-w-0">
           <div class="rounded-[28px] border border-[#dfe8f6] bg-white p-6 shadow-[0_18px_60px_rgba(15,23,42,0.05)]">
-            <div v-if="showProfessionalAnalysis" class="border-b border-[#e2e8f0]">
+            <!-- 故事、人物、分集和正文是产品核心能力，入口常驻展示；只折叠右侧的专业评分详情。 -->
+            <div class="border-b border-[#e2e8f0]">
               <div class="flex flex-wrap gap-2">
                 <button
                   v-for="tab in tabItems"
@@ -3767,6 +3841,10 @@ defineExpose({ openAllSuggestions })
                 </button>
               </div>
             </div>
+
+            <p v-if="!showProfessionalAnalysis" class="mt-4 rounded-[14px] border border-[#dbeafe] bg-[#f8fbff] px-4 py-3 text-sm leading-6 text-[#475569]">
+              当前已收起右侧体检评分；故事概览、人物关系、分集结构和完整剧本仍可正常查看与编辑。
+            </p>
 
             <div v-if="currentOptimizedVersion && !pendingDraftVersionItem" class="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-[16px] border border-[#bbf7d0] bg-[#f0fdf4] px-4 py-3 text-sm font-semibold text-[#15803d]">
               <span class="flex items-center gap-2">
@@ -4138,7 +4216,7 @@ defineExpose({ openAllSuggestions })
           </div>
         </main>
 
-        <aside v-if="showProfessionalAnalysis" class="space-y-4">
+        <aside v-if="showProfessionalAnalysis" ref="reviewPanelRef" class="scroll-mt-4 space-y-4">
           <div class="sticky top-4 rounded-[30px] border border-[#dfe8f6] bg-white p-7 shadow-[0_18px_60px_rgba(15,23,42,0.05)]">
             <div class="flex items-center justify-between">
               <h3 class="text-xl font-semibold">{{ reviewPanelTitle }}</h3>

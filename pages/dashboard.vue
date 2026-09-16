@@ -85,7 +85,6 @@ const entryFailureMessage = ref('')
 const entryIdempotencyKey = ref('')
 const entryProjectId = ref('')
 const entryResumeStage = ref<'creating' | 'uploading' | 'starting'>('creating')
-const showCreationSettings = ref(false)
 const loadingText = ref('正在准备控制台...')
 const busyKey = ref('')
 // 创建、上传和启动解析属于同一次不可分割的用户操作；独立锁避免阶段切换瞬间按钮重新可点。
@@ -182,11 +181,6 @@ const dramaSubmissionCopy = computed(() => ({
   navigating: { title: '正在进入解析进度页', description: '任务已经启动，即将自动进入项目流程页。', step: 4 },
   idle: { title: '解析剧本并创建项目', description: '', step: 0 }
 } as const)[dramaSubmissionStage.value])
-const hasAnalysis = computed(() => Boolean(currentDramaProject.value?.analysis.title))
-const hasRoleAssets = computed(() => (currentDramaProject.value?.analysis.roles || []).some((role) => role.assets.length > 0))
-const hasSceneAssets = computed(() => (currentDramaProject.value?.analysis.scenes || []).some((scene) => Boolean(scene.asset)))
-const hasPropAssets = computed(() => (currentDramaProject.value?.analysis.props || []).some((prop) => Boolean(prop.asset)))
-const hasStoryboards = computed(() => (currentDramaProject.value?.storyboards || []).length > 0)
 const stageLabel = computed(() => {
   const stage = currentDramaProject.value?.currentStage || 'input'
   if (stage === 'analysis') return '剧本解析完成'
@@ -769,24 +763,6 @@ async function bootstrapDashboard(): Promise<void> {
   }
 }
 
-async function runAction<T>(key: string, action: () => Promise<T>, successMessage: string): Promise<T | undefined> {
-  // 统一收口交互态与错误信息，避免每个阶段分别维护重复的 loading / error 逻辑。
-  busyKey.value = key
-  errorMessage.value = ''
-  infoMessage.value = ''
-  try {
-    const result = await action()
-    infoMessage.value = successMessage
-    return result
-  } catch (error) {
-    // eslint-disable-next-line no-console
-    console.error('[livliv] 控制台操作失败', { key, error })
-    errorMessage.value = error instanceof Error ? error.message : '请求失败，请稍后重试'
-    return undefined
-  } finally {
-    busyKey.value = ''
-  }
-}
 
 function buildDramaProjectTitle(): string {
   if (selectedScriptFile.value?.name) {
@@ -935,67 +911,6 @@ async function openEntryProjectDraft(): Promise<void> {
   await router.push(`/drama/${entryProjectId.value}`)
 }
 
-async function generateRoleAssets(): Promise<void> {
-  if (!currentDramaProject.value) return
-  const result = await runAction(
-    'roles',
-    () =>
-      dramaService.generateRoleAssets(currentDramaProject.value!.projectId, {
-        model: selectedImageModel.value,
-        style: effectiveVisualStyle.value,
-        overwrite: true
-      }),
-    '角色四视图已生成。'
-  )
-  if (result) currentDramaProject.value = result
-}
-
-async function generateSceneAssets(): Promise<void> {
-  if (!currentDramaProject.value) return
-  const result = await runAction(
-    'scenes',
-    () =>
-      dramaService.generateSceneAssets(currentDramaProject.value!.projectId, {
-        model: selectedImageModel.value,
-        style: effectiveVisualStyle.value,
-        overwrite: true
-      }),
-    '场景设定图已生成。'
-  )
-  if (result) currentDramaProject.value = result
-}
-
-async function generatePropAssets(): Promise<void> {
-  if (!currentDramaProject.value) return
-  const result = await runAction(
-    'props',
-    () =>
-      dramaService.generatePropAssets(currentDramaProject.value!.projectId, {
-        model: selectedImageModel.value,
-        style: effectiveVisualStyle.value,
-        overwrite: true
-      }),
-    '关键道具图已生成。'
-  )
-  if (result) currentDramaProject.value = result
-}
-
-async function generateStoryboards(): Promise<void> {
-  if (!currentDramaProject.value) return
-  const result = await runAction(
-    'storyboards',
-    () =>
-      dramaService.generateStoryboards(currentDramaProject.value!.projectId, {
-        model: selectedTextModel.value,
-        shotCount: 12,
-        style: effectiveVisualStyle.value,
-        provider: selectedVideoProvider.value,
-        resolution: selectedResolution.value
-      }),
-    '结构化分镜已生成。'
-  )
-  if (result) currentDramaProject.value = result
-}
 
 async function handleDroppedFile(event: DragEvent): Promise<void> {
   event.preventDefault()
@@ -1582,8 +1497,9 @@ onBeforeUnmount(() => {
                   </span>
                 </div>
 
-                <div class="dashboard-input-toolbar mt-5 grid grid-cols-1 gap-3" :class="showCreationSettings ? 'md:grid-cols-[1fr_1.45fr_1fr_1fr]' : 'md:grid-cols-[1fr_auto]'">
-                  <div v-if="showCreationSettings" class="relative z-[90]" @click.stop>
+                <!-- 创作参数直接展示，用户可以在提交前一次确认内容类型、风格、比例和清晰度。 -->
+                <div class="dashboard-input-toolbar mt-5 grid grid-cols-1 gap-3 md:grid-cols-[1fr_1.45fr_1fr_1fr]">
+                  <div class="relative z-[90]" @click.stop>
                     <button
                       class="dashboard-select-trigger flex h-[60px] w-full items-center justify-between rounded-[12px] border bg-white px-4 text-left transition hover:border-[#005FFE]/45"
                       :class="isCreativeIntentMenuOpen ? 'border-[#005FFE] shadow-[0_0_0_1px_rgba(0,95,254,0.1)]' : 'border-[#dfe7f2]'"
@@ -1667,18 +1583,9 @@ onBeforeUnmount(() => {
                   </div>
 
                   <!-- 比例与清晰度的图标独占左侧一列，标题和值保持与前两个入口参数一致的纵向层级。 -->
-                  <UiBaseSelect v-if="showCreationSettings" v-model="selectedAspectRatio" :options="aspectRatioOptions" label="画面比例" placeholder="画面比例" leading-icon="aspect-ratio" tone="dashboard" size="sm" class="min-w-0" />
-                  <UiBaseSelect v-if="showCreationSettings" v-model="selectedResolution" :options="resolutionOptions" label="清晰度" placeholder="清晰度" leading-icon="resolution" tone="dashboard" size="sm" class="min-w-0" />
-                  <button
-                    v-if="!showCreationSettings"
-                    class="h-[60px] rounded-[12px] border border-[#dfe7f2] bg-white px-6 text-[14px] font-black text-[#60718d] hover:border-[#005FFE]/45 hover:text-[#005FFE]"
-                    type="button"
-                    @click="showCreationSettings = true"
-                  >
-                    创作设置 · 推荐配置
-                  </button>
+                  <UiBaseSelect v-model="selectedAspectRatio" :options="aspectRatioOptions" label="画面比例" placeholder="画面比例" leading-icon="aspect-ratio" tone="dashboard" size="sm" class="min-w-0" />
+                  <UiBaseSelect v-model="selectedResolution" :options="resolutionOptions" label="清晰度" placeholder="清晰度" leading-icon="resolution" tone="dashboard" size="sm" class="min-w-0" />
                 </div>
-                <button v-if="showCreationSettings" class="mt-3 text-[13px] font-bold text-[#7b8aa3] hover:text-[#005FFE]" type="button" @click="showCreationSettings = false">收起创作设置</button>
               </div>
 
               <div class="mt-6 flex flex-col items-center">
@@ -1807,254 +1714,6 @@ onBeforeUnmount(() => {
               </section>
             </section>
 
-            <section v-if="hasAnalysis" class="rounded-3xl border border-borderSoft bg-panel p-6 shadow-panel">
-              <div class="flex flex-wrap items-center justify-between gap-4">
-                <div>
-                  <p class="text-sm uppercase tracking-[0.24em] text-textMuted">Step 2</p>
-                  <h2 class="mt-2 text-2xl font-bold">AI 解析结果</h2>
-                </div>
-                <button class="rounded-full border border-borderSoft px-4 py-2 text-sm hover:border-neon/60" :disabled="isBusy" @click="ingestAndAnalyze">
-                  重新生成
-                </button>
-              </div>
-
-              <div class="mt-5 grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
-                <article class="rounded-3xl border border-borderSoft bg-panelSoft p-5">
-                  <div class="flex flex-wrap items-center gap-3">
-                    <h3 class="text-2xl font-bold">{{ currentDramaProject?.analysis.title }}</h3>
-                    <span class="rounded-full border border-neon/35 px-3 py-1 text-xs text-neon">{{ currentDramaProject?.analysis.genre }}</span>
-                  </div>
-                  <p class="mt-4 text-lg text-slate-900/90 dark:text-white/90">{{ currentDramaProject?.analysis.logline }}</p>
-                  <p class="mt-4 text-sm leading-7 text-textMuted">{{ currentDramaProject?.analysis.synopsis }}</p>
-                </article>
-
-                <div class="grid gap-4 md:grid-cols-3 xl:grid-cols-1">
-                  <article class="rounded-3xl border border-borderSoft bg-panelSoft p-5">
-                    <p class="text-xs uppercase tracking-[0.24em] text-textMuted">主要人物</p>
-                    <div class="mt-3 space-y-3">
-                      <div v-for="role in currentDramaProject?.analysis.roles || []" :key="role.key" class="rounded-2xl border border-borderSoft px-4 py-3">
-                        <p class="font-semibold">{{ role.name }}</p>
-                        <p class="mt-1 text-xs text-textMuted">{{ role.ageIdentity }}</p>
-                      </div>
-                    </div>
-                  </article>
-                  <article class="rounded-3xl border border-borderSoft bg-panelSoft p-5">
-                    <p class="text-xs uppercase tracking-[0.24em] text-textMuted">关键场景</p>
-                    <div class="mt-3 space-y-3">
-                      <div v-for="scene in currentDramaProject?.analysis.scenes || []" :key="scene.key" class="rounded-2xl border border-borderSoft px-4 py-3">
-                        <p class="font-semibold">{{ scene.name }}</p>
-                        <p class="mt-1 text-xs text-textMuted">{{ scene.description }}</p>
-                      </div>
-                    </div>
-                  </article>
-                  <article class="rounded-3xl border border-borderSoft bg-panelSoft p-5">
-                    <p class="text-xs uppercase tracking-[0.24em] text-textMuted">关键道具</p>
-                    <div class="mt-3 space-y-3">
-                      <div v-for="prop in currentDramaProject?.analysis.props || []" :key="prop.key" class="rounded-2xl border border-borderSoft px-4 py-3">
-                        <p class="font-semibold">{{ prop.name }}</p>
-                        <p class="mt-1 text-xs text-textMuted">{{ prop.description }}</p>
-                      </div>
-                    </div>
-                  </article>
-                </div>
-              </div>
-            </section>
-
-            <section v-if="hasAnalysis" class="rounded-3xl border border-borderSoft bg-panel p-6 shadow-panel">
-              <div class="flex flex-wrap items-center justify-between gap-4">
-                <div>
-                  <p class="text-sm uppercase tracking-[0.24em] text-textMuted">Step 3</p>
-                  <h2 class="mt-2 text-2xl font-bold">角色 / 场景 / 道具设定</h2>
-                  <p class="mt-2 text-sm text-textMuted">每个阶段都保留重绘入口，后续可继续扩展音频、局部修图与风格锁定。</p>
-                </div>
-                <div class="grid min-w-[360px] grid-cols-1 gap-3 md:grid-cols-2">
-                  <UiBaseSelect
-                    v-model="selectedImageModel"
-                    label="图像模型"
-                    :options="imageModelOptions"
-                    placeholder="选择图像模型"
-                    tone="panel"
-                    full
-                  />
-                  <UiBaseInput
-                    v-model="visualStyleDraft"
-                    label="输出风格"
-                    placeholder="输入当前阶段的视觉风格"
-                    tone="panel"
-                    full
-                  />
-                </div>
-              </div>
-
-              <div class="mt-6 space-y-6">
-                <article class="rounded-3xl border border-borderSoft bg-panelSoft p-5">
-                  <div class="flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                      <h3 class="text-xl font-semibold">角色四视图</h3>
-                      <p class="mt-1 text-sm text-textMuted">根据主角与核心配角自动生成人设四视图，可后续选择音频占位。</p>
-                    </div>
-                    <button class="rounded-full bg-neon px-4 py-2 text-sm font-semibold text-white dark:text-slate-900 disabled:opacity-60" :disabled="isBusy" @click="generateRoleAssets">
-                      {{ busyKey === 'roles' ? '生成中...' : hasRoleAssets ? '重绘角色' : '生成角色' }}
-                    </button>
-                  </div>
-
-                  <div class="mt-5 grid gap-4 xl:grid-cols-2">
-                    <article v-for="role in currentDramaProject?.analysis.roles || []" :key="role.key" class="rounded-3xl border border-borderSoft bg-panel p-4">
-                      <div class="flex items-start justify-between gap-3">
-                        <div>
-                          <h4 class="text-lg font-semibold">{{ role.name }}</h4>
-                          <p class="mt-1 text-xs text-textMuted">{{ role.ageIdentity }}</p>
-                        </div>
-                        <button class="rounded-full border border-borderSoft px-3 py-1 text-xs text-textMuted">音频占位</button>
-                      </div>
-                      <p class="mt-3 text-sm text-textMuted">{{ role.personality }} / {{ role.appearance }}</p>
-                      <div class="mt-4 grid grid-cols-2 gap-3">
-                        <div v-for="asset in role.assets" :key="asset.id" class="overflow-hidden rounded-2xl border border-borderSoft bg-white/5">
-                          <UiFluidImage
-                            :src="asset.imageUrl"
-                            :alt="role.name"
-                            img-class="h-44 object-cover"
-                            wrapper-class="h-44 w-full"
-                            loading-label="生成中"
-                          />
-                          <div class="px-3 py-2 text-xs text-textMuted">{{ String(asset.meta.view_name || '视图') }}</div>
-                        </div>
-                      </div>
-                      <div class="mt-3 rounded-2xl border border-borderSoft bg-white/5 p-3 text-xs leading-6 text-textMuted">
-                        {{ role.prompt || '角色视觉提示词将在生成后回填到这里。' }}
-                      </div>
-                    </article>
-                  </div>
-                </article>
-
-                <article class="rounded-3xl border border-borderSoft bg-panelSoft p-5">
-                  <div class="flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                      <h3 class="text-xl font-semibold">场景设定</h3>
-                      <p class="mt-1 text-sm text-textMuted">关键场景按一场一图输出，便于后续镜头首帧参考。</p>
-                    </div>
-                    <button class="rounded-full bg-neon px-4 py-2 text-sm font-semibold text-white dark:text-slate-900 disabled:opacity-60" :disabled="isBusy" @click="generateSceneAssets">
-                      {{ busyKey === 'scenes' ? '生成中...' : hasSceneAssets ? '重绘场景' : '生成场景' }}
-                    </button>
-                  </div>
-                  <div class="mt-5 grid gap-4 xl:grid-cols-2">
-                    <article v-for="scene in currentDramaProject?.analysis.scenes || []" :key="scene.key" class="rounded-3xl border border-borderSoft bg-panel p-4">
-                      <div class="h-48 overflow-hidden rounded-2xl border border-borderSoft bg-white/5">
-                        <UiFluidImage
-                          v-if="scene.asset"
-                          :src="scene.asset.imageUrl"
-                          :alt="scene.name"
-                          img-class="object-cover"
-                          wrapper-class="h-full w-full"
-                          loading-label="生成中"
-                        />
-                      </div>
-                      <h4 class="mt-4 text-lg font-semibold">{{ scene.name }}</h4>
-                      <p class="mt-2 text-sm leading-6 text-textMuted">{{ scene.description }}</p>
-                      <div class="mt-3 rounded-2xl border border-borderSoft bg-white/5 p-3 text-xs leading-6 text-textMuted">{{ scene.prompt || '场景视觉提示词将在生成后回填。' }}</div>
-                    </article>
-                  </div>
-                </article>
-
-                <article class="rounded-3xl border border-borderSoft bg-panelSoft p-5">
-                  <div class="flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                      <h3 class="text-xl font-semibold">道具设定</h3>
-                      <p class="mt-1 text-sm text-textMuted">关键道具一物一图，优先服务后续角色与镜头一致性。</p>
-                    </div>
-                    <button class="rounded-full bg-neon px-4 py-2 text-sm font-semibold text-white dark:text-slate-900 disabled:opacity-60" :disabled="isBusy" @click="generatePropAssets">
-                      {{ busyKey === 'props' ? '生成中...' : hasPropAssets ? '重绘道具' : '生成道具' }}
-                    </button>
-                  </div>
-                  <div class="mt-5 grid gap-4 xl:grid-cols-3">
-                    <article v-for="prop in currentDramaProject?.analysis.props || []" :key="prop.key" class="rounded-3xl border border-borderSoft bg-panel p-4">
-                      <div class="h-56 overflow-hidden rounded-2xl border border-borderSoft bg-white/5">
-                        <UiFluidImage
-                          v-if="prop.asset"
-                          :src="prop.asset.imageUrl"
-                          :alt="prop.name"
-                          img-class="object-cover"
-                          wrapper-class="h-full w-full"
-                          loading-label="生成中"
-                        />
-                      </div>
-                      <h4 class="mt-4 text-lg font-semibold">{{ prop.name }}</h4>
-                      <p class="mt-2 text-sm leading-6 text-textMuted">{{ prop.description }}</p>
-                      <div class="mt-3 rounded-2xl border border-borderSoft bg-white/5 p-3 text-xs leading-6 text-textMuted">{{ prop.prompt || '道具视觉提示词将在生成后回填。' }}</div>
-                    </article>
-                  </div>
-                </article>
-              </div>
-            </section>
-
-            <section v-if="hasAnalysis" class="rounded-3xl border border-borderSoft bg-panel p-6 shadow-panel">
-              <div class="flex flex-wrap items-center justify-between gap-4">
-                <div>
-                  <p class="text-sm uppercase tracking-[0.24em] text-textMuted">Step 4</p>
-                  <h2 class="mt-2 text-2xl font-bold">分镜生成</h2>
-                  <p class="mt-2 text-sm text-textMuted">结构化分镜生成后，可直接进入无限画布继续做镜头衔接与视频工作流。</p>
-                </div>
-                <div class="grid min-w-[440px] grid-cols-1 gap-3 md:grid-cols-4">
-                  <UiBaseSelect
-                    v-model="selectedVideoProvider"
-                    label="视频供应商"
-                    :options="videoProviderOptions"
-                    placeholder="选择供应商"
-                    tone="panel"
-                    full
-                  />
-                  <UiBaseSelect
-                    v-model="selectedVideoModel"
-                    label="视频模型"
-                    :options="videoModelOptions"
-                    placeholder="选择视频模型"
-                    tone="panel"
-                    full
-                  />
-                  <UiBaseSelect
-                    v-model="selectedResolution"
-                    label="分辨率"
-                    :options="resolutionOptions"
-                    placeholder="选择分辨率"
-                    tone="panel"
-                    full
-                  />
-                  <button class="rounded-2xl bg-neon px-4 py-3 text-sm font-semibold text-white dark:text-slate-900 disabled:opacity-60" :disabled="isBusy" @click="generateStoryboards">
-                    {{ busyKey === 'storyboards' ? '生成中...' : hasStoryboards ? '重新生成分镜' : '生成分镜' }}
-                  </button>
-                </div>
-              </div>
-
-              <div class="mt-6 overflow-hidden rounded-3xl border border-borderSoft">
-                <table class="min-w-full text-left text-sm">
-                  <thead class="bg-white/5 text-textMuted">
-                    <tr>
-                      <th class="px-4 py-3">镜号</th>
-                      <th class="px-4 py-3">时长</th>
-                      <th class="px-4 py-3">画面描述</th>
-                      <th class="px-4 py-3">角色</th>
-                      <th class="px-4 py-3">景别</th>
-                      <th class="px-4 py-3">动作</th>
-                      <th class="px-4 py-3">情绪</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr v-for="row in currentDramaProject?.storyboards || []" :key="row.id" class="border-t border-borderSoft/70">
-                      <td class="px-4 py-3">{{ row.shotNo }}</td>
-                      <td class="px-4 py-3">{{ row.durationSec }}s</td>
-                      <td class="px-4 py-3">{{ row.sceneDescription }}</td>
-                      <td class="px-4 py-3">{{ row.role }}</td>
-                      <td class="px-4 py-3">{{ row.shotType }}</td>
-                      <td class="px-4 py-3">{{ row.action }}</td>
-                      <td class="px-4 py-3">{{ row.mood }}</td>
-                    </tr>
-                    <tr v-if="!currentDramaProject?.storyboards.length">
-                      <td colspan="7" class="px-4 py-10 text-center text-textMuted">分镜尚未生成，前面阶段完成后可在这里一键生成结构化分镜表。</td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            </section>
           </div>
         </template>
         </div>
