@@ -11,7 +11,6 @@ import DashboardSidebar from '~/features/dashboard/components/DashboardSidebar.v
 import ExportCenterPanel from '~/features/dashboard/components/ExportCenterPanel.vue'
 import FeedbackDrawer from '~/features/support/components/FeedbackDrawer.vue'
 import HelpCenterPanel from '~/features/support/components/HelpCenterPanel.vue'
-import RedeemCodeDialog from '~/features/support/components/RedeemCodeDialog.vue'
 import PlaceholderWorkspacePanel from '~/features/dashboard/components/PlaceholderWorkspacePanel.vue'
 import ProjectDirectoryPanel from '~/features/projects/components/ProjectDirectoryPanel.vue'
 import ProductImageWorkspacePanel from '~/features/product-image/components/ProductImageWorkspacePanel.vue'
@@ -20,6 +19,14 @@ import { useAccountStore } from '~/features/billing/store/useAccountStore'
 import { useThemeStore } from '~/features/ui/store/useThemeStore'
 import { useAuthStore } from '~/features/auth/store/useAuthStore'
 import { dramaService } from '~/shared/api/services/dramaService'
+import { supportService } from '~/shared/api/services/supportService'
+import { requestFeatureConsent } from '~/shared/legal/featureConsent'
+import type { LegalDocument } from '~/entities/support/types'
+import {
+  fallbackDramaVisualStyleOptions,
+  findVisualStyleOption,
+  mapStyleContractsToOptions,
+} from '~/shared/constants/dramaVisualStyles'
 import type { EpisodeCutTask } from '~/entities/drama/episodeCutTypes'
 
 type DashboardMenuKey = 'drama' | 'product' | 'product-video' | 'billing' | 'none'
@@ -68,6 +75,19 @@ const { $siteAsset: siteAsset } = useNuxtApp()
 
 const activeMenu = ref<DashboardMenuKey>('drama')
 const activeWorkspaceView = ref<DashboardWorkspaceView>('console')
+const legalDocuments = ref<LegalDocument[]>([])
+const featureNotice = computed(() => {
+  if (activeWorkspaceView.value !== 'console') return null
+  const code = activeMenu.value === 'product' ? 'image_generation_terms'
+    : activeMenu.value === 'product-video' ? 'video_generation_terms'
+    : activeMenu.value === 'drama' ? 'drama_creation_terms'
+    : ''
+  const document = legalDocuments.value.find(item => item.code === code)
+  const version = document?.versions[0]
+  if (!document || !version) return null
+  // 风险提示标题和摘要直接使用后台已发布版本，运营改版后用户端无需发版。
+  return { title: version.title, code: document.code, detail: version.summary }
+})
 const runtimeConfig = ref<DramaRuntimeConfig | null>(null)
 const publicVideoCapabilities = ref<PublicVideoCapabilities | null>(null)
 const currentDramaProject = ref<DramaProjectDetail | null>(null)
@@ -91,6 +111,7 @@ const busyKey = ref('')
 const dramaSubmissionStage = ref<DramaSubmissionStage>('idle')
 const errorMessage = ref('')
 const infoMessage = ref('')
+const toast = useToast()
 const isDraggingFile = ref(false)
 const projectItems = ref<DramaProjectCard[]>([])
 const exportTasks = ref<EpisodeCutTask[]>([])
@@ -115,18 +136,19 @@ const selectedVideoModel = ref('')
 const selectedVideoProvider = ref<'alibaba' | 'bytedance' | 'huoshan'>('bytedance')
 const selectedAspectRatio = ref('16:9')
 const selectedResolution = ref('720p')
-const selectedVisualStyle = ref('东方玄幻 · 电影写实')
+const selectedVisualStyle = ref('东方玄幻 · 古装影视写实')
 const selectedCreativeIntent = ref<CreativeIntent>('drama')
 const isUserMenuOpen = ref(false)
 // 顶部积分入口使用独立 Popover，不再点击后直接跳充值页；这样用户可以先查看余额和最近流水。
 const isCreditPopoverOpen = ref(false)
-const isRedeemDialogOpen = ref(false)
 const isFeedbackDrawerOpen = ref(false)
 const isProfileDialogOpen = ref(false)
 const isAccountSecurityDialogOpen = ref(false)
 const isCreativeIntentMenuOpen = ref(false)
 const isVisualStyleMenuOpen = ref(false)
 const activeProjectMenuId = ref('')
+let recentProjectPrefetchTimer: ReturnType<typeof setTimeout> | null = null
+let recentProjectPrefetchTarget = ''
 
 const maxScriptCharacterCount = 20_000
 const maxScriptFileSize = 20 * 1024 * 1024
@@ -162,14 +184,7 @@ const creativeIntentOptions: Array<{
 ]
 
 // 风格选择使用已有案例图，让用户先看画面再做决定；正式素材替换时只需要改 image 路径。
-const visualStyleOptions = [
-  { label: '东方玄幻 · 电影写实', value: '东方玄幻 · 电影写实', description: '写实质感 · 气势恢宏', image: '/landing/case-truth.png' },
-  { label: '都市情感 · 现代写实', value: '都市情感 · 现代写实', description: '现实题材 · 细腻真实', image: '/landing/case-city.png' },
-  { label: '古风仙侠 · 唯美国风', value: '古风仙侠 · 唯美国风', description: '唯美国风 · 国风意境', image: '/landing/tool-character.png' },
-  { label: '二次元 · 日系动画', value: '二次元 · 日系动画', description: '日系动画 · 青春活泼', image: '/landing/case-youth.png' },
-  { label: '国漫3D · 3D国风', value: '国漫3D · 3D国风', description: '3D国漫 · 热血奇幻', image: '/landing/tool-short-drama.png' },
-  { label: '悬疑推理 · 电影悬疑', value: '悬疑推理 · 电影悬疑', description: '冷色调 · 悬疑氛围', image: '/landing/case-love.png' }
-] as const
+const visualStyleOptions = ref([...fallbackDramaVisualStyleOptions])
 
 const isBooting = computed(() => busyKey.value === 'boot')
 const isBusy = computed(() => busyKey.value !== '')
@@ -192,11 +207,15 @@ const stageLabel = computed(() => {
   return '等待输入剧本'
 })
 const effectiveVisualStyle = computed(() => selectedVisualStyle.value)
+const effectiveVisualStyleId = computed(() => (
+  findVisualStyleOption(selectedVisualStyle.value, visualStyleOptions.value)?.styleId
+  || 'oriental_fantasy_live_action'
+))
 const visualStyleDraft = computed({
   get: () => selectedVisualStyle.value,
   set: (value: string) => {
     // 入口页已取消“自定义风格”卡片；这里仍允许后续资产阶段临时修改输出风格文本。
-    selectedVisualStyle.value = value.trim() || '东方玄幻 · 电影写实'
+    selectedVisualStyle.value = value.trim() || '东方玄幻 · 古装影视写实'
   }
 })
 const textModelOptions = computed<DashboardOption[]>(() => {
@@ -372,7 +391,7 @@ const userAvatarUrl = computed(() => {
   const seed = authStore.session.user?.id || 'livliv-creator'
   return `https://api.dicebear.com/9.x/notionists/svg?seed=${encodeURIComponent(seed)}&backgroundColor=b6e3f4,c0aede,d1d4f9`
 })
-const userNickname = computed(() => authStore.session.user?.nickname || '管理员开发者')
+const userNickname = computed(() => authStore.session.user?.nickname || '未登录')
 
 function formatProjectUpdatedAt(value: string): string {
   if (!value) return '更新于 --'
@@ -596,6 +615,18 @@ async function refreshAfterRedeem(): Promise<void> {
   await loadBillingData()
 }
 
+/** 反馈成功只用右上角短暂通知，不再用页面顶部横幅占据工作区。 */
+function handleFeedbackSubmitted(): void {
+  toast.add({
+    title: '反馈已提交',
+    description: '可在帮助中心查看处理进度。',
+    color: 'success',
+    icon: 'i-lucide-circle-check',
+    close: true,
+    duration: 4500,
+  })
+}
+
 async function loadProjectDirectory(): Promise<void> {
   try {
     // “我的项目”现在走后端真实分页，页面只负责展示当前页结果。
@@ -734,11 +765,20 @@ async function bootstrapDashboard(): Promise<void> {
     runtimeConfig.value = config
     applyRuntimeDefaults(config)
     applyPublicVideoCapabilities(capabilities)
+    try {
+      const contracts = await dramaService.getVisualStyles()
+      if (contracts.length > 0) visualStyleOptions.value = mapStyleContractsToOptions(contracts)
+    } catch (error) {
+      // 风格接口异常时只回退到同一份共享目录，不阻塞首页其它创作能力。
+      console.warn('[livliv] 视觉风格目录加载失败，使用内置兼容目录', error)
+    }
     const bootstrapResults = await Promise.allSettled([
       loadProjectDirectory(),
       accountStore.refreshProfile(),
       // 顶部积分 Popover 需要最近几条流水，因此控制台启动时先加载轻量账户流水。
-      accountStore.refreshLedgers(1, 6)
+      accountStore.refreshLedgers(1, 6),
+      // 安全协议入口只展示后台当前已发布版本，不在前端维护重复法律文案。
+      supportService.getLegalDocuments().then(items => { legalDocuments.value = items })
     ])
     // 项目、账户、流水互不依赖：某个局部接口暂不可用时，商品创作等独立工具仍可进入，
     // 不再用全页红色错误条遮挡工作区；具体动作仍会在所属组件里反馈失败原因。
@@ -837,6 +877,7 @@ async function continueEntryCreation(): Promise<void> {
         themeMode: themeStore.mode,
         entryIntent: selectedCreativeIntent.value,
         style: effectiveVisualStyle.value,
+        styleId: effectiveVisualStyleId.value,
         aspectRatio: selectedAspectRatio.value,
         resolution: selectedResolution.value,
         // 首页已移除集数选择，第一版统一按单项目解析；后端仍保留默认值兼容旧接口。
@@ -996,7 +1037,27 @@ function openDramaProject(projectId: string): void {
     toggleProjectSelection(projectId)
     return
   }
+  // 点击时兜底启动预取；若卡片已悬停预取，服务层会复用同一请求。
+  void dramaService.prefetchProject(projectId)
   router.push(`/drama/${encodeURIComponent(projectId)}?from=dashboard-projects`)
+}
+
+function scheduleRecentProjectPrefetch(projectId: string): void {
+  if (!projectId || isBatchSelectingProjects.value) return
+  if (recentProjectPrefetchTimer) clearTimeout(recentProjectPrefetchTimer)
+  recentProjectPrefetchTarget = projectId
+  // 轻微防抖，避免指针扫过项目卡片时为每张卡片都发出完整详情请求。
+  recentProjectPrefetchTimer = setTimeout(() => {
+    recentProjectPrefetchTimer = null
+    void dramaService.prefetchProject(projectId)
+  }, 180)
+}
+
+function cancelRecentProjectPrefetch(projectId: string): void {
+  if (recentProjectPrefetchTarget !== projectId || !recentProjectPrefetchTimer) return
+  clearTimeout(recentProjectPrefetchTimer)
+  recentProjectPrefetchTimer = null
+  recentProjectPrefetchTarget = ''
 }
 
 async function loadExportTasks(): Promise<void> {
@@ -1098,6 +1159,56 @@ watch(
   { immediate: true }
 )
 
+let legalEntryCheckSequence = 0
+const legalEntryError = ref('')
+
+/** 根据控制台路由返回对应的功能协议编码，入口检查与侧栏点击共用同一映射。 */
+function featureConsentCodeForPath(path: string): string | null {
+  if (path === '/dashboard') return 'drama_creation_terms'
+  if (path === '/dashboard-product') return 'image_generation_terms'
+  if (path === '/dashboard-product-video') return 'video_generation_terms'
+  return null
+}
+
+async function checkFeatureEntryConsent(featureCode: string): Promise<void> {
+    // 页面进入时只提示未确认的当前版本；生成提交时仍由后端再次硬性校验。
+    if (!import.meta.client || !authStore.session.token) return
+    const sequence = ++legalEntryCheckSequence
+    legalEntryError.value = ''
+    try {
+      const accepted = await supportService.getLegalAcceptanceStatus()
+      if (sequence !== legalEntryCheckSequence) return
+      // 通用 AI 规则与功能专属条款在一个弹窗中合并展示，后端仍分别保存版本留痕。
+      const missingCodes = ['ai_content_rules', featureCode].filter(code => !accepted[code])
+      if (missingCodes.length) {
+        const confirmed = await requestFeatureConsent(missingCodes)
+        if (!confirmed || sequence !== legalEntryCheckSequence) return
+      }
+    } catch (error) {
+      legalEntryError.value = error instanceof Error ? error.message : '协议状态暂时无法读取，请稍后重试。'
+    }
+}
+
+watch(
+  [() => route.path, isBooting],
+  async ([path, booting]) => {
+    if (!import.meta.client || booting) return
+    const featureCode = featureConsentCodeForPath(path)
+    if (featureCode) await checkFeatureEntryConsent(featureCode)
+  },
+  { immediate: true }
+)
+
+function handleFeatureMenuClick(menu: 'drama' | 'product' | 'product-video'): void {
+  // 已在当前页面时路由不会变化，因此用户明确再次点击菜单时直接打开对应协议。
+  // 这里不依赖状态接口，既可补看已同意条款，也能避免热更新或初始化时序造成漏弹。
+  const paths = { drama: '/dashboard', product: '/dashboard-product', 'product-video': '/dashboard-product-video' }
+  if (route.path !== paths[menu] || isBooting.value) return
+  const codes = { drama: 'drama_creation_terms', product: 'image_generation_terms', 'product-video': 'video_generation_terms' }
+  // 用户主动点击当前菜单查看时，同样用合并弹窗展示通用规则和功能规则。
+  void requestFeatureConsent(['ai_content_rules', codes[menu]])
+}
+
 watch(
   () => route.query.dramaProjectId,
   async (projectId) => {
@@ -1161,8 +1272,17 @@ onMounted(async () => {
   themeStore.hydrate()
   // 进入工作台时先恢复登录态，后续所有接口会通过 httpAdapter 自动带上当前 user_id。
   authStore.hydrate()
+  // 新浏览器没有旧浏览器的 localStorage 登录态；不可展示假昵称并静默跳过协议确认。
+  if (useRuntimeConfig().public.apiAdapter !== 'mock' && !authStore.session.token) {
+    await router.replace(`/login?redirect=${encodeURIComponent(route.fullPath)}`)
+    return
+  }
   document.addEventListener('click', handleDashboardDocumentClick)
   await bootstrapDashboard()
+  // onMounted 中再执行一次确定性的入口检查，覆盖登录后路由跳转、页面热更新等
+  // 不一定重新触发 route watcher 的场景；已同意版本会由后端状态直接跳过。
+  const entryFeatureCode = featureConsentCodeForPath(route.path)
+  if (entryFeatureCode) await checkFeatureEntryConsent(entryFeatureCode)
   // 首次直接打开 /dashboard-exports 时，路由状态早于 watcher 建立；在鉴权恢复后补上轮询。
   if (activeWorkspaceView.value === 'exports' && !exportPollTimer) {
     exportPollTimer = setInterval(() => void loadExportTasks(), 5000)
@@ -1172,6 +1292,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   if (entryCreditPreviewTimer) clearTimeout(entryCreditPreviewTimer)
   if (exportPollTimer) clearInterval(exportPollTimer)
+  if (recentProjectPrefetchTimer) clearTimeout(recentProjectPrefetchTimer)
   document.removeEventListener('click', handleDashboardDocumentClick)
 })
 </script>
@@ -1216,6 +1337,7 @@ onBeforeUnmount(() => {
         @logout="handleLogout"
         @toggle-theme="themeStore.toggleMode()"
         @request-feedback="isFeedbackDrawerOpen = true"
+        @feature-menu-click="handleFeatureMenuClick"
       />
 
       <section class="min-w-0 flex-1">
@@ -1242,15 +1364,6 @@ onBeforeUnmount(() => {
                 />
               </div>
             </div>
-
-            <button
-              class="flex h-9 items-center gap-2 rounded-full border border-[#dbe7f7] bg-white px-3.5 text-[13px] font-black text-[#2563eb] shadow-[0_10px_28px_rgba(15,23,42,0.05)] transition hover:border-[#2563eb]/40 hover:bg-[#eff6ff]"
-              type="button"
-              @click="isRedeemDialogOpen = true"
-            >
-              <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 8.5h16v7H4zM8 8.5V6.8a2 2 0 0 1 4 0v1.7M12 8.5V6.8a2 2 0 0 1 4 0v1.7M9 12h.01M15 12h.01" stroke-linecap="round" stroke-linejoin="round" /></svg>
-              兑换码
-            </button>
 
             <button
               class="dashboard-theme-toggle flex h-7 items-center gap-1 rounded-full border border-[#d7e1ef] bg-white px-1.5 shadow-[0_10px_28px_rgba(15,23,42,0.06)] transition hover:border-[#005FFE]/40"
@@ -1336,6 +1449,24 @@ onBeforeUnmount(() => {
           <div v-if="infoMessage" class="mb-4 rounded-2xl border border-neon/30 bg-neon/10 px-4 py-3 text-sm text-neon">
             {{ infoMessage }}
           </div>
+          <!-- 首次进入由协议弹窗完成确认；此处只保留可再次查阅的小入口，不占用创作区。 -->
+          <div v-if="featureNotice" class="relative z-30 mx-auto mb-2 flex max-w-[1400px] justify-end">
+            <details class="group relative text-xs text-slate-500">
+              <summary class="flex cursor-pointer list-none items-center gap-1.5 rounded-md px-2 py-1.5 hover:bg-amber-50 hover:text-amber-800">
+                <span>安全协议</span>
+                <span class="grid h-4 w-4 place-items-center rounded-full border border-amber-400 text-[10px] font-bold text-amber-600" aria-hidden="true">!</span>
+              </summary>
+              <div class="absolute right-0 top-full z-40 mt-1 w-[min(350px,calc(100vw-48px))] rounded-xl border border-amber-200 bg-white p-4 text-sm leading-6 text-slate-700 shadow-xl" role="note">
+                <strong class="text-slate-900">{{ featureNotice.title }}</strong>
+                <p class="mt-1">{{ featureNotice.detail }}</p>
+                <div class="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs font-semibold text-blue-600">
+                  <NuxtLink :to="`/legal/${featureNotice.code}`" target="_blank" class="underline">查看功能告知</NuxtLink>
+                  <NuxtLink to="/legal/ai_content_rules" target="_blank" class="underline">AI 内容规则</NuxtLink>
+                </div>
+                <p v-if="legalEntryError" class="mt-2 text-xs text-rose-700">协议状态读取失败：{{ legalEntryError }}</p>
+              </div>
+            </details>
+          </div>
 
           <ProjectDirectoryPanel
             v-if="activeWorkspaceView === 'projects'"
@@ -1388,6 +1519,7 @@ onBeforeUnmount(() => {
             :billing-packages="billingPackages"
             :current-credit-balance="currentCreditBalance"
             :is-billing-loading="isBillingLoading"
+            @redeemed="refreshAfterRedeem"
           />
 
           <AnnouncementWorkspacePanel
@@ -1631,6 +1763,8 @@ onBeforeUnmount(() => {
                     :key="project.id"
                     class="dashboard-project-card group relative flex min-h-[128px] cursor-pointer gap-5 rounded-[12px] border border-[#dfe7f2] bg-white p-4 shadow-[0_18px_48px_rgba(15,23,42,0.06)] transition hover:-translate-y-1 hover:shadow-[0_22px_58px_rgba(15,23,42,0.12)]"
                     @click="openRecentProject(project)"
+                    @mouseenter="scheduleRecentProjectPrefetch(project.projectId)"
+                    @mouseleave="cancelRecentProjectPrefetch(project.projectId)"
                   >
                     <div
                       class="relative h-[96px] w-[74px] shrink-0 overflow-hidden rounded-[8px] bg-cover bg-center"
@@ -1720,8 +1854,7 @@ onBeforeUnmount(() => {
       </section>
     </div>
 
-    <RedeemCodeDialog :open="isRedeemDialogOpen" @close="isRedeemDialogOpen = false" @redeemed="refreshAfterRedeem" />
-    <FeedbackDrawer :open="isFeedbackDrawerOpen" @close="isFeedbackDrawerOpen = false" @submitted="infoMessage = '反馈已提交，可在帮助中心查看处理进度。'" />
+    <FeedbackDrawer :open="isFeedbackDrawerOpen" @close="isFeedbackDrawerOpen = false" @submitted="handleFeedbackSubmitted" />
     <AccountProfileDialog :open="isProfileDialogOpen" @close="isProfileDialogOpen = false" @updated="accountStore.refreshProfile()" />
     <AccountSecurityDialog :open="isAccountSecurityDialogOpen" @close="isAccountSecurityDialogOpen = false" />
 

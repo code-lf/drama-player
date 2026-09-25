@@ -1,15 +1,23 @@
 <script setup lang="ts">
 import type { SystemAnnouncement } from '~/entities/announcement/types'
+import { useAuthStore } from '~/features/auth/store/useAuthStore'
 import { announcementService } from '~/shared/api/services/announcementService'
-import { sanitizeAnnouncementContent } from '~/shared/utils/sanitizeAnnouncementContent'
+import { announcementExcerpt } from '~/shared/utils/announcementExcerpt'
+import { ANNOUNCEMENT_READ_CHANGED_EVENT, restoreAnnouncementReadIds } from '~/shared/utils/announcementReadState'
 
+const authStore = useAuthStore()
 const announcements = ref<SystemAnnouncement[]>([])
 const loading = ref(false)
 const dismissedIds = ref<Set<string>>(new Set())
+const readIds = ref<Set<string>>(new Set())
+const currentUserKey = computed(() => authStore.session.user?.id || 'guest')
 
-const visibleAnnouncements = computed(() => {
-  return announcements.value.filter((item) => !dismissedIds.value.has(item.id))
-})
+// 全局提示只露出最新一条未读公告；完整内容留在公告中心查看。
+const visibleAnnouncement = computed(() => announcements.value.find((item) => !readIds.value.has(item.id) && !dismissedIds.value.has(item.id)))
+
+function restoreReadIds(): void {
+  readIds.value = restoreAnnouncementReadIds(currentUserKey.value)
+}
 
 function storageKey(id: string): string {
   return `livliv:announcement:dismissed:${id}`
@@ -55,6 +63,7 @@ async function loadAnnouncements(): Promise<void> {
   if (loading.value) return
   loading.value = true
   try {
+    restoreReadIds()
     const items = await announcementService.getActive('global')
     announcements.value = items || []
     if (import.meta.client) {
@@ -72,42 +81,47 @@ async function loadAnnouncements(): Promise<void> {
   }
 }
 
-onMounted(loadAnnouncements)
+onMounted(() => {
+  loadAnnouncements()
+  window.addEventListener(ANNOUNCEMENT_READ_CHANGED_EVENT, restoreReadIds)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener(ANNOUNCEMENT_READ_CHANGED_EVENT, restoreReadIds)
+})
+
+watch(currentUserKey, restoreReadIds)
 </script>
 
 <template>
-  <div v-if="visibleAnnouncements.length" class="sticky top-0 z-[120] space-y-2 px-4 pt-3">
+  <div v-if="visibleAnnouncement" class="pointer-events-none fixed right-4 top-[72px] z-[120] w-[min(440px,calc(100vw-32px))]">
     <article
-      v-for="item in visibleAnnouncements"
-      :key="item.id"
-      class="mx-auto flex max-w-[1180px] items-start gap-3 rounded-2xl border px-4 py-3 shadow-[0_12px_36px_rgba(15,23,42,0.12)] backdrop-blur"
-      :class="levelClass(item.level)"
+      :key="visibleAnnouncement.id"
+      class="pointer-events-auto flex items-start gap-3 rounded-2xl border px-4 py-3 shadow-[0_12px_36px_rgba(15,23,42,0.12)] backdrop-blur"
+      :class="levelClass(visibleAnnouncement.level)"
     >
-      <span class="mt-0.5 shrink-0 rounded-full px-2.5 py-1 text-[11px] font-bold" :class="badgeClass(item.level)">
-        {{ levelLabel(item.level) }}
+      <span class="mt-0.5 shrink-0 rounded-full px-2.5 py-1 text-[11px] font-bold" :class="badgeClass(visibleAnnouncement.level)">
+        {{ levelLabel(visibleAnnouncement.level) }}
       </span>
       <div class="min-w-0 flex-1">
-        <p class="text-sm font-semibold">{{ item.title }}</p>
-        <div
-          v-if="item.content"
-          class="announcement-rich-content mt-1 text-sm leading-6 opacity-85"
-          v-html="sanitizeAnnouncementContent(item.content)"
-        />
+        <p class="truncate text-sm font-semibold">{{ visibleAnnouncement.title }}</p>
+        <p v-if="visibleAnnouncement.content" class="mt-1 line-clamp-2 text-xs leading-5 opacity-85">{{ announcementExcerpt(visibleAnnouncement.content) }}</p>
+        <NuxtLink to="/dashboard-announcements" class="mt-1 inline-block text-xs font-semibold underline underline-offset-2">查看公告</NuxtLink>
       </div>
       <button
-        v-if="item.linkUrl"
+        v-if="visibleAnnouncement.linkUrl"
         type="button"
         class="shrink-0 rounded-full border border-current/20 px-3 py-1.5 text-xs font-semibold transition hover:bg-current/10"
-        @click="openAnnouncementLink(item)"
+        @click="openAnnouncementLink(visibleAnnouncement)"
       >
-        {{ item.linkText || '查看详情' }}
+        {{ visibleAnnouncement.linkText || '查看详情' }}
       </button>
       <button
-        v-if="item.dismissible"
+        v-if="visibleAnnouncement.dismissible"
         type="button"
         class="shrink-0 rounded-full px-2 py-1 text-lg leading-none opacity-60 transition hover:bg-current/10 hover:opacity-100"
         aria-label="关闭公告"
-        @click="dismissAnnouncement(item)"
+        @click="dismissAnnouncement(visibleAnnouncement)"
       >
         ×
       </button>

@@ -24,6 +24,7 @@ export interface LegalDocumentVersion {
   title: string
   summary: string
   content: string
+  confirmationText: string
   status: 'draft' | 'published' | 'archived'
   requiresAcceptance: boolean
   effectiveAt: string

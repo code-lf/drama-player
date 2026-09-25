@@ -99,9 +99,20 @@ export default defineNuxtConfig({
     }
   },
 
-  // 路由渲染策略：首页 SSR，创作页 CSR
+  // 路由渲染策略：首页 SSR，创作页和登录态工作台 CSR。
+  // 工作台依赖浏览器登录态，且内部 Tooltip/浮层需要 UApp 客户端上下文；关闭 SSR 可避免
+  // 用户直接刷新商品图等页面时出现 Provider 尚未建立导致的 500。
   routeRules: {
-    '/studio/**': { ssr: false }
+    '/studio/**': { ssr: false },
+    '/dashboard': { ssr: false },
+    '/dashboard-announcements': { ssr: false },
+    '/dashboard-billing': { ssr: false },
+    '/dashboard-canvas': { ssr: false },
+    '/dashboard-exports': { ssr: false },
+    '/dashboard-help': { ssr: false },
+    '/dashboard-product': { ssr: false },
+    '/dashboard-product-video': { ssr: false },
+    '/dashboard-projects': { ssr: false }
   },
 
   // 运行时配置：

@@ -22,6 +22,11 @@ import type {
 } from '~/entities/storyboard/types'
 import type {
   DramaAnalyzePayload,
+  DramaProductionImpact,
+  DramaProductionStatus,
+  DramaProductionSyncAction,
+  DramaProductionSyncQuote,
+  DramaProductionVersionContent,
   DramaCreditPreviewPayload,
   DramaPropUpdatePayload,
   DramaRoleCreatePayload,
@@ -33,6 +38,7 @@ import type {
   WorkflowRunInfo
 } from '~/shared/api/types'
 import CreditAmount from '~/components/ui/CreditAmount.vue'
+import LivDialog from '~/components/liv-ui/LivDialog.vue'
 import DramaAssetWorkspace from '~/components/drama/assets/DramaAssetWorkspace.vue'
 import DramaEpisodeCutWorkspace from '~/components/drama/video/DramaEpisodeCutWorkspace.vue'
 import DramaStoryboardWorkspace from '~/components/drama/storyboard/DramaStoryboardWorkspace.vue'
@@ -41,6 +47,7 @@ import { Copy, Ellipsis, Plus, Trash2 } from '@lucide/vue'
 import { useAuthStore } from '~/features/auth/store/useAuthStore'
 import { dramaService } from '~/shared/api/services/dramaService'
 import { workflowService } from '~/shared/api/services/workflowService'
+import { fallbackDramaVisualStyleOptions } from '~/shared/constants/dramaVisualStyles'
 
 type WorkflowStepKey = 'script' | 'setting' | 'storyboard' | 'video'
 type SettingTabKey = 'roles' | 'scenes' | 'props'
@@ -252,7 +259,7 @@ const fallbackAspectRatioCatalog: PageOption[] = [
   { label: '21:9', value: '21:9', preview: '21:9' }
 ]
 // 这里必须和首页配置页、后端提示词支持范围保持一致，避免项目详情页回显时丢失合法风格。
-const visualStyleCatalog = ['写实通用', '写实都市', '写实电影感', '2D日漫', '2D韩漫', '3D仙侠', '3D国风', '自定义风格'] as const
+const visualStyleCatalog: string[] = fallbackDramaVisualStyleOptions.map(item => item.value)
 const voiceToneCatalog: PageOption[] = [
   { label: '温柔女声', value: '温柔女声' },
   { label: '清冷女声', value: '清冷女声' },
@@ -339,6 +346,22 @@ const runtime = useRuntimeConfig()
 
 const runtimeConfig = ref<DramaRuntimeConfig | null>(null)
 const projectDetail = ref<DramaProjectDetail | null>(null)
+const productionStatus = ref<DramaProductionStatus | null>(null)
+const isAcceptingProductionGap = ref(false)
+const productionImpactOpen = ref(false)
+const productionImpact = ref<DramaProductionImpact | null>(null)
+const productionSyncQuote = ref<DramaProductionSyncQuote | null>(null)
+const productionVersionContent = ref<DramaProductionVersionContent | null>(null)
+const productionVersionContentBusy = ref('')
+const productionImpactBusy = ref(false)
+const productionQuoteBusy = ref<DramaProductionSyncAction | ''>('')
+const productionExecuteBusy = ref(false)
+// 资产子页面负责读取真实准备状态；版本差异入口始终保留在资产/分镜页，
+// 即使旧生产版本尚需补资料，也不能把“查看旧资产、分析差异”的入口一起隐藏。
+const assetWorkspaceStatus = ref<'loading' | 'local_ready' | 'preparing' | 'ready' | 'failed'>('loading')
+const isProductionGapAccepted = computed(() => (
+  productionStatus.value?.active_production_version?.sync_status === 'accepted_with_gap'
+))
 const scriptWorkspaceRef = ref<{ openAllSuggestions: () => void } | null>(null)
 const workflowRunInfo = ref<WorkflowRunInfo | null>(null)
 const activeStep = ref<WorkflowStepKey>('script')
@@ -381,7 +404,7 @@ const selectedVideoModel = ref('')
 const selectedVideoProvider = ref<'alibaba' | 'bytedance' | 'huoshan'>('alibaba')
 const selectedResolution = ref('720p')
 const selectedAspectRatio = ref('16:9')
-const selectedVisualStyle = ref('写实通用')
+const selectedVisualStyle = ref('东方玄幻 · 古装影视写实')
 const customVisualStyle = ref('')
 const roleVoiceSelections = ref<Record<string, string>>({})
 // 角色音色上传当前一次只处理一个角色，避免同一卡片重复点击导致状态混乱。
@@ -794,6 +817,17 @@ function getAnalysisStageActivity(stageKey: AnalysisStageKey, progress: number):
 const scriptProgressSubtitle = computed(() => {
   if (currentAnalysisRun.value.status === 'failed') return '请查看后端日志后重新发起解析。'
   if (isAnalysisResultOrganizing.value) return '正在整理结构化结果，即将进入剧本页'
+  // V2/V3 首屏仅等待基础结构；体检与封面不属于进入剧本的门禁。
+  if (currentAnalysisRun.value.nodes?.STRUCTURE_ANALYSIS) {
+    const structure = currentAnalysisRun.value.nodes.STRUCTURE_ANALYSIS
+    if (structure.status !== 'running') return '基础结构任务已排队，体检与封面会在进入剧本后继续处理。'
+    // 与后端流式 JSON 字段检查点一致；这里只解释已持久化的进度，不按等待时间推算。
+    if (structure.progress >= 90) return '模型已返回，正在校验原文覆盖并保存结构。'
+    if (structure.progress >= 68) return '正在接收分集内容与场景结构。'
+    if (structure.progress >= 48) return '正在接收人物小传与角色关系。'
+    if (structure.progress >= 22) return '正在接收故事梗概与主线。'
+    return '正在连接模型并接收基础结构。'
+  }
   const runningItem = scriptProgressItems.value.find((item) => item.status === 'running')
   return runningItem
     ? `${getAnalysisStageActivity(runningItem.key, runningItem.progress)}，模型内容持续返回中`
@@ -1061,11 +1095,11 @@ function applyRuntimeDefaults(config: DramaRuntimeConfig): void {
   autoGenerateStoryboardOnEnterStoryboard.value = (config.defaults.auto_generate_storyboard_on_enter_storyboard || 'true') === 'true'
   autoGenerateVideoOnEnterVideo.value = (config.defaults.auto_generate_video_on_enter_video || 'false') === 'true'
   const routeStyle = getQueryValue('style')
-  if (routeStyle && !visualStyleCatalog.includes(routeStyle as typeof visualStyleCatalog[number])) {
+  if (routeStyle && !visualStyleCatalog.includes(routeStyle)) {
     selectedVisualStyle.value = '自定义风格'
     customVisualStyle.value = routeStyle
   } else {
-    selectedVisualStyle.value = routeStyle || '写实通用'
+    selectedVisualStyle.value = routeStyle || '东方玄幻 · 古装影视写实'
   }
 }
 
@@ -1080,8 +1114,8 @@ function syncSelectionsFromAnalysis(project: DramaProjectDetail): void {
     selectedResolution.value = normalizeStoryboardVideoResolution(displayMeta.resolution, selectedVideoModel.value)
   }
   if (displayMeta.style) {
-    if (visualStyleCatalog.includes(displayMeta.style as typeof visualStyleCatalog[number])) {
-      selectedVisualStyle.value = displayMeta.style as typeof visualStyleCatalog[number]
+    if (visualStyleCatalog.includes(displayMeta.style)) {
+      selectedVisualStyle.value = displayMeta.style
       customVisualStyle.value = ''
     } else {
       selectedVisualStyle.value = '自定义风格'
@@ -1168,7 +1202,7 @@ function startAnalysisStatusPolling(): void {
     } finally {
       analysisStatusRefreshInFlight = false
     }
-  }, 2000)
+  }, 5000)
 }
 
 function shouldTrackStoryboardStream(project: DramaProjectDetail | null): boolean {
@@ -1371,7 +1405,11 @@ function patchAnalysisRunFromEvent(payload: DramaAnalysisEventPayload): void {
 
   projectDetail.value = {
     ...projectDetail.value,
-    analysis: payload.analysis ? mapAnalysisFromEvent(payload.analysis) : projectDetail.value.analysis,
+    // SSE 可能携带确认前的解析快照。冻结版本后只能通过 GET 更新正文，
+    // 不能让旧事件清掉快照 ID 或覆盖刚整理好的资产候选。
+    analysis: payload.analysis && !projectDetail.value.analysis.analysisSnapshotId
+      ? mapAnalysisFromEvent(payload.analysis)
+      : projectDetail.value.analysis,
     analysisRun: {
       // 如果事件已经带着完整 analysis 回来了，同时四个节点也都到 100，
       // 前端直接视为 completed，避免页面还短暂停在“整理中”。
@@ -1923,14 +1961,26 @@ async function connectStoryboardEventStream(): Promise<void> {
   }
 }
 
+/** 仅开发环境记录首屏接口耗时，帮助区分项目详情、运行配置与制作状态的慢点。 */
+async function measureProjectEntryRequest<T>(label: string, request: () => Promise<T>): Promise<T> {
+  const startedAt = import.meta.client ? performance.now() : 0
+  try {
+    return await request()
+  } finally {
+    if (import.meta.dev && import.meta.client) {
+      console.info(`[livliv] 项目进入请求耗时：${label}`, `${Math.round(performance.now() - startedAt)} ms`)
+    }
+  }
+}
+
 async function loadWorkflowPage(): Promise<void> {
   busyKey.value = 'boot'
   errorMessage.value = ''
 
   try {
     const [config, project] = await Promise.all([
-      dramaService.getRuntimeConfig(),
-      dramaService.getProject(currentProjectId.value)
+      measureProjectEntryRequest('运行配置', () => dramaService.getRuntimeConfig()),
+      measureProjectEntryRequest('项目详情', () => dramaService.getProject(currentProjectId.value))
     ])
 
     runtimeConfig.value = config
@@ -1939,6 +1989,16 @@ async function loadWorkflowPage(): Promise<void> {
     syncSelectionsFromAnalysis(project)
     syncConfirmedStepIndex()
     restoreActiveStep(project)
+    // 制作版本提示不影响项目正文；放到后台查询，避免额外接口往返压住首次进入。
+    const loadedProjectId = currentProjectId.value
+    void measureProjectEntryRequest('制作版本状态', () => dramaService.getProductionStatus(loadedProjectId))
+      .then((status) => {
+        if (currentProjectId.value === loadedProjectId) productionStatus.value = status
+      })
+      .catch((error) => {
+        // 历史环境尚未执行制作版本迁移时仍允许查看剧本，错误保留到控制台便于排查。
+        console.warn('[livliv] 制作版本状态暂不可用', error)
+      })
 
     // V3 上线前已完成结构解析的旧项目可能没有封面节点。
     // 进入页面时仅对 idle 状态免费补投一次，失败状态仍保留显式重试入口。
@@ -1972,9 +2032,118 @@ async function loadWorkflowPage(): Promise<void> {
   }
 }
 
+async function acceptExistingProductionVersion(): Promise<void> {
+  if (!productionStatus.value?.has_version_gap || isProductionGapAccepted.value || isAcceptingProductionGap.value) return
+  isAcceptingProductionGap.value = true
+  try {
+    productionStatus.value = await dramaService.acceptExistingProduction(
+      currentProjectId.value,
+      productionStatus.value.formal_script_version,
+    )
+    infoMessage.value = '已确认继续沿用旧版资产。来源版本仍会保留，不会伪装成新版资产。'
+    productionImpactOpen.value = false
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : '确认沿用旧版资产失败'
+  } finally {
+    isAcceptingProductionGap.value = false
+  }
+}
+
+const productionSyncActions: Array<{ action: DramaProductionSyncAction; label: string; description: string }> = [
+  { action: 'refine_affected_profiles', label: '重提炼受影响资料', description: '只更新命中的人物、场景和道具资料，未受影响资产继续复用。' },
+  { action: 'regenerate_affected_images', label: '重生受影响图片', description: '只为已有新版资料的受影响资产重新生图。' },
+  { action: 'recheck_affected_storyboards', label: '重新规划受影响分镜', description: '只为命中的分集建立新版方案；旧方案和手工分镜保留在历史版本中。' },
+]
+
+function impactResult() {
+  return productionImpact.value?.result || {}
+}
+
+/** 面向用户展示中文版本与剧本块类型，内部稳定 key 仅用于差异扫描。 */
+function productionVersionLabel(value: string | number | null | undefined): string {
+  const normalized = String(value || '').trim().replace(/^v/i, '')
+  return normalized ? `第 ${normalized} 版` : '未建立'
+}
+
+function impactBlockLabel(token: string): string {
+  const [type, ...keyParts] = String(token || '').split(':')
+  const typeLabel: Record<string, string> = {
+    character: '人物',
+    scene: '场景',
+    prop: '道具',
+    episode: '分集',
+  }
+  return `${typeLabel[type] || '剧本内容'} ${keyParts.join(':') || '未命名'}`
+}
+
+async function openProductionImpact(): Promise<void> {
+  productionImpactOpen.value = true
+  productionSyncQuote.value = null
+  productionVersionContent.value = null
+  productionImpactBusy.value = true
+  try {
+    productionImpact.value = await dramaService.scanProductionImpact(currentProjectId.value)
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : '读取版本影响范围失败'
+  } finally {
+    productionImpactBusy.value = false
+  }
+}
+
+async function viewProductionVersionContent(productionVersionId: string): Promise<void> {
+  if (!productionVersionId || productionVersionContentBusy.value) return
+  productionVersionContentBusy.value = productionVersionId
+  try {
+    productionVersionContent.value = await dramaService.getProductionVersionContent(
+      currentProjectId.value,
+      productionVersionId,
+    )
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : '读取制作版本内容失败'
+  } finally {
+    productionVersionContentBusy.value = ''
+  }
+}
+
+async function quoteProductionSync(action: DramaProductionSyncAction): Promise<void> {
+  if (productionQuoteBusy.value) return
+  productionQuoteBusy.value = action
+  try {
+    productionSyncQuote.value = await dramaService.quoteProductionSync(currentProjectId.value, action)
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : '同步操作估价失败'
+  } finally {
+    productionQuoteBusy.value = ''
+  }
+}
+
+async function executeProductionSync(): Promise<void> {
+  const quote = productionSyncQuote.value
+  const reportId = productionImpact.value?.id || ''
+  if (!quote?.executable || quote.required_credits === null || !reportId || productionExecuteBusy.value) return
+  productionExecuteBusy.value = true
+  try {
+    const result = await dramaService.executeProductionSync(currentProjectId.value, quote.action, reportId)
+    infoMessage.value = result.summary
+    productionSyncQuote.value = null
+    productionStatus.value = await dramaService.getProductionStatus(currentProjectId.value)
+    // 已进入后台任务时关闭差异弹窗，资产页和分镜页会从持久化任务状态继续展示进度。
+    productionImpactOpen.value = false
+    await refreshProjectDetail()
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : '差异化更新提交失败'
+  } finally {
+    productionExecuteBusy.value = false
+  }
+}
+
 async function refreshProjectDetail(): Promise<void> {
   if (!currentProjectId.value) return
   const latestProject = await dramaService.getProject(currentProjectId.value)
+  // 解析事件和手动刷新可能在“确认剧本”请求前发出，却在切到资产后才返回。
+  // 不允许这类旧详情覆盖已冻结快照，否则步骤门禁会把资产页弹回剧本页。
+  const confirmedSnapshotId = projectDetail.value?.analysis.analysisSnapshotId
+  if (confirmedSnapshotId && latestProject.analysis.analysisSnapshotId !== confirmedSnapshotId) return
   projectDetail.value = latestProject
   syncSelectionsFromAnalysis(latestProject)
   syncConfirmedStepIndex()
@@ -2378,14 +2547,16 @@ async function confirmStoryboardPlanningSelection(): Promise<void> {
   await generateStoryboards(selected)
 }
 
-async function generateStoryboards(episodeNos?: number[]): Promise<void> {
+async function generateStoryboards(episodeNos?: number[], createNewVersion = false): Promise<void> {
   if (!projectDetail.value) return
   if (!episodeNos?.length) {
     openStoryboardPlanningSelection()
     return
   }
   const episodeLabel = episodeNos.map(value => `第 ${value} 集`).join('、')
-  const failedRetry = episodeNos.every(value => projectDetail.value?.storyboardRun.episodeStatuses?.[String(value)] === 'failed')
+  const failedRetry = episodeNos.every(value => ['failed', 'partial_failed'].includes(
+    String(projectDetail.value?.storyboardRun.episodeStatuses?.[String(value)] || '')
+  ))
   const confirmed = failedRetry || await confirmCreditPreview('分镜策划', {
     action: 'storyboards',
     model: selectedTextModel.value,
@@ -2396,7 +2567,8 @@ async function generateStoryboards(episodeNos?: number[]): Promise<void> {
   }, {
     detailLines: [
       `本次规划：${episodeLabel}`,
-      `共 ${episodeNos.length} 集；只会生成所选剧集，不会自动扩展到其他集。`
+      `共 ${episodeNos.length} 集；只会生成所选剧集，不会自动扩展到其他集。`,
+      ...(createNewVersion ? ['将创建新的分镜方案版本；新版通过校验后再切换，旧方案保留在历史记录中。'] : [])
     ]
   })
   if (!confirmed) return
@@ -2413,7 +2585,9 @@ async function generateStoryboards(episodeNos?: number[]): Promise<void> {
         qualityPolicy: 'smart',
         episodeNos
       }),
-    failedRetry
+    createNewVersion
+      ? `${episodeLabel}新分镜方案已开始规划；旧版本会保留在历史记录中。`
+      : failedRetry
       ? `${episodeLabel}已沿用原任务继续规划，本次不重复扣点。`
       : `${episodeLabel}分镜规划任务已开始，通过导演质检后会一次写入正式工作台。`
   )
@@ -2438,6 +2612,14 @@ async function generateStoryboards(episodeNos?: number[]): Promise<void> {
     persistActiveStep()
     await connectStoryboardEventStream()
   }
+}
+
+async function replanStoryboardEpisode(episodeNo: number): Promise<void> {
+  if (!projectDetail.value || isBusy.value) return
+  const status = String(projectDetail.value.storyboardRun.episodeStatuses?.[String(episodeNo)] || '')
+  // 仅对已完成方案开放新版本重规划；失败项继续使用原有的免费续跑入口。
+  if (status !== 'completed') return
+  await generateStoryboards([episodeNo], true)
 }
 
 async function regenerateAllStoryboards(): Promise<void> {
@@ -4166,7 +4348,7 @@ onBeforeUnmount(() => {
          </nav>
 
         <div class="flex min-w-0 items-center justify-end gap-3 justify-self-end">
-          <UButton color="neutral" variant="outline" size="sm" label="全部建议" @click="scriptWorkspaceRef?.openAllSuggestions()" />
+          <UButton v-if="activeStep === 'script'" color="neutral" variant="outline" size="sm" label="全部建议" @click="scriptWorkspaceRef?.openAllSuggestions()" />
           <UBadge
             :label="workflowRunInfo?.status === 'success' ? '视频已生成' : '流程进行中'"
             :color="workflowRunInfo?.status === 'success' ? 'success' : 'primary'"
@@ -4183,6 +4365,33 @@ onBeforeUnmount(() => {
       避免出现大面积尾部空白并让“确认资产并进入分镜”脱离浏览器底部。
     -->
     <section class="mx-auto w-full px-4 py-6" :class="activeStep === 'setting' ? 'pb-0' : activeStep === 'video' ? 'pb-6' : 'pb-28'">
+      <div
+        v-if="productionStatus?.has_version_gap && ['setting', 'storyboard'].includes(activeStep)"
+        class="mb-4 flex flex-col gap-3 rounded-2xl border border-[#f6d28b] bg-[#fffaf0] px-5 py-4 text-sm text-[#7c4a03] lg:flex-row lg:items-center lg:justify-between"
+      >
+        <div>
+          <p class="font-semibold">
+            正式剧本 {{ productionVersionLabel(productionStatus.formal_script_version) }} / 当前生产资产 {{ productionVersionLabel(productionStatus.active_production_version?.source_script_version) }}
+          </p>
+          <p class="mt-1 text-xs leading-6 text-[#9a6700]">
+            {{ isProductionGapAccepted
+              ? '已确认沿用当前生产版本；来源仍明确标记为旧版，后续可随时查看影响并选择局部同步。'
+              : '旧资产与分镜完整保留，尚未自动同步。你可以继续查看；生成新版分镜前需明确沿用旧资产或完成同步。' }}
+          </p>
+        </div>
+        <div class="flex shrink-0 gap-2">
+          <UButton color="neutral" variant="outline" size="sm" label="分析差异并选择更新" @click="openProductionImpact" />
+          <UButton
+            color="primary"
+            size="sm"
+            :label="isProductionGapAccepted ? '已确认沿用' : '继续沿用现有资产'"
+            :loading="isAcceptingProductionGap"
+            :disabled="isProductionGapAccepted"
+            @click="acceptExistingProductionVersion"
+          />
+        </div>
+      </div>
+
       <div v-if="errorMessage" class="mb-4 rounded-[24px] border border-[#fecaca] bg-[#fff1f2] px-5 py-4 text-[#991b1b] shadow-[0_10px_30px_rgba(239,68,68,0.08)]">
         <p class="text-sm font-semibold">{{ buildErrorCardTitle(errorMessage) }}</p>
         <p class="mt-1 text-sm leading-7 text-[#b91c1c]">{{ errorMessage }}</p>
@@ -4235,6 +4444,9 @@ onBeforeUnmount(() => {
           data-current-workflow-panel
           :project-id="currentProjectId"
           :cover-image-url="scriptCoverUrl"
+          :allow-historical-workspace="Boolean(productionStatus?.has_version_gap)"
+          @status-change="assetWorkspaceStatus = $event"
+          @return-script="activeStep = 'script'"
           @continue="enterStoryboardFromAssetWorkspace"
         />
 
@@ -4250,6 +4462,7 @@ onBeforeUnmount(() => {
           :resolution="projectResolution"
           @update:episode-no="selectedEpisodeNo = $event"
           @generate="generateStoryboards"
+          @replan-episode="replanStoryboardEpisode"
           @continue="goNextStep"
         />
 
@@ -4520,7 +4733,7 @@ onBeforeUnmount(() => {
           <div class="rounded-[22px] border border-borderSoft bg-panelSoft px-4 py-4">
             <p class="text-sm font-semibold text-textMain">连续性承接</p>
             <p class="mt-2 text-xs leading-5 text-textMuted">
-              自动承接会优先读取上一条“已采用”视频的结尾状态、人物朝向、服装道具和镜头相位，让下一条更像同一段连续画面；如果没有已采用镜头，系统会按当前分镜独立生成。
+              自动承接会参考已采用镜头的导演结尾状态；同场同角色的相邻镜头若有真实尾帧，可把它作为普通参考图与当前资产图同传，不会自动上传整段视频。批量生成时，只有导演明确标记跨镜动作的镜头才等待前镜抽帧，其余照常并发。
             </p>
             <div class="mt-3 flex flex-wrap gap-2">
               <button
@@ -4674,6 +4887,194 @@ onBeforeUnmount(() => {
         </div>
       </section>
     </div>
+
+    <!--
+      版本影响仅在用户主动打开时挂载。显式导入并增加 v-if 双重门禁，
+      避免组件解析异常时把弹窗正文降级成普通页面内容直接铺开。
+    -->
+    <LivDialog
+      v-if="productionImpactOpen"
+      v-model:open="productionImpactOpen"
+      title="剧本版本差异更新"
+      :description="`正式剧本 ${productionVersionLabel(productionStatus?.formal_script_version)}；当前生产资产 ${productionVersionLabel(productionStatus?.active_production_version?.source_script_version)}`"
+      width="xl"
+    >
+      <div v-if="productionImpactBusy" class="flex min-h-48 items-center justify-center text-sm text-textMuted">
+        正在执行免费确定性扫描，不调用模型、不扣点…
+      </div>
+      <div v-else class="space-y-5">
+        <div class="rounded-xl border border-[#bfdbfe] bg-[#eff6ff] px-4 py-3 text-sm leading-6 text-[#1e40af]">
+          这里只分析新旧剧本的文本差异。旧资产、图片、手工修改和分镜仍基于
+          {{ productionStatus?.active_production_version?.source_script_version || '原版本' }} 完整保留；只有命中的项目会进入更新范围，未命中内容继续复用。
+        </div>
+
+        <section class="rounded-xl border border-borderSoft p-4">
+          <div>
+            <h4 class="font-semibold">制作版本记录</h4>
+            <p class="mt-1 text-xs leading-5 text-textMuted">每次差异合并都会形成独立制作版本；这里只读回看，不会切换或覆盖当前资产、图片和分镜。</p>
+          </div>
+          <div class="mt-3 grid gap-3 md:grid-cols-2">
+            <button
+              v-for="version in productionStatus?.available_versions || []"
+              :key="version.id"
+              type="button"
+              class="rounded-xl border p-3 text-left transition"
+              :class="productionVersionContent?.version.id === version.id ? 'border-[#60a5fa] bg-[#eff6ff]' : 'border-borderSoft hover:border-[#93c5fd]'"
+              @click="viewProductionVersionContent(version.id)"
+            >
+              <span class="flex items-center justify-between gap-3">
+                <b>制作版本 {{ version.version_no }}</b>
+                <span class="text-xs" :class="version.status === 'active' ? 'text-[#15803d]' : 'text-textMuted'">{{ version.status === 'active' ? '当前生产' : '历史保留' }}</span>
+              </span>
+              <span class="mt-1 block text-xs text-textMuted">来源剧本 {{ productionVersionLabel(version.source_script_version) }} · {{ version.resolution.toUpperCase() }} · {{ version.aspect_ratio }}</span>
+              <span class="mt-2 block text-xs font-medium text-[#2563eb]">{{ productionVersionContentBusy === version.id ? '正在读取…' : '查看对应资产与分镜' }}</span>
+            </button>
+          </div>
+
+          <div v-if="productionVersionContent" class="mt-4 rounded-xl bg-panelSoft p-4">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <p class="font-semibold">制作版本 {{ productionVersionContent.version.version_no }} 内容</p>
+              <p class="text-xs text-textMuted">资产 {{ productionVersionContent.assets.length }} 项 · 分镜方案 {{ productionVersionContent.storyboard_plans.length }} 个</p>
+            </div>
+            <div v-if="productionVersionContent.assets.length" class="mt-3 grid max-h-56 gap-2 overflow-y-auto sm:grid-cols-2 lg:grid-cols-3">
+              <div v-for="asset in productionVersionContent.assets" :key="asset.id" class="flex items-center gap-3 rounded-lg border border-borderSoft bg-panel p-2">
+                <img v-if="asset.image_url" :src="asset.image_url" :alt="asset.name" class="h-12 w-12 rounded-lg object-cover" />
+                <div v-else class="flex h-12 w-12 items-center justify-center rounded-lg bg-[#e2e8f0] text-[10px] text-textMuted">无图片</div>
+                <div class="min-w-0">
+                  <p class="truncate text-sm font-medium">{{ asset.name }}</p>
+                  <p class="mt-1 text-xs text-textMuted">{{ asset.asset_type }} · {{ asset.production_status }}</p>
+                </div>
+              </div>
+            </div>
+            <p v-else class="mt-3 text-sm text-textMuted">这个制作版本没有资产记录。</p>
+            <div v-if="productionVersionContent.storyboard_plans.length" class="mt-3 flex flex-wrap gap-2">
+              <span v-for="plan in productionVersionContent.storyboard_plans" :key="plan.id" class="rounded-full border border-borderSoft bg-panel px-3 py-1.5 text-xs text-textMuted">
+                第 {{ plan.episode_no }} 集 · {{ plan.version_label }} · {{ plan.row_count }} 个镜头
+              </span>
+            </div>
+            <p v-else class="mt-3 text-sm text-textMuted">这个制作版本还没有生成分镜镜头。</p>
+          </div>
+        </section>
+
+        <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div class="rounded-xl border border-borderSoft p-4">
+            <p class="text-xs text-textMuted">新增剧本块</p>
+            <p class="mt-1 text-2xl font-bold">{{ impactResult().added_blocks?.length || 0 }}</p>
+          </div>
+          <div class="rounded-xl border border-borderSoft p-4">
+            <p class="text-xs text-textMuted">修改 / 删除</p>
+            <p class="mt-1 text-2xl font-bold">{{ (impactResult().modified_blocks?.length || 0) + (impactResult().deleted_blocks?.length || 0) }}</p>
+          </div>
+          <div class="rounded-xl border border-borderSoft p-4">
+            <p class="text-xs text-textMuted">受影响资产</p>
+            <p class="mt-1 text-2xl font-bold">{{ impactResult().affected_assets?.length || 0 }}</p>
+          </div>
+          <div class="rounded-xl border border-borderSoft p-4">
+            <p class="text-xs text-textMuted">受影响分镜</p>
+            <p class="mt-1 text-2xl font-bold">{{ impactResult().affected_storyboard_plans?.length || 0 }}</p>
+          </div>
+        </div>
+
+        <div v-if="impactResult().style_changed" class="rounded-xl border border-[#fed7aa] bg-[#fff7ed] px-4 py-3 text-sm text-[#9a3412]">
+          视觉风格发生变化。旧视觉基准仍冻结保留，新制作版本需显式选择是否采用新版风格合同。
+        </div>
+
+        <section class="rounded-xl border border-borderSoft p-4">
+          <h4 class="font-semibold">本次剧本文本差异</h4>
+          <p class="mt-1 text-xs leading-5 text-textMuted">扫描只比较已发布版本，不读取尚未发布的编辑草稿；你可以先核对变化，再决定是否更新生产内容。</p>
+          <div class="mt-3 grid gap-3 md:grid-cols-3">
+            <div>
+              <p class="text-xs font-semibold text-[#15803d]">新增 {{ impactResult().added_blocks?.length || 0 }} 项</p>
+              <p v-for="token in impactResult().added_blocks || []" :key="`added-${token}`" class="mt-1 truncate text-xs text-textMuted" :title="impactBlockLabel(token)">{{ impactBlockLabel(token) }}</p>
+            </div>
+            <div>
+              <p class="text-xs font-semibold text-[#b45309]">修改 {{ impactResult().modified_blocks?.length || 0 }} 项</p>
+              <p v-for="token in impactResult().modified_blocks || []" :key="`modified-${token}`" class="mt-1 truncate text-xs text-textMuted" :title="impactBlockLabel(token)">{{ impactBlockLabel(token) }}</p>
+            </div>
+            <div>
+              <p class="text-xs font-semibold text-[#b91c1c]">删除 {{ impactResult().deleted_blocks?.length || 0 }} 项</p>
+              <p v-for="token in impactResult().deleted_blocks || []" :key="`deleted-${token}`" class="mt-1 truncate text-xs text-textMuted" :title="impactBlockLabel(token)">{{ impactBlockLabel(token) }}</p>
+            </div>
+          </div>
+        </section>
+
+        <div class="grid gap-4 lg:grid-cols-2">
+          <section class="rounded-xl border border-borderSoft p-4">
+            <h4 class="font-semibold">受影响资产</h4>
+            <div v-if="impactResult().affected_assets?.length" class="mt-3 max-h-44 space-y-2 overflow-y-auto">
+              <div v-for="item in impactResult().affected_assets" :key="item.profile_id" class="rounded-lg bg-panelSoft px-3 py-2 text-sm">
+                <p class="font-medium">{{ item.name }} <span class="text-xs text-textMuted">{{ item.asset_type }} · {{ item.asset_key }}</span></p>
+                <p class="mt-1 text-xs text-textMuted">{{ item.reason }}</p>
+              </div>
+            </div>
+            <p v-else class="mt-3 text-sm text-textMuted">没有定位到受影响资产。</p>
+          </section>
+          <section class="rounded-xl border border-borderSoft p-4">
+            <h4 class="font-semibold">可直接复用</h4>
+            <p class="mt-2 text-sm text-textMuted">{{ impactResult().reusable_assets?.length || 0 }} 项资产没有引用发生变化的剧本块，可继续沿用且不重复收费。</p>
+            <p class="mt-3 text-sm text-textMuted">受影响分集：{{ impactResult().affected_episodes?.join('、') || '无' }}</p>
+          </section>
+        </div>
+
+        <section class="rounded-xl border border-borderSoft p-4">
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h4 class="font-semibold">差异化更新方式</h4>
+              <p class="mt-1 text-xs text-textMuted">先确认影响范围和费用，再处理命中的资料、图片或分镜；未受影响内容不会重做。</p>
+            </div>
+            <UButton color="neutral" variant="outline" size="sm" label="重新免费扫描" :loading="productionImpactBusy" @click="openProductionImpact" />
+          </div>
+          <div class="mt-4 grid gap-3 md:grid-cols-2">
+            <button
+              v-for="item in productionSyncActions"
+              :key="item.action"
+              type="button"
+              class="rounded-xl border border-borderSoft p-4 text-left transition hover:border-[#93c5fd] hover:bg-[#f8fbff]"
+              @click="quoteProductionSync(item.action)"
+            >
+              <span class="font-semibold">{{ item.label }}</span>
+              <span class="mt-1 block text-xs leading-5 text-textMuted">{{ item.description }}</span>
+              <span class="mt-2 block text-xs font-medium text-[#2563eb]">
+                {{ productionQuoteBusy === item.action ? '正在估价…' : '查看数量、依赖和点数' }}
+              </span>
+            </button>
+          </div>
+        </section>
+
+        <section v-if="productionSyncQuote" class="rounded-xl border border-[#bfdbfe] bg-[#f8fbff] p-4">
+          <div class="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h4 class="font-semibold">估价结果</h4>
+              <p class="mt-1 text-sm text-textMuted">{{ productionSyncQuote.summary }}</p>
+            </div>
+            <UBadge :label="productionSyncQuote.required_credits === null ? '暂不可报价' : `${productionSyncQuote.required_credits} 点`" color="primary" variant="soft" />
+          </div>
+          <p class="mt-3 text-xs text-textMuted">
+            目标：资产 {{ productionSyncQuote.target_counts.assets || 0 }} 项、图片 {{ productionSyncQuote.target_counts.images || 0 }} 张、分镜方案 {{ productionSyncQuote.target_counts.storyboard_plans || 0 }} 个。
+          </p>
+          <p v-if="productionSyncQuote.dependencies.length" class="mt-2 text-xs text-[#b45309]">前置条件：{{ productionSyncQuote.dependencies.join('；') }}</p>
+          <div class="mt-4 flex justify-end">
+            <UButton
+              color="primary"
+              :label="productionSyncQuote.executable ? `确认并处理 · ${productionSyncQuote.required_credits || 0} 点` : '当前暂不可执行'"
+              :loading="productionExecuteBusy"
+              :disabled="!productionSyncQuote.executable || productionSyncQuote.required_credits === null"
+              @click="executeProductionSync"
+            />
+          </div>
+        </section>
+      </div>
+      <template #footer>
+        <UButton color="neutral" variant="outline" label="关闭" @click="productionImpactOpen = false" />
+        <UButton
+          color="primary"
+          :label="isProductionGapAccepted ? '已确认沿用' : '继续沿用当前资产'"
+          :loading="isAcceptingProductionGap"
+          :disabled="isProductionGapAccepted"
+          @click="acceptExistingProductionVersion"
+        />
+      </template>
+    </LivDialog>
 
     <div
       v-if="sourceScriptPreviewVisible"

@@ -4,6 +4,7 @@ import { useAuthStore } from '~/features/auth/store/useAuthStore'
 import { announcementService } from '~/shared/api/services/announcementService'
 import { persistAnnouncementReadIds, restoreAnnouncementReadIds } from '~/shared/utils/announcementReadState'
 import { sanitizeAnnouncementContent } from '~/shared/utils/sanitizeAnnouncementContent'
+import { announcementExcerpt } from '~/shared/utils/announcementExcerpt'
 
 const authStore = useAuthStore()
 const announcements = ref<SystemAnnouncement[]>([])
@@ -39,14 +40,6 @@ function relativeTime(value: string): string {
   if (diffMs < hour) return `${Math.max(1, Math.floor(diffMs / minute))} 分钟前`
   if (diffMs < day) return `${Math.floor(diffMs / hour)} 小时前`
   return `${Math.floor(diffMs / day)} 天前`
-}
-
-function plainTextContent(content: string): string {
-  if (!content) return ''
-  if (!import.meta.client) return content.replace(/<[^>]+>/g, '').trim()
-  const container = document.createElement('div')
-  container.innerHTML = sanitizeAnnouncementContent(content)
-  return (container.textContent || '').replace(/\s+/g, ' ').trim()
 }
 
 function persistReadIds(): void {
@@ -151,7 +144,7 @@ onMounted(loadAnnouncements)
               <span class="text-[12px] font-semibold text-[#8a98ad]">{{ relativeTime(item.updatedAt || item.createdAt) }}</span>
             </span>
             <span class="mt-2 block truncate text-[17px] font-black text-[#111827]">{{ item.title }}</span>
-            <span class="mt-1 line-clamp-2 text-[14px] font-semibold leading-6 text-[#64748b]">{{ plainTextContent(item.content) || '点击查看公告详情' }}</span>
+            <span class="mt-1 line-clamp-2 text-[14px] font-semibold leading-6 text-[#64748b]">{{ announcementExcerpt(item.content) || '点击查看公告详情' }}</span>
           </span>
 
           <svg viewBox="0 0 24 24" class="mt-5 h-5 w-5 shrink-0 text-[#94a3b8] transition group-hover:translate-x-0.5 group-hover:text-[#005FFE]" fill="none" stroke="currentColor" stroke-width="2">

@@ -97,9 +97,35 @@ export interface StoryboardPlanVersion {
   status: string
   isCurrent: boolean
   sourceScriptVersion: string
+  productionVersionId: string
+  visualBibleVersionId: string
   tuning: Record<string, unknown>
   validation: Record<string, unknown>
   createdAt: string
+}
+
+/** 分镜历史卡片只返回预览所需的导演字段，前端没有历史方案的制作操作入口。 */
+export interface StoryboardPlanHistoryRow {
+  shotNo: number
+  durationSec: number
+  sceneDescription: string
+  roleName: string
+  shotType: string
+  actionDesc: string
+  dialogue: string
+  directorSegments: StoryboardDirectorSegment[]
+}
+
+export interface StoryboardPlanHistoryVersion {
+  plan: StoryboardPlanVersion
+  shotCount: number
+  estimatedDurationSec: number
+  rows: StoryboardPlanHistoryRow[]
+}
+
+export interface StoryboardPlanHistory {
+  episodeNo: number
+  versions: StoryboardPlanHistoryVersion[]
 }
 
 export interface StoryboardReferenceBinding {
@@ -169,6 +195,37 @@ export interface StoryboardAssetGap {
   recommendedAction: string
 }
 
+/** 镜头动作结束方式；用于区分完整落点、跨镜承接和遮罩转场。 */
+export type StoryboardCompletionPolicy = 'resolved' | 'continue_next' | 'transition_mask'
+
+/** 服务端关键路径估时中的单个可见事件。 */
+export interface StoryboardTimingEvent {
+  index: number
+  type: string
+  description: string
+  estimatedMs: number
+  dependsOn: number[]
+}
+
+/**
+ * 分镜动作时长合同。该数据由服务端根据顺序事件和结果保持时间计算，
+ * 前端只展示和执行门禁，不能自行缩短或覆盖推荐时长。
+ */
+export interface StoryboardTimingContract {
+  contractVersion: string
+  completionPolicy: StoryboardCompletionPolicy
+  headReadMs: number
+  tailHoldMs: number
+  criticalPathMs: number
+  minimumDurationMs: number
+  recommendedDurationSec: number
+  originalDurationSec: number
+  splitRequired: boolean
+  endpointIncomplete: boolean
+  events: StoryboardTimingEvent[]
+  reason: string
+}
+
 export interface StoryboardRuntimeExtra {
   /** 当前镜头生成时采用的参考输入模式，刷新工作区后仍保留用户选择。 */
   videoInputMode?: StoryboardVideoInputMode
@@ -182,6 +239,11 @@ export interface StoryboardRuntimeExtra {
   /** 导演层识别出的动作、情绪、信息、焦点或声音变化节点。 */
   visibleChangePoints?: Array<Record<string, unknown> | string>
   visible_change_points?: Array<Record<string, unknown> | string>
+  /** 本镜头动作完成方式和服务端关键路径估时结果。 */
+  completionPolicy?: StoryboardCompletionPolicy
+  timingContract?: StoryboardTimingContract
+  completion_policy?: StoryboardCompletionPolicy
+  timing_contract?: Record<string, unknown>
   /** 用户编辑后递增；后台质检只能自动覆盖同一修订号。 */
   revision?: number
   userEdited?: boolean
@@ -291,6 +353,8 @@ export interface StoryboardWorkspace {
   sourceTitle: string
   sourceSummary: string
   sourceScriptVersion: string
+  productionVersionId: string
+  visualBibleVersionId: string
   visualBible: Record<string, unknown>
   assetReadiness: { ready?: boolean; legacy?: boolean; blockers?: string[] }
   currentPlan: StoryboardPlanVersion

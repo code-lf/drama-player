@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { useAuthStore } from '~/features/auth/store/useAuthStore'
 import { useAccountStore } from '~/features/billing/store/useAccountStore'
+import { supportService } from '~/shared/api/services/supportService'
+import { defaultWebsiteInfo } from '~/entities/support/types'
 import BrandSparkIcon from '~/components/ui/BrandSparkIcon.vue'
 import {
   ArrowRight,
@@ -17,6 +19,7 @@ import {
 
 const authStore = useAuthStore()
 const accountStore = useAccountStore()
+const websiteInfo = ref({ ...defaultWebsiteInfo })
 const router = useRouter()
 // 页面只传相对路径；真实 OSS 域名和位图 WebP 后缀由全局素材服务统一处理。
 const { $siteAsset: siteAsset } = useNuxtApp()
@@ -247,8 +250,13 @@ function handleLogout(): void {
   router.push('/')
 }
 
-onMounted(() => {
+onMounted(async () => {
   document.addEventListener('click', handleClickOutside)
+  try {
+    websiteInfo.value = await supportService.getLoginAppearance()
+  } catch {
+    // 公共配置临时不可用时沿用已核实的苏ICP备案默认值，不展示占位备案号。
+  }
 })
 
 onUnmounted(() => {
@@ -631,11 +639,12 @@ watch(
         </div>
 
         <div class="mt-8 flex flex-wrap items-center justify-center gap-x-8 gap-y-2 border-t border-[#dfe8f6] py-5 text-[12px] font-medium text-[#7c8aa4]">
-          <span>© 2025 Livliv AI. 保留所有权利。</span>
-          <a href="#footer">用户协议</a>
-          <a href="#footer">隐私政策</a>
-          <a href="#footer">服务条款</a>
-          <span>备案号：粤ICP备202500000号</span>
+          <span>{{ websiteInfo.footerCopyright }}</span>
+          <NuxtLink to="/legal/user_service">用户协议</NuxtLink>
+          <NuxtLink to="/legal/privacy_policy">隐私政策</NuxtLink>
+          <NuxtLink to="/legal/ai_content_rules">AI 内容规则</NuxtLink>
+          <NuxtLink to="/legal/payment_rules">充值规则</NuxtLink>
+          <a :href="websiteInfo.icpRecordUrl" target="_blank" rel="noopener noreferrer">{{ websiteInfo.icpRecordNumber }}</a>
         </div>
       </footer>
     </section>

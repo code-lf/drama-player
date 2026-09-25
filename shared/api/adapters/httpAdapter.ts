@@ -32,16 +32,20 @@ import type {
   StoryboardMicroEditEstimate,
   StoryboardMicroEditReference,
   StoryboardPlanVersion,
+  StoryboardPlanHistory,
   StoryboardPromptLoad,
   StoryboardQualityPolicy,
   StoryboardReferenceBinding,
   StoryboardRow,
   StoryboardTake,
+  StoryboardTimingContract,
   StoryboardWorkspace
 } from '~/entities/storyboard/types'
 import type { AuthSession } from '~/entities/auth/types'
 import type { SystemAnnouncement } from '~/entities/announcement/types'
 import { useAuthStore } from '~/features/auth/store/useAuthStore'
+import { ApiClientError } from '~/shared/api/errors'
+import { requestFeatureConsent } from '~/shared/legal/featureConsent'
 import { getStoryboardCache, setStoryboardCache } from '~/shared/api/storyboardCache'
 import type {
   ApiAdapter,
@@ -56,6 +60,7 @@ import type {
   DramaAssetRepairEstimate,
   DramaAssetRepairRequest,
   DramaAssetWorkspace,
+  DramaAssetVisualPromptDraft,
   DramaVisualBible,
   DramaWorkspaceAssetStatus,
   DramaWorkspaceAssetType,
@@ -63,6 +68,12 @@ import type {
   DramaEntryCreditPreviewPayload,
   DramaDeleteResult,
   DramaProjectCreatePayload,
+  DramaProductionImpact,
+  DramaProductionSyncAction,
+  DramaProductionSyncExecution,
+  DramaProductionSyncQuote,
+  DramaProductionStatus,
+  DramaProductionVersionContent,
   DramaPropUpdatePayload,
   DramaRoleUpdatePayload,
   DramaRoleVoiceUpdatePayload,
@@ -87,6 +98,7 @@ import type {
   StoryboardVideoGeneratePayload,
   WorkflowRunCreatePayload,
 } from '~/shared/api/types'
+import type { DramaVisualStyleContract } from '~/shared/constants/dramaVisualStyles'
 
 interface BackendProjectItem {
   id: string
@@ -490,6 +502,7 @@ interface BackendLegalDocumentListResponse {
       title: string
       summary: string
       content: string
+      confirmation_text: string
       status: 'draft' | 'published' | 'archived'
       requires_acceptance: boolean
       effective_at: string
@@ -604,6 +617,8 @@ interface BackendProductImageHistoryBatchResponse {
   required_credits: number
   count: number
   status: string
+  progress?: number
+  current_step?: string
   aspect_ratio: string
   resolution: string
   style: string
@@ -1017,6 +1032,8 @@ interface BackendStoryboardWorkspaceResponse {
   source_title: string
   source_summary: string
   source_script_version: string
+  production_version_id?: string
+  visual_bible_version_id?: string
   visual_bible: Record<string, unknown>
   asset_readiness: Record<string, unknown>
   current_plan: Record<string, unknown>
@@ -1034,6 +1051,25 @@ interface BackendStoryboardWorkspaceResponse {
     error_message?: string
     created_at?: string
   }
+}
+
+interface BackendStoryboardPlanHistoryResponse {
+  episode_no: number
+  versions: Array<{
+    plan: Record<string, unknown>
+    shot_count: number
+    estimated_duration_sec: number
+    rows: Array<{
+      shot_no: number
+      duration_sec: number
+      scene_description: string
+      role_name: string
+      shot_type: string
+      action_desc: string
+      dialogue: string
+      director_segments?: BackendStoryboardDirectorSegment[]
+    }>
+  }>
 }
 
 function formatStoryboardVideoErrorMessage(message: string): string {
@@ -1343,6 +1379,7 @@ function mapLegalDocuments(raw: BackendLegalDocumentListResponse): LegalDocument
       title: version.title,
       summary: version.summary || '',
       content: version.content || '',
+      confirmationText: version.confirmation_text || '',
       status: version.status,
       requiresAcceptance: Boolean(version.requires_acceptance),
       effectiveAt: version.effective_at || '',
@@ -1455,6 +1492,8 @@ function mapProductImageHistoryBatch(raw: BackendProductImageHistoryBatchRespons
     requiredCredits: raw.required_credits || 0,
     count: raw.count || 0,
     status: raw.status || '',
+    progress: raw.progress ?? 100,
+    currentStep: raw.current_step || '已完成',
     aspectRatio: raw.aspect_ratio || '1:1',
     resolution: raw.resolution || '1024',
     style: raw.style || '',
@@ -1503,6 +1542,10 @@ function buildProductImagePayload(payload: ProductImageGeneratePayload) {
     split_selling_points: payload.splitSellingPoints,
     aspect_ratio: payload.aspectRatio,
     resolution: payload.resolution,
+    quality: payload.quality,
+    background: payload.background,
+    output_format: payload.outputFormat,
+    output_compression: payload.outputFormat === 'jpeg' ? payload.outputCompression : undefined,
     style: payload.style,
     // 场景化字段用于后端编译海报文字、营销套图和图片修改的专用提示词。
     workspace_mode: payload.workspaceMode || 'product',
@@ -1555,7 +1598,7 @@ function mapProductVideoTask(raw: any): ProductVideoTask {
   return {
     id: String(raw?.id || ''),
     template: raw?.template ? mapProductVideoTemplate(raw.template) : null,
-    creationType: ['product', 'model', 'image_to_video', 'digital_human'].includes(String(raw?.creation_type)) ? raw.creation_type : 'product',
+    creationType: ['product', 'model', 'image_to_video', 'reference_video', 'digital_human'].includes(String(raw?.creation_type)) ? raw.creation_type : 'product',
     prompt: String(raw?.prompt || ''),
     sourceImages: Array.isArray(raw?.source_images) ? raw.source_images.map(String) : [],
     status: ['queued', 'running', 'succeeded', 'failed'].includes(String(raw?.status)) ? raw.status : 'queued',
@@ -1592,7 +1635,8 @@ function buildProductVideoPayload(payload: ProductVideoCreatePayload) {
     aspect_ratio: payload.aspectRatio,
     resolution: payload.resolution,
     result_count: payload.resultCount,
-    model: payload.model || ''
+    model: payload.model || '',
+    reference_video_token: payload.referenceVideoToken || ''
   }
 }
 
@@ -1677,6 +1721,32 @@ function mapStoryboardRuntimeExtra(raw?: Record<string, unknown>) {
     retryPolicy: String(rawAssetGap.retry_policy || rawAssetGap.retryPolicy || ''),
     recommendedAction: String(rawAssetGap.recommended_action || rawAssetGap.recommendedAction || '')
   } : undefined
+  const rawTimingContract = (raw?.timing_contract || raw?.timingContract) as Record<string, unknown> | undefined
+  const timingContract = rawTimingContract ? {
+    contractVersion: String(rawTimingContract.contract_version || rawTimingContract.contractVersion || ''),
+    completionPolicy: String(rawTimingContract.completion_policy || rawTimingContract.completionPolicy || 'resolved') as StoryboardTimingContract['completionPolicy'],
+    headReadMs: Number(rawTimingContract.head_read_ms || rawTimingContract.headReadMs || 0),
+    tailHoldMs: Number(rawTimingContract.tail_hold_ms || rawTimingContract.tailHoldMs || 0),
+    criticalPathMs: Number(rawTimingContract.critical_path_ms || rawTimingContract.criticalPathMs || 0),
+    minimumDurationMs: Number(rawTimingContract.minimum_duration_ms || rawTimingContract.minimumDurationMs || 0),
+    recommendedDurationSec: Number(rawTimingContract.recommended_duration_sec || rawTimingContract.recommendedDurationSec || 0),
+    originalDurationSec: Number(rawTimingContract.original_duration_sec || rawTimingContract.originalDurationSec || 0),
+    splitRequired: Boolean(rawTimingContract.split_required ?? rawTimingContract.splitRequired),
+    endpointIncomplete: Boolean(rawTimingContract.endpoint_incomplete ?? rawTimingContract.endpointIncomplete),
+    events: (Array.isArray(rawTimingContract.events) ? rawTimingContract.events : []).map((event, index) => {
+      const value = event as Record<string, unknown>
+      return {
+        index: Number(value.index || index + 1),
+        type: String(value.type || 'action'),
+        description: String(value.description || ''),
+        estimatedMs: Number(value.estimated_ms || value.estimatedMs || 0),
+        dependsOn: Array.isArray(value.depends_on)
+          ? value.depends_on.map(Number)
+          : (Array.isArray(value.dependsOn) ? value.dependsOn.map(Number) : [])
+      }
+    }),
+    reason: String(rawTimingContract.reason || '')
+  } satisfies StoryboardTimingContract : undefined
   return {
     ...raw,
     videoInputMode: String(raw?.video_input_mode || raw?.videoInputMode || 'universal_reference') as 'universal_reference' | 'first_last_frame',
@@ -1695,6 +1765,8 @@ function mapStoryboardRuntimeExtra(raw?: Record<string, unknown>) {
     repairPatchSummary: String(raw?.repair_patch_summary || raw?.repairPatchSummary || ''),
     repairRevision: Number(raw?.repair_revision || raw?.repairRevision || 0),
     lastRetryReason: String(raw?.last_retry_reason || raw?.lastRetryReason || ''),
+    completionPolicy: String(raw?.completion_policy || raw?.completionPolicy || timingContract?.completionPolicy || 'resolved'),
+    timingContract,
     assetGap
   }
 }
@@ -1756,6 +1828,8 @@ function mapStoryboardPlan(raw?: Record<string, unknown>): StoryboardPlanVersion
     status: String(raw?.status || 'draft'),
     isCurrent: Boolean(raw?.is_current ?? true),
     sourceScriptVersion: String(raw?.source_script_version || ''),
+    productionVersionId: String(raw?.production_version_id || ''),
+    visualBibleVersionId: String(raw?.visual_bible_version_id || ''),
     tuning: (raw?.tuning || {}) as Record<string, unknown>,
     validation: (raw?.validation || {}) as Record<string, unknown>,
     createdAt: String(raw?.created_at || '')
@@ -1867,6 +1941,8 @@ function mapStoryboardWorkspace(raw: BackendStoryboardWorkspaceResponse): Storyb
     sourceTitle: raw.source_title || '',
     sourceSummary: raw.source_summary || '',
     sourceScriptVersion: raw.source_script_version || '',
+    productionVersionId: raw.production_version_id || '',
+    visualBibleVersionId: raw.visual_bible_version_id || '',
     visualBible: raw.visual_bible || {},
     assetReadiness: raw.asset_readiness || {},
     currentPlan: mapStoryboardPlan(raw.current_plan),
@@ -1894,6 +1970,27 @@ function mapStoryboardWorkspace(raw: BackendStoryboardWorkspaceResponse): Storyb
       createdAt: latestBatch.created_at || ''
     },
     run: mapStoryboardRun(raw.run)
+  }
+}
+
+function mapStoryboardPlanHistory(raw: BackendStoryboardPlanHistoryResponse): StoryboardPlanHistory {
+  return {
+    episodeNo: Number(raw.episode_no || 1),
+    versions: (raw.versions || []).map(item => ({
+      plan: mapStoryboardPlan(item.plan),
+      shotCount: Number(item.shot_count || 0),
+      estimatedDurationSec: Number(item.estimated_duration_sec || 0),
+      rows: (item.rows || []).map(row => ({
+        shotNo: Number(row.shot_no || 0),
+        durationSec: Number(row.duration_sec || 0),
+        sceneDescription: row.scene_description || '',
+        roleName: row.role_name || '',
+        shotType: row.shot_type || '',
+        actionDesc: row.action_desc || '',
+        dialogue: row.dialogue || '',
+        directorSegments: mapStoryboardDirectorSegments(row.director_segments)
+      }))
+    }))
   }
 }
 
@@ -2193,7 +2290,10 @@ function mapDramaDetail(raw: BackendDramaDetailResponse): DramaProjectDetail {
         endOffset: Number(item.end_offset || 0),
         content: item.content || '',
         dialogues: item.dialogues || [],
-        suggestions: item.suggestions || []
+        suggestions: item.suggestions || [],
+        hasUnpublishedChanges: Boolean(item.has_unpublished_changes),
+        unpublishedOriginalContent: String(item.unpublished_original_content || ''),
+        unpublishedChangedAt: String(item.unpublished_changed_at || '')
       })),
       scriptReviews: {
         overview: mapDramaScriptReview(scriptReviews.overview),
@@ -2203,6 +2303,7 @@ function mapDramaDetail(raw: BackendDramaDetailResponse): DramaProjectDetail {
       },
       scriptReviewsSourceVersion: raw.analysis?.script_reviews_source_version || '',
       scriptReviewsStale: Boolean(raw.analysis?.script_reviews_stale),
+      unpublishedSceneChanges: raw.analysis?.unpublished_scene_changes || {},
       productionEstimate: {
         roles: Number(raw.analysis?.production_estimate?.roles || 0),
         scenes: Number(raw.analysis?.production_estimate?.scenes || 0),
@@ -2491,7 +2592,7 @@ function buildEpisodeCutPayload(payload: EpisodeCutSavePayload) {
   }
 }
 
-async function request<T>(path: string, options?: Parameters<typeof $fetch<T>>[1]): Promise<T> {
+async function request<T>(path: string, options?: Parameters<typeof $fetch<T>>[1], consentPromptsRemaining = 3): Promise<T> {
   const config = useRuntimeConfig()
   const baseUrl = config.public.apiBase as string
   let accessToken = ''
@@ -2531,6 +2632,25 @@ async function request<T>(path: string, options?: Parameters<typeof $fetch<T>>[1
       || fetchError.response?.status
       || 0
     )
+    // 服务端会先检查 AI 通用规则，再检查当前功能规则；两份新版可能依次需要确认。
+    // 只在明确收到 428 前置拦截时重提原请求，限制次数防止协议反复变化形成循环。
+    const legalPayload = (error as { data?: { detail?: unknown }; response?: { _data?: { detail?: unknown } } }).data?.detail
+      || (error as { response?: { _data?: { detail?: unknown } } }).response?._data?.detail
+    if (import.meta.client && consentPromptsRemaining > 0 && status === 428 && legalPayload && typeof legalPayload === 'object') {
+      const legalError = legalPayload as { error_code?: string; document_code?: string }
+      if (legalError.error_code === 'LEGAL_FEATURE_ACCEPTANCE_REQUIRED' && legalError.document_code) {
+        // 用户从入口点了“暂不使用”后再发起生成，428 仍应一次重弹通用规则和当前功能条款。
+        const relatedCode = path.startsWith('/product-image/') ? 'image_generation_terms'
+          : path.startsWith('/product-video/') ? 'video_generation_terms'
+            : legalError.document_code
+        const consentCodes = relatedCode === 'ai_content_rules'
+          ? ['ai_content_rules']
+          : ['ai_content_rules', relatedCode]
+        if (await requestFeatureConsent(consentCodes)) {
+          return request<T>(path, options, consentPromptsRemaining - 1)
+        }
+      }
+    }
     // 只有带着已有 token 仍返回 401，才属于“登录已过期”。公开接口本身的 401
     // 不应误清理其他页面状态。跳转和提示交给全局插件统一处理，避免并发请求重复弹窗。
     if (import.meta.client && status === 401 && accessToken) {
@@ -2543,6 +2663,12 @@ async function request<T>(path: string, options?: Parameters<typeof $fetch<T>>[1
 }
 
 export const httpAdapter: ApiAdapter = {
+  async getGenerationProfile(useCaseKey) {
+    const response = await request<import('~/shared/api/types').GenerationProfile>(
+      `/runtime/generation-profiles/${encodeURIComponent(useCaseKey)}`
+    )
+    return ok(response)
+  },
   async getLandingProjects(category) {
     const response = await request<BackendProjectListResponse>('/projects')
     const items = response.items.map(mapProject)
@@ -2738,6 +2864,33 @@ export const httpAdapter: ApiAdapter = {
     return ok(mapLegalDocuments(response))
   },
 
+  async getLegalAcceptanceStatus() {
+    const response = await request<{ accepted: Record<string, boolean> }>('/legal-documents/acceptance-status')
+    return ok(response.accepted || {})
+  },
+
+  async acceptFeatureLegalDocument(documentCode, documentVersionId) {
+    await request<void>('/legal-documents/feature-accept', {
+      method: 'POST',
+      body: { document_code: documentCode, document_version_id: documentVersionId, confirmed: true }
+    })
+    return ok(true)
+  },
+
+  async acceptFeatureLegalDocuments(documents) {
+    await request<void>('/legal-documents/feature-accept-batch', {
+      method: 'POST',
+      body: {
+        documents: documents.map(item => ({
+          document_code: item.documentCode,
+          document_version_id: item.documentVersionId
+        })),
+        confirmed: true
+      }
+    })
+    return ok(true)
+  },
+
   async submitFeedback(payload: FeedbackSubmitPayload) {
     const body = new FormData()
     body.append('category', payload.category)
@@ -2767,7 +2920,12 @@ export const httpAdapter: ApiAdapter = {
         model: payload.model || '',
         template_id: payload.templateId || '',
         count: payload.count,
-        split_selling_points: payload.splitSellingPoints
+        split_selling_points: payload.splitSellingPoints,
+        resolution: payload.resolution,
+        quality: payload.quality,
+        background: payload.background,
+        output_format: payload.outputFormat,
+        output_compression: payload.outputFormat === 'jpeg' ? payload.outputCompression : undefined
       }
     })
     return ok(mapProductImageCreditPreview(response))
@@ -2795,12 +2953,51 @@ export const httpAdapter: ApiAdapter = {
     return ok((response || []).map(mapProductSellingPoint))
   },
 
-  async generateProductImages(payload) {
-    const response = await request<BackendProductImageGenerateResponse>('/product-image/generate', {
+  async optimizeProductImagePrompt(payload) {
+    const response = await request<{ optimized_prompt: string }>('/product-image/optimize-prompt', {
+      method: 'POST',
+      body: payload
+    })
+    return ok({ optimizedPrompt: response.optimized_prompt })
+  },
+
+  async generateProductImages(payload, onProgress) {
+    // 新链路立即返回批次号；离开页面不影响 Worker，历史记录仍可恢复。
+    const queued = await request<{ batch_id: string }>('/product-image/tasks', {
       method: 'POST',
       body: buildProductImagePayload(payload)
     })
-    return ok(mapProductImageGenerateResult(response))
+    let consecutivePollFailures = 0
+    let lastProgress = 0
+    while (true) {
+      await new Promise(resolve => setTimeout(resolve, 5000 + Math.random() * 5000))
+      let task: BackendProductImageGenerateResponse & { status: string; progress: number; current_step: string; error_message: string; error_code?: string }
+      try {
+        task = await request<BackendProductImageGenerateResponse & { status: string; progress: number; current_step: string; error_message: string; error_code?: string }>(`/product-image/tasks/${queued.batch_id}`)
+        consecutivePollFailures = 0
+      } catch (error) {
+        // 已拿到批次号时，单次状态查询失败不等于供应商生成失败；继续查询同一批次，避免重复提交扣费。
+        consecutivePollFailures += 1
+        if (consecutivePollFailures < 6) {
+          onProgress?.(lastProgress, '状态查询暂时中断，正在重连')
+          continue
+        }
+        throw new ApiClientError(`任务已提交，但状态查询连续失败。请到生成历史查看批次 ${queued.batch_id}，不要重复提交。`, 'PRODUCT_IMAGE_POLL_UNAVAILABLE')
+      }
+      lastProgress = Math.max(lastProgress, Math.min(100, Number(task.progress) || 0))
+      onProgress?.(lastProgress, task.current_step)
+      if (task.status === 'success') return ok(mapProductImageGenerateResult(task))
+      if (task.status === 'failed') {
+        // 业务终态直接携带后端脱敏后的供应商原因，不能再由通用网络错误处理覆盖。
+        throw new ApiClientError(task.error_message || '商品图片生成失败，请到生成历史查看原因。', task.error_code || 'PRODUCT_IMAGE_FAILED')
+      }
+    }
+  },
+
+  async getProductImageTask(batchId) {
+    const task = await request<{ batch_id: string; status: string; progress: number; current_step: string; error_message: string }>(`/product-image/tasks/${batchId}`)
+    return ok({ batchId: task.batch_id, status: task.status, progress: task.progress,
+      currentStep: task.current_step, errorMessage: task.error_message })
   },
 
   async listProductImageHistory(params) {
@@ -2838,6 +3035,65 @@ export const httpAdapter: ApiAdapter = {
     return ok(result)
   },
 
+  async analyzeProductVideoReference(file) {
+    const form = new FormData()
+    form.append('file', file)
+    const response = await request<any>('/product-video/reference/analyze', { method: 'POST', body: form })
+    return ok({
+      referenceVideoToken: String(response.reference_video_token || ''),
+      videoUrl: String(response.video_url || ''),
+      durationSec: Number(response.duration_sec || 0),
+      suggestedPrompt: String(response.suggested_prompt || ''),
+      visualHook: String(response.visual_hook || ''),
+      pacing: String(response.pacing || ''),
+      analysisAvailable: Boolean(response.analysis_available),
+      transcript: String(response.transcript || ''),
+      transcriptStatus: String(response.transcript_status || 'unavailable'),
+      scriptDraft: String(response.script_draft || '')
+    })
+  },
+
+  async analyzeProductVideoReferenceLink(url) {
+    const response = await request<any>('/product-video/reference/analyze-link', { method: 'POST', body: { text: url } })
+    return ok({
+      referenceVideoToken: String(response.reference_video_token || ''), videoUrl: String(response.video_url || ''),
+      durationSec: Number(response.duration_sec || 0), suggestedPrompt: String(response.suggested_prompt || ''),
+      visualHook: String(response.visual_hook || ''), pacing: String(response.pacing || ''),
+      analysisAvailable: Boolean(response.analysis_available), transcript: String(response.transcript || ''),
+      transcriptStatus: String(response.transcript_status || 'unavailable'), scriptDraft: String(response.script_draft || '')
+    })
+  },
+
+  async inspectProductVideoReferenceLink(text) {
+    const raw = await request<any>('/product-video/reference/inspect-link', { method: 'POST', body: { text } })
+    return ok({ platform: String(raw.platform || ''), url: String(raw.url || ''), requiresUpload: Boolean(raw.requires_upload), message: String(raw.message || '') })
+  },
+
+  async optimizeProductVideoScript(payload) {
+    const raw = await request<any>('/product-video/reference/optimize-script', { method: 'POST', body: { script: payload.script, product_details: payload.productDetails, duration_sec: payload.durationSec } })
+    return ok({ script: String(raw.script || ''), prompt: String(raw.prompt || ''), hook: String(raw.hook || '') })
+  },
+
+  async getDigitalHumanAvailability() {
+    const raw = await request<any>('/product-video/digital-human/availability')
+    return ok({ available: Boolean(raw.available), maxSeconds: Number(raw.max_seconds || 180), message: String(raw.message || '') })
+  },
+
+  async quoteDigitalHuman(script) {
+    const raw = await request<any>('/product-video/digital-human/quote', { method: 'POST', body: { script } })
+    return ok({ estimatedSeconds: Number(raw.estimated_seconds || 0), creditsPerSecond: Number(raw.credits_per_second || 0), requiredCredits: Number(raw.required_credits || 0), currentBalance: Number(raw.current_balance || 0), balanceAfter: Number(raw.balance_after || 0), sufficient: Boolean(raw.sufficient) })
+  },
+
+  async createDigitalHumanTask(payload) {
+    const raw = await request<any>('/product-video/digital-human/tasks', { method: 'POST', body: payload })
+    return ok(mapProductVideoTask(raw))
+  },
+
+  async listDigitalHumanTasks() {
+    const raw = await request<any[]>('/product-video/digital-human/tasks')
+    return ok((raw || []).map(mapProductVideoTask))
+  },
+
   async listProductVideoTemplates(params) {
     const query = new URLSearchParams()
     if (params?.category) query.set('category', params.category)
@@ -2847,7 +3103,7 @@ export const httpAdapter: ApiAdapter = {
   },
 
   async previewProductVideoCredits(payload) {
-    const response = await request<any>('/product-video/credit-preview', { method: 'POST', body: buildProductVideoPayload({ ...payload, creationType: 'product', prompt: '', sourceImages: [], aspectRatio: '9:16', resolution: '720p' }) })
+    const response = await request<any>('/product-video/credit-preview', { method: 'POST', body: buildProductVideoPayload({ ...payload, creationType: 'product', prompt: '', sourceImages: [], aspectRatio: '9:16' }) })
     const result: ProductVideoCreditPreview = {
       provider: String(response?.provider || ''),
       model: String(response?.model || ''),
@@ -3084,6 +3340,7 @@ export const httpAdapter: ApiAdapter = {
         entry_intent: payload.entryIntent || 'drama',
         // 项目列表快捷创建不会先经过入口配置面板，因此这里必须提供后端认可的有效默认值。
         style: payload.style || '东方玄幻 · 电影写实',
+        style_id: payload.styleId || undefined,
         aspect_ratio: payload.aspectRatio || '16:9',
         resolution: payload.resolution || '720p',
         episode_count: payload.episodeCount || 1,
@@ -3091,6 +3348,54 @@ export const httpAdapter: ApiAdapter = {
       }
     })
     return ok(mapDramaDetail(response), 'created')
+  },
+
+  async getDramaVisualStyles() {
+    const response = await request<DramaVisualStyleContract[]>('/drama/visual-styles')
+    return ok(response)
+  },
+
+  async getDramaProductionStatus(projectId: string) {
+    const response = await request<DramaProductionStatus>(`/drama/projects/${projectId}/production-status`)
+    return ok(response)
+  },
+
+  async getDramaProductionVersionContent(projectId: string, productionVersionId: string) {
+    const response = await request<DramaProductionVersionContent>(
+      `/drama/projects/${projectId}/production-versions/${productionVersionId}/content`,
+    )
+    return ok(response)
+  },
+
+  async scanDramaProductionImpact(projectId: string) {
+    const response = await request<DramaProductionImpact>(`/drama/projects/${projectId}/production-impact/scan`, {
+      method: 'POST',
+    })
+    return ok(response)
+  },
+
+  async quoteDramaProductionSync(projectId: string, action: DramaProductionSyncAction) {
+    const response = await request<DramaProductionSyncQuote>(`/drama/projects/${projectId}/production-sync/quote`, {
+      method: 'POST',
+      body: { action },
+    })
+    return ok(response)
+  },
+
+  async executeDramaProductionSync(projectId: string, action: DramaProductionSyncAction, impactReportId: string) {
+    const response = await request<DramaProductionSyncExecution>(`/drama/projects/${projectId}/production-sync/execute`, {
+      method: 'POST',
+      body: { action, impact_report_id: impactReportId },
+    })
+    return ok(response)
+  },
+
+  async acceptExistingDramaProduction(projectId: string, targetScriptVersion = '') {
+    const response = await request<DramaProductionStatus>(`/drama/projects/${projectId}/production-sync/accept-existing`, {
+      method: 'POST',
+      body: { target_script_version: targetScriptVersion },
+    })
+    return ok(response)
   },
 
   async getDramaProject(projectId: string) {
@@ -3143,6 +3448,16 @@ export const httpAdapter: ApiAdapter = {
     payload: { name?: string; is_required?: boolean; production_status?: DramaWorkspaceAssetStatus; selected_asset_id?: string; data?: Record<string, unknown> },
   ) {
     const response = await request<DramaAssetWorkspace>(`/drama/projects/${projectId}/assets/${assetType}/${assetKey}`, { method: 'PATCH', body: payload })
+    return ok(response)
+  },
+
+  async previewDramaAssetVisualPrompt(projectId: string, assetType: DramaWorkspaceAssetType, assetKey: string) {
+    const response = await request<DramaAssetVisualPromptDraft>(`/drama/projects/${projectId}/assets/${assetType}/${encodeURIComponent(assetKey)}/visual-prompt`)
+    return ok(response)
+  },
+
+  async confirmDramaAssetVisualPrompt(projectId: string, assetType: DramaWorkspaceAssetType, assetKey: string, payload: { prompt: string; base_hash: string }) {
+    const response = await request<DramaAssetVisualPromptDraft>(`/drama/projects/${projectId}/assets/${assetType}/${encodeURIComponent(assetKey)}/visual-prompt`, { method: 'PUT', body: payload })
     return ok(response)
   },
 
@@ -3671,6 +3986,13 @@ export const httpAdapter: ApiAdapter = {
     return ok(mapStoryboardWorkspace(response))
   },
 
+  async getStoryboardPlanHistory(projectId: string, episodeNo = 1, planVersionId = '') {
+    const params = new URLSearchParams({ episode_no: String(episodeNo) })
+    if (planVersionId) params.set('plan_version_id', planVersionId)
+    const response = await request<BackendStoryboardPlanHistoryResponse>(`/drama/projects/${projectId}/storyboard-plan-history?${params.toString()}`)
+    return ok(mapStoryboardPlanHistory(response))
+  },
+
   async updateStoryboardDirectorSegments(projectId: string, rowId: string, payload: StoryboardDirectorSegmentsPayload) {
     const response = await request<BackendStoryboardWorkspaceResponse>(`/drama/projects/${projectId}/storyboards/${rowId}/director-segments`, {
       method: 'PUT',
@@ -3727,6 +4049,14 @@ export const httpAdapter: ApiAdapter = {
     const response = await request<BackendStoryboardWorkspaceResponse>(
       `/drama/projects/${projectId}/storyboards/${rowId}/frames/${slot}`,
       { method: 'DELETE' }
+    )
+    return ok(mapStoryboardWorkspace(response))
+  },
+
+  async inheritStoryboardFrameReference(projectId: string, rowId: string, slot: 'first' | 'last') {
+    const response = await request<BackendStoryboardWorkspaceResponse>(
+      `/drama/projects/${projectId}/storyboards/${rowId}/frames/${slot}/inherit`,
+      { method: 'POST' }
     )
     return ok(mapStoryboardWorkspace(response))
   },

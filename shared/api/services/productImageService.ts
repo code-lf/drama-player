@@ -7,7 +7,7 @@ export const productImageService = {
     return callApi('productImage/listTemplates', (adapter) => adapter.listProductImageTemplates(params))
   },
 
-  async previewCredits(payload: Pick<ProductImageGeneratePayload, 'count' | 'model' | 'prompt' | 'splitSellingPoints' | 'templateId'>) {
+  async previewCredits(payload: Pick<ProductImageGeneratePayload, 'count' | 'model' | 'prompt' | 'splitSellingPoints' | 'templateId' | 'resolution' | 'quality' | 'background' | 'outputFormat' | 'outputCompression'>) {
     return callApi('productImage/previewCredits', (adapter) => adapter.previewProductImageCredits(payload))
   },
 
@@ -16,8 +16,17 @@ export const productImageService = {
     return callApi('productImage/splitSellingPoints', (adapter) => adapter.splitProductSellingPoints(payload))
   },
 
-  async generate(payload: ProductImageGeneratePayload) {
-    return callApi('productImage/generate', (adapter) => adapter.generateProductImages(payload))
+  /** 仅获取候选优化稿；是否替换用户原文由页面二次确认。 */
+  async optimizePrompt(payload: { prompt: string; mode: 'single' | 'marketing' | 'free' }) {
+    return callApi('productImage/optimizePrompt', (adapter) => adapter.optimizeProductImagePrompt(payload))
+  },
+
+  async generate(payload: ProductImageGeneratePayload, onProgress?: (progress: number, step: string) => void) {
+    return callApi('productImage/generate', (adapter) => adapter.generateProductImages(payload, onProgress))
+  },
+
+  async getTask(batchId: string) {
+    return callApi('productImage/getTask', (adapter) => adapter.getProductImageTask(batchId))
   },
 
   /** 历史记录从服务端读取，刷新页面或更换设备后仍然可见。 */

@@ -335,6 +335,10 @@ const sourceBindingMessage = ref('')
 const reReviewEstimatedCredits = ref<number | null>(null)
 const reReviewQuoteBusy = ref(false)
 const reReviewQuoteError = ref('')
+// 项目详情会被进度轮询、SSE 和手动刷新同时更新。报价必须按“项目 + 正式剧本版本”去重，
+// 并且只允许最后一次请求回写，避免旧请求长期占用“积分计算中”或覆盖新版本报价。
+let reReviewQuoteSequence = 0
+let lastReReviewQuoteKey = ''
 // 完整剧本页的场次正文先进入本地草稿，再通过防抖自动保存写回后端：
 // - 用户手动修文不属于 AI 生成动作，不扣积分；
 // - 保存后会更新 analysis.script_scenes，让刷新页面、进入后续资产阶段都能读到最新剧本；
@@ -380,35 +384,52 @@ const reReviewButtonLabel = computed(() => {
   return '重新体检当前版本'
 })
 
-async function refreshReReviewQuote() {
+async function refreshReReviewQuote(force = false) {
   if (!analysis.value?.scriptReviewsStale || projectId.value === 'unknown') return
+  const quoteKey = `${projectId.value}:${analysis.value.currentScriptVersion || 'current'}`
+  if (!force && (quoteKey === lastReReviewQuoteKey || reReviewQuoteBusy.value)) return
+  lastReReviewQuoteKey = quoteKey
+  const requestSequence = ++reReviewQuoteSequence
   reReviewQuoteBusy.value = true
   reReviewQuoteError.value = ''
   try {
     const meta = analysis.value.displayMeta
-    const quote = await dramaService.previewCredits(projectId.value, {
-      action: 'analysis',
-      aspectRatio: meta?.aspectRatio || '16:9',
-      resolution: meta?.resolution || '720p',
-      style: meta?.style || '',
-      forceReanalyze: true
-    })
+    // 网络或后端异常不能让按钮永久停在加载态；超时后用户仍可打开确认弹窗，
+    // 正式提交前由父页面再次获取后端权威报价。
+    const quote = await Promise.race([
+      dramaService.previewCredits(projectId.value, {
+        action: 'analysis',
+        aspectRatio: meta?.aspectRatio || '16:9',
+        resolution: meta?.resolution || '720p',
+        style: meta?.style || '',
+        forceReanalyze: true
+      }),
+      new Promise<never>((_, reject) => {
+        globalThis.setTimeout(() => reject(new Error('积分预估请求超时')), 12000)
+      })
+    ])
+    if (requestSequence !== reReviewQuoteSequence) return
     reReviewEstimatedCredits.value = quote.requiredCredits
   } catch (error) {
+    if (requestSequence !== reReviewQuoteSequence) return
     // 报价失败不阻塞用户进入现有确认流程；确认时父页面仍会重新请求一次权威报价。
     console.error('[livliv] 重新体检积分预估加载失败', error)
     reReviewEstimatedCredits.value = null
     reReviewQuoteError.value = '积分暂未加载，点击后将重新计算'
   } finally {
-    reReviewQuoteBusy.value = false
+    if (requestSequence === reReviewQuoteSequence) reReviewQuoteBusy.value = false
   }
 }
 
 watch(
-  () => [projectId.value, analysis.value?.currentScriptVersion, analysis.value?.scriptReviewsStale] as const,
+  [projectId, () => analysis.value?.currentScriptVersion, () => analysis.value?.scriptReviewsStale],
   ([, , reviewsStale]) => {
     if (reviewsStale) void refreshReReviewQuote()
     else {
+      // 新一轮体检完成后废弃尚未返回的旧报价，避免迟到响应重新点亮历史价格。
+      reReviewQuoteSequence += 1
+      lastReReviewQuoteKey = ''
+      reReviewQuoteBusy.value = false
       reReviewEstimatedCredits.value = null
       reReviewQuoteError.value = ''
     }
@@ -478,6 +499,11 @@ const pendingDraftVersionItem = computed(() => {
     || null
 })
 const pendingDraftVersion = computed(() => pendingDraftVersionItem.value?.version || '优化草稿')
+const pendingDraftIsManual = computed(() => /人工编辑/.test(pendingDraftVersionItem.value?.summary || ''))
+const unpublishedSceneChangeCount = computed(() => Object.keys(analysis.value?.unpublishedSceneChanges || {}).length)
+const hasProductionSnapshot = computed(() => Boolean(
+  analysis.value?.confirmedScriptVersionId && analysis.value?.analysisSnapshotId
+))
 const pendingOptimizationAnalysis = computed(() => pendingOptimizedDetail.value?.analysis || null)
 const pendingReviewScore = computed(() => pendingOptimizationAnalysis.value?.scriptReviews?.overview?.score || healthScore.value)
 const healthScore = computed(() => analysis.value?.scriptReviews?.overview?.score || 0)
@@ -519,16 +545,6 @@ function normalizeAnalysisStageStatus(status?: string): AnalysisStageStatus {
   return 'queued'
 }
 
-function mergeAnalysisNodeStatuses(statuses: string[]): AnalysisStageStatus {
-  const normalized = statuses.map(normalizeAnalysisStageStatus)
-  if (normalized.every(status => status === 'succeeded')) return 'succeeded'
-  if (normalized.some(status => status === 'running')) return 'running'
-  if (normalized.some(status => status === 'failed')) return 'failed'
-  if (normalized.some(status => status === 'succeeded')) return 'running'
-  if (normalized.every(status => status === 'canceled')) return 'canceled'
-  return 'queued'
-}
-
 function normalizedAnalysisNodeProgress(status: string | undefined, progress: number | undefined) {
   const normalizedStatus = normalizeAnalysisStageStatus(status)
   if (normalizedStatus === 'succeeded') return 100
@@ -536,50 +552,43 @@ function normalizedAnalysisNodeProgress(status: string | undefined, progress: nu
   return Math.max(0, Math.min(99, Number(progress || 0)))
 }
 
+const structureNodeProgress = computed(() => {
+  const node = props.currentAnalysisRun.nodes?.STRUCTURE_ANALYSIS
+  return node ? normalizedAnalysisNodeProgress(node.status, node.progress) : null
+})
 const analysisProgressStages = computed(() => {
-  const nodes = props.currentAnalysisRun.nodes || {}
-  return [
-    {
-      key: 'structure',
-      title: '基础结构解析',
-      description: '题材、大纲、人物与分集边界',
-      status: normalizeAnalysisStageStatus(nodes.STRUCTURE_ANALYSIS?.status),
-      progress: normalizedAnalysisNodeProgress(nodes.STRUCTURE_ANALYSIS?.status, nodes.STRUCTURE_ANALYSIS?.progress),
-    },
-    {
-      key: 'global-review',
-      title: '综合剧本体检',
-      description: '故事、人物关系与分集节奏',
-      status: mergeAnalysisNodeStatuses([
-        nodes.OVERVIEW_REVIEW?.status || 'queued',
-        nodes.CHARACTER_REVIEW?.status || 'queued',
-        nodes.EPISODE_REVIEW?.status || 'queued',
-      ]),
-      progress: Math.round([
-        nodes.OVERVIEW_REVIEW,
-        nodes.CHARACTER_REVIEW,
-        nodes.EPISODE_REVIEW,
-      ].reduce((total, node) => total + normalizedAnalysisNodeProgress(node?.status, node?.progress), 0) / 3),
-    },
-    {
-      key: 'fulltext-review',
-      title: '全文可制作性',
-      description: '对白、行动、场景与情绪承接',
-      status: normalizeAnalysisStageStatus(nodes.FULLTEXT_REVIEW?.status),
-      progress: normalizedAnalysisNodeProgress(nodes.FULLTEXT_REVIEW?.status, nodes.FULLTEXT_REVIEW?.progress),
-    },
-    {
-      key: 'cover',
-      title: '项目封面',
-      description: '结构完成后在后台并行生成',
-      status: normalizeAnalysisStageStatus(props.currentAnalysisRun.coverStatus),
-      progress: normalizedAnalysisNodeProgress(props.currentAnalysisRun.coverStatus, props.currentAnalysisRun.coverStatus === 'running' ? 5 : 0),
-    },
+  // 下列阈值与后端 _handle_progressive_structure_progress 的 JSON 字段检查点一一对应。
+  // 它们表示“服务端已收到该部分输出”，不是用耗时估算的独立模型百分比。
+  if (structureNodeProgress.value === null) {
+    // 旧项目没有结构节点详情时只展示一个真实的整体任务，不制造五个虚假的等待节点。
+    return [{ key: 'legacy', title: '剧本解析', description: '正在等待服务端返回结构化结果', status: normalizeAnalysisStageStatus(props.currentAnalysisRun.status) }]
+  }
+  const progress = structureNodeProgress.value ?? 0
+  const nodeStatus = normalizeAnalysisStageStatus(props.currentAnalysisRun.nodes?.STRUCTURE_ANALYSIS?.status)
+  const milestones = [
+    { key: 'receiving', title: '启动结构解析', description: '连接模型并接收首段结果', start: 5, complete: 22 },
+    { key: 'story', title: '整理故事与大纲', description: '标题、梗概与故事主线', start: 22, complete: 48 },
+    { key: 'characters', title: '识别人物关系', description: '人物小传与角色关系', start: 48, complete: 68 },
+    { key: 'episodes', title: '拆分分集与场景', description: '分集内容与场景结构', start: 68, complete: 90 },
+    { key: 'validating', title: '核对并保存', description: '模型返回结束，校验原文覆盖', start: 90, complete: 100 },
   ]
+  return milestones.map((milestone) => ({
+    ...milestone,
+    status: nodeStatus === 'failed' && progress < milestone.complete && (progress >= milestone.start || milestone.key === 'receiving')
+      ? 'failed' as const
+      : nodeStatus === 'succeeded' || progress >= milestone.complete
+        ? 'succeeded' as const
+        : nodeStatus === 'running' && progress >= milestone.start
+          ? 'running' as const
+          : 'queued' as const,
+  }))
 })
 
 const analysisOverallProgress = computed(() => {
-  // 总进度只采用服务端统一值，避免详情与项目列表因前端各自推算而出现 0%/12% 不一致。
+  // 首屏只等待基础结构。综合体检、全文体检和封面会在进入剧本页后继续运行，
+  // 因此这里展示结构节点的真实进度，不能把四项平均值称作“进入剧本”的进度。
+  if (structureNodeProgress.value !== null) return structureNodeProgress.value
+  // 老项目仍沿用原来的单链路进度，避免没有节点明细时首屏一直显示 0%。
   return Math.max(0, Math.min(100, Number(props.currentAnalysisRun.overallProgress || 0)))
 })
 const isInitialAnalysisFailed = computed(() => {
@@ -592,12 +601,12 @@ async function retryFailedStructureAnalysis() {
   await props.retryAnalysisNodeAction('STRUCTURE_ANALYSIS')
 }
 
-function analysisStageStatusLabel(status: AnalysisStageStatus) {
+function analysisStageStatusLabel(status: AnalysisStageStatus, key: string) {
   return ({
-    queued: '等待中',
-    running: '处理中',
-    succeeded: '已完成',
-    failed: '生成失败',
+    queued: '待开始',
+    running: key === 'validating' ? '校验中' : '接收中',
+    succeeded: key === 'validating' ? '已完成' : '已收到',
+    failed: '此处失败',
     canceled: '已取消',
   } as const)[status]
 }
@@ -772,7 +781,10 @@ const currentSceneList = computed(() => {
         // 场次正文必须来自后端 script_scenes.content 或 dialogues。
         // 如果后端没有返回正文，前端保持空白，避免把占位文案误当成真实剧本。
         content: scene.content || scene.dialogues.join('\n') || '',
-        suggestions: scene.suggestions || []
+        suggestions: scene.suggestions || [],
+        hasUnpublishedChanges: Boolean(scene.hasUnpublishedChanges),
+        unpublishedOriginalContent: scene.unpublishedOriginalContent || '',
+        unpublishedChangedAt: scene.unpublishedChangedAt || ''
       }
     })
   }
@@ -923,6 +935,23 @@ async function saveCurrentScene(snapshot = buildCurrentSceneSaveSnapshot()): Pro
   }
 }
 
+/** 将当前场恢复到本轮人工编辑前的正式文本；该动作免费，也不会改动资产或分镜。 */
+async function restoreCurrentScene(): Promise<void> {
+  const scene = currentScene.value
+  const originalContent = scene?.unpublishedOriginalContent || ''
+  if (!scene?.hasUnpublishedChanges || !originalContent) return
+  if (sceneAutoSaveTimer.value) {
+    window.clearTimeout(sceneAutoSaveTimer.value)
+    sceneAutoSaveTimer.value = null
+  }
+  const draftKey = currentSceneDraftKey.value
+  editableSceneContents.value = { ...editableSceneContents.value, [draftKey]: originalContent }
+  const restored = await saveCurrentScene(buildCurrentSceneSaveSnapshot(originalContent, draftKey))
+  if (restored) {
+    toast.add({ title: '已还原当前场', description: '该场未发布改动已撤销，现有资产和分镜未发生变化。', color: 'success' })
+  }
+}
+
 /**
  * 报价确认完成后立即进入资产步骤：如果命中缓存就直接展示完整工作台；如果刚进入队列，
  * 资产页负责展示 Worker 的真实阶段。这里不再把用户锁在剧本页的等待弹窗中。
@@ -944,7 +973,8 @@ async function enterAssetWorkspaceAfterSubmit(options: { cached?: boolean; prepa
     close: true,
     duration: 4200,
   })
-  emit('refresh')
+  // 确认接口已经返回本次冻结的项目详情。先由父页用该详情切换步骤，
+  // 避免并发 GET 取回旧快照后把刚进入的资产页重新锁回剧本页。
   await props.confirmScriptAction(serverOptimizedDetail.value || undefined)
 }
 
@@ -983,6 +1013,12 @@ async function confirmCurrentScriptVersion() {
   if (confirmScriptBusy.value || assetPreparationSubmitBusy.value) return
   confirmScriptBusy.value = true
   try {
+    // 生产快照只在项目第一次进入资产时建立。后续剧本编辑通过“发布草稿 + 资产/分镜页
+    // 差异化同步”处理，禁止再次点此按钮重建快照或覆盖既有制作数据。
+    if (hasProductionSnapshot.value) {
+      await props.confirmScriptAction(serverOptimizedDetail.value || effectiveProjectDetail.value || undefined)
+      return
+    }
     if (sceneAutoSaveTimer.value) {
       window.clearTimeout(sceneAutoSaveTimer.value)
       sceneAutoSaveTimer.value = null
@@ -2312,6 +2348,7 @@ const confirmScriptButtonLabel = computed(() => {
   if (assetTransitionPhase.value === 'extracting') return '正在提炼完整资产资料…'
   if (assetTransitionPhase.value === 'entering') return '正在进入资产制作…'
   if (!canConfirmScriptVersion.value) return '正在解析剧本结构…'
+  if (hasProductionSnapshot.value) return '进入资产制作'
   if (!props.currentAnalysisRun.reviewsReady) return '进入资产制作（体检将在后台继续）'
   return '确认当前剧本版本，进入资产制作'
 })
@@ -3731,12 +3768,12 @@ defineExpose({ openAllSuggestions })
       <h2 class="mt-8 text-[34px] font-semibold tracking-[-0.04em]">{{ isInitialAnalysisFailed ? '剧本解析失败' : scriptProgressTitle }}</h2>
       <p class="mt-3 text-base text-[#64748b]">{{ isInitialAnalysisFailed ? '基础结构未通过校验，后续体检和封面任务已停止。' : scriptProgressSubtitle }}</p>
       <div class="mt-5 flex items-center gap-3 text-sm font-semibold text-[#315173]">
-        <span>整体进度 {{ analysisOverallProgress }}%</span>
+        <span>{{ structureNodeProgress !== null ? '基础解析进度' : '整体进度' }} {{ analysisOverallProgress }}%</span>
         <span class="h-1.5 w-48 overflow-hidden rounded-full bg-[#e2e8f0]">
           <span class="block h-full rounded-full transition-all duration-500" :class="isInitialAnalysisFailed ? 'bg-[#dc2626]' : 'bg-[#0f67ff]'" :style="{ width: `${analysisOverallProgress}%` }" />
         </span>
       </div>
-      <div class="mt-10 grid w-full max-w-[1040px] gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div class="mt-10 grid w-full max-w-[1180px] gap-4 sm:grid-cols-2 xl:grid-cols-5">
         <article
           v-for="stage in analysisProgressStages"
           :key="stage.key"
@@ -3751,10 +3788,10 @@ defineExpose({ openAllSuggestions })
           </div>
           <p class="mt-3 text-base font-semibold text-[#0f172a]">{{ stage.title }}</p>
           <p class="mt-1 text-xs leading-5 text-[#64748b]">{{ stage.description }}</p>
-          <p class="mt-2 text-lg font-semibold tabular-nums" :class="stage.status === 'failed' ? 'text-[#dc2626]' : 'text-[#0f67ff]'">{{ stage.progress }}%</p>
-          <p class="mt-2 text-sm font-semibold" :class="stage.status === 'failed' ? 'text-[#dc2626]' : stage.status === 'succeeded' ? 'text-[#059669]' : 'text-[#0f67ff]'">{{ analysisStageStatusLabel(stage.status) }}</p>
+          <p class="mt-3 text-sm font-semibold" :class="stage.status === 'failed' ? 'text-[#dc2626]' : stage.status === 'succeeded' ? 'text-[#059669]' : 'text-[#0f67ff]'">{{ analysisStageStatusLabel(stage.status, stage.key) }}</p>
         </article>
       </div>
+      <p v-if="!isInitialAnalysisFailed" class="mt-5 text-center text-sm text-[#64748b]">这些节点来自基础解析的真实输出检查点；完成后进入剧本页，体检与封面在后台继续处理。</p>
       <p v-if="isStructureLongRunning" class="mt-5 max-w-[620px] rounded-[12px] bg-[#eff6ff] px-4 py-3 text-center text-sm leading-6 text-[#315173]">
         模型仍在处理，可离开页面后返回查看；完成后会自动进入剧本工作台。
       </p>
@@ -3789,6 +3826,15 @@ defineExpose({ openAllSuggestions })
     </div>
 
     <template v-else>
+      <div v-if="unpublishedSceneChangeCount" class="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-[16px] border border-[#fdba74] bg-[#fff7ed] px-4 py-3 text-sm leading-6 text-[#9a3412]">
+        <div>
+          <p class="font-semibold">当前有 {{ unpublishedSceneChangeCount }} 个场次包含未发布改动</p>
+          <p class="mt-0.5 text-xs text-[#b45309]">橘色场次为工作草稿；发布前资产和分镜继续使用原生产版本，不会自动重做。</p>
+        </div>
+        <button type="button" class="rounded-[10px] bg-[#f97316] px-4 py-2 text-xs font-semibold text-white" @click="applyConfirmVisible = true">
+          发布 {{ pendingDraftVersion }}
+        </button>
+      </div>
       <div v-if="currentAnalysisRun.structureReady && !currentAnalysisRun.reviewsReady" class="rounded-[16px] border border-[#bfdbfe] bg-[#eff6ff] px-4 py-3 text-sm leading-6 text-[#315173]">
         基础解析已完成，专业体检后台进行中；体检结论不会阻塞资产制作，也不会修改已冻结的生产快照。
       </div>
@@ -4154,10 +4200,12 @@ defineExpose({ openAllSuggestions })
                         :key="`${episode.episodeNo}-${scene.index}`"
                         type="button"
                         class="w-full rounded-[10px] px-3 py-2 text-left text-xs transition"
-                        :class="selectedEpisodeNo === episode.episodeNo && selectedSceneIndex === scenePosition ? 'bg-[#e8f1ff] text-[#0f67ff]' : 'text-[#475569] hover:bg-white'"
+                        :class="selectedEpisodeNo === episode.episodeNo && selectedSceneIndex === scenePosition
+                          ? scene.hasUnpublishedChanges ? 'bg-[#ffedd5] text-[#c2410c] ring-1 ring-[#fb923c]' : 'bg-[#e8f1ff] text-[#0f67ff]'
+                          : scene.hasUnpublishedChanges ? 'bg-[#fff7ed] text-[#c2410c] hover:bg-[#ffedd5]' : 'text-[#475569] hover:bg-white'"
                         @click="selectScene(episode.episodeNo, scenePosition)"
                       >
-                        <b class="block">场{{ scenePosition + 1 }} {{ scene.title }}</b>
+                        <b class="flex items-center justify-between gap-2"><span>场{{ scenePosition + 1 }} {{ scene.title }}</span><span v-if="scene.hasUnpublishedChanges" class="rounded-full bg-[#fed7aa] px-2 py-0.5 text-[10px]">未发布</span></b>
                         <span class="mt-1 block truncate">{{ [scene.place, scene.timeOfDay].filter(Boolean).join(' · ') }}</span>
                       </button>
                       <p v-if="!scenesForEpisode(episode.episodeNo).length" class="px-3 py-2 text-xs text-[#94a3b8]">本集场次正在生成</p>
@@ -4191,17 +4239,22 @@ defineExpose({ openAllSuggestions })
                     </div>
                   </div>
                 </div>
-                <div class="mt-4 flex items-center justify-between gap-3 rounded-t-[14px] border border-b-0 border-[#bfdbfe] bg-[#eff6ff] px-4 py-2.5">
+                <div class="mt-4 flex items-center justify-between gap-3 rounded-t-[14px] border border-b-0 px-4 py-2.5" :class="currentScene?.hasUnpublishedChanges ? 'border-[#fdba74] bg-[#fff7ed]' : 'border-[#bfdbfe] bg-[#eff6ff]'">
                   <div class="min-w-0">
                     <b class="block truncate text-sm text-[#0f172a]">第{{ selectedEpisodeNo }}集 · 场{{ selectedSceneIndex + 1 }} {{ currentScene?.title || '' }}</b>
                     <span class="mt-0.5 block truncate text-xs text-[#64748b]">{{ [currentScene?.place, currentScene?.timeOfDay].filter(Boolean).join(' · ') || '当前场次' }}</span>
                   </div>
-                  <span class="shrink-0 text-xs text-[#64748b]">当前场 {{ editableCurrentSceneContent.length }} 字</span>
+                  <div class="flex shrink-0 items-center gap-2">
+                    <span v-if="currentScene?.hasUnpublishedChanges" class="rounded-full bg-[#fed7aa] px-2 py-1 text-[10px] font-semibold text-[#c2410c]">未发布改动</span>
+                    <button v-if="currentScene?.hasUnpublishedChanges" type="button" class="rounded-[8px] border border-[#fb923c] bg-white px-3 py-1.5 text-xs font-semibold text-[#c2410c]" :disabled="sceneSaveBusy" @click="restoreCurrentScene">还原当前场</button>
+                    <span class="text-xs text-[#64748b]">当前场 {{ editableCurrentSceneContent.length }} 字</span>
+                  </div>
                 </div>
                 <textarea
                   ref="sourceScriptContainerRef"
                   v-model="editableCurrentSceneContent"
-                  class="min-h-[560px] w-full resize-y rounded-b-[14px] border border-[#bfdbfe] bg-white p-5 font-sans text-[15px] leading-8 text-[#0f172a] outline-none transition focus:border-[#0f67ff] focus:ring-2 focus:ring-[#dbeafe]"
+                  class="min-h-[560px] w-full resize-y rounded-b-[14px] border bg-white p-5 font-sans text-[15px] leading-8 text-[#0f172a] outline-none transition"
+                  :class="currentScene?.hasUnpublishedChanges ? 'border-[#fdba74] focus:border-[#f97316] focus:ring-2 focus:ring-[#ffedd5]' : 'border-[#bfdbfe] focus:border-[#0f67ff] focus:ring-2 focus:ring-[#dbeafe]'"
                   :aria-label="`编辑第${selectedEpisodeNo}集场${selectedSceneIndex + 1}正文`"
                   spellcheck="false"
                   @select="captureSourceSelection"
@@ -4351,7 +4404,9 @@ defineExpose({ openAllSuggestions })
             </li>
           </ol>
           <p v-else class="text-xs font-medium text-[#64748b]">
-            确认剧本版本本身不扣点；完整资产资料将按当前模型和识别出的资产数量报价，确认费用后才开始提炼。
+            {{ hasProductionSnapshot
+              ? '生产快照已经建立；后续剧本改动请先发布，再到资产或分镜页按差异选择同步。'
+              : '首次确认剧本版本本身不扣点；完整资产资料将按当前模型和识别出的资产数量报价，确认费用后才开始提炼。' }}
           </p>
           <span :title="canConfirmScriptVersion ? '冻结当前剧本版本，核算完整资产资料提炼费用，确认后再进入资产制作。' : '基础剧本结构完成后即可确认版本。'">
             <button
@@ -4880,7 +4935,7 @@ defineExpose({ openAllSuggestions })
                 </div>
               </div>
               <div class="rounded-[16px] border border-[#dbeafe] bg-[#f8fbff] p-4">
-                <h3 class="font-semibold text-[#0f67ff]">优化版本 {{ pendingDraftVersion }}（AI 生成）</h3>
+                <h3 class="font-semibold text-[#0f67ff]">{{ pendingDraftIsManual ? '人工编辑草稿' : '优化版本' }} {{ pendingDraftVersion }}{{ pendingDraftIsManual ? '' : '（AI 生成）' }}</h3>
                 <div class="mt-3 space-y-2">
                   <p v-for="item in pendingChangePreview" :key="`new-${item.id}`" class="rounded-[10px] bg-white px-3 py-2.5 text-sm leading-6">{{ item.advice }}</p>
                   <p v-if="!pendingChangePreview.length" class="rounded-[10px] bg-white px-3 py-2.5 text-sm text-[#64748b]">优化草稿已生成，但后端未返回可展示的差异摘要。</p>
@@ -4912,10 +4967,10 @@ defineExpose({ openAllSuggestions })
 
       <div v-if="applyConfirmVisible" class="fixed inset-0 z-[100] flex items-center justify-center bg-[#0f172a]/45 p-4">
         <div class="w-full max-w-[560px] rounded-[24px] bg-white p-7">
-          <div class="flex gap-4"><div class="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#fff7ed]"><AlertTriangle class="h-6 w-6 text-[#f59e0b]" /></div><div><h3 class="text-xl font-semibold text-[#0f172a]">确认发布 AI 优化版本 {{ pendingDraftVersion }}？</h3><p class="mt-2 text-sm leading-7 text-[#64748b]">发布后 {{ pendingDraftVersion }} 将成为正式版本，原版本 {{ pendingOriginalVersion }} 会保留在版本历史中。</p></div></div>
+          <div class="flex gap-4"><div class="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#fff7ed]"><AlertTriangle class="h-6 w-6 text-[#f59e0b]" /></div><div><h3 class="text-xl font-semibold text-[#0f172a]">确认发布{{ pendingDraftIsManual ? '人工编辑草稿' : ' AI 优化版本' }} {{ pendingDraftVersion }}？</h3><p class="mt-2 text-sm leading-7 text-[#64748b]">发布后 {{ pendingDraftVersion }} 将成为正式剧本，原版本 {{ pendingOriginalVersion }} 会保留在版本历史中；现有资产和分镜不会自动变化。</p></div></div>
           <div class="mt-5 rounded-[14px] border border-[#fde68a] bg-[#fffbeb] p-4 text-sm leading-7 text-[#92400e]">
             <p><b>发布前请确认：</b>当前仍有 {{ publishInvalidSuggestionCount }} 条未处理建议。发布后它们会立即失效并归档，不能再生成、定位或采纳；已采纳建议会显示为“已优化记录”。</p>
-            <p class="mt-2">发布不会自动重新体检，也不会额外扣点。若要获得适用于 {{ pendingDraftVersion }} 的新建议，需要在发布后主动重新体检当前版本。</p>
+            <p class="mt-2">发布本身不扣点，也不会自动重做资产或分镜。请到资产或分镜页面查看差异、积分预估，并在确认后只合并受影响内容。</p>
           </div>
           <div class="mt-6 flex gap-3"><button class="flex-1 rounded-[12px] border border-[#cbd5e1] px-5 py-3" @click="applyConfirmVisible = false">继续处理建议</button><button class="flex-1 rounded-[12px] bg-[#0f67ff] px-5 py-3 font-semibold text-white" @click="applyOptimizedVersion">确认发布新版本</button></div>
         </div>

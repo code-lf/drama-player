@@ -8,6 +8,8 @@ import BaseSelect, { type BaseSelectOption } from '~/components/ui/BaseSelect.vu
 import LivDialog from '~/components/liv-ui/LivDialog.vue'
 import { useAccountStore } from '~/features/billing/store/useAccountStore'
 import { productImageService } from '~/shared/api/services/productImageService'
+import { generationProfileService } from '~/shared/api/services/generationProfileService'
+import { PRODUCT_REFERENCE_IMAGE_MAX_BYTES, PRODUCT_REFERENCE_IMAGE_MAX_MB } from '~/shared/constants/uploadLimits'
 
 type WorkspaceMode = 'product' | 'poster' | 'edit' | 'free'
 type CreationMethod = 'single' | 'marketing'
@@ -51,21 +53,40 @@ const styleDrafts = reactive<Record<WorkspaceMode, string>>({
 const selectedStyle = computed({ get: () => styleDrafts[activeMode.value], set: value => { styleDrafts[activeMode.value] = value } })
 const selectedModel = ref(props.defaultImageModel)
 const aspectRatio = ref('1:1')
-const resolution = ref('1024')
-const count = ref(3)
+const aspectRatioLoadFailed = ref(false)
+const resolution = ref('1K')
+const quality = ref<'low' | 'medium' | 'high'>('low')
+const background = ref<'auto' | 'transparent' | 'opaque'>('auto')
+const outputFormat = ref<'png' | 'jpeg'>('png')
+const outputCompression = ref(85)
+// 单图默认只生成一张；只有用户选择“营销套图”时才自动切换为三张。
+const count = ref(1)
 const referenceImages = ref<ProductImageReference[]>([])
 const sellingPoints = ref<ProductSellingPoint[]>([])
 const creditPreview = ref<ProductImageCreditPreview | null>(null)
+const creditPreviewLoading = ref(false)
+const creditPreviewFailed = ref(false)
+let creditPreviewTimer: ReturnType<typeof setTimeout> | undefined
+let creditPreviewRequestId = 0
 const generateResult = ref<ProductImageGenerateResult | null>(null)
 const generatedAt = ref('')
 const activeResultIndex = ref(0)
 const loadingKey = ref('')
 const errorMessage = ref('')
 const infoMessage = ref('')
+const optimizePromptLoading = ref(false)
+const optimizedPromptOpen = ref(false)
+const optimizedPromptDraft = ref('')
+const optimizeDialogError = ref('')
+const optimizeOriginalPrompt = ref('')
+const optimizeTargetMode = ref<WorkspaceMode>('product')
+const optimizeTargetCreationMethod = ref<CreationMethod>('single')
 const sellingPointPlan = ref<ProductSellingPoint[]>([])
 const resultPlanOpen = ref(false)
 const generationStage = ref<GenerationStage>('idle')
 const generationElapsedSeconds = ref(0)
+const supplierProgress = ref(0)
+const supplierStep = ref('')
 const advancedOpen = ref(false)
 const negativePrompt = ref('')
 const historyOpen = ref(false)
@@ -73,6 +94,10 @@ const historyLoading = ref(false)
 const historyFavoritesOnly = ref(false)
 const historyBatches = ref<ProductImageHistoryBatch[]>([])
 const historyError = ref('')
+const imagePreviewOpen = ref(false)
+const imagePreviewItems = ref<ProductImageResult[]>([])
+const imagePreviewIndex = ref(0)
+const imagePreviewScale = ref(1)
 let generationStageTimer: ReturnType<typeof setTimeout> | undefined
 let generationElapsedTimer: ReturnType<typeof setInterval> | undefined
 
@@ -117,17 +142,20 @@ const activeStyleOptions = computed<BaseSelectOption[]>(() => ({
   edit: editStyleOptions,
   free: freeStyleOptions
 }[activeMode.value]))
-const aspectRatioOptions: BaseSelectOption[] = [
-  { label: '1:1（正方形）', value: '1:1' },
-  { label: '3:4（竖图）', value: '3:4' },
-  { label: '4:3（横图）', value: '4:3' },
-  { label: '16:9（横幅）', value: '16:9' }
+// 可选比例完全由功能模型能力下发；接口不可用时不提供可能与模型不符的本地枚举。
+const aspectRatioOptions = ref<BaseSelectOption[]>([])
+const resolutionOptions = ref<BaseSelectOption[]>([
+  { label: '1K', value: '1K' },
+  { label: '2K', value: '2K' },
+  { label: '4K', value: '4K' }
+])
+const qualityOptions = ref<BaseSelectOption[]>([
+  { label: '普通', value: 'low' }, { label: '中等质量', value: 'medium' }, { label: '高质量', value: 'high' }
+])
+const backgroundOptions: BaseSelectOption[] = [
+  { label: '自动', value: 'auto' }, { label: '透明', value: 'transparent' }, { label: '不透明', value: 'opaque' }
 ]
-const resolutionOptions: BaseSelectOption[] = [
-  { label: '1024 × 1024', value: '1024' },
-  { label: '1280 高清', value: '1280' },
-  { label: '768 快速', value: '768' }
-]
+const formatOptions: BaseSelectOption[] = [{ label: 'PNG', value: 'png' }, { label: 'JPEG', value: 'jpeg' }]
 const countOptions: BaseSelectOption[] = [1, 2, 3, 4, 5].map(value => ({ label: `${value} 张`, value: String(value) }))
 // 海报用途属于一级创作意图，保持平铺展示，让用户无需展开下拉框就能发现全部能力。
 const posterThemeOptions: Array<{ label: string; value: PosterTheme; description: string }> = [
@@ -143,6 +171,43 @@ const posterFontOptions: BaseSelectOption[] = [
   { label: '手写艺术体', value: '手写艺术体', description: '温暖亲和，适合节日与生活方式' }
 ]
 const editMethodOptions: BaseSelectOption[] = ['换背景', '局部修改', '去除瑕疵', '扩图', '替换颜色', '高清修复'].map(value => ({ label: value, value }))
+
+async function loadGenerationProfile(): Promise<void> {
+  try {
+    const profile = await generationProfileService.get('product_image')
+    const schema = profile.input_schema || {}
+    const defaults = profile.default_params || {}
+    const ratiosRaw = schema.aspect_ratio || schema.aspect_ratios
+    const resolutionsRaw = schema.resolution || schema.resolutions
+    const qualitiesRaw = schema.quality || schema.qualities
+    const ratios = Array.isArray(ratiosRaw) ? ratiosRaw.map(String) : []
+    const resolutions = Array.isArray(resolutionsRaw) ? resolutionsRaw.map(String) : []
+    const qualities = Array.isArray(qualitiesRaw) ? qualitiesRaw.map(String) : []
+    // 比例列表以模型能力接口为准；preview 仅负责按真实宽高比绘制矩形图标。
+    if (!ratios.length) throw new Error('当前模型未配置可用图片比例')
+    aspectRatioOptions.value = ratios.map(value => ({ label: value, value, preview: value }))
+    aspectRatioLoadFailed.value = false
+    if (resolutions.length) resolutionOptions.value = resolutions.map(value => ({ label: value.toUpperCase(), value: value.toUpperCase() }))
+    if (qualities.length) qualityOptions.value = qualities.map(value => ({
+      // 供应商协议仍使用 low；平台文案统一称“普通”，避免让用户误解为低劣输出。
+      label: ({ low: '普通', medium: '中等质量', high: '高质量' } as Record<string, string>)[value] || value,
+      value
+    }))
+    const preferredRatio = String(defaults.aspect_ratio || aspectRatio.value)
+    aspectRatio.value = ratios.includes(preferredRatio) ? preferredRatio : ratios[0]!
+    resolution.value = String(defaults.resolution || resolution.value).toUpperCase()
+    quality.value = String(defaults.quality || quality.value) as 'low' | 'medium' | 'high'
+    background.value = String(defaults.background || background.value) as 'auto' | 'transparent' | 'opaque'
+    outputFormat.value = String(defaults.output_format || outputFormat.value) as 'png' | 'jpeg'
+    selectedModel.value = String(profile.model?.code || selectedModel.value)
+  } catch (error) {
+    // 比例配置缺失时禁止生成，不能回退到写死的比例后再让供应商拒绝。
+    aspectRatioLoadFailed.value = true
+    console.warn('[livliv] 商品图功能配置加载失败', error)
+  }
+}
+
+onMounted(loadGenerationProfile)
 
 // 四类海报使用不同字段语义，避免用户面对一套与当前任务无关的通用表单。
 const posterFieldConfig = computed(() => ({
@@ -173,23 +238,31 @@ const posterFieldConfig = computed(() => ({
 }[posterTheme.value]))
 
 const normalizedBalance = computed(() => Number(props.currentCreditBalance || 0))
+// 千问 Image 3.0 的图生图接口最多接收三张参考图；其他已配置模型沿用原有上限。
+const referenceImageLimit = computed(() => selectedModel.value.startsWith('qwen-image-3.0') ? 3 : 6)
 const activeImageModelOptions = computed<BaseSelectOption[]>(() => {
-  const defaultModel = props.defaultImageModel || selectedModel.value || 'doubao-seedream-5-0-260128'
+  const defaultModel = props.defaultImageModel || selectedModel.value || 'qwen-image-3.0'
   const options = props.imageModelOptions.map(option => ({
     ...option,
     description: option.value === defaultModel ? '系统推荐的默认图片模型' : undefined
   }))
   // 后台可能把默认模型设为“不可手动选择”；工作台仍需显式展示当前真实默认值，避免下拉框空白。
   if (!options.some(option => option.value === defaultModel)) {
-    const label = defaultModel.includes('seedream') ? '豆包 Seedream 5.0（推荐）' : `默认模型（${defaultModel}）`
+    const label = defaultModel === 'qwen-image-3.0' ? 'Qwen-Image-3.0（推荐）' : `默认模型（${defaultModel}）`
     options.unshift({ label, value: defaultModel, description: '当前系统默认图片模型' })
   }
   return options
 })
-const canSubmit = computed(() => buildPrompt().trim().length > 0 && !loadingKey.value)
+const canSubmit = computed(() => buildPrompt().trim().length > 0 && !loadingKey.value && aspectRatioOptions.value.some(option => option.value === aspectRatio.value))
 const activeResult = computed(() => generateResult.value?.results[activeResultIndex.value] || generateResult.value?.results[0] || null)
 const resultItems = computed(() => generateResult.value?.results || [])
-const creditCost = computed(() => creditPreview.value?.requiredCredits || Math.max(1, count.value) * (activeMode.value === 'product' && creationMethod.value === 'marketing' ? 5 : 4))
+// 未取得后端报价时绝不展示写死的“4 点”，避免用户看到低价而实际按模型定价扣费。
+const creditCostLabel = computed(() => {
+  if (!buildPrompt().trim()) return '填写需求后预估'
+  if (creditPreviewLoading.value) return '正在预估…'
+  if (creditPreview.value) return `${creditPreview.value.requiredCredits} 点`
+  return creditPreviewFailed.value ? '预估失败，生成前会重试' : '等待报价'
+})
 // 只有商品图的“营销套图”模式才存在卖点理解和套图规划阶段；单图及其他模式直接进入生成。
 const isMarketingGeneration = computed(() => activeMode.value === 'product' && creationMethod.value === 'marketing')
 const countValue = computed({
@@ -217,10 +290,45 @@ watch(() => props.defaultImageModel, (model) => {
   }
 }, { immediate: true })
 
-watch([activeMode, prompt, posterTheme, posterTitle, posterSubtitle, posterActivity, posterFontStyle, editMethod, selectedStyle, count, selectedModel], () => {
-  // 输入变化后旧报价不再可信，必须重新向后端预估，避免“显示低价、实际高价”。
-  creditPreview.value = null
+watch(background, (value) => {
+  // 透明背景只能导出 PNG，避免提交后才因格式冲突失败。
+  if (value === 'transparent') outputFormat.value = 'png'
 })
+
+watch([() => buildPrompt(), activeMode, creationMethod, count, selectedModel, resolution, quality, background, outputFormat, outputCompression], () => {
+  // 报价随输入和模型切换失效；短暂防抖后读取与真正扣费相同的后端报价接口。
+  creditPreview.value = null
+  creditPreviewFailed.value = false
+  const requestId = ++creditPreviewRequestId
+  if (creditPreviewTimer) clearTimeout(creditPreviewTimer)
+  const assembledPrompt = buildPrompt().trim()
+  if (!assembledPrompt || !selectedModel.value) {
+    creditPreviewLoading.value = false
+    return
+  }
+  creditPreviewLoading.value = true
+  creditPreviewTimer = setTimeout(async () => {
+    try {
+      const preview = await productImageService.previewCredits({
+        prompt: assembledPrompt,
+        model: selectedModel.value,
+        templateId: '',
+        count: count.value,
+        splitSellingPoints: activeMode.value === 'product' && creationMethod.value === 'marketing',
+        resolution: resolution.value, quality: quality.value, background: background.value,
+        outputFormat: outputFormat.value, outputCompression: outputFormat.value === 'jpeg' ? outputCompression.value : undefined
+      })
+      if (requestId === creditPreviewRequestId) creditPreview.value = preview
+    } catch (error) {
+      if (requestId === creditPreviewRequestId) {
+        creditPreviewFailed.value = true
+        console.error('[livliv] 商品图积分自动预估失败', { error })
+      }
+    } finally {
+      if (requestId === creditPreviewRequestId) creditPreviewLoading.value = false
+    }
+  }, 350)
+}, { immediate: true })
 
 watch([activeMode, creationMethod, prompt, count, selectedStyle, aspectRatio], () => {
   // 输入变化后仅清空旧方案，不在用户输入过程中调用模型；规划统一在点击生成后执行。
@@ -229,6 +337,8 @@ watch([activeMode, creationMethod, prompt, count, selectedStyle, aspectRatio], (
 })
 
 watch(creationMethod, (method) => {
+  // 套图默认三张，单图默认一张；切换创作方式时立即同步，用户随后仍可手工调整。
+  count.value = method === 'marketing' ? 3 : 1
   // 营销套图默认服务于详情页；仅在当前仍是系统默认值时自动切换，避免覆盖用户主动选择。
   if (method === 'marketing' && styleDrafts.product === '电商主图') {
     styleDrafts.product = '电商详情页'
@@ -245,15 +355,21 @@ watch(posterTheme, (theme) => {
 
 onBeforeUnmount(() => {
   stopGenerationProgress()
+  if (creditPreviewTimer) clearTimeout(creditPreviewTimer)
+  creditPreviewRequestId += 1
 })
 
 function setMode(mode: WorkspaceMode): void {
   activeMode.value = mode
+  // 各创作页签切换时恢复该模式的默认张数，避免套图的三张设置带入改图或自由创作。
+  count.value = mode === 'product' && creationMethod.value === 'marketing' ? 3 : 1
   errorMessage.value = ''
   infoMessage.value = ''
 }
 
 function startGenerationProgress(withPlanning: boolean): void {
+  supplierProgress.value = 0
+  supplierStep.value = ''
   stopGenerationProgress()
   generationElapsedSeconds.value = 0
   generationStage.value = withPlanning ? 'understanding' : 'generating'
@@ -283,6 +399,51 @@ function generatePosterCopy(): void {
   }
   ;[posterTitle.value, posterSubtitle.value, posterActivity.value] = drafts[posterTheme.value]
   infoMessage.value = '已根据宣传主题生成可编辑文案，请确认品牌名、日期和优惠信息。'
+}
+
+async function optimizeDescription(): Promise<void> {
+  const original = prompt.value.trim()
+  if (!original) {
+    errorMessage.value = '请先输入需要优化的描述。'
+    return
+  }
+  const targetMode = activeMode.value
+  const mode = targetMode === 'free' ? 'free' : creationMethod.value === 'marketing' ? 'marketing' : 'single'
+  errorMessage.value = ''
+  optimizePromptLoading.value = true
+  try {
+    const result = await productImageService.optimizePrompt({ prompt: original, mode })
+    if (!result?.optimizedPrompt?.trim()) throw new Error('AI 未返回有效的优化描述，请重试。')
+    // 先展示候选稿供用户修改和确认，不能在模型返回时直接覆盖正在编辑的原文。
+    optimizeOriginalPrompt.value = original
+    optimizeTargetMode.value = targetMode
+    optimizeTargetCreationMethod.value = creationMethod.value
+    optimizedPromptDraft.value = result.optimizedPrompt.trim()
+    optimizeDialogError.value = ''
+    optimizedPromptOpen.value = true
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : '描述优化失败，请稍后重试。'
+  } finally {
+    optimizePromptLoading.value = false
+  }
+}
+
+function applyOptimizedDescription(): void {
+  const draft = optimizedPromptDraft.value.trim()
+  const limit = optimizeTargetMode.value === 'free' ? 1000 : 500
+  if (!draft || draft.length > limit) {
+    optimizeDialogError.value = `优化描述不能为空且不能超过 ${limit} 字。`
+    return
+  }
+  if (promptDrafts[optimizeTargetMode.value].trim() !== optimizeOriginalPrompt.value || (optimizeTargetMode.value === 'product' && creationMethod.value !== optimizeTargetCreationMethod.value)) {
+    errorMessage.value = '原描述或创作方式已发生变化，请重新点击 AI 优化描述。'
+    optimizedPromptOpen.value = false
+    return
+  }
+  promptDrafts[optimizeTargetMode.value] = draft
+  optimizedPromptOpen.value = false
+  errorMessage.value = ''
+  infoMessage.value = '已使用优化描述，仍可继续手动修改；生成前请确认内容。'
 }
 
 function buildPrompt(): string {
@@ -320,11 +481,11 @@ async function withLoading<T>(key: string, action: () => Promise<T>): Promise<T 
 
 async function handleReferenceUpload(event: Event): Promise<void> {
   const input = event.target as HTMLInputElement
-  const files = Array.from(input.files || []).slice(0, Math.max(0, 6 - referenceImages.value.length))
+  const files = Array.from(input.files || []).slice(0, Math.max(0, referenceImageLimit.value - referenceImages.value.length))
   if (!files.length) return
   try {
     const nextImages = await Promise.all(files.map(readFileAsReference))
-    referenceImages.value = [...referenceImages.value, ...nextImages].slice(0, 6)
+    referenceImages.value = [...referenceImages.value, ...nextImages].slice(0, referenceImageLimit.value)
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : '参考图读取失败，请重试。'
   } finally {
@@ -338,8 +499,8 @@ function readFileAsReference(file: File): Promise<ProductImageReference> {
       reject(new Error(`参考图「${file.name}」不是图片文件。`))
       return
     }
-    if (file.size > 3 * 1024 * 1024) {
-      reject(new Error(`参考图「${file.name}」超过 3MB，请先压缩后上传。`))
+    if (file.size > PRODUCT_REFERENCE_IMAGE_MAX_BYTES) {
+      reject(new Error(`参考图「${file.name}」超过 ${PRODUCT_REFERENCE_IMAGE_MAX_MB}MB，请先压缩后上传。`))
       return
     }
     const reader = new FileReader()
@@ -359,14 +520,24 @@ async function refreshCreditPreview(): Promise<ProductImageCreditPreview | undef
     errorMessage.value = '请先补充创作需求。'
     return undefined
   }
+  // 点击生成时重新读取实时报价与余额，不能直接信任页面停留期间缓存的预估。
+  if (creditPreviewTimer) clearTimeout(creditPreviewTimer)
+  const requestId = ++creditPreviewRequestId
+  creditPreviewLoading.value = true
   const result = await withLoading('preview', () => productImageService.previewCredits({
     prompt: assembledPrompt,
     model: selectedModel.value,
     templateId: '',
     count: count.value,
-    splitSellingPoints: activeMode.value === 'product' && creationMethod.value === 'marketing'
+    splitSellingPoints: activeMode.value === 'product' && creationMethod.value === 'marketing',
+    resolution: resolution.value, quality: quality.value, background: background.value,
+    outputFormat: outputFormat.value, outputCompression: outputFormat.value === 'jpeg' ? outputCompression.value : undefined
   }))
-  if (result) creditPreview.value = result
+  if (requestId === creditPreviewRequestId) {
+    creditPreview.value = result || null
+    creditPreviewFailed.value = !result
+    creditPreviewLoading.value = false
+  }
   return result
 }
 
@@ -380,10 +551,14 @@ async function generateImages(): Promise<void> {
     errorMessage.value = '图片修改需要先上传原图。'
     return
   }
+  if (referenceImages.value.length > referenceImageLimit.value) {
+    errorMessage.value = `当前图像模型最多支持 ${referenceImageLimit.value} 张参考图，请移除多余图片后重试。`
+    return
+  }
   const splitSellingPoints = activeMode.value === 'product' && creationMethod.value === 'marketing'
   // 一次点击只创建一个批次号，免费规划、付费生图和历史记录始终归为同一业务操作。
   const generationBatchId = crypto.randomUUID()
-  const preview = creditPreview.value || await refreshCreditPreview()
+  const preview = await refreshCreditPreview()
   if (!preview) return
   if (!preview.sufficient) {
     errorMessage.value = '点数余额不足，请先充值后再生成。'
@@ -423,6 +598,10 @@ async function generateImages(): Promise<void> {
     splitSellingPoints,
     aspectRatio: aspectRatio.value,
     resolution: resolution.value,
+    quality: quality.value,
+    background: background.value,
+    outputFormat: outputFormat.value,
+    outputCompression: outputFormat.value === 'jpeg' ? outputCompression.value : undefined,
     style: selectedStyle.value,
     workspaceMode: activeMode.value,
     creationMethod: creationMethod.value,
@@ -436,6 +615,10 @@ async function generateImages(): Promise<void> {
     negativePrompt: negativePrompt.value.trim(),
     plannedSellingPoints: confirmedPlan,
     referenceImages: referenceImages.value
+  }, (percent, step) => {
+    // 供应商实际进度覆盖计时动画；刷新后仍可在历史批次找回任务。
+    supplierProgress.value = percent
+    supplierStep.value = step
   }))
   if (!result) {
     generationStage.value = 'failed'
@@ -475,6 +658,19 @@ async function generateImages(): Promise<void> {
 
 function selectResult(index: number): void {
   activeResultIndex.value = index
+}
+
+function openImagePreview(items: ProductImageResult[], index: number): void {
+  // 本次结果与历史批次共用预览器，但保留各自的上一张/下一张顺序。
+  imagePreviewItems.value = items
+  imagePreviewIndex.value = index
+  imagePreviewScale.value = 1
+  imagePreviewOpen.value = true
+}
+
+function moveImagePreview(step: number): void {
+  imagePreviewIndex.value = Math.min(imagePreviewItems.value.length - 1, Math.max(0, imagePreviewIndex.value + step))
+  imagePreviewScale.value = 1
 }
 
 function downloadResult(item = activeResult.value): void {
@@ -518,7 +714,7 @@ function showHistoryBatch(batch: ProductImageHistoryBatch): void {
   promptDrafts[batch.workspaceMode] = batch.sourcePrompt
   styleDrafts[batch.workspaceMode] = batch.style || styleDrafts[batch.workspaceMode]
   aspectRatio.value = batch.aspectRatio
-  resolution.value = batch.resolution
+  resolution.value = ({ '1024': '1K', '2048': '2K', '4096': '4K' } as Record<string, string>)[batch.resolution] || batch.resolution || '1K'
   negativePrompt.value = batch.negativePrompt
   sellingPoints.value = batch.sellingPoints
   activeResultIndex.value = 0
@@ -614,7 +810,10 @@ function continueFromHistory(item: ProductImageResult): void {
             </div>
           </div>
           <div class="form-section">
-            <p class="form-section__title">3. {{ creationMethod === 'marketing' ? '卖点输入' : '单图需求' }} <UTooltip :text="creationMethod === 'marketing' ? '写清楚核心卖点、材质与使用场景，系统会在生成前按张数拆分。' : '描述希望呈现的商品主体、光线、构图和背景氛围。'"><CircleHelp :size="14" /></UTooltip></p>
+            <div class="section-title-row">
+              <p class="form-section__title">3. {{ creationMethod === 'marketing' ? '卖点输入' : '单图需求' }} <UTooltip :text="creationMethod === 'marketing' ? '写清楚核心卖点、材质与使用场景，系统会在生成前按张数拆分。' : '描述希望呈现的商品主体、光线、构图和背景氛围。'"><CircleHelp :size="14" /></UTooltip></p>
+              <button class="subtle-action" type="button" :disabled="!prompt.trim() || optimizePromptLoading" @click="optimizeDescription"><Sparkles :size="14" />{{ optimizePromptLoading ? '优化中…' : 'AI 优化描述' }}</button>
+            </div>
             <textarea v-model="prompt" class="studio-textarea" maxlength="500" placeholder="输入商品卖点、材质、使用场景和画面氛围，例如：香水新品，柔和自然光，突出玻璃质感和花瓣倒影。" />
           </div>
         </template>
@@ -672,20 +871,40 @@ function continueFromHistory(item: ProductImageResult): void {
         </template>
 
         <template v-else>
-          <div class="form-section"><p class="form-section__title">1. 创意描述 <UTooltip text="越完整地描述主体、构图、光线和色彩，结果越可控。"><CircleHelp :size="14" /></UTooltip></p><textarea v-model="prompt" class="studio-textarea studio-textarea--tall" maxlength="1000" placeholder="详细描述你想要生成的画面、主体、构图、光线、色彩和氛围。" /></div>
+          <div class="form-section"><div class="section-title-row"><p class="form-section__title">1. 创意描述 <UTooltip text="越完整地描述主体、构图、光线和色彩，结果越可控。"><CircleHelp :size="14" /></UTooltip></p><button class="subtle-action" type="button" :disabled="!prompt.trim() || optimizePromptLoading" @click="optimizeDescription"><Sparkles :size="14" />{{ optimizePromptLoading ? '优化中…' : 'AI 优化描述' }}</button></div><textarea v-model="prompt" class="studio-textarea studio-textarea--tall" maxlength="1000" placeholder="详细描述你想要生成的画面、主体、构图、光线、色彩和氛围。" /></div>
           <div class="form-section"><p class="form-section__title">2. 风格选择 <UTooltip text="选择最接近预期的画面风格。"><CircleHelp :size="14" /></UTooltip></p><BaseSelect v-model="selectedStyle" :options="activeStyleOptions" tone="light" full /></div>
-          <div class="form-section"><p class="form-section__title">3. 参考图片（可选） <UTooltip text="参考图用于引导构图和风格，最多 6 张。"><CircleHelp :size="14" /></UTooltip></p><div class="reference-row"><div v-for="(image, index) in referenceImages" :key="`${image.name}-${index}`" class="reference-thumb"><img :src="image.dataUrl" :alt="image.name"><button type="button" @click="removeReference(index)">×</button></div><label class="upload-tile"><Plus :size="22" /><span>上传参考图</span><input type="file" accept="image/*" multiple class="sr-only" @change="handleReferenceUpload"></label></div></div>
+          <div class="form-section"><p class="form-section__title">3. 参考图片（可选） <UTooltip :text="`参考图用于引导构图和风格，当前模型最多 ${referenceImageLimit} 张。`"><CircleHelp :size="14" /></UTooltip></p><div class="reference-row"><div v-for="(image, index) in referenceImages" :key="`${image.name}-${index}`" class="reference-thumb"><img :src="image.dataUrl" :alt="image.name"><button type="button" @click="removeReference(index)">×</button></div><label class="upload-tile"><Plus :size="22" /><span>上传参考图</span><input type="file" accept="image/*" multiple class="sr-only" @change="handleReferenceUpload"></label></div></div>
         </template>
 
-        <div class="form-section form-section--settings"><p class="form-section__title">{{ activeMode === 'product' ? '4' : activeMode === 'poster' ? '5' : activeMode === 'edit' ? '5' : '4' }}. 快速设置 <UTooltip text="营销套图会在点击生成后自动规划；常用设置直接选择，模型和负向提示词收纳在高级设置。"><CircleHelp :size="14" /></UTooltip></p><div class="setting-grid"><label><span>图片比例</span><BaseSelect v-model="aspectRatio" :options="aspectRatioOptions" tone="light" full /></label><label><span>生成数量</span><BaseSelect v-model="countValue" :options="countOptions" tone="light" full /></label><label><span>画面风格</span><BaseSelect v-model="selectedStyle" :options="activeStyleOptions" tone="light" full /></label><label><span>清晰度</span><BaseSelect v-model="resolution" :options="resolutionOptions" tone="light" full /></label></div><div class="advanced-settings"><button type="button" class="advanced-settings__toggle" :aria-expanded="advancedOpen" @click="advancedOpen = !advancedOpen"><span>高级设置</span><component :is="advancedOpen ? ChevronUp : ChevronDown" :size="15" /></button><div v-if="advancedOpen" class="advanced-settings__content"><label><span>图像模型</span><BaseSelect v-model="selectedModel" :options="activeImageModelOptions" tone="light" full placeholder="选择图像模型" /></label><label><span>负向提示词</span><input v-model="negativePrompt" class="studio-input" maxlength="240" placeholder="例如：模糊、额外文字、水印"></label></div></div></div>
+        <div class="form-section form-section--settings">
+          <p class="form-section__title">{{ activeMode === 'product' ? '4' : activeMode === 'poster' ? '5' : activeMode === 'edit' ? '5' : '4' }}. 快速设置 <UTooltip text="比例、数量、风格、分辨率和质量都会参与本次生成与报价。"><CircleHelp :size="14" /></UTooltip></p>
+          <div class="setting-grid">
+            <label><span>图片比例</span><BaseSelect v-model="aspectRatio" :options="aspectRatioOptions" :placeholder="aspectRatioLoadFailed ? '比例配置不可用' : '加载可用比例…'" tone="light" full /></label>
+            <label><span>生成数量</span><BaseSelect v-model="countValue" :options="countOptions" tone="light" full /></label>
+            <label><span>画面风格</span><BaseSelect v-model="selectedStyle" :options="activeStyleOptions" tone="light" full /></label>
+            <label><span>分辨率</span><BaseSelect v-model="resolution" :options="resolutionOptions" tone="light" full /></label>
+            <label><span>质量</span><BaseSelect v-model="quality" :options="qualityOptions" tone="light" full /></label>
+          </div>
+          <div class="advanced-settings">
+            <button type="button" class="advanced-settings__toggle" :aria-expanded="advancedOpen" @click="advancedOpen = !advancedOpen"><span>高级设置</span><component :is="advancedOpen ? ChevronUp : ChevronDown" :size="15" /></button>
+            <div v-if="advancedOpen" class="advanced-settings__content">
+              <label><span>图像模型</span><BaseSelect v-model="selectedModel" :options="activeImageModelOptions" tone="light" full placeholder="选择图像模型" /></label>
+              <label><span>背景</span><BaseSelect v-model="background" :options="backgroundOptions" tone="light" full /></label>
+              <label><span>输出格式</span><BaseSelect v-model="outputFormat" :options="formatOptions" tone="light" full /></label>
+              <label v-if="outputFormat === 'jpeg'"><span>JPEG 压缩率</span><input v-model.number="outputCompression" type="number" min="1" max="100" class="studio-input"></label>
+              <label><span>负向提示词</span><input v-model="negativePrompt" class="studio-input" maxlength="240" placeholder="例如：模糊、额外文字、水印"></label>
+            </div>
+          </div>
+        </div>
 
-        <footer class="form-footer"><div><span>当前点数</span><CreditAmount :value="normalizedBalance" size="lg" tone="accent" /></div><div><span>预计消耗</span><b>{{ creditCost }} 点</b></div><button type="button" :disabled="!canSubmit" @click="generateImages"><Sparkles :size="16" />{{ loadingKey === 'planning' ? '正在规划套图...' : loadingKey === 'generate' ? '正在生成图片...' : loadingKey === 'preview' ? '正在确认费用...' : activeMode === 'edit' ? '开始修改' : activeMode === 'poster' ? '生成宣传海报' : activeMode === 'free' ? '开始生成' : '生成商品图' }}</button></footer>
+        <footer class="form-footer"><div><span>当前点数</span><CreditAmount :value="normalizedBalance" size="lg" tone="accent" /></div><div><span>预计消耗</span><b>{{ creditCostLabel }}</b></div><button type="button" :disabled="!canSubmit" @click="generateImages"><Sparkles :size="16" />{{ loadingKey === 'planning' ? '正在规划套图...' : loadingKey === 'generate' ? '正在生成图片...' : loadingKey === 'preview' ? '正在确认费用...' : activeMode === 'edit' ? '开始修改' : activeMode === 'poster' ? '生成宣传海报' : activeMode === 'free' ? '开始生成' : '生成商品图' }}</button></footer>
       </section>
 
       <section class="studio-result-card">
         <div class="result-header"><div><h2>{{ activeMode === 'edit' ? '修改结果' : '生成结果' }}</h2><div class="result-tabs"><button class="result-tabs__active" type="button">本次生成</button><button type="button" @click="openHistory(true)">收藏</button></div></div><button class="history-button" type="button" @click="openHistory(false)"><History :size="16" />历史记录</button></div>
         <div v-if="['understanding', 'planning', 'generating', 'saving'].includes(generationStage)" class="generation-progress">
-          <div class="generation-progress__summary"><span class="generation-progress__spinner" /><div><b>{{ generationStageText }}</b><small>已等待 {{ generationElapsedSeconds }} 秒，请保持页面打开</small></div></div>
+          <div class="generation-progress__summary"><span class="generation-progress__spinner" /><div><b>{{ supplierStep || generationStageText }}</b><small>供应商进度 {{ supplierProgress }}% · 已等待 {{ generationElapsedSeconds }} 秒；离开页面后任务仍会继续</small></div></div>
+          <div class="generation-progress__bar" role="progressbar" :aria-valuenow="supplierProgress" aria-valuemin="0" aria-valuemax="100" aria-label="图片供应商实际生成进度"><span :style="{ width: `${supplierProgress}%` }" /></div>
           <div class="generation-progress__steps">
             <div :class="{ 'is-active': generationStep === 1, 'is-done': generationStep > 1 }"><span>1</span><b>{{ activeMode === 'product' && creationMethod === 'marketing' ? '理解卖点并规划套图' : '准备生成参数' }}</b></div>
             <div :class="{ 'is-active': generationStep === 2, 'is-done': generationStep > 2 }"><span>2</span><b>生成图片</b></div>
@@ -694,8 +913,9 @@ function continueFromHistory(item: ProductImageResult): void {
           <p>系统正在后台连续处理，无需再次点击生成；规划失败不会进入图片扣点。</p>
         </div>
         <div v-else-if="resultItems.length" class="result-body">
+          <p v-if="generationStage === 'failed'" class="result-previous-notice">以下为上一次成功的图片，本次生成失败；请查看上方报错原因。</p>
           <p class="result-meta">生成时间：{{ generatedAt ? new Date(generatedAt).toLocaleString('zh-CN', { hour12: false }) : '刚刚' }} <span>{{ resultItems.length }} 张</span></p>
-          <div class="result-gallery" :class="{ 'result-gallery--single': resultItems.length === 1 }"><button v-if="activeResult" class="result-gallery__main" type="button" @click="selectResult(activeResultIndex)"><FluidImage :src="activeResult.imageUrl" :alt="activeResult.sellingPoint?.title || '生成结果'" wrapper-class="h-full w-full" img-class="object-contain" loading-label="生成结果" fallback-text="图片加载失败，请稍后重试" /></button><div v-if="resultItems.length > 1" class="result-gallery__side"><button v-for="(item, index) in resultItems.filter((_, index) => index !== activeResultIndex).slice(0, 3)" :key="item.id" class="result-gallery__side-item" type="button" @click="selectResult(resultItems.indexOf(item))"><FluidImage :src="item.imageUrl" :alt="item.sellingPoint?.title || `结果 ${index + 1}`" wrapper-class="h-full w-full" img-class="object-contain" loading-label="生成结果" fallback-text="图片加载失败" /></button></div></div>
+          <div class="result-gallery" :class="{ 'result-gallery--single': resultItems.length === 1 }"><button v-if="activeResult" class="result-gallery__main" type="button" title="点击查看大图" @click="openImagePreview(resultItems, activeResultIndex)"><FluidImage :src="activeResult.imageUrl" :alt="activeResult.sellingPoint?.title || '生成结果'" wrapper-class="h-full w-full" img-class="object-contain" loading-label="生成结果" fallback-text="图片加载失败，请稍后重试" /></button><div v-if="resultItems.length > 1" class="result-gallery__side"><button v-for="(item, index) in resultItems.filter((_, index) => index !== activeResultIndex).slice(0, 3)" :key="item.id" class="result-gallery__side-item" type="button" @click="selectResult(resultItems.indexOf(item))"><FluidImage :src="item.imageUrl" :alt="item.sellingPoint?.title || `结果 ${index + 1}`" wrapper-class="h-full w-full" img-class="object-contain" loading-label="生成结果" fallback-text="图片加载失败" /></button></div></div>
           <div v-if="sellingPoints.length" class="selling-point-summary"><div class="selling-point-row"><span v-for="point in sellingPoints" :key="point.index">{{ point.index }}. {{ point.purpose || point.title }}</span></div><button type="button" :aria-expanded="resultPlanOpen" @click="resultPlanOpen = !resultPlanOpen">{{ resultPlanOpen ? '收起本次套图方案' : '查看本次套图方案' }}<component :is="resultPlanOpen ? ChevronUp : ChevronDown" :size="14" /></button></div>
           <div v-if="resultPlanOpen && sellingPointPlan.length" class="selling-plan selling-plan--result"><div v-for="point in sellingPointPlan" :key="point.index" class="selling-plan__item"><span>{{ String(point.index).padStart(2, '0') }}</span><b>{{ point.purpose ? `${point.purpose} · ` : '' }}{{ point.title }}</b><small>{{ point.overlayText ? `画面文字：${point.overlayText}` : point.description }}</small></div></div>
         </div>
@@ -705,27 +925,62 @@ function continueFromHistory(item: ProductImageResult): void {
       </section>
     </div>
 
+    <LivDialog v-model:open="optimizedPromptOpen" title="AI 优化描述" description="优化稿可继续修改；只有点击“使用优化稿”才会替换原描述，不会立即生成图片。" width="md">
+      <div class="prompt-optimize-dialog">
+        <label><span>原描述</span><div class="prompt-optimize-dialog__original">{{ optimizeOriginalPrompt }}</div></label>
+        <label><span>优化稿（可编辑）</span><textarea v-model="optimizedPromptDraft" :maxlength="optimizeTargetMode === 'free' ? 1000 : 500" rows="7" /></label>
+        <p v-if="optimizeDialogError" class="prompt-optimize-dialog__error">{{ optimizeDialogError }}</p>
+        <div class="prompt-optimize-dialog__actions"><button type="button" @click="optimizedPromptOpen = false">保留原描述</button><button type="button" class="prompt-optimize-dialog__primary" @click="applyOptimizedDescription">使用优化稿</button></div>
+      </div>
+    </LivDialog>
     <LivDialog v-model:open="historyOpen" :title="historyFavoritesOnly ? '我的收藏' : '生成历史'" :description="historyFavoritesOnly ? '集中查看收藏的图片，可继续修改或下载。' : '按生成批次保存结果与创作设置，刷新页面后仍可恢复。'" width="xl">
       <div v-if="historyLoading" class="history-state"><RotateCcw class="history-spin" :size="22" />正在读取历史记录…</div>
       <div v-else-if="historyError" class="history-state history-state--error">{{ historyError }}<button type="button" @click="openHistory(historyFavoritesOnly)">重新加载</button></div>
       <div v-else-if="!historyBatches.length" class="history-state"><History :size="28" /><b>{{ historyFavoritesOnly ? '还没有收藏图片' : '还没有生成记录' }}</b><span>{{ historyFavoritesOnly ? '生成图片后点击“收藏”，会集中显示在这里。' : '完成第一次图片生成后，记录会自动保存在这里。' }}</span></div>
       <div v-else class="history-list">
         <article v-for="batch in historyBatches" :key="batch.id" class="history-batch">
-          <header><div><b>{{ batch.style || '图片创作' }}</b><span>{{ new Date(batch.createdAt).toLocaleString('zh-CN', { hour12: false }) }} · {{ batch.results.length }} 张 · {{ batch.requiredCredits }} 点</span></div><div><button type="button" @click="showHistoryBatch(batch)">查看本次结果</button><button class="history-delete" type="button" aria-label="删除历史记录" @click="deleteHistoryBatch(batch)"><Trash2 :size="15" /></button></div></header>
+          <header><div><b>{{ batch.style || '图片创作' }}</b><span>{{ new Date(batch.createdAt).toLocaleString('zh-CN', { hour12: false }) }} · {{ batch.status === 'success' ? `${batch.results.length} 张` : `${batch.currentStep || '处理中'} ${batch.progress ?? 0}%` }} · {{ batch.requiredCredits }} 点</span></div><div><button v-if="batch.status === 'success'" type="button" @click="showHistoryBatch(batch)">查看本次结果</button><button v-else type="button" @click="openHistory(historyFavoritesOnly)">刷新进度</button><button v-if="!['queued', 'processing'].includes(batch.status)" class="history-delete" type="button" aria-label="删除历史记录" @click="deleteHistoryBatch(batch)"><Trash2 :size="15" /></button></div></header>
           <p>{{ batch.sourcePrompt || batch.compiledPrompt }}</p>
           <div class="history-images">
             <div v-for="item in batch.results" :key="item.id" class="history-image">
               <FluidImage :src="item.imageUrl" :alt="item.sellingPoint?.title || '历史图片'" wrapper-class="h-full w-full" img-class="object-contain" loading-label="历史图片" fallback-text="图片加载失败" />
-              <div class="history-image__actions"><button type="button" title="下载" @click="downloadResult(item)"><Download :size="15" /></button><button type="button" title="继续修改" @click="continueFromHistory(item)"><SquarePen :size="15" /></button><button type="button" :title="item.isFavorite ? '取消收藏' : '收藏'" @click="toggleFavorite(batch.id, item)"><Star :size="15" :fill="item.isFavorite ? 'currentColor' : 'none'" /></button></div>
+              <div class="history-image__actions"><button type="button" title="预览" @click="openImagePreview(batch.results, batch.results.indexOf(item))"><ImageIcon :size="15" /></button><button type="button" title="下载" @click="downloadResult(item)"><Download :size="15" /></button><button type="button" title="继续修改" @click="continueFromHistory(item)"><SquarePen :size="15" /></button><button type="button" :title="item.isFavorite ? '取消收藏' : '收藏'" @click="toggleFavorite(batch.id, item)"><Star :size="15" :fill="item.isFavorite ? 'currentColor' : 'none'" /></button></div>
             </div>
           </div>
         </article>
+      </div>
+    </LivDialog>
+    <LivDialog v-model:open="imagePreviewOpen" title="图片预览" description="可切换图片、缩放并下载原图。" width="xl">
+      <div v-if="imagePreviewItems[imagePreviewIndex]" class="image-preview-panel">
+        <div class="image-preview-panel__canvas"><img :src="imagePreviewItems[imagePreviewIndex].imageUrl" alt="生成图片大图" :style="{ transform: `scale(${imagePreviewScale})` }"></div>
+        <div class="image-preview-panel__actions">
+          <button type="button" :disabled="imagePreviewIndex === 0" @click="moveImagePreview(-1)">上一张</button>
+          <span>{{ imagePreviewIndex + 1 }} / {{ imagePreviewItems.length }}</span>
+          <button type="button" :disabled="imagePreviewIndex >= imagePreviewItems.length - 1" @click="moveImagePreview(1)">下一张</button>
+          <button type="button" @click="imagePreviewScale = Math.max(0.5, imagePreviewScale - 0.25)">缩小</button>
+          <button type="button" @click="imagePreviewScale = Math.min(3, imagePreviewScale + 0.25)">放大</button>
+          <button type="button" @click="downloadResult(imagePreviewItems[imagePreviewIndex])">下载原图</button>
+        </div>
       </div>
     </LivDialog>
   </section>
 </template>
 
 <style scoped>
+.prompt-optimize-dialog { display: grid; gap: 15px; }
+.prompt-optimize-dialog label { display: grid; gap: 7px; color: #34445e; font-size: 13px; font-weight: 800; }
+.prompt-optimize-dialog__original { max-height: 110px; overflow: auto; padding: 11px 12px; border-radius: 8px; background: #f5f7fb; color: #66758f; line-height: 1.7; white-space: pre-wrap; font-weight: 500; }
+.prompt-optimize-dialog textarea { width: 100%; min-height: 170px; resize: vertical; padding: 11px 12px; border: 1px solid #cbd9ee; border-radius: 8px; color: #24344e; line-height: 1.7; outline: none; font: inherit; font-weight: 500; }
+.prompt-optimize-dialog textarea:focus { border-color: #0d63ff; box-shadow: 0 0 0 3px #dbeafe; }
+.prompt-optimize-dialog__error { margin: 0; color: #dc2626; font-size: 12px; }
+.prompt-optimize-dialog__actions { display: flex; justify-content: flex-end; gap: 9px; }
+.prompt-optimize-dialog__actions button { padding: 8px 14px; border: 1px solid #dce7f5; border-radius: 8px; background: #fff; color: #37516f; cursor: pointer; font-weight: 800; }
+.prompt-optimize-dialog__actions .prompt-optimize-dialog__primary { border-color: #0d63ff; background: #0d63ff; color: #fff; }
+.image-preview-panel__canvas { display: flex; min-height: 320px; max-height: 70vh; align-items: center; justify-content: center; overflow: auto; background: #f4f7fc; }
+.image-preview-panel__canvas img { display: block; max-width: 100%; max-height: 68vh; object-fit: contain; transition: transform .15s ease; }
+.image-preview-panel__actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 10px; padding-top: 12px; }
+.image-preview-panel__actions button { padding: 7px 12px; border: 1px solid #dce7f5; border-radius: 8px; background: #fff; color: #0d63ff; cursor: pointer; }
+.image-preview-panel__actions button:disabled { color: #9caec7; cursor: not-allowed; }
 .product-studio { max-width: 1400px; margin: 0 auto; color: #17233a; }
 .studio-heading h1 { margin: 0; font-size: 30px; line-height: 1.2; font-weight: 900; letter-spacing: -.04em; color: #0d1934; }
 .studio-heading p { margin: 8px 0 0; color: #7b8ca7; font-size: 14px; font-weight: 600; }
@@ -741,7 +996,8 @@ function continueFromHistory(item: ProductImageResult): void {
 .reference-row { display: flex; flex-wrap: wrap; gap: 10px; }.reference-thumb,.upload-tile { width: 108px; height: 88px; border-radius: 9px; overflow: hidden; position: relative; }.reference-thumb { border: 1px solid #e2eaf5; background: #f8faff; }.reference-thumb img { width: 100%; height: 100%; object-fit: cover; }.reference-thumb button { position: absolute; top: 4px; right: 4px; width: 19px; height: 19px; padding: 0; border: 0; border-radius: 50%; background: rgba(16, 31, 57, .72); color: #fff; cursor: pointer; }
 .upload-tile { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; border: 1px dashed #c8d7ea; color: #6680a4; font-size: 12px; font-weight: 700; cursor: pointer; }.upload-tile--wide { width: 100%; height: 150px; }.choice-grid { display: grid; gap: 10px; }.choice-grid--two { grid-template-columns: repeat(2, 1fr); }.choice-grid--four { grid-template-columns: repeat(4, 1fr); }.choice-card { position: relative; min-height: 66px; padding: 10px; border: 1px solid #dfe8f4; border-radius: 9px; background: #fbfcfe; text-align: left; color: #2b3b55; cursor: pointer; }.choice-card b,.choice-card small { display: block; }.choice-card b { font-size: 13px; }.choice-card small { margin-top: 4px; color: #8291a8; font-size: 11px; line-height: 1.35; }.choice-card--compact { min-height: 58px; padding: 8px; }.choice-card--active { border-color: #0d63ff; background: #f3f8ff; box-shadow: 0 0 0 1px rgba(13, 99, 255, .12); color: #075fff; }.choice-card--radio { display: block; }.choice-radio { position: absolute; top: 10px; right: 10px; width: 15px; height: 15px; margin: 0; accent-color: #0d63ff; }
 .studio-input,.studio-textarea { box-sizing: border-box; width: 100%; border: 1px solid #dfe8f4; border-radius: 9px; background: #fff; color: #273853; font: inherit; font-size: 13px; font-weight: 600; outline: none; }.studio-input { height: 35px; padding: 0 11px; }.studio-textarea { min-height: 96px; padding: 10px 11px; line-height: 1.6; resize: vertical; }.studio-textarea--short { min-height: 74px; }.studio-textarea--tall { min-height: 180px; }.studio-input:focus,.studio-textarea:focus { border-color: #0d63ff; box-shadow: 0 0 0 3px rgba(13, 99, 255, .08); }.field-stack { display: grid; gap: 9px; }.field-stack label,.setting-grid label,.advanced-settings__content label { display: grid; gap: 5px; color: #7b8ca7; font-size: 11px; font-weight: 700; }.form-hint { margin: 8px 0 0; color: #5c82c5; font-size: 11px; font-weight: 700; }.chip-row { display: flex; flex-wrap: wrap; gap: 9px; }.style-chip { min-width: 72px; height: 32px; padding: 0 12px; border: 1px solid #dfe8f4; border-radius: 9px; background: #fff; color: #62738d; font-size: 12px; font-weight: 800; cursor: pointer; }.style-chip--active { border-color: #0d63ff; background: #f3f8ff; color: #0d63ff; }.edit-source { position: relative; overflow: hidden; border-radius: 10px; background: #f6f8fc; }.edit-source > img { display: block; width: 100%; height: 176px; object-fit: cover; }.replace-image { position: absolute; right: 10px; bottom: 10px; padding: 7px 10px; border-radius: 7px; background: #fff; color: #50627e; font-size: 11px; font-weight: 800; cursor: pointer; }
-.setting-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 9px; }.advanced-settings { margin-top: 10px; }.advanced-settings__toggle,.subtle-action { display: inline-flex; align-items: center; gap: 5px; min-height: 28px; padding: 0 7px; border: 0; background: transparent; color: #0d63ff; font-size: 12px; font-weight: 800; cursor: pointer; }.advanced-settings__toggle { float: right; }.advanced-settings__content { display: grid; grid-template-columns: 1fr 1.4fr; gap: 10px; clear: both; padding-top: 10px; }.section-title-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }.section-title-row .form-section__title { margin-bottom: 10px; }.subtle-action:disabled { cursor: not-allowed; opacity: .45; }.selling-plan { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }.selling-plan--result { margin-top: 10px; }.selling-plan__item { display: grid; grid-template-columns: 24px minmax(0, 1fr); column-gap: 7px; align-items: center; padding: 8px; border: 1px solid #e0eaf8; border-radius: 8px; background: #f8fbff; }.selling-plan__item span { grid-row: span 2; color: #0d63ff; font-size: 11px; font-weight: 900; }.selling-plan__item b { overflow: hidden; color: #263754; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }.selling-plan__item small { overflow: hidden; margin-top: 2px; color: #8291a8; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+/* 质量留在快捷设置，但五项分两行显示，避免下拉框被挤成窄条。 */
+.setting-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; }.advanced-settings { margin-top: 10px; }.advanced-settings__toggle,.subtle-action { display: inline-flex; align-items: center; gap: 5px; min-height: 28px; padding: 0 7px; border: 0; background: transparent; color: #0d63ff; font-size: 12px; font-weight: 800; cursor: pointer; }.advanced-settings__toggle { float: right; }.advanced-settings__content { display: grid; grid-template-columns: 1fr 1.4fr; gap: 10px; clear: both; padding-top: 10px; }.section-title-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }.section-title-row .form-section__title { margin-bottom: 10px; }.subtle-action:disabled { cursor: not-allowed; opacity: .45; }.selling-plan { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }.selling-plan--result { margin-top: 10px; }.selling-plan__item { display: grid; grid-template-columns: 24px minmax(0, 1fr); column-gap: 7px; align-items: center; padding: 8px; border: 1px solid #e0eaf8; border-radius: 8px; background: #f8fbff; }.selling-plan__item span { grid-row: span 2; color: #0d63ff; font-size: 11px; font-weight: 900; }.selling-plan__item b { overflow: hidden; color: #263754; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }.selling-plan__item small { overflow: hidden; margin-top: 2px; color: #8291a8; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .form-footer { display: grid; grid-template-columns: 1fr .9fr 1.55fr; gap: 10px; align-items: center; margin-top: 16px; padding: 10px 12px; border: 1px solid #e3ebf6; border-radius: 10px; background: #f8fbff; }.form-footer > div { min-width: 0; padding-right: 9px; border-right: 1px solid #e1eaf5; }.form-footer span { display: block; color: #8a9ab1; font-size: 11px; font-weight: 800; }.form-footer b { display: block; margin-top: 3px; color: #17233a; font-size: 16px; }.form-footer :deep(.credit-amount) { margin-top: 2px; }.form-footer button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; height: 42px; border: 0; border-radius: 8px; background: #0d63ff; color: #fff; font-size: 13px; font-weight: 900; cursor: pointer; }.form-footer button:disabled { cursor: not-allowed; opacity: .5; }
 .studio-result-card { min-height: 620px; padding: 20px; }.result-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; border-bottom: 1px solid #e8eef6; }.result-header h2 { margin: 0; color: #14213a; font-size: 20px; font-weight: 900; }.result-tabs { display: flex; gap: 24px; margin-top: 16px; }.result-tabs button { height: 34px; padding: 0; border: 0; border-bottom: 2px solid transparent; background: transparent; color: #687a95; font-size: 13px; font-weight: 800; cursor: pointer; }.result-tabs .result-tabs__active { border-color: #0d63ff; color: #0d63ff; }.history-button { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; border: 1px solid #dfe8f4; border-radius: 18px; background: #fff; color: #4f6281; font-size: 12px; font-weight: 800; cursor: pointer; }.result-meta { margin: 16px 0 12px; color: #71839f; font-size: 12px; font-weight: 700; }.result-meta span { margin-left: 8px; padding: 3px 8px; border-radius: 12px; background: #edf4ff; color: #0d63ff; }.result-gallery { display: grid; height: clamp(420px, 58vh, 620px); grid-template-columns: minmax(0, 1.2fr) minmax(188px, .8fr); gap: 10px; }.result-gallery--single { grid-template-columns: 1fr; }.result-gallery__main,.result-gallery__side-item { overflow: hidden; padding: 0; border: 0; border-radius: 9px; background: #f3f6fb; cursor: pointer; }.result-gallery__main { min-width: 0; min-height: 0; }.result-gallery__side { display: grid; min-height: 0; grid-template-rows: repeat(3, minmax(0, 1fr)); gap: 10px; }.result-gallery__side-item { min-height: 0; }.selling-point-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }.selling-point-row span { padding: 6px 8px; border-radius: 6px; background: #f4f7fb; color: #506682; font-size: 11px; font-weight: 800; }.result-empty { display: flex; min-height: 440px; flex-direction: column; align-items: center; justify-content: center; color: #a3b0c2; }.result-empty p { margin: 14px 0 6px; color: #60728e; font-size: 14px; font-weight: 900; }.result-empty span { font-size: 12px; font-weight: 600; }.result-actions { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 16px; }.result-actions button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; height: 40px; border: 1px solid #dfe8f4; border-radius: 8px; background: #fff; color: #4a5f7c; font-size: 12px; font-weight: 900; cursor: pointer; }.result-actions .result-actions__primary { border-color: #0d63ff; background: #0d63ff; color: #fff; }.result-actions button:disabled { cursor: not-allowed; opacity: .48; }.result-tip { display: flex; align-items: center; gap: 7px; margin: 16px 0 0; padding: 10px 12px; border-radius: 8px; background: #f2f6ff; color: #5b7eaf; font-size: 11px; font-weight: 700; }
 .generation-progress { display: flex; min-height: 470px; flex-direction: column; align-items: center; justify-content: center; padding: 30px; text-align: center; }.generation-progress__summary { display: flex; align-items: center; gap: 12px; }.generation-progress__summary div { display: grid; gap: 4px; text-align: left; }.generation-progress__summary b { color: #243551; font-size: 15px; }.generation-progress__summary small { color: #8392a9; font-size: 11px; }.generation-progress__spinner { width: 34px; height: 34px; border: 3px solid #dce8ff; border-top-color: #0d63ff; border-radius: 50%; animation: progress-spin .85s linear infinite; }.generation-progress__steps { display: grid; width: min(520px, 100%); grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 28px; }.generation-progress__steps div { display: grid; justify-items: center; gap: 7px; color: #97a5b9; font-size: 11px; }.generation-progress__steps span { display: inline-flex; width: 28px; height: 28px; align-items: center; justify-content: center; border: 1px solid #dbe4f0; border-radius: 50%; background: #fff; font-weight: 900; }.generation-progress__steps .is-active { color: #0d63ff; }.generation-progress__steps .is-active span { border-color: #0d63ff; background: #edf4ff; }.generation-progress__steps .is-done { color: #16895a; }.generation-progress__steps .is-done span { border-color: #a9dfc9; background: #effaf5; }.generation-progress > p { margin: 22px 0 0; color: #6c7f9c; font-size: 11px; }.selling-point-summary { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; }.selling-point-summary > button { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 4px; padding: 6px 0; border: 0; background: transparent; color: #0d63ff; font-size: 11px; font-weight: 800; cursor: pointer; }
@@ -750,4 +1006,7 @@ function continueFromHistory(item: ProductImageResult): void {
 @media (max-width: 700px) { .studio-heading h1 { font-size: 25px; }.studio-tabs { gap: 0; overflow-x: auto; }.studio-tab { flex: 0 0 auto; padding: 0 12px; }.choice-grid--four { grid-template-columns: repeat(2, 1fr); }.setting-grid { grid-template-columns: 1fr; }.form-footer { grid-template-columns: 1fr 1fr; }.form-footer button { grid-column: 1 / -1; }.result-gallery { height: auto; grid-template-columns: 1fr; }.result-gallery__main { min-height: 280px; aspect-ratio: 1; }.result-gallery__side { grid-template-columns: repeat(3, 1fr); grid-template-rows: 110px; }.result-actions { grid-template-columns: 1fr; } }
 @keyframes plan-pulse { 50% { opacity: .35; transform: scale(.75); } }
 @keyframes progress-spin { to { transform: rotate(360deg); } }
+.generation-progress__bar { width: min(100%, 400px); height: 7px; margin-top: 18px; overflow: hidden; border-radius: 999px; background: #e5edfb; }
+.generation-progress__bar span { display: block; height: 100%; border-radius: inherit; background: #1968f5; transition: width .25s ease; }
+.result-previous-notice { margin: 0 0 10px; padding: 8px 10px; border-radius: 6px; background: #fff7ed; color: #a14b12; font-size: 12px; }
 </style>

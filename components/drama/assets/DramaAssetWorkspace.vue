@@ -20,6 +20,7 @@ import type {
   DramaAssetGenerationEstimate,
   DramaAssetPreparationEstimate,
   DramaAssetProfile,
+  DramaAssetVisualPromptDraft,
   DramaAssetWorkspace,
   DramaVisualBible,
   DramaWorkspaceAssetType,
@@ -29,10 +30,19 @@ const props = withDefaults(defineProps<{
   projectId: string
   /** 剧本阶段已经生成的项目封面，资产页直接复用，不再展示无意义的灰色占位。 */
   coverImageUrl?: string
+  /** 正式剧本已更新时继续展示旧生产版本，允许用户忽略差异或手工维护资产。 */
+  allowHistoricalWorkspace?: boolean
 }>(), {
   coverImageUrl: '',
+  allowHistoricalWorkspace: false,
 })
-const emit = defineEmits<{ continue: [] }>()
+const emit = defineEmits<{
+  continue: []
+  /** 将资产资料门禁状态交给项目页，避免未就绪时仍展示版本同步等无效操作。 */
+  'status-change': [status: DramaAssetWorkspace['preparation_status'] | 'loading']
+  /** 未就绪提示提供直达剧本页的操作，不让用户只能阅读说明后自行寻找入口。 */
+  'return-script': []
+}>()
 
 const runtime = useRuntimeConfig()
 const authStore = useAuthStore()
@@ -40,10 +50,17 @@ const toast = useToast()
 const workspace = ref<DramaAssetWorkspace | null>(null)
 const activeType = ref<DramaWorkspaceAssetType>('role')
 const selectedProfile = ref<DramaAssetProfile | null>(null)
+// 安全审核后的画面稿与资产档案分开编辑，避免误改剧情事实。
+const visualPromptDraft = ref<DramaAssetVisualPromptDraft | null>(null)
+const visualPromptText = ref('')
+const visualPromptBusy = ref(false)
+const visualPromptError = ref('')
 const selectedKeys = ref<string[]>([])
 const searchKeyword = ref('')
 const statusFilter = ref('all')
 const loading = ref(true)
+// 首次请求通常很快完成；只有等待超过 6 秒才显示手动重连，避免正常加载时制造“连接失败”的错觉。
+const showInitialRetry = ref(false)
 const actionBusy = ref('')
 const errorMessage = ref('')
 // 生成确认弹窗使用独立错误状态：提交失败时弹窗继续保留，用户能看到原因并直接重试。
@@ -87,6 +104,11 @@ const voicePreset = ref('')
 const bibleDraft = ref<Omit<DramaVisualBible, 'id' | 'version_no' | 'source_script_version' | 'status'> | null>(null)
 let assetEventSource: EventSource | null = null
 let fallbackPollTimer: number | null = null
+let eventRefreshTimer: number | null = null
+let initialRetryTimer: number | null = null
+let lastWorkspaceRefreshAt = 0
+// Worker 会密集发布单项进度；事件只用于提示“有更新”，不能每条都立即请求完整工作台。
+const minEventRefreshIntervalMs = 5000
 // 资产工作台可能同时收到手动刷新、轮询和 SSE 刷新，只采纳最后一次请求，避免旧响应覆盖新状态。
 let workspaceLoadSequence = 0
 
@@ -112,6 +134,13 @@ const typeMeta: Record<DramaWorkspaceAssetType, { label: string; icon: any; empt
 }
 
 const allAssets = computed(() => workspace.value?.assets || [])
+// 版本有差异时，旧生产版本仍是合法且可追溯的制作快照。即使历史提炼标记因旧数据
+// 缺少哈希而显示 local_ready，也应允许查看和编辑现有资产，不能整页清空逼用户全量重做。
+const canDisplayHistoricalWorkspace = computed(() => Boolean(
+  props.allowHistoricalWorkspace
+  && workspace.value?.preparation_status === 'local_ready'
+  && allAssets.value.length,
+))
 const currentAssets = computed(() => {
   const keyword = searchKeyword.value.trim().toLowerCase()
   const visible = allAssets.value.filter((item) => {
@@ -204,30 +233,41 @@ const hasRunningAssets = computed(() => allAssets.value.some(item =>
 ) || workspace.value?.preparation_status === 'preparing')
 
 /**
- * 资产初始化页展示的是 Worker 已持久化的真实检查点。
- * validating 与 repairing 共用“质量校验”大阶段，但会显示后端传回的具体说明，
- * 不根据等待秒数伪造供应商内部进度。
+ * Worker 仍保留五个真实检查点；用户只需理解“整理、提炼、核对并保存”三段。
+ * 校验和合并是资产可安全用于生图的必要门槛，不能因为页面简化而提前放行。
  */
 const preparationStageIndex = computed(() => ({
   queued: 0,
-  collecting_evidence: 1,
-  model_extracting: 2,
-  validating: 3,
-  repairing: 3,
-  merging: 4,
-  ready: 5,
+  collecting_evidence: 0,
+  model_extracting: 1,
+  validating: 2,
+  repairing: 2,
+  merging: 2,
+  ready: 3,
 }[workspace.value?.preparation_stage || 'queued'] ?? 0))
 const preparationSteps = computed(() => [
-  { key: 'queued', label: '任务排队', detail: '积分与任务已安全落库' },
-  { key: 'collecting_evidence', label: '整理剧本证据', detail: '汇总人物、场景、道具原文' },
-  { key: 'model_extracting', label: 'AI 专用提炼', detail: '拆分事实、固定设定与状态' },
-  { key: 'validating', label: '质量与证据校验', detail: workspace.value?.preparation_stage === 'repairing' ? '发现问题，正在免费系统修复' : '核验结构、出处和资产覆盖' },
-  { key: 'merging', label: '合并保存', detail: '保护手工字段并写入资产档案' },
+  { key: 'collecting', label: '整理剧本资料', detail: '汇总人物、场景和道具的原文依据' },
+  { key: 'extracting', label: 'AI 提炼资产设定', detail: '形成可用于后续制作的统一资料' },
+  {
+    key: 'checking',
+    label: '核对并保存',
+    detail: workspace.value?.preparation_stage === 'repairing'
+      ? '发现资料问题，正在免费修复'
+      : workspace.value?.preparation_stage === 'merging'
+        ? '核对通过，正在保护手工修改并保存'
+        : '核对原文依据与完整性，避免错误进入生图',
+  },
 ].map((step, index) => ({
   ...step,
   state: index < preparationStageIndex.value ? 'done' : index === preparationStageIndex.value ? 'running' : 'pending',
 })))
 const preparationProgress = computed(() => Math.max(0, Math.min(100, Number(workspace.value?.preparation_progress || 0))))
+const preparationCurrentStageLabel = computed(() => {
+  // 保留后端真实阶段和进度，仅把内部检查点翻译成更易理解的用户文案。
+  if (workspace.value?.preparation_stage === 'repairing') return '正在补齐未通过核对的资料'
+  if (workspace.value?.preparation_stage === 'merging') return '正在保存已核对的资产资料'
+  return workspace.value?.preparation_stage_label || '任务已进入队列'
+})
 const preparationAssetCounts = computed(() => ({
   role: allAssets.value.filter(item => item.asset_type === 'role').length,
   scene: allAssets.value.filter(item => item.asset_type === 'scene').length,
@@ -240,6 +280,12 @@ const preparationUpdatedLabel = computed(() => {
   if (Number.isNaN(date.getTime())) return '进度刚刚更新'
   return `最近更新 ${date.toLocaleTimeString('zh-CN', { hour12: false })}`
 })
+
+watch(
+  () => workspace.value?.preparation_status,
+  status => emit('status-change', status || 'loading'),
+  { immediate: true },
+)
 /**
  * 旧任务可能保存了“基础资料仍可继续使用”的历史提示，但现在完整资产提炼是进入工作台的硬门槛。
  * 这里仅兼容展示旧数据，不篡改数据库中的失败记录；新任务会直接使用后端返回的准确原因。
@@ -365,6 +411,15 @@ function visualKeywords(value: string, fallbacks: string[]): string[] {
   return keywords.length ? keywords : fallbacks
 }
 
+/**
+ * 将后端保存的 v1、v1.2 等技术版本号转换为面向用户的中文表达。
+ * 页面不直接展示内部 UUID 和英文风格编码，排障信息仍保留在后台日志中。
+ */
+function chineseVersionLabel(value: string | number | null | undefined): string {
+  const normalized = String(value || '').trim().replace(/^v/i, '')
+  return normalized ? `第 ${normalized} 版` : '当前版'
+}
+
 function openImagePreview(url: string, alt: string): void {
   if (!url) return
   previewImageUrl.value = url
@@ -416,7 +471,7 @@ function hasUsableAssetVersion(profile: DramaAssetProfile): boolean {
 }
 
 /**
- * 一次重新生成包含“提交、排队、生图、附送质检”四段。
+ * 一次图片生成包含“提交、排队、生图、附送质检”四段。
  * 质检仍属于本次任务收尾阶段，因此期间禁止再次生成，避免新旧图片与质检报告交叉覆盖；
  * 但质检不会阻止用户锁定已经成功生成的当前图片。
  */
@@ -427,7 +482,10 @@ function generationActionState(profile: DramaAssetProfile): { busy: boolean; lab
   if (['queued', 'running'].includes(profile.consistency?.status)) return { busy: true, label: '质检中' }
   return {
     busy: false,
-    label: profile.production_status === 'failed' ? '免费重试' : '重新生成',
+    // 首次制作没有任何可用图片时显示“生成”；只有已有图片版本后才称为“重新生成”。
+    label: profile.production_status === 'failed'
+      ? '免费重试'
+      : hasUsableAssetVersion(profile) ? '重新生成' : '生成',
   }
 }
 
@@ -457,6 +515,11 @@ function statusLabel(status: string): string {
 /** 后端只返回稳定业务文案；旧项目没有错误字段时使用统一兜底，不暴露 Python 或供应商异常。 */
 function generationFailureText(profile: DramaAssetProfile): string {
   return profile.generation_error_message || '图片生成服务暂时异常，本次失败不会扣除积分，请稍后重试。'
+}
+
+function isContentReviewFailure(profile: DramaAssetProfile): boolean {
+  return profile.data?.generation_failure_kind === 'content_review'
+    || /安全审核|内容审核|敏感内容/.test(generationFailureText(profile))
 }
 
 function dataText(profile: DramaAssetProfile): string {
@@ -579,9 +642,10 @@ function consistencyLabel(profile: DramaAssetProfile): string {
   if (report?.status === 'failed') return '检测失败'
   if (report?.status !== 'succeeded') return '待检测'
   if (report.qualification_status === 'hard_failed') return '硬性偏差'
+  // 非硬性问题只是风格建议，不应让用户误以为当前图片必须重新生成。
+  if (report.issues?.length) return '可使用 · 风格建议'
   if (report.overall_score >= 90) return '一致性良好'
-  if (report.overall_score >= 75) return '轻微偏差'
-  return '风格偏差'
+  return '可使用'
 }
 
 function consistencyTone(profile: DramaAssetProfile): string {
@@ -590,9 +654,8 @@ function consistencyTone(profile: DramaAssetProfile): string {
   if (report?.status === 'failed') return 'failed'
   if (report?.status !== 'succeeded') return 'idle'
   if (report.qualification_status === 'hard_failed') return 'danger'
-  if (report.overall_score >= 90) return 'good'
-  if (report.overall_score >= 75) return 'warning'
-  return 'danger'
+  // 分数是视觉模型的参考意见，软性建议不使用危险色。
+  return report.issues?.length ? 'warning' : 'good'
 }
 
 /**
@@ -648,19 +711,6 @@ function consistencyDimensionLabel(name: string): string {
   } as Record<string, string>)[name] || name
 }
 
-function rootCauseLabel(rootCause: string): string {
-  return ({
-    profile_data_gap: '资产资料缺失',
-    profile_data_conflict: '资产资料冲突',
-    prompt_gap: '生成要求遗漏',
-    prompt_conflict: '生成要求冲突',
-    model_noncompliance: '图片模型未完整执行',
-    reference_conflict: '参考图与设定冲突',
-    subjective_improvement: '可选审美优化',
-    unknown: '待进一步确认',
-  } as Record<string, string>)[rootCause] || '待进一步确认'
-}
-
 /**
  * 质检接口为了稳定存储会返回英文枚举和字段路径，例如 medium、scene.spatial_layout。
  * 这些信息对排查模型很有用，但不属于创作者需要理解的产品语言，因此统一在用户端做中文映射。
@@ -673,6 +723,13 @@ function qualitySeverityLabel(severity: unknown): string {
     low: '一般建议',
     critical: '必须处理',
   } as Record<string, string>)[String(severity || '').toLowerCase()] || '建议关注'
+}
+
+/** 硬性偏差才向创作者展示处理优先级；软性问题统一明确为可选建议。 */
+function qualityIssueLabel(profile: DramaAssetProfile, issue: { severity?: unknown; hard_constraint?: boolean }): string {
+  return profile.consistency.qualification_status === 'hard_failed' && issue.hard_constraint
+    ? qualitySeverityLabel(issue.severity)
+    : '可选建议'
 }
 
 /**
@@ -755,7 +812,7 @@ function userFacingConsistencyError(errorMessage: unknown): string {
 
 function repairActionText(profile: DramaAssetProfile): string {
   if (profile.consistency.system_repair_available) return '消耗 0 点积分 · 系统修正'
-  return '查看生成优化版本所需积分'
+  return '查看优化费用'
 }
 
 function isSelected(profile: DramaAssetProfile): boolean {
@@ -807,7 +864,15 @@ function switchType(type: DramaWorkspaceAssetType): void {
 async function loadWorkspace(silent = false): Promise<void> {
   if (!props.projectId) return
   const requestSequence = ++workspaceLoadSequence
-  if (!silent) loading.value = true
+  lastWorkspaceRefreshAt = Date.now()
+  if (!silent) {
+    loading.value = true
+    showInitialRetry.value = false
+    if (initialRetryTimer) window.clearTimeout(initialRetryTimer)
+    initialRetryTimer = window.setTimeout(() => {
+      showInitialRetry.value = true
+    }, 6000)
+  }
   errorMessage.value = ''
   try {
     const nextWorkspace = await dramaService.getAssetWorkspace(props.projectId)
@@ -822,9 +887,18 @@ async function loadWorkspace(silent = false): Promise<void> {
     syncRealtimeTracking()
   } catch (error: any) {
     if (requestSequence !== workspaceLoadSequence) return
-    errorMessage.value = error?.message || '资产制作资料加载失败，请确认当前剧本版本已经完成确认。'
+    // 后台刷新遇到短期限流时保留上一次成功读取的资料，避免整页被错误提示清空。
+    if (!workspace.value) {
+      errorMessage.value = error?.message || '资产制作资料加载失败，请确认当前剧本版本已经完成确认。'
+    } else {
+      console.warn('[livliv] 资产状态刷新失败，继续显示上次成功读取的资料。', error)
+    }
   } finally {
-    if (!silent && requestSequence === workspaceLoadSequence) loading.value = false
+    if (!silent && requestSequence === workspaceLoadSequence) {
+      loading.value = false
+      if (initialRetryTimer) window.clearTimeout(initialRetryTimer)
+      initialRetryTimer = null
+    }
   }
 }
 
@@ -885,14 +959,55 @@ function resetEditDraft(profile: DramaAssetProfile): void {
 
 function openDetail(profile: DramaAssetProfile): void {
   selectedProfile.value = profile
+  visualPromptDraft.value = null
+  visualPromptText.value = ''
+  visualPromptError.value = ''
   resetEditDraft(profile)
   void preloadConsistencyEstimate(profile)
 }
 
+function openVisualPromptRevision(profile: DramaAssetProfile): void {
+  // 卡片入口先打开对应资产，再加载修订稿，确保建议不会写进另一个资产的抽屉。
+  openDetail(profile)
+  void prepareVisualPrompt(profile)
+}
+
 function closeDetail(): void {
   selectedProfile.value = null
+  visualPromptDraft.value = null
   editDraft.value = {}
   voicePreset.value = ''
+}
+
+async function prepareVisualPrompt(profile: DramaAssetProfile): Promise<void> {
+  visualPromptBusy.value = true
+  visualPromptError.value = ''
+  try {
+    const draft = await dramaService.previewAssetVisualPrompt(props.projectId, profile)
+    if (selectedProfile.value?.id !== profile.id) return
+    visualPromptDraft.value = draft
+    visualPromptText.value = draft.suggested_prompt
+  } catch (error: any) {
+    visualPromptError.value = error?.message || '生成画面描述建议失败，请稍后重试。'
+  } finally {
+    visualPromptBusy.value = false
+  }
+}
+
+async function confirmVisualPrompt(profile: DramaAssetProfile): Promise<void> {
+  if (!visualPromptDraft.value || !visualPromptText.value.trim()) return
+  visualPromptBusy.value = true
+  visualPromptError.value = ''
+  try {
+    // 只保存画面稿，不自动提交生图；用户可以再检查资料后单独点击免费重试。
+    await dramaService.confirmAssetVisualPrompt(props.projectId, profile, visualPromptText.value.trim(), visualPromptDraft.value.base_hash)
+    visualPromptDraft.value = null
+    showDrawerFeedback('success', '修订后的画面描述已保存，可点击“免费重试”生成图片。')
+  } catch (error: any) {
+    visualPromptError.value = error?.message || '确认画面描述失败，请检查资产资料后重试。'
+  } finally {
+    visualPromptBusy.value = false
+  }
 }
 
 function roleVoiceStatus(profile: DramaAssetProfile): string {
@@ -973,25 +1088,48 @@ async function removeRoleVoice(): Promise<void> {
   }
 }
 
-async function saveProfile(): Promise<void> {
-  if (!selectedProfile.value) return
+// 失败后用户可能直接编辑资产资料。只有确有改动才保存，避免把未修改字段全标成人工确认。
+function hasUnsavedProfileChanges(profile: DramaAssetProfile): boolean {
+  if (selectedProfile.value?.id !== profile.id) return false
+  if (editDraft.value.name !== profile.name || editDraft.value.is_required !== profile.is_required) return true
+  const ignored = new Set(['name', 'is_required', 'generation_error_message', 'generation_failure_kind', 'failed_compile_hash', 'failed_prompt_digest'])
+  return Object.entries(editDraft.value).some(([key, value]) => {
+    if (key.startsWith('_') || ignored.has(key)) return false
+    if (key === 'state_variants_text') {
+      const parsed = String(value || '').split(/[、,，;；]/).map(item => item.trim()).filter(Boolean)
+      return JSON.stringify(parsed) !== JSON.stringify(profile.data.state_variants || [])
+    }
+    return JSON.stringify(value) !== JSON.stringify(profile.data[key])
+  })
+}
+
+async function saveProfile(): Promise<boolean> {
+  if (!selectedProfile.value) return false
   actionBusy.value = 'save-profile'
   try {
     const { name, is_required, state_variants_text, ...rawData } = editDraft.value
     // 只提交可编辑业务字段；所有“_”开头的编译器元数据均由后端维护。
-    const data = Object.fromEntries(Object.entries(rawData).filter(([key]) => !key.startsWith('_')))
+    const operationalFields = new Set(['generation_error_message', 'generation_failure_kind', 'failed_compile_hash', 'failed_prompt_digest'])
+    const originalData = selectedProfile.value.data
+    const data = Object.fromEntries(Object.entries(rawData).filter(([key, value]) =>
+      !key.startsWith('_') && !operationalFields.has(key)
+      && JSON.stringify(value) !== JSON.stringify(originalData[key]),
+    ))
     if (selectedProfile.value.asset_type === 'prop') {
-      data.state_variants = String(state_variants_text || '')
+      const stateVariants = String(state_variants_text || '')
         .split(/[、,，;；]/)
         .map(item => item.trim())
         .filter(Boolean)
+      if (JSON.stringify(stateVariants) !== JSON.stringify(originalData.state_variants || [])) data.state_variants = stateVariants
     }
     workspace.value = await dramaService.updateAssetProfile(props.projectId, selectedProfile.value, { name, is_required, data })
     const fresh = workspace.value.assets.find(item => item.id === selectedProfile.value?.id)
     selectedProfile.value = fresh || null
     showDrawerFeedback('success', '资产设定已保存，后续生成会使用本次确认后的资料。')
+    return true
   } catch (error: any) {
     showDrawerFeedback('error', error?.message || '资产设定保存失败，请稍后重试。')
+    return false
   } finally {
     actionBusy.value = ''
   }
@@ -1090,11 +1228,15 @@ async function retryFailedAssets(targets: string[]): Promise<void> {
   }
 }
 
-function regenerateProfile(profile: DramaAssetProfile): void {
+async function regenerateProfile(profile: DramaAssetProfile): Promise<void> {
   // 后台仍在执行本轮任务时直接忽略重复点击；按钮也会同步显示旋转加载和当前阶段。
   if (generationActionState(profile).busy) return
   if (profile.production_status === 'failed') {
-    void retryFailedAssets([profileTarget(profile)])
+    if (hasUnsavedProfileChanges(profile)) {
+      const saved = await saveProfile()
+      if (!saved) return
+    }
+    await retryFailedAssets([profileTarget(profile)])
     return
   }
   void requestEstimate([profileTarget(profile)])
@@ -1455,6 +1597,18 @@ function stopRealtimeTracking(): void {
   assetEventSource = null
   if (fallbackPollTimer) window.clearInterval(fallbackPollTimer)
   fallbackPollTimer = null
+  if (eventRefreshTimer) window.clearTimeout(eventRefreshTimer)
+  eventRefreshTimer = null
+}
+
+/** 合并同一批 Worker 事件，最多每五秒读取一次完整资产工作台。 */
+function scheduleEventRefresh(): void {
+  if (eventRefreshTimer) return
+  const elapsed = Date.now() - lastWorkspaceRefreshAt
+  eventRefreshTimer = window.setTimeout(() => {
+    eventRefreshTimer = null
+    void loadWorkspace(true)
+  }, Math.max(0, minEventRefreshIntervalMs - elapsed))
 }
 
 function syncRealtimeTracking(): void {
@@ -1463,16 +1617,17 @@ function syncRealtimeTracking(): void {
     return
   }
   /*
-   * 初始化资产资料时，用户正停留在专用进度页，2 秒一次的兜底轮询可以更及时地显示 Worker 检查点；
-   * 普通图片生成仍保留 5 秒频率，避免资产较多时给 API 造成不必要的查询压力。
-   * SSE 正常时会更快触发刷新，轮询只负责网络代理不支持事件流时的容错。
+   * SSE 事件在前端合并刷新，10 秒轮询仅负责事件丢失时的最终一致性。
+   * 轮询和事件刷新均读取后端真实检查点，不伪造处理进度。
    */
-  const fallbackInterval = workspace.value?.preparation_status === 'preparing' ? 2000 : 5000
-  if (!fallbackPollTimer) fallbackPollTimer = window.setInterval(() => loadWorkspace(true), fallbackInterval)
+  if (!fallbackPollTimer) fallbackPollTimer = window.setInterval(() => {
+    // 刚由事件或手动操作刷新过时无需重复请求；多标签页也能显著减少同 IP 的请求量。
+    if (Date.now() - lastWorkspaceRefreshAt >= minEventRefreshIntervalMs) void loadWorkspace(true)
+  }, 10000)
   if (assetEventSource) return
   const path = `${runtime.public.apiBase}/drama/projects/${props.projectId}/assets/events`
   assetEventSource = new EventSource(normalizeStreamUrl(path))
-  assetEventSource.onmessage = () => loadWorkspace(true)
+  assetEventSource.onmessage = scheduleEventRefresh
   assetEventSource.onerror = () => console.warn('[livliv] 资产事件流暂时断开，将使用轮询恢复真实状态。')
 }
 
@@ -1483,24 +1638,28 @@ onMounted(() => {
 })
 onBeforeUnmount(() => {
   stopRealtimeTracking()
+  if (initialRetryTimer) window.clearTimeout(initialRetryTimer)
   window.removeEventListener('keydown', handlePreviewKeydown)
 })
 </script>
 
 <template>
   <section class="asset-workspace">
-    <!-- 首个接口返回前还拿不到后端百分比，因此展示明确的连接步骤而不伪造进度。 -->
+    <!-- 首个接口只负责读取工作区状态，不伪造三段式任务进度，也不让正常加载看起来像连接故障。 -->
     <div v-if="loading" class="asset-initial-loading" aria-live="polite" aria-busy="true">
-      <div class="initial-loading-icon"><RefreshCw class="spin" :size="28" /></div>
-      <h2>正在连接资产制作任务</h2>
-      <p>正在读取已确认剧本和后台任务状态，首次进入可能需要几秒。</p>
-      <ol>
-        <li class="is-running"><span><RefreshCw class="spin" :size="15" /></span><div><strong>读取任务状态</strong><small>确认后台是否已开始提炼</small></div><em>进行中</em></li>
-        <li><span>2</span><div><strong>恢复实时进度</strong><small>连接 Worker 检查点与自动刷新</small></div><em>等待</em></li>
-        <li><span>3</span><div><strong>展开资产工作台</strong><small>展示人物、场景和道具资料</small></div><em>等待</em></li>
-      </ol>
-      <button type="button" @click="loadWorkspace()"><RefreshCw :size="15" /> 重新连接</button>
-      <small>重新连接只刷新状态，不会重复提交任务或扣除积分。</small>
+      <div class="initial-loading-card">
+        <div class="initial-loading-icon"><RefreshCw class="spin" :size="24" /></div>
+        <div class="initial-loading-copy">
+          <h2>正在打开资产工作台</h2>
+          <p>正在读取剧本版本和资产任务状态，请稍候。</p>
+        </div>
+        <div class="initial-loading-track" aria-hidden="true"><i /></div>
+        <template v-if="showInitialRetry">
+          <p class="initial-loading-delay">连接时间较长，可能是本地服务正在恢复。</p>
+          <button type="button" @click="loadWorkspace()"><RefreshCw :size="15" /> 重新连接</button>
+          <small>仅刷新状态，不会重复提交任务或扣除积分。</small>
+        </template>
+      </div>
     </div>
 
     <div v-else-if="errorMessage" class="asset-error">
@@ -1543,7 +1702,7 @@ onBeforeUnmount(() => {
           </div>
           <div class="preparation-current-copy">
             <span>当前正在处理</span>
-            <h3>{{ workspace.preparation_stage_label || '任务已进入队列' }}</h3>
+            <h3>{{ preparationCurrentStageLabel }}</h3>
             <p>{{ workspace.preparation_message || '正在等待后台 Worker 接收任务…' }}</p>
             <div class="preparation-linear-progress"><i :style="{ width: `${preparationProgress}%` }" /></div>
             <small><Clock3 :size="13" /> {{ preparationUpdatedLabel }}</small>
@@ -1572,6 +1731,10 @@ onBeforeUnmount(() => {
           <em>{{ step.state === 'done' ? '已完成' : step.state === 'running' ? '进行中' : '等待' }}</em>
         </li>
       </ol>
+      <p class="preparation-check-note">
+        <ShieldCheck :size="17" />
+        <span>核对与保存是进入资产制作前的必要步骤：系统会排除无依据或缺失的资料，并保留您已手工修改的内容。发现问题时会在本次任务内免费修复，不重复扣点。</span>
+      </p>
 
       <div v-if="allAssets.length" class="preparation-candidate-strip">
         <span>已识别的资产候选</span>
@@ -1589,7 +1752,7 @@ onBeforeUnmount(() => {
     </div>
 
     <!-- 历史失败或未确认的深链仍禁止降级使用不完整资料，避免继续污染分镜与成片。 -->
-    <div v-else-if="workspace && workspace.preparation_status !== 'ready'" class="asset-error asset-preparation-blocker">
+    <div v-else-if="workspace && workspace.preparation_status !== 'ready' && !canDisplayHistoricalWorkspace" class="asset-error asset-preparation-blocker">
       <AlertTriangle :size="24" />
       <div>
         <strong>完整资产资料尚未就绪</strong>
@@ -1598,6 +1761,7 @@ onBeforeUnmount(() => {
         <p v-if="preparationRetryError" class="preparation-retry-error">{{ preparationRetryError }}</p>
       </div>
       <div class="preparation-failure-actions">
+        <button class="preparation-return-primary" @click="emit('return-script')">返回剧本确认</button>
         <button @click="loadWorkspace()">刷新状态</button>
         <button
           v-if="workspace.preparation_status === 'failed'"
@@ -1611,10 +1775,26 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <template v-else-if="workspace && workspace.preparation_status === 'ready'">
+    <template v-else-if="workspace && (workspace.preparation_status === 'ready' || canDisplayHistoricalWorkspace)">
+      <div v-if="canDisplayHistoricalWorkspace" class="mb-4 rounded-2xl border border-[#f6d28b] bg-[#fffaf0] px-5 py-4 text-sm leading-6 text-[#7c4a03]">
+        当前展示的是上一正式剧本对应的生产资产。你可以继续查看、使用或手工新增；需要同步新版剧本时，请使用页面上方“分析差异并选择更新”，系统不会自动覆盖未受影响资产。
+      </div>
       <div class="asset-overview">
+        <div class="production-version-strip">
+          <span>制作规格 <b>{{ workspace.production_version_id ? '已锁定' : '历史版本' }}</b></span>
+          <span>来源剧本 <b>{{ chineseVersionLabel(workspace.source_script_version) }}</b></span>
+          <span>视觉风格 <b>{{ workspace.visual_bible.style_type || '默认风格' }} · {{ chineseVersionLabel(workspace.visual_bible.style_version || 1) }}</b></span>
+          <em :class="`sync-${workspace.production_sync_status}`">{{ workspace.production_sync_status === 'accepted_with_gap' ? '已确认版本差异' : workspace.production_sync_status === 'version_gap' ? '存在版本差异' : '版本已同步' }}</em>
+        </div>
         <header class="visual-bible-card">
-          <div class="bible-reference">
+          <button
+            class="bible-reference"
+            type="button"
+            :disabled="!visualReferenceUrl"
+            :aria-label="visualReferenceUrl ? '点击预览项目封面' : '项目暂未生成封面'"
+            :title="visualReferenceUrl ? '点击预览项目封面' : '项目暂未生成封面'"
+            @click="openImagePreview(visualReferenceUrl, '项目封面大图预览')"
+          >
             <FluidImage
               :src="visualReferenceUrl"
               alt="项目封面与视觉参考"
@@ -1622,7 +1802,8 @@ onBeforeUnmount(() => {
               img-class="object-cover"
               loading-label="项目封面"
             />
-          </div>
+            <span v-if="visualReferenceUrl" class="bible-reference-preview"><Maximize2 :size="14" />预览</span>
+          </button>
           <div class="bible-identity">
             <div class="eyebrow">项目视觉基准 <span>v{{ workspace.visual_bible.version_no }}</span></div>
             <h2>{{ workspace.visual_bible.style_type || '待补充项目视觉类型' }}</h2>
@@ -1796,7 +1977,7 @@ onBeforeUnmount(() => {
                     img-class="rounded-[11px] object-cover"
                     :loading-label="assetImage(profile) ? `${profile.name}加载中` : ''"
                   />
-                  <div v-if="!assetImage(profile)" class="image-placeholder-label"><ImageIcon :size="25" /><span>{{ statusLabel(profile.production_status) }}</span></div>
+                  <div v-if="!assetImage(profile)" class="image-placeholder-label" :class="{ 'is-generating': ['queued', 'generating'].includes(profile.production_status) }"><ImageIcon :size="25" /><span>{{ statusLabel(profile.production_status) }}</span></div>
                   <UButton class="select-check" :class="{ checked: isSelected(profile) }" icon="i-lucide-check" :color="isSelected(profile) ? 'primary' : 'neutral'" :variant="isSelected(profile) ? 'solid' : 'soft'" size="sm" square :aria-label="isSelected(profile) ? '取消选择' : '选择资产'" @click.stop="toggleSelect(profile)" />
                   <span v-if="profile.production_status === 'locked'" class="image-lock"><Check :size="14" /></span>
                   <span class="more-button"><BaseMenu :items="assetMenuItems(profile)" @select="handleAssetMenu(profile, $event)"><template #trigger><UIcon name="i-lucide-ellipsis" class="size-4" /></template></BaseMenu></span>
@@ -1804,11 +1985,11 @@ onBeforeUnmount(() => {
                 <div class="card-content">
                   <div class="card-title"><h3>{{ profile.name }}</h3><span v-if="profile.is_required">主要</span></div>
                   <div v-if="cardFacts(profile).length" class="card-facts" :title="dataText(profile)">
-                    <span v-for="fact in cardFacts(profile)" :key="fact.label"><b>{{ fact.label }}</b><em>{{ fact.value }}</em></span>
+                    <span v-for="fact in cardFacts(profile)" :key="fact.label" :title="`${fact.label}：${fact.value}`"><b>{{ fact.label }}</b><em>{{ fact.value }}</em></span>
                   </div>
                   <div v-else class="card-facts card-facts-empty"><span><em>制作资料待补充</em></span></div>
                   <p class="card-description" :title="descriptionText(profile)">{{ descriptionText(profile) }}</p>
-                  <div class="tag-row"><span v-for="tag in tags(profile)" :key="String(tag)">{{ tag }}</span><span v-if="profile.data.appearance_source === 'ai_completion'" class="ai-tag">AI 补全</span><span v-if="profile.asset_type === 'role'" class="voice-card-tag"><Volume2 :size="11" />{{ roleVoiceStatus(profile) }}</span></div>
+                  <div class="tag-row"><span>来源 {{ chineseVersionLabel(profile.source_script_version || workspace.source_script_version) }}</span><span v-if="profile.reused_from_profile_id" class="reuse-tag">复用资产</span><span v-for="tag in tags(profile)" :key="String(tag)">{{ tag }}</span><span v-if="profile.data.appearance_source === 'ai_completion'" class="ai-tag">AI 补全</span><span v-if="profile.asset_type === 'role'" class="voice-card-tag"><Volume2 :size="11" />{{ roleVoiceStatus(profile) }}</span></div>
                   <div class="card-status">
                     <button
                       v-if="profile.production_status === 'failed'"
@@ -1822,6 +2003,10 @@ onBeforeUnmount(() => {
                     </button>
                     <span v-else :class="`status-${profile.production_status}`">{{ statusLabel(profile.production_status) }}</span>
                     <button class="consistency-tag" :class="`tone-${consistencyTone(profile)}`" @click="openDetail(profile)">{{ consistencyLabel(profile) }}</button>
+                  </div>
+                  <div v-if="profile.production_status === 'failed'" class="asset-failure-reason">
+                    <span class="asset-failure-message" :title="generationFailureText(profile)">{{ generationFailureText(profile) }}</span>
+                    <button v-if="isContentReviewFailure(profile)" type="button" class="asset-failure-revise" title="打开可编辑的画面描述建议" @click="openVisualPromptRevision(profile)">AI 修订</button>
                   </div>
                   <div class="card-actions"><UButton color="neutral" variant="outline" size="sm" label="编辑" @click="openDetail(profile)" /><UButton color="neutral" variant="outline" size="sm" :label="generationActionState(profile).label" :loading="generationActionState(profile).busy" :disabled="generationActionState(profile).busy" @click="regenerateProfile(profile)" /><BaseTooltip :text="lockDisabledReason(profile)" align="right"><UButton class="primary" color="primary" variant="solid" size="sm" :label="profile.production_status === 'locked' ? '已确认使用' : '使用此版本'" :loading="actionBusy === `lock:${profile.id}` || actionBusy === `select-lock:${profile.id}`" :disabled="!canLockProfile(profile)" @click="lockProfile(profile, profile.production_status !== 'locked')" /></BaseTooltip></div>
                 </div>
@@ -1911,9 +2096,22 @@ onBeforeUnmount(() => {
             <main class="detail-editor">
               <section v-if="selectedProfile.production_status === 'failed'" class="report-failed generation-failure-panel">
                 <AlertTriangle :size="20" />
-                <div><h4>本次生成失败</h4><p>{{ generationFailureText(selectedProfile) }}</p></div>
-                <button type="button" @click="retryFailedAssets([profileTarget(selectedProfile!)])"><RefreshCw :size="14" />免费重试</button>
+                <div>
+                  <h4>本次生成失败</h4>
+                  <p>{{ generationFailureText(selectedProfile) }}<button v-if="isContentReviewFailure(selectedProfile)" class="visual-prompt-inline-action" type="button" title="生成可编辑的修订建议稿；当前使用本地规则，不调用付费模型" :disabled="visualPromptBusy" @click="prepareVisualPrompt(selectedProfile)">AI 修订</button></p>
+                </div>
+                <button type="button" :disabled="generationActionState(selectedProfile).busy" @click="regenerateProfile(selectedProfile)"><RefreshCw :size="14" />免费重试</button>
               </section>
+              <section v-if="visualPromptDraft && selectedProfile.production_status === 'failed'" class="visual-prompt-review editor-section">
+                <h3>审核后画面描述</h3>
+                <p>当前建议稿由本地规则生成，不调用付费模型；原剧情与资产设定不会改动。请检查人物身份、外貌和四视图要求，保存后再单独点击免费重试。</p>
+                <ul v-if="visualPromptDraft.risk_notices.length"><li v-for="notice in visualPromptDraft.risk_notices" :key="notice">{{ notice }}</li></ul>
+                <details><summary>查看当前基础编译描述</summary><p class="visual-prompt-original">{{ visualPromptDraft.original_prompt }}</p></details>
+                <label>可编辑的下次生图描述<UTextarea v-model="visualPromptText" class="w-full" :rows="10" /></label>
+                <p v-if="visualPromptError" class="visual-prompt-error">{{ visualPromptError }}</p>
+                <button type="button" :disabled="visualPromptBusy || !visualPromptText.trim()" @click="confirmVisualPrompt(selectedProfile)">保存修订描述</button>
+              </section>
+              <p v-else-if="visualPromptError" class="visual-prompt-error">{{ visualPromptError }}</p>
               <section class="editor-section">
                 <h3>基础信息</h3>
                 <div class="base-fields"><label>资产名称<UInput v-model="editDraft.name" class="w-full" /></label><label v-if="selectedProfile.asset_type === 'role'">身份<UInput v-model="editDraft.identity" class="w-full" /></label><label v-if="selectedProfile.asset_type === 'role'">年龄<UInput v-model="editDraft.age" class="w-full" /></label><label>资产定位<BaseSelect v-if="selectedProfile.asset_type === 'role'" v-model="editDraft.role_label" tone="light" full :options="rolePositionOptions" /><UInput v-else v-model="editDraft.canonical_location" class="w-full" /></label><div class="check-line"><UCheckbox v-model="editDraft.is_required" label="将在分镜中使用（高级设置）" /><BaseTooltip text="勾选后，该资产需要先生成并确认使用，分镜会优先引用当前图片与设定。只有不会在实际镜头中出现的候选资产才建议取消。"><CircleHelp :size="15" /></BaseTooltip></div></div>
@@ -2010,7 +2208,7 @@ onBeforeUnmount(() => {
                 <div class="asset-quality-card" :class="`tone-${consistencyTone(selectedProfile)}`">
                   <div class="asset-quality-head">
                     <div><strong>{{ selectedProfile.name }}</strong><span>{{ consistencyLabel(selectedProfile) }}</span></div>
-                    <b>{{ selectedProfile.consistency.overall_score }}%</b>
+                    <b title="AI 图片质检参考分，不代表硬性合格率">{{ selectedProfile.consistency.overall_score }}<small>参考分</small></b>
                   </div>
                   <FluidImage
                     :src="assetImage(selectedProfile)"
@@ -2020,25 +2218,25 @@ onBeforeUnmount(() => {
                   />
                   <div v-if="selectedProfile.consistency.issues.length" class="asset-quality-primary-issue">
                     <div>
-                      <span>{{ qualitySeverityLabel((selectedProfile.consistency.issues[0] as any).severity) }}</span>
+                      <span>{{ qualityIssueLabel(selectedProfile, selectedProfile.consistency.issues[0] as any) }}</span>
                       <strong>{{ qualityRequirementLabel((selectedProfile.consistency.issues[0] as any).requirement_key) }}</strong>
                     </div>
                     <p>{{ userFacingQualityText((selectedProfile.consistency.issues[0] as any).observed) || '图片表现与已确认的生成要求存在差异。' }}</p>
                     <small v-if="(selectedProfile.consistency.issues[0] as any).evidence">判断依据：{{ userFacingQualityText((selectedProfile.consistency.issues[0] as any).evidence) }}</small>
                   </div>
-                  <div class="asset-quality-responsibility">
-                    <span>原因：{{ rootCauseLabel(selectedProfile.consistency.root_cause) }}</span>
-                    <p v-if="selectedProfile.consistency.responsibility === 'system'">系统检测到图片未完整满足已确认要求，可使用一次0积分系统修正。</p>
-                    <p v-else>当前属于参考资料差异或可选审美提升，不会把系统问题转嫁为用户消费。</p>
+                  <div v-if="selectedProfile.consistency.issues.length" class="asset-quality-responsibility">
+                    <p v-if="selectedProfile.consistency.system_repair_available">图片未满足已确认的制作要求，可使用一次 0 积分系统修正。</p>
+                    <p v-else-if="selectedProfile.consistency.qualification_status === 'hard_failed'">图片与已确认的制作要求有差异，请查看具体问题后再决定是否使用。</p>
+                    <p v-else>这是可选的风格建议，不影响使用当前版本；如需调整，可先查看费用再决定。</p>
                   </div>
                   <button v-if="selectedProfile.consistency.issues.length" class="outline-button full quality-repair-button" @click="requestRepair(selectedProfile)"><CreditIcon size="xs" />{{ repairActionText(selectedProfile) }}</button>
                 </div>
-                <div class="score-summary"><div class="big-score">{{ selectedProfile.consistency.overall_score }}%</div><div><strong>{{ consistencyLabel(selectedProfile) }}</strong><p v-if="selectedProfile.consistency.score_delta !== null">较上一轮 {{ selectedProfile.consistency.score_delta >= 0 ? '+' : '' }}{{ selectedProfile.consistency.score_delta }}%</p></div></div>
+                <div class="score-summary"><div class="big-score">{{ selectedProfile.consistency.overall_score }}</div><div><strong>{{ consistencyLabel(selectedProfile) }}</strong><p>AI 图片质检参考分</p><p v-if="selectedProfile.consistency.score_delta !== null">较上一轮 {{ selectedProfile.consistency.score_delta >= 0 ? '+' : '' }}{{ selectedProfile.consistency.score_delta }} 分</p></div></div>
                 <div class="dimension" v-for="(score, name) in selectedProfile.consistency.dimensions" :key="name"><span>{{ consistencyDimensionLabel(String(name)) }}</span><div><i :style="{ width: `${score}%` }" /></div><b>{{ score }}</b></div>
                 <ul class="issue-list">
                   <li v-for="issue in selectedProfile.consistency.issues" :key="String((issue as any).requirement_key || (issue as any).observed)">
                     <div class="issue-title-row">
-                      <strong>{{ qualitySeverityLabel((issue as any).severity) }}</strong>
+                      <strong>{{ qualityIssueLabel(selectedProfile, issue as any) }}</strong>
                       <b>{{ qualityRequirementLabel((issue as any).requirement_key) }}</b>
                     </div>
                     <span>{{ userFacingQualityText((issue as any).observed) || '图片表现与已确认的生成要求存在差异。' }}</span>
@@ -2154,8 +2352,38 @@ onBeforeUnmount(() => {
       <template #footer><LivButton variant="secondary" @click="showConsistencyEstimate = false">取消</LivButton><LivButton variant="primary" :loading="actionBusy.startsWith('check:')" :disabled="!consistencyEstimate.sufficient" @click="confirmConsistency"><template #icon><CreditIcon size="md" class="button-credit-icon" /></template>{{ consistencyEstimate.sufficient ? `消耗 ${consistencyEstimate.required_credits} 点积分 · 开始检测` : '点数不足' }}</LivButton></template>
     </LivDialog>
 
-    <LivDialog v-if="bibleDraft" :open="showBibleEditor" title="创建新的项目视觉基准版本" description="不会覆盖旧版本；旧资产会保留并标记为需要重新确认。" width="md" @update:open="showBibleEditor = $event">
-      <div class="field-grid liv-bible-fields"><label>风格类型<input v-model="bibleDraft.style_type" /></label><label>主色调（用顿号分隔）<input :value="bibleDraft.color_palette.join('、')" @input="bibleDraft!.color_palette = ($event.target as HTMLInputElement).value.split(/[、,，]/).filter(Boolean)" /></label><label>光影氛围<textarea v-model="bibleDraft.lighting" rows="3" /></label><label>材质语言<textarea v-model="bibleDraft.materials" rows="3" /></label><label>人物表现<textarea v-model="bibleDraft.character_style" rows="3" /></label><label>镜头语言<textarea v-model="bibleDraft.camera_language" rows="3" /></label><label class="wide">禁止元素（用顿号分隔）<input :value="bibleDraft.forbidden_elements.join('、')" @input="bibleDraft!.forbidden_elements = ($event.target as HTMLInputElement).value.split(/[、,，]/).filter(Boolean)" /></label></div>
+    <LivDialog v-if="bibleDraft" :open="showBibleEditor" title="创建新的项目视觉基准版本" description="不会覆盖旧版本；旧资产会保留并标记为需要重新确认。" width="lg" @update:open="showBibleEditor = $event">
+      <!-- 视觉基准属于长期生产配置，采用带字段名和说明的表格式布局，避免内容看起来像一段不可编辑的普通文本。 -->
+      <div class="liv-bible-fields" role="group" aria-label="项目视觉基准配置表">
+        <label class="bible-field-row">
+          <span class="bible-field-heading"><b>风格类型</b><small>项目整体美术方向</small></span>
+          <input v-model="bibleDraft.style_type" placeholder="例如：国风3D、游戏CG质感" />
+        </label>
+        <label class="bible-field-row">
+          <span class="bible-field-heading"><b>主色调</b><small>多个颜色用顿号分隔</small></span>
+          <input :value="bibleDraft.color_palette.join('、')" placeholder="例如：青灰、墨黑、暗金" @input="bibleDraft!.color_palette = ($event.target as HTMLInputElement).value.split(/[、,，]/).map(item => item.trim()).filter(Boolean)" />
+        </label>
+        <label class="bible-field-row bible-field-area">
+          <span class="bible-field-heading"><b>光影氛围</b><small>描述光线方向、强弱与空间氛围</small></span>
+          <textarea v-model="bibleDraft.lighting" rows="3" placeholder="例如：全局光照、物理可信反射、体积光与电影级明暗关系" />
+        </label>
+        <label class="bible-field-row bible-field-area">
+          <span class="bible-field-heading"><b>材质语言</b><small>约束服装、皮肤、金属与环境材质</small></span>
+          <textarea v-model="bibleDraft.materials" rows="3" placeholder="例如：PBR材质、真实布料纹理、金属细节清晰" />
+        </label>
+        <label class="bible-field-row bible-field-area">
+          <span class="bible-field-heading"><b>人物表现</b><small>约束角色造型、五官与表演质感</small></span>
+          <textarea v-model="bibleDraft.character_style" rows="3" placeholder="例如：高精度角色模型、比例可信、表情自然" />
+        </label>
+        <label class="bible-field-row bible-field-area">
+          <span class="bible-field-heading"><b>镜头语言</b><small>定义景别、焦点与空间调度方式</small></span>
+          <textarea v-model="bibleDraft.camera_language" rows="3" placeholder="例如：电影级镜头、焦点清晰、空间调度完整" />
+        </label>
+        <label class="bible-field-row bible-field-wide">
+          <span class="bible-field-heading"><b>禁止元素</b><small>多个禁止项用顿号分隔</small></span>
+          <input :value="bibleDraft.forbidden_elements.join('、')" placeholder="例如：真人摄影、二维平涂、低模塑料感" @input="bibleDraft!.forbidden_elements = ($event.target as HTMLInputElement).value.split(/[、,，]/).map(item => item.trim()).filter(Boolean)" />
+        </label>
+      </div>
       <template #footer><LivButton variant="secondary" @click="showBibleEditor = false">取消</LivButton><LivButton variant="primary" :loading="actionBusy === 'save-bible'" @click="saveBible">保存为新版本</LivButton></template>
     </LivDialog>
 
@@ -2187,6 +2415,9 @@ onBeforeUnmount(() => {
  */
 .visual-bible-card{padding:18px 20px}.bible-reference{width:164px;height:96px;background:transparent}.bible-main h2{font-size:19px;line-height:1.35}.bible-grid span{font-size:12px}.bible-grid b{font-size:13px;line-height:20px}
 .status-row{align-items:center;flex-wrap:wrap}.status-row button{font-size:12px;font-weight:600}.status-row .failed-filter{border-color:#fecdd3;color:#dc3f54}.status-row .retry-failed{display:inline-flex;align-items:center;gap:6px;border:1px solid #f4b9c2;border-radius:999px;background:#fff7f8;padding:7px 12px;color:#cf3148}.status-row .retry-failed:disabled{cursor:not-allowed;opacity:.55}.asset-failure-detail{display:inline-flex;align-items:center;gap:5px;border:0;background:transparent;padding:0;color:#dc3f54;font-size:12px;font-weight:700;cursor:pointer}.generation-failure-panel{display:flex;align-items:flex-start;gap:12px}.generation-failure-panel>div{min-width:0;flex:1}.generation-failure-panel button{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}.select-all-control{display:inline-flex;align-items:center;gap:8px;margin-left:auto;padding:0 4px;color:#42516a;font-size:13px;font-weight:600;cursor:pointer}.select-all-control input{width:16px;height:16px;accent-color:var(--blue)}
+.generation-failure-panel .visual-prompt-inline-action{display:inline;margin-left:7px;border:0;background:transparent;padding:0;color:#a62f46;font-size:11px;font-weight:700;text-decoration:underline;text-underline-offset:2px;cursor:pointer}.generation-failure-panel .visual-prompt-inline-action:disabled{cursor:wait;opacity:.5}
+/* 内容审核后只展示可审阅稿，不让用户在同一提示词上无意义地反复免费重试。 */
+.visual-prompt-review{display:flex;flex-direction:column;gap:12px;border:1px solid #bfd7ff;border-radius:12px;background:#f8fbff;padding:16px}.visual-prompt-review h3{margin:0;font-size:15px}.visual-prompt-review p,.visual-prompt-review li{font-size:12px;line-height:1.7;color:#526078}.visual-prompt-review ul{margin:0;padding-left:18px}.visual-prompt-review label{display:flex;flex-direction:column;gap:7px;font-size:12px;font-weight:700;color:#34435d}.visual-prompt-review details{font-size:12px;color:#526078}.visual-prompt-original{max-height:120px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere}.visual-prompt-review>button{align-self:flex-end;border:0;border-radius:8px;background:#1769e8;padding:9px 15px;color:#fff;font-size:12px;font-weight:700;cursor:pointer}.visual-prompt-review>button:disabled{cursor:not-allowed;opacity:.5}.visual-prompt-error{color:#c53549!important;font-size:12px;line-height:1.6}
 .card-image{height:184px;overflow:hidden}.card-image>:deep(.relative){border-radius:11px}.image-placeholder-label{position:absolute;inset:0;z-index:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:9px;pointer-events:none;color:#72839b;font-size:12px;font-weight:650}.image-placeholder-label.large{font-size:13px}.select-check,.more-button,.image-lock{z-index:4}.card-menu{z-index:8}
 .card-content{padding:7px 16px 16px}.card-title h3{font-size:17px;line-height:24px}.card-title p{font-size:13px;line-height:20px}.card-title>span{height:auto;padding:4px 8px;font-size:11px}.card-description{min-height:44px;margin:10px 0 9px;font-size:13px;line-height:22px}.tag-row{gap:6px;min-height:26px}.tag-row span{padding:5px 8px;font-size:11px}.card-status{margin:12px 0;font-size:12px}.card-actions{gap:8px}.card-actions button{padding:9px 6px;font-size:12px}
 .consistency-panel{padding:18px}.panel-title h3{font-size:16px}.panel-title p{font-size:11px;line-height:18px}.panel-empty p{font-size:12px}.readiness-box h4{font-size:14px}.readiness-box p,.readiness-box li{font-size:11px;line-height:18px}
@@ -2262,11 +2493,11 @@ onBeforeUnmount(() => {
 .workspace-body{grid-template-columns:minmax(0,1fr) 292px;gap:14px;align-items:start}
 .asset-grid-wrap{min-width:0;min-height:390px}
 /*
- * 用户再次确认 276px 仍偏小，因此提升到 312px，并恢复两行身份与两行描述。
- * 卡片变大后信息可以自然阅读；极长文本仍通过 title 提供完整内容，避免撑坏网格。
+ * 卡片保持 312px 宽度，身份字段改为独占一行，年龄与定位放到第二行。
+ * 高度同步留出两行摘要空间，避免标签挤压或把底部操作推出卡片。
  */
 .asset-grid{grid-template-columns:repeat(auto-fill,312px);gap:16px;align-items:start;justify-content:start}
-.asset-card{width:312px;height:440px;display:flex;min-width:312px;flex-direction:column;border-radius:13px;overflow:visible}
+.asset-card{width:312px;min-height:472px;display:flex;min-width:312px;flex-direction:column;border-radius:13px;overflow:visible}
 .card-image{height:188px;min-height:188px;margin:9px;border-radius:10px}
 .card-image>:deep(.relative),.card-image>img{border-radius:9px}
 .select-check,.more-button,.image-lock{top:7px;width:25px;height:25px;border-radius:7px}
@@ -2290,10 +2521,11 @@ onBeforeUnmount(() => {
  * 身份摘要采用“标签 + 内容”的胶囊结构，正文则使用轻底色信息块。
  * 两者建立清晰层级，同时取消旧标题区域强制占位造成的空白行。
  */
-.card-facts{display:flex;min-height:24px;align-items:center;gap:5px;margin-top:5px;overflow:hidden;white-space:nowrap}
-.card-facts>span{display:inline-flex;min-width:0;align-items:center;overflow:hidden;border:1px solid #e2eaf5;border-radius:6px;background:#f7f9fc;font-size:10px;line-height:18px}
+.card-facts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));grid-auto-rows:25px;align-items:stretch;gap:5px;margin-top:5px;min-width:0}
+.card-facts>span{display:flex;min-width:0;align-items:center;overflow:hidden;border:1px solid #e2eaf5;border-radius:6px;background:#f7f9fc;font-size:10px;line-height:18px;white-space:nowrap}
+.card-facts>span:first-child{grid-column:1/-1}
 .card-facts b{flex:0 0 auto;padding:2px 5px;background:#eaf2ff;color:#3970c8;font-weight:700}
-.card-facts em{min-width:0;overflow:hidden;padding:2px 6px;color:#66758b;font-style:normal;text-overflow:ellipsis}
+.card-facts em{min-width:0;overflow:hidden;padding:2px 6px;color:#66758b;font-style:normal;text-overflow:ellipsis;white-space:nowrap}
 .card-facts-empty>span{border-style:dashed}.card-facts-empty em{color:#9aa6b7}
 .card-description{display:-webkit-box;overflow:hidden;min-height:40px;margin:6px 0 7px;border-left:3px solid #c7d9fb;border-radius:6px;background:#f7faff;padding:5px 8px;color:#53647b;font-size:11px;line-height:18px;-webkit-box-orient:vertical;-webkit-line-clamp:2;white-space:normal}
 .tag-row{min-height:24px;flex-wrap:nowrap;gap:5px;overflow:hidden}
@@ -2336,6 +2568,7 @@ onBeforeUnmount(() => {
 .card-status .status-to_confirm{border-color:#fed7aa;background:#fff7ed;color:#c2410c}
 .card-status .status-locked{border-color:#bbf7d0;background:#f0fdf4;color:#15803d}
 .card-status .status-stale{border-color:#fde68a;background:#fffbeb;color:#b45309}
+.asset-failure-reason{display:flex;align-items:flex-end;gap:5px;min-width:0;margin:0;border:1px solid #fecdd3;border-radius:7px;background:#fff7f8;padding:6px 8px;color:#b4233d;font-size:10px;line-height:15px}.asset-failure-message{display:-webkit-box;flex:1;min-width:0;overflow:hidden;-webkit-box-orient:vertical;-webkit-line-clamp:2}.asset-failure-revise{flex:none;border:0;background:transparent;padding:0;color:#a62f46;font-size:10px;font-weight:700;line-height:15px;text-decoration:underline;text-underline-offset:2px;white-space:nowrap;cursor:pointer}
 .consistency-tag.tone-good{border-color:#bcebd6;background:#effbf5;color:#21805a}
 .consistency-tag.tone-warning{border-color:#f7db9d;background:#fff8e9;color:#a76a00}
 .consistency-tag.tone-danger{border-color:#ffc6ce;background:#fff2f4;color:#cf3349}
@@ -2364,6 +2597,9 @@ onBeforeUnmount(() => {
 .asset-quality-image{height:128px;overflow:hidden;border-radius:8px;background:#eef2f7}.asset-quality-image :deep(img){width:100%;height:100%;background:#eef2f7}
 .asset-quality-primary-issue{margin-top:9px}.asset-quality-primary-issue>div{display:flex;align-items:center;gap:6px}.asset-quality-primary-issue>div span{border-radius:5px;background:#ffe9df;padding:2px 5px;color:#cf6324;font-size:9px}.asset-quality-primary-issue>div strong{font-size:11px;color:#37445a}.asset-quality-primary-issue p{margin:6px 0 2px;color:#8e4450;font-size:10px;line-height:17px}.asset-quality-primary-issue small{display:block;color:#94717a;font-size:9px;line-height:16px}
 .asset-quality-responsibility{margin-top:8px;border-top:1px solid rgba(218,92,108,.12);padding-top:7px}.asset-quality-responsibility span{color:#6e7889;font-size:9px}.asset-quality-responsibility p{margin-top:4px;color:#798599;font-size:9px;line-height:16px}
+/* 参考分和可选说明只辅助判断，不再把内部归因说明挤进狭窄的用户卡片。 */
+.asset-quality-head>b small{margin-left:3px;font-size:9px;font-weight:500}
+.asset-quality-responsibility p{margin:0;color:#64748b;font-size:10px;line-height:18px}
 .quality-repair-button{margin-top:9px;background:#fff!important}
 .issue-list li{margin:6px 0}.issue-list small{display:block;margin-top:2px;color:#7a6570;line-height:17px}
 .report-failed{margin:12px 0;border:1px solid #ffc5ce;border-radius:10px;background:#fff5f6;padding:14px;color:#c8374c;text-align:center}.report-failed h4{margin:7px 0 4px}.report-failed p{font-size:10px;line-height:17px;word-break:break-word}
@@ -2389,7 +2625,11 @@ onBeforeUnmount(() => {
   background:#fbfdff;
   box-shadow:0 12px 34px rgba(30,55,95,.055);
 }
-.bible-reference{width:92px;height:132px;border:1px solid #e3e9f2;border-radius:11px;background:#f2f5f9;box-shadow:0 8px 20px rgba(25,48,88,.09)}
+.bible-reference{position:relative;width:92px;height:132px;overflow:hidden;border:1px solid #e3e9f2;border-radius:11px;background:#f2f5f9;box-shadow:0 8px 20px rgba(25,48,88,.09);cursor:zoom-in}
+.bible-reference:not(:disabled):hover,.bible-reference:not(:disabled):focus-visible{border-color:#77a5ff;box-shadow:0 10px 24px rgba(23,104,255,.2);outline:none}
+.bible-reference:disabled{cursor:default}
+.bible-reference-preview{position:absolute;right:6px;bottom:6px;display:flex;align-items:center;gap:4px;border-radius:6px;background:rgba(15,28,48,.72);padding:5px 6px;color:#fff;font-size:9px;font-weight:700;opacity:0;transform:translateY(3px);transition:.18s}
+.bible-reference:not(:disabled):hover .bible-reference-preview,.bible-reference:not(:disabled):focus-visible .bible-reference-preview{opacity:1;transform:translateY(0)}
 .bible-identity{min-width:0;padding-right:20px;border-right:1px solid #d9e2f1}
 .bible-identity .eyebrow{display:flex;align-items:center;gap:7px;color:#75839a;font-size:11px;line-height:16px}
 .bible-identity .eyebrow span{border-radius:999px;background:#edf4ff;padding:2px 7px;color:#3370d4;font-size:10px;font-weight:700}
@@ -2432,6 +2672,25 @@ onBeforeUnmount(() => {
 .feature-copy>div{display:flex;gap:6px;overflow:hidden;margin-top:10px}
 .feature-copy em{flex:0 0 auto;border:1px solid currentColor;border-radius:6px;background:rgba(255,255,255,.76);padding:4px 8px;color:currentColor;font-size:10px;font-style:normal;line-height:14px;opacity:.86;white-space:nowrap}
 .visual-bible-card>.outline-button{min-width:138px;height:44px;padding:0 15px;border-color:#81adff;background:#fff;color:#1768ef;font-size:13px;white-space:nowrap}
+
+/*
+ * 视觉基准编辑器使用清晰的“字段说明 + 编辑控件”表格结构。
+ * LivDialog 会将内容挂载到页面弹窗层，因此这里给控件完整定义边框、背景和焦点态，
+ * 避免仅依赖通用 field-grid 后在弹窗中退化成无边框文本。
+ */
+.liv-bible-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));overflow:hidden;border:1px solid #dce5f2;border-radius:12px;background:#fff}
+.bible-field-row{min-width:0;display:grid;grid-template-columns:138px minmax(0,1fr);align-items:center;gap:14px;padding:14px 16px;border-bottom:1px solid #e7edf5;color:#536177}
+.bible-field-row:nth-child(odd):not(.bible-field-wide){border-right:1px solid #e7edf5}
+.bible-field-row.bible-field-wide{grid-column:1/-1;border-bottom:0}
+.bible-field-heading{display:flex;min-width:0;flex-direction:column;gap:4px}
+.bible-field-heading b{color:#25324a;font-size:13px;font-weight:750;line-height:19px}
+.bible-field-heading small{color:#8491a5;font-size:10px;line-height:15px}
+.bible-field-row input,.bible-field-row textarea{width:100%;min-width:0;border:1px solid #cad6e6;border-radius:9px;background:#fbfcff;padding:9px 11px;color:#172033;font-size:12px;line-height:19px;outline:none;transition:border-color .16s,box-shadow .16s,background .16s}
+.bible-field-row textarea{min-height:78px;resize:vertical}
+.bible-field-row input:hover,.bible-field-row textarea:hover{border-color:#9eb8e2;background:#fff}
+.bible-field-row input:focus,.bible-field-row textarea:focus{border-color:#3d7cff;background:#fff;box-shadow:0 0 0 3px rgba(23,104,255,.11)}
+.bible-field-row input::placeholder,.bible-field-row textarea::placeholder{color:#a6b0bf}
+@media(max-width:760px){.liv-bible-fields{grid-template-columns:1fr}.bible-field-row,.bible-field-row.bible-field-wide{grid-column:1;border-right:0!important}.bible-field-row{grid-template-columns:1fr;gap:8px}.bible-field-row:last-child{border-bottom:0}}
 
 /* 点击主图的透明热区覆盖整张图；提示徽标只在右上角出现，不遮挡主体。 */
 .hero-preview-trigger{position:absolute;z-index:2;inset:0;display:flex;align-items:flex-start;justify-content:flex-end;padding:10px;background:transparent;color:#fff;cursor:zoom-in}
@@ -2495,6 +2754,11 @@ onBeforeUnmount(() => {
 .asset-card{border-color:#dfe7f2;background:#fff;box-shadow:0 2px 8px rgba(15,35,65,.025)}
 .asset-card:hover,.asset-card.selected{border-color:#75a4ff;box-shadow:0 10px 28px rgba(28,92,210,.1)}
 .asset-card.selected{background:linear-gradient(180deg,#fff 0%,#fbfdff 100%)}
+/* 生成状态只高亮图片占位中的图标和文字；卡片边框继续表达用户选中态。 */
+.image-placeholder-label.is-generating{color:#c2410c}
+.image-placeholder-label.is-generating :deep(svg){color:#ea580c}
+.image-placeholder-label.is-generating span{border:1px solid #fdba74;border-radius:999px;background:#ffedd5;padding:4px 11px}
+.card-status .status-generating,.card-status .status-queued{border-color:#fdba74;background:#ffedd5;color:#c2410c}
 .select-check{position:absolute!important;padding:0!important}
 .select-check:not(.checked) :deep(.iconify){opacity:0}
 .more-button{padding:0}
@@ -2503,7 +2767,8 @@ onBeforeUnmount(() => {
 .card-actions :deep(button){width:100%;min-height:34px;justify-content:center;border-radius:7px;font-size:12px}
 .card-actions :deep(.primary){box-shadow:0 5px 12px rgba(23,104,255,.16)}
 
-.asset-editor-body{width:100%;height:min(760px,calc(100vh - 190px));min-height:560px}
+/* 内容区由弹窗的中间网格行决定高度，不能再设置独立高度，否则会被底部操作栏遮住。 */
+.asset-editor-body{width:100%;height:auto;min-height:0;box-sizing:border-box}
 .asset-editor-body>.asset-media-column,
 .asset-editor-body>.detail-editor,
 .asset-editor-body>.detail-advice{min-width:0;min-height:0;height:100%;overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;border:1px solid var(--line);border-radius:12px;background:#fff;scrollbar-gutter:stable}
@@ -2561,14 +2826,13 @@ onBeforeUnmount(() => {
  * 完整资料提炼使用独立的资产页工作台，不再用一个无法说明进度的遮罩弹窗。
  * 背景光斑只做轻微漂浮，阶段卡片和进度条则由后端真实检查点驱动，兼顾“活跃感”和信息可信度。
  */
-.asset-initial-loading{min-height:560px!important;flex-direction:column!important;padding:48px 24px;text-align:center;background:radial-gradient(circle at 50% 8%,rgba(67,126,255,.11),transparent 30%),linear-gradient(180deg,#fff,#f8fbff)!important}
-.initial-loading-icon{display:flex;width:64px;height:64px;align-items:center;justify-content:center;border:1px solid #cfe0ff;border-radius:20px;background:#edf5ff;color:var(--blue);box-shadow:0 14px 34px rgba(23,104,255,.12)}
-.asset-initial-loading h2{margin:10px 0 0;color:var(--ink);font-size:24px;font-weight:760}.asset-initial-loading>p{margin:0;color:var(--muted);font-size:13px}
-.asset-initial-loading ol{width:min(620px,100%);margin:18px 0 8px;padding:0;border:1px solid #dfe8f6;border-radius:16px;background:rgba(255,255,255,.9);list-style:none;text-align:left;box-shadow:0 12px 32px rgba(35,71,133,.06)}
-.asset-initial-loading li{display:grid;grid-template-columns:36px minmax(0,1fr) auto;align-items:center;gap:12px;padding:14px 16px;border-bottom:1px solid #edf1f7}.asset-initial-loading li:last-child{border-bottom:0}
-.asset-initial-loading li>span{display:flex;width:30px;height:30px;align-items:center;justify-content:center;border-radius:50%;background:#f1f5f9;color:#94a3b8;font-size:12px;font-weight:700}.asset-initial-loading li.is-running>span{background:#eaf2ff;color:var(--blue)}
-.asset-initial-loading li strong,.asset-initial-loading li small{display:block}.asset-initial-loading li strong{color:#273247;font-size:13px}.asset-initial-loading li small{margin-top:3px;color:#8290a4;font-size:11px}.asset-initial-loading li em{color:#94a3b8;font-size:11px;font-style:normal}.asset-initial-loading li.is-running em{color:var(--blue);font-weight:700}
-.asset-initial-loading>button{display:inline-flex;align-items:center;gap:7px;margin-top:8px;border:1px solid #bfd4ff;border-radius:10px;background:#fff;padding:9px 14px;color:var(--blue);font-size:12px;font-weight:700}.asset-initial-loading>small{color:#94a3b8;font-size:10px}
+.asset-initial-loading{display:flex;min-height:300px;align-items:center;justify-content:center;padding:32px 20px;border:1px solid #e2eaf5;border-radius:20px;background:linear-gradient(180deg,#fff,#f8fbff)}
+.initial-loading-card{display:flex;width:min(440px,100%);flex-direction:column;align-items:center;border:1px solid #dfe8f6;border-radius:18px;background:rgba(255,255,255,.94);padding:30px 34px;text-align:center;box-shadow:0 14px 36px rgba(35,71,133,.07)}
+.initial-loading-icon{display:flex;width:52px;height:52px;align-items:center;justify-content:center;border:1px solid #cfe0ff;border-radius:16px;background:#edf5ff;color:var(--blue)}
+.initial-loading-copy h2{margin:15px 0 6px;color:var(--ink);font-size:19px;font-weight:760}.initial-loading-copy p{margin:0;color:var(--muted);font-size:12px;line-height:20px}
+.initial-loading-track{width:100%;height:4px;margin-top:22px;overflow:hidden;border-radius:99px;background:#eaf0f8}.initial-loading-track i{display:block;width:42%;height:100%;border-radius:inherit;background:linear-gradient(90deg,#1768ff,#7c6cff);animation:initial-loading-slide 1.4s ease-in-out infinite}
+@keyframes initial-loading-slide{0%{transform:translateX(-110%)}100%{transform:translateX(340%)}}
+.initial-loading-delay{margin:17px 0 0;color:#7b879a;font-size:11px}.initial-loading-card>button{display:inline-flex;align-items:center;gap:7px;margin-top:10px;border:1px solid #bfd4ff;border-radius:10px;background:#fff;padding:9px 14px;color:var(--blue);font-size:12px;font-weight:700}.initial-loading-card>small{margin-top:7px;color:#94a3b8;font-size:10px}
 .asset-preparation-progress-page{position:relative;isolation:isolate;min-height:650px;overflow:hidden;border:1px solid #d9e6fb;border-radius:22px;background:radial-gradient(circle at 10% 8%,rgba(73,134,255,.12),transparent 30%),radial-gradient(circle at 88% 18%,rgba(126,91,255,.1),transparent 28%),linear-gradient(145deg,#fbfdff 0%,#f5f8ff 48%,#fbf9ff 100%);padding:32px;box-shadow:0 18px 50px rgba(35,71,133,.09)}
 .preparation-orb{position:absolute;z-index:-1;border-radius:999px;filter:blur(2px);opacity:.6;animation:preparation-float 7s ease-in-out infinite}
 .preparation-orb-one{top:88px;right:-70px;width:210px;height:210px;background:radial-gradient(circle,rgba(94,109,255,.22),rgba(94,109,255,0) 70%)}
@@ -2606,18 +2870,20 @@ onBeforeUnmount(() => {
 .preparation-count-grid span{color:#8794a9;font-size:9px}
 .preparation-summary-card>p{display:flex;align-items:flex-start;gap:8px;margin:16px 0 0;border-radius:10px;background:#f0f8f5;padding:10px;color:#4c7d6a;font-size:10px;line-height:17px}
 .preparation-summary-card>p svg{flex:0 0 auto;margin-top:1px;color:#2aaa78}
-.preparation-step-list{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;margin:18px 0 0;padding:0;list-style:none}
-.preparation-step-list li{position:relative;display:grid;grid-template-columns:34px minmax(0,1fr);gap:10px;min-height:102px;border:1px solid #e4ebf6;border-radius:14px;background:rgba(255,255,255,.67);padding:15px 13px;transition:border-color .25s ease,box-shadow .25s ease,transform .25s ease}
+.preparation-step-list{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin:20px 0 0;padding:0;list-style:none}
+.preparation-step-list li{position:relative;display:grid;grid-template-columns:42px minmax(0,1fr);align-items:start;gap:13px;min-height:128px;border:1px solid #e4ebf6;border-radius:16px;background:rgba(255,255,255,.76);padding:19px 18px;transition:border-color .25s ease,box-shadow .25s ease,transform .25s ease}
 .preparation-step-list li.is-running{transform:translateY(-2px);border-color:#8ab5ff;background:#fff;box-shadow:0 10px 24px rgba(33,105,225,.12)}
 .preparation-step-list li.is-done{border-color:#cbe7dc;background:rgba(248,255,252,.9)}
-.preparation-step-marker{display:grid;width:32px;height:32px;place-items:center;border-radius:10px;background:#eef2f8;color:#8d9aaf;font-size:11px;font-weight:800}
+.preparation-step-marker{display:grid;width:40px;height:40px;place-items:center;border-radius:12px;background:#eef2f8;color:#8d9aaf;font-size:14px;font-weight:800}
 .is-running .preparation-step-marker{background:#eaf3ff;color:#176cff}
 .is-done .preparation-step-marker{background:#e7f8f1;color:#1e9c6a}
-.preparation-step-list strong{display:block;color:#24334d;font-size:11px;line-height:17px}
-.preparation-step-list p{margin:3px 0 0;color:#8a97aa;font-size:9px;line-height:15px}
-.preparation-step-list em{position:absolute;right:11px;bottom:9px;color:#a1adbd;font-size:9px;font-style:normal}
+.preparation-step-list strong{display:block;color:#24334d;font-size:16px;line-height:23px}
+.preparation-step-list p{margin:7px 0 0;color:#677891;font-size:13px;line-height:20px}
+.preparation-step-list em{position:absolute;right:18px;bottom:13px;color:#8390a6;font-size:12px;font-style:normal}
 .preparation-step-list .is-running em{color:#176cff;font-weight:700}
 .preparation-step-list .is-done em{color:#22966b}
+.preparation-check-note{display:flex;align-items:flex-start;gap:9px;margin:13px 0 0;border:1px solid #dbe8fa;border-radius:12px;background:rgba(255,255,255,.66);padding:11px 14px;color:#526784;font-size:12px;line-height:20px}
+.preparation-check-note svg{flex:0 0 auto;margin-top:1px;color:#2b7bdb}
 .preparation-candidate-strip{display:flex;align-items:center;justify-content:space-between;gap:20px;margin-top:18px;border:1px dashed #d6e2f3;border-radius:13px;background:rgba(255,255,255,.55);padding:13px 15px}
 .preparation-candidate-strip>span{color:#78879f;font-size:11px;font-weight:700}
 .preparation-candidate-strip>div{display:flex;align-items:center}
@@ -2629,7 +2895,12 @@ onBeforeUnmount(() => {
 .preparation-progress-footer button:disabled{cursor:wait;opacity:.6}
 
 /* 深链或旧页面只能查看失败状态，不能降级使用不完整的基础候选继续生产。 */
+.asset-preparation-blocker{min-height:240px!important;margin:0 auto;padding:34px 24px;background:linear-gradient(145deg,#fff 0%,#f8fbff 100%)}
+.asset-preparation-blocker>svg{color:#6b82a4}
+.asset-preparation-blocker strong{display:block;color:#24334d;font-size:18px}
 .asset-preparation-blocker p{max-width:620px;line-height:22px}
+.asset-preparation-blocker .preparation-failure-actions{display:flex;flex-wrap:wrap;justify-content:center;gap:10px;margin-top:8px}
+.asset-error .preparation-return-primary{border-color:#1768ff;background:#1768ff;color:#fff;font-weight:700;box-shadow:0 8px 20px rgba(23,104,255,.17)}
 .preparation-failure-actions{display:flex;align-items:center;gap:10px}
 .asset-error .preparation-retry-primary{display:inline-flex;align-items:center;gap:7px;border-color:#1768ff;background:#1768ff;color:#fff;font-weight:700;box-shadow:0 8px 20px rgba(23,104,255,.17)}
 .asset-error .preparation-retry-primary:disabled{cursor:wait;opacity:.62}
@@ -2639,11 +2910,11 @@ onBeforeUnmount(() => {
 .preparation-retry-summary p{margin:0;font-size:11px;line-height:19px}
 
 @media(max-width:1200px){
-  .asset-editor-body{height:min(720px,calc(100vh - 170px));grid-template-columns:minmax(260px,32%) minmax(380px,1fr);overflow:auto}
+  .asset-editor-body{height:auto;grid-template-columns:minmax(260px,32%) minmax(380px,1fr);overflow:auto}
   .asset-editor-body>.detail-advice{grid-column:1/-1;display:grid;height:auto;grid-template-columns:repeat(3,minmax(0,1fr));overflow:visible}
 }
 @media(max-width:760px){
-  .asset-editor-body{height:calc(100vh - 150px);min-height:0;grid-template-columns:1fr;overflow-y:auto}
+  .asset-editor-body{height:auto;min-height:0;grid-template-columns:1fr;overflow-y:auto}
   .asset-editor-body>.asset-media-column,.asset-editor-body>.detail-editor,.asset-editor-body>.detail-advice{height:auto;overflow:visible}
   .asset-editor-body>.detail-advice{display:flex;grid-column:auto}
 }
@@ -2679,4 +2950,11 @@ onBeforeUnmount(() => {
   .asset-image-lightbox{padding:18px}
   .lightbox-content{max-width:100%;max-height:calc(100vh - 36px)}
 }
+.production-version-strip{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-bottom:12px;padding:11px 14px;border:1px solid #d9e6fb;border-radius:12px;background:#f8fbff;color:#66758b;font-size:12px}
+.production-version-strip span{padding-right:10px;border-right:1px solid #dce5f2}
+.production-version-strip b{margin-left:4px;color:#1f4f9d}
+.production-version-strip em{margin-left:auto;border-radius:99px;background:#e9f8f1;padding:5px 9px;color:#237957;font-style:normal}
+.production-version-strip em.sync-version_gap{background:#fff4df;color:#a66a00}
+.production-version-strip em.sync-accepted_with_gap{background:#edf4ff;color:#2765c5}
+.tag-row .reuse-tag{background:#e9f8f1;color:#237957}
 </style>

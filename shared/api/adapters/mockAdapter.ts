@@ -6,10 +6,11 @@ import type { EpisodeCutDraft, EpisodeCutSavePayload, EpisodeCutTask } from '~/e
 import { defaultWebsiteInfo, type FeedbackPage, type FeedbackSubmitPayload, type RedeemCodeResult, type SupportCenter, type UserFeedback } from '~/entities/support/types'
 import type { ProductImageGeneratePayload, ProductImageHistoryBatch, ProductImageTemplate, ProductSellingPoint } from '~/entities/product-image/types'
 import type { ProductVideoCreatePayload, ProductVideoTask, ProductVideoTemplate } from '~/entities/product-video/types'
-import type { StoryboardClipContract, StoryboardContinuationPolicy, StoryboardContinuityState, StoryboardReferenceBinding, StoryboardWorkspace } from '~/entities/storyboard/types'
+import type { StoryboardClipContract, StoryboardContinuationPolicy, StoryboardContinuityState, StoryboardReferenceBinding, StoryboardWorkspace, StoryboardPlanHistory } from '~/entities/storyboard/types'
 import { defaultNodes } from '~/shared/constants/canvas'
 import { mockProjects } from '~/shared/constants/landing'
 import { mockStoryboardRows } from '~/shared/constants/storyboard'
+import { fallbackDramaVisualStyleOptions } from '~/shared/constants/dramaVisualStyles'
 import { setStoryboardCache } from '~/shared/api/storyboardCache'
 import type {
   ApiAdapter,
@@ -19,6 +20,7 @@ import type {
   DramaEntryCreditPreviewPayload,
   DramaPropUpdatePayload,
   DramaProjectCreatePayload,
+  DramaProductionSyncAction,
   DramaRoleUpdatePayload,
   DramaRoleVoiceUpdatePayload,
   DramaSceneUpdatePayload,
@@ -500,6 +502,26 @@ function createMockStoryboardWorkspace(projectId: string, episodeNo = 1): Storyb
 }
 
 export const mockAdapter: ApiAdapter = {
+  async getGenerationProfile(useCaseKey) {
+    await sleep(40)
+    const isVideo = useCaseKey.includes('video')
+    return ok({
+      use_case_key: useCaseKey,
+      task_type: isVideo ? 'video' : 'image',
+      profile_version: 1,
+      selection_mode: useCaseKey === 'product_image' ? 'advanced_optional' : 'locked',
+      supports_user_model_selection: useCaseKey === 'product_image',
+      model: { id: 'mock-model', code: isVideo ? 'seedance-2-mini' : 'gpt-image-2-official', name: isVideo ? 'Seedance 2 Mini' : 'GPT Image 2' },
+      input_schema: isVideo
+        ? { aspect_ratios: ['9:16', '16:9', '1:1'], resolutions: ['480P', '720P'], min_duration_sec: 4, max_duration_sec: 15 }
+        : { aspect_ratios: ['1:1', '3:4', '4:3', '16:9'], resolutions: ['1K', '2K', '4K'], qualities: ['low', 'medium', 'high'] },
+      limits: {},
+      default_params: isVideo
+        ? { aspect_ratio: '9:16', resolution: '720P', duration_sec: 10 }
+        : { aspect_ratio: '1:1', resolution: '1K', quality: 'low', background: 'auto', output_format: 'png' },
+      basic_override_keys: [], advanced_override_keys: [], allowed_models: []
+    })
+  },
   async getLandingProjects(category) {
     await sleep(280)
     const result = category && category !== '全部' ? mockProjects.filter((project) => project.category === category) : mockProjects
@@ -805,6 +827,18 @@ export const mockAdapter: ApiAdapter = {
     return ok([])
   },
 
+  async getLegalAcceptanceStatus() {
+    return ok({} as Record<string, boolean>)
+  },
+
+  async acceptFeatureLegalDocument() {
+    return ok(true)
+  },
+
+  async acceptFeatureLegalDocuments() {
+    return ok(true)
+  },
+
   async submitFeedback(payload: FeedbackSubmitPayload) {
     await sleep(180)
     const item: UserFeedback = {
@@ -878,6 +912,12 @@ export const mockAdapter: ApiAdapter = {
     return ok(splitMockProductSellingPoints(payload.prompt, payload.count))
   },
 
+  async optimizeProductImagePrompt(payload) {
+    await sleep(120)
+    // 模拟模式不冒充真实 AI 优化；仅保留输入供界面流程调试。
+    return ok({ optimizedPrompt: payload.prompt.trim() })
+  },
+
   async generateProductImages(payload) {
     await sleep(700)
     // Mock 环境也优先复用页面已展示的方案，行为与真实接口保持一致。
@@ -936,6 +976,12 @@ export const mockAdapter: ApiAdapter = {
     return ok(result)
   },
 
+  async getProductImageTask(batchId) {
+    const batch = mockProductImageHistory.find(item => item.id === batchId)
+    return ok({ batchId, status: batch?.status || 'failed', progress: batch ? 100 : 0,
+      currentStep: batch ? '已完成' : '批次不存在', errorMessage: batch ? '' : '批次不存在' })
+  },
+
   async listProductImageHistory(params) {
     await sleep(80)
     const batches = mockProductImageHistory.slice(0, params?.limit || 30).map((batch) => ({
@@ -974,6 +1020,36 @@ export const mockAdapter: ApiAdapter = {
       featuredTemplates: mockProductVideoTemplates.filter(item => item.isFeatured),
       recentTasks: Array.from(mockProductVideoTasks.values()).map(refreshMockProductVideoTask).slice(0, 8)
     })
+  },
+
+  async analyzeProductVideoReference(file) {
+    // 本地 mock 只演示界面，不声称真实解析了参考视频内容。
+    return ok({ referenceVideoToken: `mock-${file.name}`, videoUrl: URL.createObjectURL(file), durationSec: 15, suggestedPrompt: '', visualHook: '', pacing: '', analysisAvailable: false, transcript: '', transcriptStatus: 'unavailable', scriptDraft: '' })
+  },
+  async analyzeProductVideoReferenceLink(_url) {
+    throw new Error('演示模式不支持导入媒体直链，请上传视频。')
+  },
+  async inspectProductVideoReferenceLink(text) {
+    return ok({ platform: '其他平台', url: text, requiresUpload: true, message: '演示模式不抓取平台视频，请上传有权使用的原片。' })
+  },
+  async optimizeProductVideoScript(_payload) {
+    throw new Error('演示模式未连接 AI 脚本服务，请使用正式接口。')
+  },
+
+  async getDigitalHumanAvailability() {
+    return ok({ available: false, maxSeconds: 180, message: '演示环境未配置数字人口播供应商。' })
+  },
+
+  async quoteDigitalHuman(_script) {
+    throw new Error('演示环境未配置数字人口播供应商。')
+  },
+
+  async createDigitalHumanTask(_payload) {
+    throw new Error('演示环境未配置数字人口播供应商。')
+  },
+
+  async listDigitalHumanTasks() {
+    return ok([])
   },
 
   async listProductVideoTemplates(params) {
@@ -1084,13 +1160,13 @@ export const mockAdapter: ApiAdapter = {
         video_provider: 'alibaba',
         text_model: 'Qwen-Plus',
         image_model: 'wanx2.1-t2i-turbo',
-        video_model: 'wan2.7-r2v',
+        video_model: 'wan3.0-video',
         video_resolution: '360p'
       },
       textModels: [{ provider: 'alibaba', model: 'Qwen-Plus', label: '阿里文本经济款', description: '适合剧情解析与分镜输出', baseCredits: 1, billingMode: 'per_token' }],
       imageModels: [{ provider: 'alibaba', model: 'wanx2.1-t2i-turbo', label: '阿里图像经济款', description: '角色与场景快速出图', baseCredits: 30, billingMode: 'per_call' }],
       videoModels: [
-        { provider: 'alibaba', model: 'wan2.7-r2v', label: 'wan2.7-r2v', description: '阿里默认参考生视频模型', baseCredits: 15, billingMode: 'per_second' },
+        { provider: 'alibaba', model: 'wan3.0-video', label: '万相 3.0 视频生成', description: '阿里默认参考生视频模型', baseCredits: 150, billingMode: 'per_second' },
         { provider: 'bytedance', model: 'Doubao-Seedance-1.0-pro-fast', label: 'Doubao-Seedance-1.0-pro-fast', description: '字节视频备选模型', baseCredits: 12, billingMode: 'per_second' }
       ]
     }
@@ -1216,6 +1292,67 @@ export const mockAdapter: ApiAdapter = {
     }
     mockDramaProjectMap.set(projectId, detail)
     return ok(detail, 'created')
+  },
+
+  async getDramaVisualStyles() {
+    return ok(fallbackDramaVisualStyleOptions.map(item => ({
+      style_id: item.styleId,
+      style_version: 1,
+      display_name: item.label,
+      aliases: [],
+      render_medium: item.description,
+      character_style: '',
+      costume_material_style: '',
+      environment_render_style: '',
+      camera_language: '',
+      color_palette: [],
+      lighting: '',
+      negative_elements: [],
+      runtime_style_prefix: '',
+    })))
+  },
+
+  async getDramaProductionStatus(projectId: string) {
+    const project = mockDramaProjectMap.get(projectId)
+    const version = project?.analysis.currentScriptVersion || 'v1.2'
+    return ok({
+      project_id: projectId,
+      formal_script_version: version,
+      active_production_version: null,
+      has_version_gap: false,
+      impact_report: null,
+      available_versions: [],
+    })
+  },
+
+  async scanDramaProductionImpact(projectId: string) {
+    return ok({
+      id: '', source_script_version: '', target_script_version: '',
+      source_content_hash: '', target_content_hash: '', cached: true, result: {},
+    })
+  },
+
+  async quoteDramaProductionSync(projectId: string, action: DramaProductionSyncAction) {
+    return ok({
+      action,
+      free: action === 'accept_existing' || action === 'rescan',
+      target_counts: { assets: 0, images: 0, storyboard_plans: 0 },
+      dependencies: [],
+      required_credits: 0,
+      executable: action === 'accept_existing' || action === 'rescan',
+      summary: '模拟环境没有受影响内容。',
+    })
+  },
+
+  async executeDramaProductionSync(projectId: string, action: DramaProductionSyncAction) {
+    return ok({
+      action, status: 'completed' as const, production_version_id: '', run_id: '',
+      target_count: 0, required_credits: 0, summary: '模拟环境没有需要同步的内容。', next_actions: [],
+    })
+  },
+
+  async acceptExistingDramaProduction(projectId: string) {
+    return this.getDramaProductionStatus!(projectId)
   },
 
   async getDramaProjects(page = 1, pageSize = 10) {
@@ -1982,6 +2119,11 @@ export const mockAdapter: ApiAdapter = {
     return ok(createMockStoryboardWorkspace(projectId, episodeNo))
   },
 
+  async getStoryboardPlanHistory(_projectId: string, episodeNo = 1): Promise<ApiResponse<StoryboardPlanHistory>> {
+    await sleep(80)
+    return ok({ episodeNo, versions: [] })
+  },
+
   async updateStoryboardDirectorSegments(projectId: string, rowId: string, payload) {
     await sleep(100)
     const current = mockDramaProjectMap.get(projectId)!
@@ -2005,6 +2147,61 @@ export const mockAdapter: ApiAdapter = {
       ? { ...row, previsualizationStatus: 'queued' }
       : row)
     return ok(createMockStoryboardWorkspace(projectId, current.storyboards.find(row => row.id === rowId)?.episodeNo || 1))
+  },
+
+  async uploadStoryboardFrameReference(projectId: string, rowId: string, slot: 'first' | 'last', file: File) {
+    await sleep(100)
+    const current = mockDramaProjectMap.get(projectId)!
+    current.storyboards = current.storyboards.map(row => row.id === rowId
+      ? {
+          ...row,
+          extra: {
+            ...row.extra,
+            frame_references: {
+              ...((row.extra.frame_references as Record<string, unknown>) || {}),
+              [slot]: { url: URL.createObjectURL(file), file_name: file.name, source: 'user_upload' }
+            }
+          }
+        }
+      : row)
+    return ok(createMockStoryboardWorkspace(projectId, current.storyboards.find(row => row.id === rowId)?.episodeNo || 1))
+  },
+
+  async clearStoryboardFrameReference(projectId: string, rowId: string, slot: 'first' | 'last') {
+    await sleep(80)
+    const current = mockDramaProjectMap.get(projectId)!
+    current.storyboards = current.storyboards.map((row) => {
+      if (row.id !== rowId) return row
+      const references = { ...((row.extra.frame_references as Record<string, unknown>) || {}) }
+      delete references[slot]
+      return { ...row, extra: { ...row.extra, frame_references: references } }
+    })
+    return ok(createMockStoryboardWorkspace(projectId, current.storyboards.find(row => row.id === rowId)?.episodeNo || 1))
+  },
+
+  async inheritStoryboardFrameReference(projectId: string, rowId: string, slot: 'first' | 'last') {
+    await sleep(80)
+    const current = mockDramaProjectMap.get(projectId)!
+    const index = current.storyboards.findIndex(row => row.id === rowId)
+    const adjacent = slot === 'first' ? current.storyboards[index - 1] : current.storyboards[index + 1]
+    const sourceSlot = slot === 'first' ? 'last' : 'first'
+    const source = adjacent
+      ? ((adjacent.extra.frame_references as Record<string, any> | undefined)?.[sourceSlot] || null)
+      : null
+    if (index >= 0 && source?.url) {
+      const row = current.storyboards[index]
+      current.storyboards[index] = {
+        ...row,
+        extra: {
+          ...row.extra,
+          frame_references: {
+            ...((row.extra.frame_references as Record<string, unknown>) || {}),
+            [slot]: { ...source, source: 'continuity_manual', from_row_id: adjacent!.id, from_slot: sourceSlot }
+          }
+        }
+      }
+    }
+    return ok(createMockStoryboardWorkspace(projectId, current.storyboards[index]?.episodeNo || 1))
   },
 
   async reviewStoryboards(projectId: string, payload) {
@@ -2206,7 +2403,7 @@ export const mockAdapter: ApiAdapter = {
       })
     }
 
-    const activeModel = payload?.model || target.videoModel || 'wan2.7-r2v'
+    const activeModel = payload?.model || target.videoModel || 'wan3.0-video'
     const activeDuration = payload?.durationSec || target.videoDurationSec || 5
     const clipContract = createMockClipContract(target)
     const referenceBindings = payload?.referenceBindings?.length ? payload.referenceBindings : createMockReferenceBindings(target)

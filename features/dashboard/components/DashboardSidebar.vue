@@ -13,11 +13,23 @@ interface Props {
   themeMode: 'dark' | 'light'
 }
 
-withDefaults(defineProps<Props>(), {
+const props = withDefaults(defineProps<Props>(), {
   avatarUrl: ''
 })
 
-const emit = defineEmits<{ requestFeedback: [] }>()
+const emit = defineEmits<{
+  requestFeedback: []
+  featureMenuClick: [menu: 'drama' | 'product' | 'product-video']
+}>()
+
+/**
+ * 当前功能菜单再次点击时只触发协议查看，不重复导航并重建整个控制台。
+ * 切换到其他功能时保留 NuxtLink 的默认导航行为，目标页面会执行首次协议检查。
+ */
+function handleFeatureMenuClick(event: MouseEvent, menu: 'drama' | 'product' | 'product-video'): void {
+  if (props.activeMenu === menu) event.preventDefault()
+  emit('featureMenuClick', menu)
+}
 
 const createMenuItems = [
   {
@@ -76,6 +88,7 @@ const toolMenuItems = [
           :class="item.key === activeMenu
             ? 'bg-[#f0f4ff] text-[#005FFE]'
             : 'text-[#53627c] hover:bg-[#f6f8fc] hover:text-[#005FFE]'"
+          @click="handleFeatureMenuClick($event, item.key)"
         >
           <svg v-if="item.icon === 'script'" viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M8 7h8M8 12h8M8 17h5" stroke-linecap="round" />
@@ -110,6 +123,7 @@ const toolMenuItems = [
           :class="item.key === activeMenu
             ? 'bg-[#f0f4ff] text-[#005FFE]'
             : 'text-[#53627c] hover:bg-[#f6f8fc] hover:text-[#005FFE]'"
+          @click="handleFeatureMenuClick($event, item.key)"
         >
           <svg v-if="item.icon === 'image'" viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2">
             <rect x="4" y="5" width="16" height="14" rx="2.5" />

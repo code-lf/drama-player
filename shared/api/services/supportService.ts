@@ -19,6 +19,18 @@ export const supportService = {
     return callApi('support/legalDocuments', (adapter: any) => adapter.getLegalDocuments())
   },
 
+  async getLegalAcceptanceStatus() {
+    return callApi('support/legalAcceptanceStatus', adapter => adapter.getLegalAcceptanceStatus!())
+  },
+
+  async acceptFeatureLegalDocument(documentCode: string, documentVersionId: string) {
+    return callApi('support/featureLegalAcceptance', adapter => adapter.acceptFeatureLegalDocument!(documentCode, documentVersionId))
+  },
+
+  async acceptFeatureLegalDocuments(documents: Array<{ documentCode: string; documentVersionId: string }>) {
+    return callApi('support/featureLegalBatchAcceptance', adapter => adapter.acceptFeatureLegalDocuments!(documents))
+  },
+
   async submitFeedback(payload: FeedbackSubmitPayload) {
     return callApi('support/feedback', adapter => adapter.submitFeedback(payload))
   },

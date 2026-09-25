@@ -45,6 +45,8 @@ import type {
   StoryboardQualityPolicy,
   StoryboardRow,
   StoryboardTake,
+  StoryboardPlanHistoryVersion,
+  StoryboardTimingContract,
   StoryboardWorkspace,
   StoryboardVideoInputMode
 } from '~/entities/storyboard/types'
@@ -84,6 +86,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   continue: []
   generate: []
+  /** 已完成单集的显式新版本重规划入口，与失败节点续跑区分。 */
+  'replan-episode': [episodeNo: number]
   'update:episodeNo': [episodeNo: number]
 }>()
 
@@ -100,6 +104,11 @@ const continuityTooltipUi = {
 }
 
 const workspace = ref<StoryboardWorkspace | null>(null)
+/** 版本摘要先展示，用户选中某个版本后再按需载入镜头，避免打开页面时额外拉取全部历史。 */
+const planHistoryVisible = ref(false)
+const planHistoryLoading = ref(false)
+const planHistoryVersions = ref<StoryboardPlanHistoryVersion[]>([])
+const selectedPlanHistoryId = ref('')
 const publicVideoCapabilities = ref<PublicVideoCapabilities | null>(null)
 const loading = ref(true)
 const refreshing = ref(false)
@@ -338,7 +347,7 @@ const isStoryboardPlanning = computed(() => {
 })
 
 const planningFailed = computed(() => {
-  return currentEpisodeStatus.value === 'failed'
+  return ['failed', 'partial_failed'].includes(currentEpisodeStatus.value)
 })
 
 const planningCanResumeFromDetail = computed(() => {
@@ -349,7 +358,7 @@ const planningCanResumeFromDetail = computed(() => {
     || String(stage.errorMessage || '').includes('旧导演规划已恢复')
 })
 
-// 五个阶段不使用前端计时器伪造进度，而是由后端真实节点运行态驱动。
+// 五个阶段只使用后端真实节点运行态驱动。
 const planningStages = computed(() => {
   const completed = currentEpisodeStatus.value === 'completed'
   const stageIndex = completed ? 5 : ({
@@ -365,7 +374,8 @@ const planningStages = computed(() => {
   }[currentEpisodeStage.value.stage] ?? 0)
   return [
     { title: '全局导演分析', description: '梳理原文覆盖、人物认知边界与场次节拍' },
-    { title: '分场导演规划', description: `思考镜头边界、对白时长和专业时间轴${currentEpisodeStage.value.totalScenes ? ` · ${currentEpisodeStage.value.completedScenes}/${currentEpisodeStage.value.totalScenes} 场` : ''}` },
+    // 超大场次会拆成多个规划单元并行执行，因此这里展示规划单元而不是误报实际场数。
+    { title: '分场导演规划', description: `思考镜头边界、对白时长和专业时间轴${currentEpisodeStage.value.totalScenes ? ` · ${currentEpisodeStage.value.completedScenes}/${currentEpisodeStage.value.totalScenes} 个规划单元` : ''}` },
     { title: '镜头细化', description: `并行补全景别、运镜、表演与声音${currentEpisodeStage.value.totalBatches ? ` · ${currentEpisodeStage.value.completedBatches}/${currentEpisodeStage.value.totalBatches} 批` : ''}` },
     { title: '导演质检', description: `后台复核时间轴、对白、动作和连续性${currentEpisodeStage.value.qaTotal ? ` · ${currentEpisodeStage.value.qaCompleted}/${currentEpisodeStage.value.qaTotal} 个镜头` : ''}` },
     { title: '生成可制作方案', description: currentEpisodeStage.value.workspaceReady ? `基础分镜已发布 ${currentEpisodeStage.value.publishedRows || workspace.value?.rows.length || 0} 个，质检建议将增量更新` : '细化完成的镜头会先进入工作台，导演质检在后台继续' }
@@ -421,6 +431,18 @@ const hasVideoTasks = computed(() => (workspace.value?.rows || []).some(row =>
   || ['queued', 'running'].includes(row.previsualizationStatus)
   || row.takes.some(take => ['queued', 'running'].includes(String(take.qc?.status || '')))
 ))
+
+const episodeVideoProgress = computed(() => {
+  // 仅汇总后端已经收到的供应商百分比；未提交镜头记 0、已完成镜头记 100，不按等待时间猜测进度。
+  const rows = workspace.value?.rows || []
+  if (!rows.length) return 0
+  const total = rows.reduce((sum, row) => {
+    if (['success', 'succeeded'].includes(row.videoStatus) || row.videoUrl) return sum + 100
+    if (row.videoStatus === 'running') return sum + Math.max(0, Math.min(99, Number(row.videoProgress) || 0))
+    return sum
+  }, 0)
+  return Math.round(total / rows.length)
+})
 
 const selectedRow = computed(() => currentRow.value)
 /** 当前工作台镜头的人工资产缺口；none 状态不参与界面展示。 */
@@ -561,7 +583,7 @@ function inputModeFor(row: StoryboardRow | null | undefined): StoryboardVideoInp
   return value === 'first_last_frame' ? 'first_last_frame' : 'universal_reference'
 }
 
-/** 批量生成必须保证一批镜头使用同一协议；混合模式时回退到安全的全能参考模式。 */
+/** 混合批次传全能参考作为默认值；后端会逐镜恢复显式保存的首尾帧模式。 */
 function inputModeForRows(rows: StoryboardRow[]): StoryboardVideoInputMode {
   if (!rows.length) return videoInputMode.value
   const modes = new Set(rows.map(row => inputModeFor(row)))
@@ -928,6 +950,8 @@ function directorSegmentExtra(segment: StoryboardDirectorSegment, key: string, i
  */
 function directorSegmentDialogueLines(row: StoryboardRow, segment: StoryboardDirectorSegment): Array<{ speaker: string; text: string; delivery?: string }> {
   const structured = segment.extra?.dialogue_lines
+  // 服务端返回空数组代表该段已确认没有对白（例如原文景色描写已从伪对白中剔除）；
+  // 只有旧数据完全没有逐段字段时，才允许走镜头级对白的兼容回退，避免用剩余对白错配残留 ID。
   if (Array.isArray(structured)) {
     return structured
       .filter((line): line is Record<string, unknown> => Boolean(line) && typeof line === 'object')
@@ -949,9 +973,77 @@ function directorSegmentDialogueLines(row: StoryboardRow, segment: StoryboardDir
       : []
   ))
   return segmentIds.map((unitId) => {
-    const line = row.audioIntent.dialogueLines[allIds.indexOf(unitId)]
+    const lineIndex = allIds.indexOf(unitId)
+    // 极老数据只有镜头级整句对白而没有逐段文本时，至少在第一个说话段展示完整原文；
+    // 新接口会按稳定对白 ID 返回精确分段，因此该分支只作为兼容兜底。
+    const line = row.audioIntent.dialogueLines[lineIndex]
+      || (lineIndex === 0 && row.audioIntent.dialogueLines.length === 1 ? row.audioIntent.dialogueLines[0] : undefined)
     return line ? { speaker: line.speaker || '角色', text: line.text } : null
   }).filter((line): line is { speaker: string; text: string } => Boolean(line?.text))
+}
+
+type DirectorDialogueLineField = 'speaker' | 'text' | 'delivery'
+
+/**
+ * 打开手工编辑器时把服务端回填的逐段台词固化到草稿中。
+ * 台词仍保留原始对白 ID 作为溯源依据，但只有用户实际修改后才标记为人工版本。
+ */
+function prepareDraftDialogueLines(row: StoryboardRow, segment: StoryboardDirectorSegment): void {
+  const lines = directorSegmentDialogueLines(row, segment)
+  segment.extra = {
+    ...(segment.extra || {}),
+    dialogue_lines: lines.map(line => ({
+      speaker: line.speaker || '角色',
+      text: line.text || '',
+      delivery: line.delivery || '',
+    })),
+  }
+}
+
+function draftDialogueLines(segment: StoryboardDirectorSegment): Array<{ speaker: string; text: string; delivery: string }> {
+  const value = segment.extra?.dialogue_lines
+  if (!Array.isArray(value)) return []
+  return value
+    .filter((line): line is Record<string, unknown> => Boolean(line) && typeof line === 'object')
+    .map(line => ({
+      speaker: String(line.speaker || ''),
+      text: String(line.text || ''),
+      delivery: String(line.delivery || ''),
+    }))
+}
+
+// 人工修改台词后写入显式标记，服务端刷新时不再用剧本原文自动覆盖用户版本。
+function updateDraftDialogueLine(
+  segment: StoryboardDirectorSegment,
+  lineIndex: number,
+  field: DirectorDialogueLineField,
+  value: unknown,
+): void {
+  const lines = draftDialogueLines(segment)
+  const line = lines[lineIndex]
+  if (!line) return
+  lines[lineIndex] = { ...line, [field]: String(value || '') }
+  segment.extra = {
+    ...(segment.extra || {}),
+    dialogue_lines: lines,
+    dialogue_lines_user_edited: true,
+  }
+}
+
+function addDraftDialogueLine(segment: StoryboardDirectorSegment): void {
+  segment.extra = {
+    ...(segment.extra || {}),
+    dialogue_lines: [...draftDialogueLines(segment), { speaker: '', text: '', delivery: '' }],
+    dialogue_lines_user_edited: true,
+  }
+}
+
+function removeDraftDialogueLine(segment: StoryboardDirectorSegment, lineIndex: number): void {
+  segment.extra = {
+    ...(segment.extra || {}),
+    dialogue_lines: draftDialogueLines(segment).filter((_, index) => index !== lineIndex),
+    dialogue_lines_user_edited: true,
+  }
 }
 
 // 编辑器只更新 extra 中的结构化导演字段，保留服务端返回的其他扩展数据。
@@ -1053,7 +1145,33 @@ function qaStatusClass(row: StoryboardRow): string {
 }
 
 function riskText(row: StoryboardRow): string {
-  return row.riskLevel === 'high' ? '高风险' : row.riskLevel === 'medium' ? '建议检查' : '低风险'
+  const count = visibleRiskReasons(row).length
+  if (row.riskLevel === 'high') return count ? `需处理 ${count} 项` : '需处理'
+  if (row.riskLevel === 'medium') return count ? `建议检查 ${count} 项` : '建议检查'
+  return '制作条件正常'
+}
+
+/**
+ * 清理历史误报和语义重复项。对白、道具是制作能力标签，已经在卡片其它位置展示，
+ * 不再混入风险清单；旧版本产生的“多变化节点必须多段”也不再展示给用户。
+ */
+function visibleRiskReasons(row: StoryboardRow): string[] {
+  const hiddenMarkers = [
+    '包含关键道具',
+    '包含原生对白',
+    '含未本地化英文制作字段',
+    '摄影机设置含未中文化的英文内容',
+    '包含多个可见变化节点，但导演只安排了一个连续时间段',
+    '包含多个可见变化节点但仅有一个导演段落'
+  ]
+  const readableReasonMap: Record<string, string> = {
+    '复杂动作或特效': '包含连续动作或视觉特效，生成后建议检查动作衔接和画面稳定性。',
+    '多人物同镜头': '同一镜头涉及多名人物，生成后建议检查人物数量、站位和视线关系。'
+  }
+  return [...new Set((row.riskReasons || [])
+    .map(reason => String(reason || '').trim())
+    .filter(reason => reason && !hiddenMarkers.some(marker => reason.includes(marker)))
+    .map(reason => readableReasonMap[reason] || reason))]
 }
 
 function qcStatusText(status: unknown): string {
@@ -1116,6 +1234,20 @@ function assetGapFor(row: StoryboardRow | null | undefined): StoryboardAssetGap 
   }
 }
 
+/** 读取服务端冻结的动作时长合同，历史镜头没有合同时保持兼容。 */
+function timingContractFor(row: StoryboardRow | null | undefined): StoryboardTimingContract | null {
+  return row?.extra?.timingContract || null
+}
+
+function timingContractText(row: StoryboardRow): string {
+  const contract = timingContractFor(row)
+  if (!contract) return `动作时长沿用历史方案 · ${row.durationSec}秒`
+  if (contract.splitRequired) return `动作链约需 ${(contract.minimumDurationMs / 1000).toFixed(1)}秒，需拆为连续镜头`
+  if (contract.completionPolicy === 'continue_next') return `跨镜连续动作 · 当前 ${row.durationSec}秒`
+  if (contract.completionPolicy === 'transition_mask') return `遮罩转场已校准 · 结尾保持 ${(contract.tailHoldMs / 1000).toFixed(1)}秒`
+  return `动作时长已校准 · ${row.durationSec}秒 · 结尾保持 ${(contract.tailHoldMs / 1000).toFixed(1)}秒`
+}
+
 function generationPlanHint(row: StoryboardRow): string {
   if (row.planStatus === 'stale') return '时长已变更，导演节奏需要重新编排'
   if (['queued', 'running', 'pending'].includes(row.videoStatus)) return '生成任务已提交，完成后会自动刷新视频版本'
@@ -1131,6 +1263,7 @@ function generationPlanHint(row: StoryboardRow): string {
 function canPrepareWorkbenchGeneration(row: StoryboardRow): boolean {
   if (actionBusy.value) return false
   if (row.planStatus === 'stale') return false
+  if (timingContractFor(row)?.splitRequired) return false
   if (['queued', 'running', 'pending'].includes(row.videoStatus)) return false
   return true
 }
@@ -1177,6 +1310,51 @@ function frameReferenceUrl(row: StoryboardRow, slot: StoryboardFrameSlot): strin
   return String(frameReference(row, slot)?.url || '')
 }
 
+/** 按当前首尾槽位查找同一集内的直接相邻镜头。 */
+function adjacentFrameRow(row: StoryboardRow, slot: StoryboardFrameSlot): StoryboardRow | null {
+  const rows = workspace.value?.rows || []
+  const index = rows.findIndex(item => item.id === row.id)
+  if (index < 0) return null
+  const adjacent = (slot === 'first' ? rows[index - 1] : rows[index + 1]) || null
+  // 与后端同源节点、同一集的限制保持一致，避免显示可点但接口拒绝。
+  return adjacent?.sourceNodeId === row.sourceNodeId && adjacent.episodeNo === row.episodeNo ? adjacent : null
+}
+
+/** 查找可承接的相邻边界帧：当前首帧取上一镜头尾帧，当前尾帧取下一镜头首帧。 */
+function adjacentFrameReference(row: StoryboardRow, slot: StoryboardFrameSlot): StoryboardFrameReference | null {
+  const adjacent = adjacentFrameRow(row, slot)
+  return adjacent ? frameReference(adjacent, slot === 'first' ? 'last' : 'first') : null
+}
+
+/** 已有保存帧可直接复制；老版本仅有视频时由后端免费补抽后再复制。 */
+function canInheritAdjacentFrame(row: StoryboardRow, slot: StoryboardFrameSlot): boolean {
+  if (adjacentFrameReference(row, slot)?.url) return true
+  const adjacent = adjacentFrameRow(row, slot)
+  const take = adjacent?.takes.find(item => item.id === adjacent.selectedTakeId)
+  return Boolean(take?.status === 'succeeded' && take.videoUrl)
+}
+
+function adjacentFrameActionLabel(slot: StoryboardFrameSlot): string {
+  return slot === 'first' ? '导入上镜尾帧' : '导入下镜首帧'
+}
+
+/**
+ * 返回当前镜头能够从相邻镜头继承的边界帧。
+ * 首帧只承接上一镜头尾帧，尾帧只承接下一镜头首帧，避免误把同一张图填入两个槽位。
+ */
+function inheritableAdjacentFrameSlots(row: StoryboardRow): StoryboardFrameSlot[] {
+  return frameSlots.filter(slot => canInheritAdjacentFrame(row, slot))
+}
+
+/** 一键导入入口始终展示，并明确告诉用户当前缺少哪一侧的来源帧。 */
+function adjacentFrameImportHint(row: StoryboardRow): string {
+  const slots = inheritableAdjacentFrameSlots(row)
+  if (slots.length === 2) return '前后镜头均有可用图片或成片，可同时导入；旧视频会先免费抽帧。'
+  if (slots.includes('first')) return '上一镜头可导入；下一镜头还没有首帧或已完成视频。'
+  if (slots.includes('last')) return '下一镜头可导入；上一镜头还没有尾帧或已完成视频。'
+  return '相邻镜头暂时没有可导入的边界帧或已完成视频。'
+}
+
 /** 上传完成后接口直接返回整份工作区，页面无需再猜测本地临时 URL。 */
 async function uploadFrameReference(slot: StoryboardFrameSlot, event: Event): Promise<void> {
   const input = event.target as HTMLInputElement
@@ -1217,6 +1395,52 @@ async function clearFrameReference(slot: StoryboardFrameSlot): Promise<void> {
     showNotice(`${slot === 'first' ? '首帧' : '尾帧'}参考图已移除。`)
   } catch (error) {
     showNotice(actionErrorMessage(error, '首尾帧移除失败，请稍后重试。'), 'error')
+  } finally {
+    actionBusy.value = ''
+  }
+}
+
+/** 明确点击后由后端复制引用关系，不下载图片、不重复产生素材文件。 */
+async function inheritFrameReference(slot: StoryboardFrameSlot): Promise<void> {
+  const row = selectedRow.value
+  if (!row || !canInheritAdjacentFrame(row, slot)) return
+  actionBusy.value = `frame-${slot}-${row.id}`
+  try {
+    updateWorkspace(await dramaService.inheritStoryboardFrameReference(props.projectId, row.id, slot))
+    rowEstimateCache.value = {}
+    void ensureOverviewEstimate(true)
+    showNotice(`${slot === 'first' ? '上一镜头尾帧' : '下一镜头首帧'}已导入。`)
+  } catch (error) {
+    showNotice(actionErrorMessage(error, '相邻边界帧导入失败，请稍后重试。'), 'error')
+  } finally {
+    actionBusy.value = ''
+  }
+}
+
+/**
+ * 一次导入当前镜头两侧可用的相邻边界帧。
+ * 接口按槽位顺序执行；逐次刷新页面，第二张失败时已成功导入的第一张仍可见。
+ */
+async function inheritAdjacentFrameReferences(): Promise<void> {
+  const row = selectedRow.value
+  if (!row) return
+  const slots = inheritableAdjacentFrameSlots(row)
+  if (!slots.length) {
+    showNotice('相邻镜头还没有可导入的首尾帧。', 'error')
+    return
+  }
+
+  actionBusy.value = `frame-inherit-adjacent-${row.id}`
+  try {
+    for (const slot of slots) {
+      updateWorkspace(await dramaService.inheritStoryboardFrameReference(props.projectId, row.id, slot))
+    }
+    rowEstimateCache.value = {}
+    void ensureOverviewEstimate(true)
+    const imported = slots.map(slot => slot === 'first' ? '上一镜头尾帧' : '下一镜头首帧').join('和')
+    showNotice(`已一键导入${imported}。`)
+  } catch (error) {
+    showNotice(actionErrorMessage(error, '相邻首尾帧一键导入失败，请稍后重试。'), 'error')
   } finally {
     actionBusy.value = ''
   }
@@ -1294,6 +1518,46 @@ function switchEpisode(episodeNo: number): void {
   exitSelectionMode()
   emit('update:episodeNo', episodeNo)
   setQuery({ episode: String(episodeNo), view: 'overview', review: undefined, shot: undefined })
+}
+
+async function openPlanHistory(): Promise<void> {
+  planHistoryVisible.value = true
+  planHistoryLoading.value = true
+  selectedPlanHistoryId.value = ''
+  try {
+    const history = await dramaService.getStoryboardPlanHistory(props.projectId, currentEpisodeNo.value)
+    planHistoryVersions.value = history.versions
+    const initialVersion = history.versions.find(item => !item.plan.isCurrent) || history.versions[0]
+    if (initialVersion) await selectPlanHistoryVersion(initialVersion.plan.id)
+  } catch (error) {
+    toast.add({ title: '历史方案读取失败', description: actionErrorMessage(error, '请稍后重试。'), color: 'error' })
+  } finally {
+    planHistoryLoading.value = false
+  }
+}
+
+async function selectPlanHistoryVersion(planVersionId: string): Promise<void> {
+  if (!planVersionId) return
+  selectedPlanHistoryId.value = planVersionId
+  const cached = planHistoryVersions.value.find(item => item.plan.id === planVersionId)
+  if (cached?.rows.length) return
+  planHistoryLoading.value = true
+  try {
+    const history = await dramaService.getStoryboardPlanHistory(props.projectId, currentEpisodeNo.value, planVersionId)
+    planHistoryVersions.value = history.versions
+  } catch (error) {
+    toast.add({ title: '历史方案预览失败', description: actionErrorMessage(error, '请稍后重试。'), color: 'error' })
+  } finally {
+    planHistoryLoading.value = false
+  }
+}
+
+const selectedPlanHistory = computed(() => planHistoryVersions.value.find(item => item.plan.id === selectedPlanHistoryId.value) || null)
+
+function formatPlanHistoryDate(value: string): string {
+  if (!value) return '创建时间未记录'
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? '创建时间未记录' : date.toLocaleString('zh-CN', { dateStyle: 'short', timeStyle: 'short' })
 }
 
 function requestStoryboardPlanning(): void {
@@ -1615,6 +1879,7 @@ async function handleDirectorSegmentMenu(index: number, item: BaseMenuItem): Pro
 function openSegmentEditor(): void {
   if (!selectedRow.value) return
   segmentDraft.value = JSON.parse(JSON.stringify(selectedRow.value.directorSegments))
+  segmentDraft.value.forEach(segment => prepareDraftDialogueLines(selectedRow.value!, segment))
   advancedSegmentId.value = ''
   segmentEditorVisible.value = true
 }
@@ -1651,7 +1916,11 @@ function addSegment(afterIndex = segmentDraft.value.length - 1): void {
       ...(source.extra || {}),
       narrative_function: sourceIndex === segmentDraft.value.length - 1 ? '结果与反应' : '动作推进',
       turn: '',
-      endpoint: ''
+      endpoint: '',
+      // 新增节奏段不能复制原段台词，否则同一句话会在成片中重复说两次。
+      dialogue_unit_ids: [],
+      dialogue_lines: [],
+      dialogue_lines_user_edited: true,
     }
   }
   const items = [...segmentDraft.value]
@@ -1692,6 +1961,13 @@ function copySegment(index: number): void {
   }
   const copy = JSON.parse(JSON.stringify(source)) as StoryboardDirectorSegment
   copy.id = `draft-${Date.now()}`
+  copy.extra = {
+    ...(copy.extra || {}),
+    // “复制段落”复制的是画面节奏，不复制台词，防止供应商执行提示词重复对白。
+    dialogue_unit_ids: [],
+    dialogue_lines: [],
+    dialogue_lines_user_edited: true,
+  }
   const items = [...segmentDraft.value]
   const durations = items.map(item => item.endMs - item.startMs)
   const firstDuration = Math.max(MIN_DIRECTOR_SEGMENT_MS, Math.round(sourceDuration / 2))
@@ -2491,13 +2767,17 @@ function startMicroEditPolling(editId: string): void {
                 />
               </div>
               <p>{{ workspace.sourceSummary || '当前集已继承确认剧本、视觉基准与已确认资产。' }}</p>
-              <div class="context-tags">
+            <div class="context-tags">
                 <span>{{ workspace.currentPlan.versionLabel }}</span>
-                <span>{{ workspace.sourceScriptVersion || '已确认剧本' }}</span>
-                <span :class="{ warning: workspace.assetReadiness.ready === false }">
-                  {{ workspace.assetReadiness.ready === false ? '资产待补全' : '资产已就绪' }}
-                </span>
-              </div>
+                <span>剧本 {{ workspace.sourceScriptVersion || '已确认版本' }}</span>
+                <!-- 技术 UUID 仅保留在悬浮提示中，页面主文案只呈现用户能理解的锁定状态。 -->
+                <span :title="workspace.productionVersionId">{{ workspace.productionVersionId ? '制作配置已锁定' : '历史制作配置' }}</span>
+                <span :title="workspace.visualBibleVersionId">{{ workspace.visualBibleVersionId ? '视觉规范已锁定' : '视觉规范未记录' }}</span>
+              <span :class="{ warning: workspace.assetReadiness.ready === false }">
+                {{ workspace.assetReadiness.ready === false ? '资产待补全' : '资产已就绪' }}
+              </span>
+              <button class="context-history-button" type="button" @click="openPlanHistory"><Clock3 :size="13" />方案历史</button>
+            </div>
             </div>
           </div>
 
@@ -2626,8 +2906,8 @@ function startMicroEditPolling(editId: string): void {
           <div class="planning-panel__heading">
             <div class="planning-icon"><WandSparkles :size="22" /></div>
             <div>
-              <strong>{{ currentEpisodeStage.currentNodeLabel || `AI 正在规划第 ${currentEpisodeNo} 集镜头` }}</strong>
-              <span>{{ currentEpisodeStage.workspaceReady ? '基础分镜已经可以使用，导演质检正在后台继续，不会隐藏或清空现有镜头。' : '细化完成的基础分镜会先进入工作台，导演质检随后在后台继续。' }}</span>
+              <strong>{{ currentEpisodeStage.baseGenerationStatus === 'preserved_previous' ? '正在复核未完成场次' : (currentEpisodeStage.currentNodeLabel || `AI 正在规划第 ${currentEpisodeNo} 集镜头`) }}</strong>
+              <span>{{ currentEpisodeStage.baseGenerationStatus === 'preserved_previous' ? '当前完整方案继续可用，只处理上次未完成的场次，不会清空已有镜头。' : (currentEpisodeStage.workspaceReady ? '基础分镜已经可以使用，导演质检正在后台继续，不会隐藏或清空现有镜头。' : '细化完成的基础分镜会先进入工作台，导演质检随后在后台继续。') }}</span>
             </div>
             <div class="planning-count">
               <b>{{ currentPlanningProgress }}%</b>
@@ -2647,13 +2927,13 @@ function startMicroEditPolling(editId: string): void {
           <div>
             <AlertTriangle :size="18" />
             <span>
-              <strong>第 {{ currentEpisodeNo }} 集规划中断</strong>
-              已生成 {{ currentGeneratedCount }}{{ currentExpectedCount ? ` / ${currentExpectedCount}` : '' }} 个镜头，现有内容不是完整方案。
+              <strong>第 {{ currentEpisodeNo }} 集有场次待修复</strong>
+              {{ currentEpisodeStage.baseGenerationStatus === 'preserved_previous' ? '新版尚未覆盖当前完整方案。' : `已先展示 ${currentGeneratedCount}${currentExpectedCount ? ` / ${currentExpectedCount}` : ''} 个可用镜头。` }}
               <template v-if="otherPlanningEpisodeNos.length">第 {{ otherPlanningEpisodeNos.join('、') }} 集正在后台规划，完成后可重试本集。</template>
             </span>
           </div>
           <button class="button button--secondary planning-retry-button" type="button" :disabled="otherPlanningEpisodeNos.length > 0" @click="requestStoryboardPlanning">
-            <RotateCcw :size="13" />重新规划第 {{ currentEpisodeNo }} 集
+            <RotateCcw :size="13" />{{ workspace.run.retryAction || '继续自动修复' }}
           </button>
         </section>
 
@@ -2661,9 +2941,9 @@ function startMicroEditPolling(editId: string): void {
           <div>
             <LoaderCircle :size="17" class="spin" />
             <strong>后台正在生成镜头视频</strong>
-            <span>已完成 {{ workspace.summary.videoSucceeded }} / {{ workspace.summary.total }}</span>
+            <span>本集 {{ episodeVideoProgress }}% · 已完成 {{ workspace.summary.videoSucceeded }} / {{ workspace.summary.total }}</span>
           </div>
-          <div class="progress-track"><span :style="{ width: `${workspace.summary.total ? Math.round(workspace.summary.videoSucceeded / workspace.summary.total * 100) : 0}%` }" /></div>
+          <div class="progress-track" role="progressbar" :aria-valuenow="episodeVideoProgress" aria-valuemin="0" aria-valuemax="100" aria-label="本集视频实际生成进度"><span :style="{ width: `${episodeVideoProgress}%` }" /></div>
         </div>
 
         <div v-if="workspace.rows.length" class="toolbar">
@@ -2683,6 +2963,17 @@ function startMicroEditPolling(editId: string): void {
             </label>
           </div>
           <div class="toolbar__actions">
+            <UTooltip v-if="currentEpisodeStatus === 'completed'" text="创建本集的新分镜方案版本；旧方案保留在历史记录中">
+              <UButton
+                color="neutral"
+                variant="outline"
+                size="sm"
+                :disabled="isStoryboardPlanning || selectionMode"
+                @click="emit('replan-episode', currentEpisodeNo)"
+              >
+                <RotateCcw :size="15" />重新规划本集
+              </UButton>
+            </UTooltip>
             <UButton
               color="neutral"
               :variant="selectionMode ? 'soft' : 'outline'"
@@ -2711,8 +3002,8 @@ function startMicroEditPolling(editId: string): void {
 
         <div v-if="planningFailed && !workspace.rows.length" class="workspace-state workspace-state--compact workspace-state--error">
           <AlertTriangle :size="25" />
-          <strong>{{ planningCanResumeFromDetail ? `第 ${currentEpisodeNo} 集导演规划已恢复` : `第 ${currentEpisodeNo} 集分镜规划失败` }}</strong>
-          <span>{{ workspace.run.userMessage || '当前规划任务未完整完成；已完成镜头已保留，可从失败步骤继续。' }}</span>
+          <strong>{{ planningCanResumeFromDetail ? `第 ${currentEpisodeNo} 集导演规划已恢复` : `第 ${currentEpisodeNo} 集暂时没有可展示镜头` }}</strong>
+          <span>{{ workspace.run.userMessage || '当前场次尚未通过制作校验，可从失败节点继续，不会重跑已成功步骤。' }}</span>
           <button class="button button--primary" type="button" @click="requestStoryboardPlanning">
             <RotateCcw :size="16" />{{ workspace.run.retryAction || (planningCanResumeFromDetail ? '继续生成镜头细化' : '重试失败步骤') }}
           </button>
@@ -2765,6 +3056,15 @@ function startMicroEditPolling(editId: string): void {
               <div v-if="assetGapFor(row)" class="shot-card__asset-gap">
                 <AlertTriangle :size="12" />
                 <span><b>资产待补</b>{{ assetGapFor(row)?.suggestedName || '请人工补充匹配资产' }}</span>
+              </div>
+              <div
+                v-if="timingContractFor(row)"
+                class="shot-card__timing"
+                :class="{ 'shot-card__timing--warning': timingContractFor(row)?.splitRequired }"
+              >
+                <AlertTriangle v-if="timingContractFor(row)?.splitRequired" :size="12" />
+                <Clock3 v-else :size="12" />
+                <span>{{ timingContractText(row) }}</span>
               </div>
               <div class="shot-statuses">
                 <span class="status-chip status-chip--plan">{{ planStatusText(row) }}</span>
@@ -2894,11 +3194,26 @@ function startMicroEditPolling(editId: string): void {
               </div>
               <div v-if="videoInputMode === 'universal_reference'" class="video-input-mode-note">
                 <Package :size="15" />
-                <span>当前为全能参考模式。首尾帧图片仍可保存，但不会混入本次请求；需要边界控制时请切换到首尾帧模式。</span>
+                <span>当前优先发送本镜头角色、场景与道具资产图。同场同角色且相邻的已采用镜头有尾帧时，系统可再附加一张普通参考图；不会自动上传整段前镜视频，也不保证首帧完全一致。手动保存的首尾帧槽位不会与资产图混发。</span>
               </div>
               <div v-else class="video-input-mode-note video-input-mode-note--warning">
                 <AlertTriangle :size="15" />
                 <span>当前为首尾帧模式，本次只会发送下方首帧 / 尾帧。角色、场景、道具资产不会与首尾帧混发；切换模式不会删除已保存素材。</span>
+              </div>
+              <div v-if="videoInputMode === 'first_last_frame'" class="frame-reference-import-toolbar">
+                <div>
+                  <strong>相邻镜头边界帧</strong>
+                  <span>{{ adjacentFrameImportHint(selectedRow) }}</span>
+                </div>
+                <button
+                  type="button"
+                  :disabled="Boolean(actionBusy) || !inheritableAdjacentFrameSlots(selectedRow).length"
+                  @click="inheritAdjacentFrameReferences"
+                >
+                  <LoaderCircle v-if="actionBusy === `frame-inherit-adjacent-${selectedRow.id}`" :size="14" class="spin" />
+                  <Copy v-else :size="14" />
+                  {{ actionBusy === `frame-inherit-adjacent-${selectedRow.id}` ? '导入中…' : '一键导入相邻帧' }}
+                </button>
               </div>
               <div v-if="videoInputMode === 'first_last_frame'" class="frame-reference-grid">
                 <article v-for="slot in frameSlots" :key="slot" class="frame-reference-card">
@@ -2942,6 +3257,15 @@ function startMicroEditPolling(editId: string): void {
                       @click="clearFrameReference(slot)"
                     >
                       <Trash2 :size="14" />移除
+                    </button>
+                  </div>
+                  <div v-if="canInheritAdjacentFrame(selectedRow, slot)" class="frame-reference-card__inherit">
+                    <button
+                      type="button"
+                      :disabled="actionBusy === `frame-${slot}-${selectedRow.id}`"
+                      @click="inheritFrameReference(slot)"
+                    >
+                      <Copy :size="14" />{{ adjacentFrameActionLabel(slot) }}
                     </button>
                   </div>
                 </article>
@@ -3005,15 +3329,22 @@ function startMicroEditPolling(editId: string): void {
                       <strong>{{ segment.shotSize || '中景' }} · {{ segment.cameraMotion || '固定' }}</strong>
                       <span>{{ directorSegmentExtra(segment, 'narrative_function', segmentIndex, selectedRow.directorSegments.length) }}</span>
                       <span>{{ directorSegmentExtra(segment, 'pace', segmentIndex, selectedRow.directorSegments.length) }}</span>
-                      <span v-if="segment.emotionDesc">情绪：{{ segment.emotionDesc }}</span>
                     </div>
-                    <p v-if="segment.visualFocus"><b>画面重点</b>{{ normalizeVisibleTimelineText(segment.visualFocus) }}</p>
-                    <p v-for="(line, lineIndex) in directorSegmentDialogueLines(selectedRow, segment)" :key="`${segment.id}-dialogue-${lineIndex}`" class="director-dialogue-line"><b>原文台词</b><strong>{{ line.speaker }}</strong>“{{ line.text }}”<em v-if="line.delivery">{{ line.delivery }}</em></p>
-                    <p><b>动作与表演</b>{{ normalizeVisibleTimelineText(segment.actionDesc || segment.visualFocus || '待补充动作设计') }}</p>
-                    <p v-if="segment.emotionDesc || selectedRow.moodDesc"><b>情绪表演</b>{{ normalizeVisibleTimelineText(segment.emotionDesc || selectedRow.moodDesc) }}</p>
-                    <p v-if="directorSegmentExtra(segment, 'turn', segmentIndex, selectedRow.directorSegments.length)"><b>段落变化</b>{{ normalizeVisibleTimelineText(directorSegmentExtra(segment, 'turn', segmentIndex, selectedRow.directorSegments.length)) }}</p>
-                    <p v-if="directorSegmentExtra(segment, 'endpoint', segmentIndex, selectedRow.directorSegments.length)"><b>结束状态</b>{{ normalizeVisibleTimelineText(directorSegmentExtra(segment, 'endpoint', segmentIndex, selectedRow.directorSegments.length)) }}</p>
-                    <small v-if="segment.audioCue"><Volume2 :size="13" />{{ normalizeVisibleTimelineText(segment.audioCue) }}</small>
+                    <div class="director-content__script">
+                      <p v-if="segment.visualFocus"><b>画面</b><span>{{ normalizeVisibleTimelineText(segment.visualFocus) }}</span></p>
+                      <p><b>表演</b><span>{{ normalizeVisibleTimelineText(segment.actionDesc || segment.visualFocus || '待补充动作设计') }}</span></p>
+                      <p v-if="segment.emotionDesc || selectedRow.moodDesc"><b>情绪</b><span>{{ normalizeVisibleTimelineText(segment.emotionDesc || selectedRow.moodDesc) }}</span></p>
+                      <p v-if="directorSegmentExtra(segment, 'turn', segmentIndex, selectedRow.directorSegments.length)"><b>变化</b><span>{{ normalizeVisibleTimelineText(directorSegmentExtra(segment, 'turn', segmentIndex, selectedRow.directorSegments.length)) }}</span></p>
+                      <p v-if="directorSegmentExtra(segment, 'endpoint', segmentIndex, selectedRow.directorSegments.length)"><b>收束</b><span>{{ normalizeVisibleTimelineText(directorSegmentExtra(segment, 'endpoint', segmentIndex, selectedRow.directorSegments.length)) }}</span></p>
+                    </div>
+                    <div v-if="directorSegmentDialogueLines(selectedRow, segment).length" class="director-dialogue-list">
+                      <div v-for="(line, lineIndex) in directorSegmentDialogueLines(selectedRow, segment)" :key="`${segment.id}-dialogue-${lineIndex}`" class="director-dialogue-line">
+                        <span class="director-dialogue-line__speaker">{{ line.speaker }}</span>
+                        <q>{{ line.text }}</q>
+                        <em v-if="line.delivery">{{ line.delivery }}</em>
+                      </div>
+                    </div>
+                    <small v-if="segment.audioCue"><Volume2 :size="13" /><b>声音</b>{{ normalizeVisibleTimelineText(segment.audioCue) }}</small>
                   </div>
                   <BaseMenu :items="directorSegmentMenuItems(segmentIndex, selectedRow.directorSegments.length)" @select="handleDirectorSegmentMenu(segmentIndex, $event)">
                     <template #trigger><MoreHorizontal :size="16" /></template>
@@ -3101,7 +3432,14 @@ function startMicroEditPolling(editId: string): void {
                   <small>{{ continuityCheckEvidence('frame') }}</small>
                 </div>
               </div>
-        <ul v-if="selectedRow.riskReasons.filter(reason => reason !== '包含关键道具' && reason !== '包含原生对白').length" class="risk-list"><li v-for="reason in selectedRow.riskReasons.filter(item => item !== '包含关键道具' && item !== '包含原生对白')" :key="reason">{{ reason }}</li></ul>
+              <div v-if="visibleRiskReasons(selectedRow).length" class="risk-summary">
+                <strong>制作提示 · {{ visibleRiskReasons(selectedRow).length }} 项</strong>
+                <ul class="risk-list"><li v-for="reason in visibleRiskReasons(selectedRow).slice(0, 2)" :key="reason">{{ reason }}</li></ul>
+                <details v-if="visibleRiskReasons(selectedRow).length > 2">
+                  <summary>展开其余 {{ visibleRiskReasons(selectedRow).length - 2 }} 项</summary>
+                  <ul class="risk-list"><li v-for="reason in visibleRiskReasons(selectedRow).slice(2)" :key="reason">{{ reason }}</li></ul>
+                </details>
+              </div>
               <ul v-if="selectedTakeQcIssues.length" class="qc-issues"><li v-for="issue in selectedTakeQcIssues" :key="issue">{{ issue }}</li></ul>
             </section>
 
@@ -3159,7 +3497,7 @@ function startMicroEditPolling(editId: string): void {
             <div v-if="selectedAssetGap.suggestedContent.requiredVisibleElements.length" class="review-assets"><span v-for="item in selectedAssetGap.suggestedContent.requiredVisibleElements" :key="item">必须可见 · {{ item }}</span></div>
             <small>只影响当前镜头，其他镜头继续；系统不会自动整批重做。</small>
           </section>
-          <section><h4>制作预检</h4><div class="preflight-list"><div><CheckCircle2 :size="15" />视频片段时长 {{ selectedRow.durationSec }} 秒</div><div><CheckCircle2 :size="15" />镜头内节奏 {{ selectedRow.directorSegments.length }} 段</div><div :class="{ warning: selectedRow.riskLevel !== 'low' }"><AlertTriangle v-if="selectedRow.riskLevel !== 'low'" :size="15" /><CheckCircle2 v-else :size="15" />{{ riskText(selectedRow) }}</div></div></section>
+          <section><h4>制作预检</h4><div class="preflight-list"><div :class="{ warning: timingContractFor(selectedRow)?.splitRequired }"><AlertTriangle v-if="timingContractFor(selectedRow)?.splitRequired" :size="15" /><CheckCircle2 v-else :size="15" />{{ timingContractText(selectedRow) }}</div><div><CheckCircle2 :size="15" />镜头内节奏 {{ selectedRow.directorSegments.length }} 段</div><div :class="{ warning: selectedRow.riskLevel !== 'low' }"><AlertTriangle v-if="selectedRow.riskLevel !== 'low'" :size="15" /><CheckCircle2 v-else :size="15" />{{ riskText(selectedRow) }}</div></div></section>
         </div>
         <template #footer>
           <LivButton variant="secondary" @click="reviewRow('needs_revision')">需要修改</LivButton>
@@ -3284,6 +3622,21 @@ function startMicroEditPolling(editId: string): void {
                     @keydown.enter.exact.prevent="addSegment(index)"
                   />
                 </label>
+                <div class="director-dialogue-editor">
+                  <div class="director-dialogue-editor__heading">
+                    <div><span>台词</span><small>会按当前时间段合并进最终视频生成指令</small></div>
+                    <LivButton variant="ghost" size="sm" @click="addDraftDialogueLine(segment)"><template #icon><Plus :size="14" /></template>添加台词</LivButton>
+                  </div>
+                  <div v-if="draftDialogueLines(segment).length" class="director-dialogue-editor__lines">
+                    <div v-for="(line, lineIndex) in draftDialogueLines(segment)" :key="`${segment.id}-draft-dialogue-${lineIndex}`" class="director-dialogue-editor__line">
+                      <UInput :model-value="line.speaker" variant="none" placeholder="说话人" aria-label="说话人" @update:model-value="updateDraftDialogueLine(segment, lineIndex, 'speaker', $event)" />
+                      <UTextarea :model-value="line.text" :rows="1" autoresize variant="none" placeholder="输入本段实际说出的台词" aria-label="台词内容" @update:model-value="updateDraftDialogueLine(segment, lineIndex, 'text', $event)" />
+                      <UInput :model-value="line.delivery" variant="none" placeholder="语气（可选）" aria-label="台词语气" @update:model-value="updateDraftDialogueLine(segment, lineIndex, 'delivery', $event)" />
+                      <LivIconButton label="删除这句台词" size="sm" danger @click="removeDraftDialogueLine(segment, lineIndex)"><Trash2 :size="14" /></LivIconButton>
+                    </div>
+                  </div>
+                  <p v-else>本段没有对白，仅执行画面、动作和声音设计。</p>
+                </div>
                 <div class="director-script-line director-script-line--meta">
                   <label><span>情绪</span><UInput v-model="segment.emotionDesc" variant="none" placeholder="可见的情绪变化" /></label>
                   <label><Volume2 :size="14" /><span>声音</span><UInput v-model="segment.audioCue" variant="none" placeholder="对白、环境声或动作音效" /></label>
@@ -3628,6 +3981,55 @@ function startMicroEditPolling(editId: string): void {
           </LivButton>
         </template>
       </LivDialog>
+
+      <LivDialog
+        v-model:open="planHistoryVisible"
+        :title="`第 ${currentEpisodeNo} 集方案历史`"
+        description="历史方案仅供查看，不会切换当前方案，也不能直接生成或修改旧镜头。"
+        width="xl"
+      >
+        <template #icon><Clock3 :size="20" /></template>
+        <div class="plan-history-layout">
+          <aside class="plan-history-list">
+            <div v-if="planHistoryLoading && !planHistoryVersions.length" class="plan-history-empty"><LoaderCircle :size="18" class="spin" />正在读取方案历史…</div>
+            <div v-else-if="!planHistoryVersions.length" class="plan-history-empty"><Clock3 :size="20" />还没有归档的方案版本</div>
+            <button
+              v-for="item in planHistoryVersions"
+              :key="item.plan.id"
+              type="button"
+              class="plan-history-version"
+              :class="{ 'is-selected': selectedPlanHistoryId === item.plan.id }"
+              @click="selectPlanHistoryVersion(item.plan.id)"
+            >
+              <span class="plan-history-version__top"><strong>{{ item.plan.versionLabel }}</strong><em v-if="item.plan.isCurrent">当前版本</em><em v-else>历史版本</em></span>
+              <span>{{ formatPlanHistoryDate(item.plan.createdAt) }}</span>
+              <small>{{ item.shotCount }} 个镜头 · {{ formatDuration(item.estimatedDurationSec) }}</small>
+            </button>
+          </aside>
+          <div class="plan-history-preview">
+            <div v-if="planHistoryLoading" class="plan-history-empty"><LoaderCircle :size="18" class="spin" />正在载入镜头预览…</div>
+            <template v-else-if="selectedPlanHistory">
+              <div class="plan-history-preview__heading">
+                <div><strong>{{ selectedPlanHistory.plan.versionLabel }} · {{ selectedPlanHistory.plan.isCurrent ? '当前方案' : '历史方案' }}</strong><span>{{ selectedPlanHistory.shotCount }} 个镜头，预计 {{ formatDuration(selectedPlanHistory.estimatedDurationSec) }}</span></div>
+                <span class="plan-history-readonly"><ShieldCheck :size="13" />只读</span>
+              </div>
+              <div v-if="selectedPlanHistory.rows.length" class="plan-history-shots">
+                <article v-for="row in selectedPlanHistory.rows" :key="row.shotNo" class="plan-history-shot">
+                  <header><strong>镜头 {{ String(row.shotNo).padStart(2, '0') }}</strong><span>{{ row.shotType || '分镜' }} · {{ formatDuration(row.durationSec) }}</span></header>
+                  <p v-if="row.sceneDescription"><b>场景</b>{{ row.sceneDescription }}</p>
+                  <p v-if="row.roleName"><b>角色</b>{{ row.roleName }}</p>
+                  <p v-if="row.actionDesc"><b>动作</b>{{ row.actionDesc }}</p>
+                  <p v-if="row.dialogue"><b>台词</b>{{ row.dialogue }}</p>
+                  <div v-for="segment in row.directorSegments" :key="segment.id" class="plan-history-segment"><span>{{ (segment.startMs / 1000).toFixed(1) }}–{{ (segment.endMs / 1000).toFixed(1) }} 秒</span>{{ segment.actionDesc || segment.visualFocus || '导演段落' }}</div>
+                </article>
+              </div>
+              <div v-else class="plan-history-empty">该版本暂时没有可预览的镜头记录。</div>
+            </template>
+            <div v-else class="plan-history-empty">选择左侧版本查看当时保存的镜头方案。</div>
+          </div>
+        </div>
+        <template #footer><LivButton variant="secondary" @click="planHistoryVisible = false">关闭</LivButton></template>
+      </LivDialog>
     </template>
   </section>
 </template>
@@ -3638,6 +4040,34 @@ function startMicroEditPolling(editId: string): void {
 .storyboard-workspace--workbench { width: calc(100% + 32px); min-height: calc(100dvh - 130px); margin: -24px -16px -112px; padding: 14px 16px 16px; border: 0; border-radius: 0; background: #f8fafc; box-shadow: none; }
 .workspace-state { min-height: 420px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; color: var(--sb-muted); }
 .workspace-state strong { color: var(--sb-ink); font-size: 17px; }
+.context-history-button { display: inline-flex; align-items: center; gap: 4px; padding: 3px 7px; border: 1px solid #d7e3f4; border-radius: 5px; background: #fff; color: #315b96; font-size: 10px; cursor: pointer; }
+.context-history-button:hover { border-color: #9fc1ff; background: var(--sb-blue-soft); color: var(--sb-blue); }
+.plan-history-layout { display: grid; grid-template-columns: minmax(220px, 280px) minmax(0, 1fr); gap: 14px; min-height: 420px; max-height: min(68vh, 720px); }
+.plan-history-list { display: flex; flex-direction: column; gap: 8px; overflow: auto; padding-right: 3px; }
+.plan-history-version { display: flex; flex-direction: column; gap: 5px; padding: 11px 12px; border: 1px solid var(--sb-line); border-radius: 8px; background: #fff; color: var(--sb-ink); text-align: left; cursor: pointer; }
+.plan-history-version.is-selected { border-color: #8bb5ff; background: var(--sb-blue-soft); box-shadow: 0 0 0 2px rgba(20,104,255,.08); }
+.plan-history-version__top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.plan-history-version__top strong { font-size: 14px; }
+.plan-history-version__top em, .plan-history-readonly { display: inline-flex; align-items: center; gap: 4px; padding: 2px 6px; border-radius: 999px; background: #eef3fa; color: #5c6b82; font-size: 10px; font-style: normal; }
+.plan-history-version > span:not(.plan-history-version__top), .plan-history-version small { color: var(--sb-muted); font-size: 11px; }
+.plan-history-preview { min-width: 0; display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--sb-line); border-radius: 8px; background: #f8fafc; }
+.plan-history-preview__heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; border-bottom: 1px solid var(--sb-line); background: #fff; }
+.plan-history-preview__heading > div { display: flex; flex-direction: column; gap: 4px; }
+.plan-history-preview__heading strong { font-size: 14px; }
+.plan-history-preview__heading span:not(.plan-history-readonly) { color: var(--sb-muted); font-size: 11px; }
+.plan-history-readonly { flex: 0 0 auto; color: #18794e; background: #eaf8f0; }
+.plan-history-shots { display: flex; flex-direction: column; gap: 8px; overflow: auto; padding: 10px; }
+.plan-history-shot { padding: 11px 12px; border: 1px solid var(--sb-line); border-radius: 7px; background: #fff; }
+.plan-history-shot header { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 7px; }
+.plan-history-shot header strong { color: var(--sb-blue); font-size: 12px; }
+.plan-history-shot header span { color: var(--sb-muted); font-size: 11px; }
+.plan-history-shot p { display: grid; grid-template-columns: 38px minmax(0, 1fr); gap: 8px; margin: 5px 0; color: #344054; font-size: 12px; line-height: 1.55; white-space: pre-wrap; }
+.plan-history-shot p b { color: #667085; font-weight: 600; }
+.plan-history-segment { display: grid; grid-template-columns: 82px minmax(0, 1fr); gap: 8px; padding: 6px 8px; border-radius: 5px; background: #f3f6fb; color: #475467; font-size: 11px; line-height: 1.5; white-space: pre-wrap; }
+.plan-history-segment + .plan-history-segment { margin-top: 4px; }
+.plan-history-segment span { color: var(--sb-blue); font-weight: 600; }
+.plan-history-empty { display: flex; min-height: 140px; align-items: center; justify-content: center; gap: 8px; padding: 18px; color: var(--sb-muted); font-size: 12px; text-align: center; }
+@media (max-width: 720px) { .plan-history-layout { grid-template-columns: 1fr; max-height: 72vh; } .plan-history-list { max-height: 180px; } }
 .workspace-state--compact { min-height: 260px; border: 1px dashed var(--sb-line); border-radius: 8px; }
 .workspace-state--error { color: #c2410c; }
 .segment-title button { display: grid; place-items: center; border: 0; background: transparent; color: inherit; cursor: pointer; }
@@ -3667,6 +4097,10 @@ function startMicroEditPolling(editId: string): void {
 .shot-card__asset-gap svg { flex: 0 0 auto; }
 .shot-card__asset-gap span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .shot-card__asset-gap b { margin-right: 5px; color: #b25f00; }
+.shot-card__timing { min-width: 0; display: flex; align-items: center; gap: 5px; margin-top: 6px; padding: 6px 7px; border: 1px solid #cfe0f5; border-radius: 5px; background: #f4f8fd; color: #46617e; font-size: 10px; }
+.shot-card__timing svg { flex: 0 0 auto; }
+.shot-card__timing span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.shot-card__timing--warning { border-color: #f2c98c; background: #fff8eb; color: #9a5b08; }
 .context-tags .warning { border-color: #f8c98e; color: #b45309; background: #fff8eb; }
 .production-summary { display: grid; grid-template-columns: repeat(5, minmax(66px, 1fr)); gap: 8px; align-content: center; }
 .production-summary > .summary-item { min-height: 86px; display: grid; grid-template-columns: auto auto; grid-template-rows: auto auto; column-gap: 6px; align-content: center; justify-content: center; border: 1px solid var(--sb-line); border-radius: 8px; background: var(--sb-soft); }
@@ -3855,6 +4289,13 @@ function startMicroEditPolling(editId: string): void {
 .video-input-mode-switch small { color: #7b8799; font-size: 10px; font-weight: 500; line-height: 1.4; }
 .video-input-mode-note { display: flex; gap: 6px; align-items: flex-start; margin-top: 8px; padding: 8px 9px; border: 1px solid #d7e6ff; border-radius: 6px; background: #f5f9ff; color: #3d5d8a; font-size: 11px; line-height: 1.5; }
 .video-input-mode-note--warning { border-color: #f3d19c; background: #fff9ed; color: #8b5b13; }
+.frame-reference-import-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 8px; padding: 8px 10px; border: 1px solid #cbdaf0; border-radius: 7px; background: #f7faff; }
+.frame-reference-import-toolbar > div { min-width: 0; display: grid; gap: 2px; }
+.frame-reference-import-toolbar strong { color: #344054; font-size: 12px; }
+.frame-reference-import-toolbar span { color: #667085; font-size: 10px; line-height: 1.45; }
+.frame-reference-import-toolbar button { flex: 0 0 auto; min-height: 30px; display: inline-flex; align-items: center; justify-content: center; gap: 5px; padding: 0 10px; border: 1px solid #8eb2ea; border-radius: 6px; background: #edf4ff; color: #245fae; font-size: 11px; font-weight: 600; cursor: pointer; }
+.frame-reference-import-toolbar button:hover:not(:disabled) { border-color: #5f94df; background: #e2edff; }
+.frame-reference-import-toolbar button:disabled { cursor: not-allowed; opacity: .55; }
 .frame-reference-grid { display: grid; grid-template-columns: repeat(2, minmax(150px, 220px)); gap: 8px; margin-top: 8px; }
 .frame-reference-card { min-width: 0; overflow: hidden; border: 1px solid #dbe4f0; border-radius: 7px; background: #f8faff; }
 .frame-reference-card__preview { position: relative; aspect-ratio: 16 / 9; overflow: hidden; background: #edf2f8; }
@@ -3870,6 +4311,10 @@ function startMicroEditPolling(editId: string): void {
 .frame-reference-card__actions label.disabled, .frame-reference-card__actions button:disabled { cursor: not-allowed; opacity: .55; }
 .frame-reference-card__actions label input { position: absolute; width: 1px; height: 1px; overflow: hidden; opacity: 0; pointer-events: none; }
 .frame-reference-card__actions button { color: #b42318; }
+.frame-reference-card__inherit { padding: 0 7px 7px; }
+.frame-reference-card__inherit button { width: 100%; min-height: 28px; display: inline-flex; align-items: center; justify-content: center; gap: 5px; border: 1px solid #b8cced; border-radius: 5px; background: #edf4ff; color: #245fae; font-size: 11px; cursor: pointer; }
+.frame-reference-card__inherit button:hover:not(:disabled) { border-color: #7ea7e8; background: #e4efff; }
+.frame-reference-card__inherit button:disabled { cursor: not-allowed; opacity: .55; }
 .take-section, .filmstrip-section, .detail-section { margin-top: 10px; padding: 12px; border: 1px solid var(--sb-line); border-radius: 8px; background: white; }
 .detail-column .detail-section:first-child { margin-top: 0; }
 .section-heading { display: flex; justify-content: space-between; gap: 12px; align-items: center; margin-bottom: 12px; }
@@ -3912,12 +4357,17 @@ function startMicroEditPolling(editId: string): void {
 .director-content__meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .director-content__meta strong { color: var(--sb-text); font-size: 13px; }
 .director-content__meta span { padding: 2px 6px; border-radius: 4px; background: #f7f8fb; color: #667085; font-size: 11px; }
-.director-content p { margin: 5px 0 0; color: #475467; font-size: 12px; line-height: 1.55; }
-.director-content p b { display: inline-block; margin-right: 7px; color: #667085; font-size: 11px; font-weight: 700; }
-.director-content .director-dialogue-line { padding: 7px 9px; border-left: 3px solid #84adff; border-radius: 4px; background: #f2f6ff; color: #344054; }
-.director-dialogue-line strong { margin-right: 4px; color: #175cd3; }
-.director-dialogue-line em { margin-left: 7px; color: #667085; font-size: 11px; font-style: normal; }
+.director-content__script { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px 12px; margin-top: 7px; }
+.director-content__script p { min-width: 0; display: grid; grid-template-columns: 36px minmax(0, 1fr); gap: 5px; margin: 0; color: #475467; font-size: 12px; line-height: 1.55; }
+.director-content__script p b { color: #8290a4; font-size: 11px; font-weight: 700; }
+.director-content__script p span { min-width: 0; }
+.director-dialogue-list { display: grid; gap: 5px; margin-top: 7px; }
+.director-content .director-dialogue-line { min-width: 0; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 7px; align-items: start; padding: 7px 9px; border-left: 3px solid #6f9fff; border-radius: 5px; background: #f2f6ff; color: #344054; font-size: 12px; line-height: 1.6; }
+.director-dialogue-line__speaker { padding: 1px 6px; border-radius: 4px; background: #dce9ff; color: #175cd3; font-size: 11px; font-weight: 750; white-space: nowrap; }
+.director-dialogue-line q { quotes: '“' '”'; }
+.director-dialogue-line em { color: #667085; font-size: 11px; font-style: normal; white-space: nowrap; }
 .director-content small { display: flex; align-items: center; gap: 5px; margin-top: 5px; color: #667085; font-size: 11px; line-height: 1.45; }
+.director-content small b { color: #8290a4; font-size: 11px; }
 .director-list article :deep(.base-menu-trigger), .bound-assets article :deep(.base-menu-trigger) { width: 28px; height: 28px; border: 0; border-radius: 5px; background: #f5f7fa; color: #667085; }
 .bound-assets { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .bound-assets article { min-width: 0; display: grid; grid-template-columns: 42px 1fr auto; gap: 8px; align-items: center; padding: 7px; border: 1px solid var(--sb-line); border-radius: 6px; }
@@ -3960,6 +4410,10 @@ function startMicroEditPolling(editId: string): void {
 .continuity-check--pending { border-color: #bfd6fb; background: #f6f9ff; color: #2563eb; }
 .continuity-check--neutral { border-color: #e4e7ec; background: #f8fafc; color: #667085; }
 .risk-list { margin: 10px 0 0; padding-left: 19px; color: #a15c07; font-size: 12px; }
+.risk-summary { margin-top: 10px; padding: 10px 12px; border: 1px solid #f4d7a8; border-radius: 10px; background: #fffaf2; color: #7f5415; }
+.risk-summary > strong { font-size: 12px; }
+.risk-summary details { margin-top: 8px; font-size: 12px; }
+.risk-summary summary { cursor: pointer; color: #8b641f; }
 .qc-status { display: inline-flex; align-items: center; min-height: 24px; padding: 0 7px; border-radius: 4px; background: #f2f4f7; color: #667085; font-size: 10px; font-weight: 700; }
 .qc-status--passed { background: #eaf9ef; color: #16844b; }
 .qc-status--needs_review, .qc-status--unavailable { background: #fff7e8; color: #b25f00; }
@@ -4083,6 +4537,16 @@ function startMicroEditPolling(editId: string): void {
 .director-script-line :deep(textarea), .director-script-line :deep(input) { min-height: 28px; border: 0 !important; outline: 0; background: transparent !important; padding: 3px 0 !important; box-shadow: none !important; color: #27364d; font-size: 13px; line-height: 1.6; resize: none; }
 .director-script-line :deep(textarea:focus), .director-script-line :deep(input:focus) { box-shadow: none !important; }
 .director-script-line--action :deep(textarea) { min-height: 48px; }
+.director-dialogue-editor { display: grid; gap: 7px; padding: 9px 0; border-bottom: 1px solid #edf1f6; }
+.director-dialogue-editor__heading { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+.director-dialogue-editor__heading > div { display: flex; gap: 8px; align-items: baseline; }
+.director-dialogue-editor__heading span { color: #52729f; font-size: 11px; font-weight: 750; }
+.director-dialogue-editor__heading small { color: #8a96a8; font-size: 10px; }
+.director-dialogue-editor__lines { display: grid; gap: 6px; }
+.director-dialogue-editor__line { display: grid; grid-template-columns: 92px minmax(0, 1fr) 128px 30px; gap: 6px; align-items: start; padding: 6px; border: 1px solid #dbe6f5; border-radius: 6px; background: #f8fbff; }
+.director-dialogue-editor__line :deep(input), .director-dialogue-editor__line :deep(textarea) { min-height: 30px; border: 0 !important; background: #fff !important; padding: 5px 7px !important; box-shadow: inset 0 0 0 1px #e2e8f0 !important; color: #27364d; font-size: 12px; line-height: 1.55; resize: none; }
+.director-dialogue-editor__line :deep(input:focus), .director-dialogue-editor__line :deep(textarea:focus) { box-shadow: inset 0 0 0 1px #75a3ff !important; }
+.director-dialogue-editor > p { margin: 0; padding: 6px 8px; border-radius: 5px; background: #f8fafc; color: #8a96a8; font-size: 11px; }
 .director-script-line--meta { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; border-bottom: 0; }
 .director-script-line--meta label { min-width: 0; display: grid; grid-template-columns: auto auto minmax(0, 1fr); gap: 5px; align-items: center; margin: 0; }
 .director-script-line--meta label:first-child { grid-template-columns: auto minmax(0, 1fr); }

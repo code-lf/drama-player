@@ -2,6 +2,7 @@ import type { AuthSession } from '~/entities/auth/types'
 import type { SystemAnnouncement } from '~/entities/announcement/types'
 import type { AccountProfile, AccountSecuritySummary, CreditLedgerPage, CreditPackage, PaymentOrder, PaymentOrderPage } from '~/entities/account/types'
 import type { CanvasGraph } from '~/entities/canvas/types'
+import type { DramaVisualStyleContract } from '~/shared/constants/dramaVisualStyles'
 import type {
   DramaCreditPreview,
   DramaIntentMode,
@@ -23,7 +24,7 @@ import type {
   ProductImageTemplate,
   ProductSellingPoint
 } from '~/entities/product-image/types'
-import type { ProductVideoCreatePayload, ProductVideoCreditPreview, ProductVideoHome, ProductVideoTask, ProductVideoTemplate } from '~/entities/product-video/types'
+import type { DigitalHumanAvailability, DigitalHumanQuote, ProductVideoCreatePayload, ProductVideoCreditPreview, ProductVideoHome, ProductVideoReferenceAnalysis, ProductVideoReferenceLinkInspection, ProductVideoScriptOptimization, ProductVideoTask, ProductVideoTemplate } from '~/entities/product-video/types'
 import type {
   StoryboardClipContract,
   StoryboardContinuationPolicy,
@@ -40,13 +41,31 @@ import type {
   StoryboardRow,
   StoryboardTake,
   StoryboardVideoInputMode,
-  StoryboardWorkspace
+  StoryboardWorkspace,
+  StoryboardPlanHistory
 } from '~/entities/storyboard/types'
 
 export interface ApiResponse<T> {
   data: T
   message: string
   success: boolean
+}
+
+/** 后端按业务功能公开的模型能力快照；不包含供应商密钥和采购信息。 */
+export interface GenerationProfile {
+  use_case_key: string
+  task_type: 'image' | 'video' | string
+  profile_version: number
+  selection_mode: 'locked' | 'advanced_optional' | string
+  /** 短剧生产功能为 false：前台不得展示模型选择器，也不能提交模型覆盖后台路由。 */
+  supports_user_model_selection: boolean
+  model: { id: string; code: string; name: string }
+  input_schema: Record<string, unknown>
+  limits: Record<string, unknown>
+  default_params: Record<string, unknown>
+  basic_override_keys: string[]
+  advanced_override_keys: string[]
+  allowed_models: Array<{ id: string; code: string; name: string }>
 }
 
 export interface WechatLoginTicket {
@@ -87,6 +106,7 @@ export interface DramaProjectCreatePayload {
   themeMode?: 'dark' | 'light'
   entryIntent?: DramaIntentMode
   style?: string
+  styleId?: string
   aspectRatio?: string
   resolution?: string
   episodeCount?: number
@@ -448,11 +468,17 @@ export interface DramaVisualBible {
   version_no: number
   title: string
   style_type: string
+  style_id?: string
+  style_version?: number
+  render_medium?: string
   color_palette: string[]
   lighting: string
   materials: string
   character_style: string
+  costume_material_style?: string
+  environment_render_style?: string
   camera_language: string
+  runtime_style_prefix?: string
   forbidden_elements: string[]
   reference_asset_ids: string[]
   source_script_version: string
@@ -538,12 +564,22 @@ export interface DramaAssetConsistencyRun {
   billing_status: string
 }
 
+/** 用户可审阅的图片画面稿；与角色/场景原始剧情档案分开保存。 */
+export interface DramaAssetVisualPromptDraft {
+  original_prompt: string
+  suggested_prompt: string
+  base_hash: string
+  risk_notices: string[]
+}
+
 export interface DramaAssetProfile {
   id: string
   asset_type: DramaWorkspaceAssetType
   asset_key: string
   name: string
   source_script_version: string
+  production_version_id?: string
+  reused_from_profile_id?: string
   visual_bible_version_id: string
   selected_asset_id: string
   production_status: DramaWorkspaceAssetStatus
@@ -562,6 +598,8 @@ export interface DramaAssetProfile {
 export interface DramaAssetWorkspace {
   project_id: string
   source_script_version: string
+  production_version_id?: string
+  production_sync_status?: string
   confirmed_snapshot_id: string
   confirmed_content_hash: string
   asset_compiler_version: number
@@ -583,6 +621,119 @@ export interface DramaAssetWorkspace {
     locked_total: number
     blockers: string[]
   }
+}
+
+export interface DramaProductionVersion {
+  id: string
+  version_no: number
+  source_script_version: string
+  source_content_hash: string
+  visual_bible_version_id: string
+  based_on_version_id: string
+  status: string
+  accepted_for_script_version: string
+  sync_status: string
+  aspect_ratio: string
+  resolution: string
+  style_id: string
+  style_version: number
+  created_at: string
+}
+
+export interface DramaProductionStatus {
+  project_id: string
+  formal_script_version: string
+  active_production_version: DramaProductionVersion | null
+  has_version_gap: boolean
+  impact_report: Record<string, any> | null
+  available_versions: DramaProductionVersion[]
+}
+
+export interface DramaProductionVersionContent {
+  version: DramaProductionVersion
+  assets: Array<{
+    id: string
+    asset_type: string
+    asset_key: string
+    name: string
+    production_status: string
+    selected_asset_id: string
+    image_url: string
+  }>
+  storyboard_plans: Array<{
+    id: string
+    episode_no: number
+    version_no: number
+    version_label: string
+    status: string
+    row_count: number
+  }>
+}
+
+export interface DramaProductionImpact {
+  id: string
+  source_script_version: string
+  target_script_version: string
+  source_content_hash: string
+  target_content_hash: string
+  cached: boolean
+  result: DramaProductionImpactResult
+}
+
+export interface DramaProductionImpactAsset {
+  profile_id: string
+  asset_type: string
+  asset_key: string
+  name: string
+  reason: string
+}
+
+export interface DramaProductionImpactPlan {
+  plan_id: string
+  episode_no: number
+  reason: string
+}
+
+export interface DramaProductionImpactResult {
+  message?: string
+  added_blocks?: string[]
+  deleted_blocks?: string[]
+  modified_blocks?: string[]
+  affected_assets?: DramaProductionImpactAsset[]
+  reusable_assets?: DramaProductionImpactAsset[]
+  affected_storyboard_plans?: DramaProductionImpactPlan[]
+  affected_episodes?: number[]
+  style_changed?: boolean
+  needs_manual_confirmation?: DramaProductionImpactPlan[]
+}
+
+export type DramaProductionSyncAction =
+  | 'accept_existing'
+  | 'rescan'
+  | 'refine_affected_profiles'
+  | 'regenerate_affected_images'
+  | 'recheck_affected_storyboards'
+  | 'update_all_affected'
+
+export interface DramaProductionSyncQuote {
+  action: DramaProductionSyncAction
+  free: boolean
+  target_counts: Record<string, number>
+  dependencies: string[]
+  required_credits: number | null
+  executable: boolean
+  summary: string
+}
+
+export interface DramaProductionSyncExecution {
+  action: DramaProductionSyncAction
+  status: 'completed' | 'queued' | 'preparing' | 'blocked'
+  production_version_id: string
+  run_id: string
+  target_count: number
+  required_credits: number
+  summary: string
+  next_actions: string[]
 }
 
 export interface StoryboardMicroEditPayload {
@@ -674,6 +825,8 @@ export interface DramaAssetGenerationRun {
 }
 
 export interface ApiAdapter {
+  /** 读取功能级模型能力和默认参数，页面不得自行猜测供应商规格。 */
+  getGenerationProfile(useCaseKey: string): Promise<ApiResponse<GenerationProfile>>
   getLandingProjects(category?: string): Promise<ApiResponse<Project[]>>
   createProject(payload: { title?: string; category?: string }): Promise<ApiResponse<Project>>
   getWechatLoginTicket(): Promise<ApiResponse<WechatLoginTicket>>
@@ -700,6 +853,9 @@ export interface ApiAdapter {
   getSupportCenter(): Promise<ApiResponse<SupportCenter>>
   getLoginAppearance(): Promise<ApiResponse<WebsiteInfo>>
   getLegalDocuments?(): Promise<ApiResponse<import('~/entities/support/types').LegalDocument[]>>
+  getLegalAcceptanceStatus?(): Promise<ApiResponse<Record<string, boolean>>>
+  acceptFeatureLegalDocument?(documentCode: string, documentVersionId: string): Promise<ApiResponse<boolean>>
+  acceptFeatureLegalDocuments?(documents: Array<{ documentCode: string; documentVersionId: string }>): Promise<ApiResponse<boolean>>
   submitFeedback(payload: FeedbackSubmitPayload): Promise<ApiResponse<UserFeedback>>
   getMyFeedback(page?: number, pageSize?: number): Promise<ApiResponse<FeedbackPage>>
   getActiveAnnouncements(placement?: string): Promise<ApiResponse<SystemAnnouncement[]>>
@@ -712,6 +868,13 @@ export interface ApiAdapter {
   createWorkflowRun(payload: WorkflowRunCreatePayload): Promise<ApiResponse<WorkflowRunInfo>>
   getWorkflowRun(runId: string): Promise<ApiResponse<WorkflowRunInfo>>
   createDramaProject(payload: DramaProjectCreatePayload): Promise<ApiResponse<DramaProjectDetail>>
+  getDramaVisualStyles?(): Promise<ApiResponse<DramaVisualStyleContract[]>>
+  getDramaProductionStatus?(projectId: string): Promise<ApiResponse<DramaProductionStatus>>
+  getDramaProductionVersionContent?(projectId: string, productionVersionId: string): Promise<ApiResponse<DramaProductionVersionContent>>
+  scanDramaProductionImpact?(projectId: string): Promise<ApiResponse<DramaProductionImpact>>
+  quoteDramaProductionSync?(projectId: string, action: DramaProductionSyncAction): Promise<ApiResponse<DramaProductionSyncQuote>>
+  executeDramaProductionSync?(projectId: string, action: DramaProductionSyncAction, impactReportId: string): Promise<ApiResponse<DramaProductionSyncExecution>>
+  acceptExistingDramaProduction?(projectId: string, targetScriptVersion?: string): Promise<ApiResponse<DramaProductionStatus>>
   getDramaProjects(page?: number, pageSize?: number): Promise<ApiResponse<DramaProjectPage>>
   deleteDramaProject(projectId: string): Promise<ApiResponse<DramaDeleteResult>>
   batchDeleteDramaProjects(ids: string[]): Promise<ApiResponse<DramaDeleteResult>>
@@ -723,6 +886,8 @@ export interface ApiAdapter {
   updateDramaVisualBible?(projectId: string, payload: Omit<DramaVisualBible, 'id' | 'version_no' | 'source_script_version' | 'status'>): Promise<ApiResponse<DramaAssetWorkspace>>
   createDramaAssetProfile?(projectId: string, payload: { asset_type: DramaWorkspaceAssetType; name: string; is_required?: boolean; data?: Record<string, unknown> }): Promise<ApiResponse<DramaAssetWorkspace>>
   updateDramaAssetProfile?(projectId: string, assetType: DramaWorkspaceAssetType, assetKey: string, payload: { name?: string; is_required?: boolean; production_status?: DramaWorkspaceAssetStatus; selected_asset_id?: string; data?: Record<string, unknown> }): Promise<ApiResponse<DramaAssetWorkspace>>
+  previewDramaAssetVisualPrompt?(projectId: string, assetType: DramaWorkspaceAssetType, assetKey: string): Promise<ApiResponse<DramaAssetVisualPromptDraft>>
+  confirmDramaAssetVisualPrompt?(projectId: string, assetType: DramaWorkspaceAssetType, assetKey: string, payload: { prompt: string; base_hash: string }): Promise<ApiResponse<DramaAssetVisualPromptDraft>>
   deleteDramaAssetProfile?(projectId: string, assetType: DramaWorkspaceAssetType, assetKey: string): Promise<ApiResponse<DramaAssetWorkspace>>
   uploadDramaAssetReference?(projectId: string, assetType: DramaWorkspaceAssetType, assetKey: string, file: File): Promise<ApiResponse<DramaAssetWorkspace>>
   estimateDramaAssetGeneration?(projectId: string, targets: string[]): Promise<ApiResponse<DramaAssetGenerationEstimate>>
@@ -767,6 +932,8 @@ export interface ApiAdapter {
   generateDramaStoryboards(projectId: string, payload?: DramaStoryboardGeneratePayload): Promise<ApiResponse<DramaProjectDetail>>
   listDramaStoryboards(projectId: string, episodeNo?: number): Promise<ApiResponse<{ rows: StoryboardRow[]; run: DramaProjectDetail['storyboardRun'] }>>
   getStoryboardWorkspace(projectId: string, episodeNo?: number): Promise<ApiResponse<StoryboardWorkspace>>
+  /** 查询方案版本清单；传版本 ID 时读取只读历史镜头预览。 */
+  getStoryboardPlanHistory(projectId: string, episodeNo?: number, planVersionId?: string): Promise<ApiResponse<StoryboardPlanHistory>>
   updateStoryboardDirectorSegments(projectId: string, rowId: string, payload: StoryboardDirectorSegmentsPayload): Promise<ApiResponse<StoryboardWorkspace>>
   tuneStoryboardShot(projectId: string, rowId: string, payload: StoryboardShotTuningPayload): Promise<ApiResponse<StoryboardWorkspace>>
   generateStoryboardPrevisualization(projectId: string, rowId: string): Promise<ApiResponse<StoryboardWorkspace>>
@@ -774,6 +941,8 @@ export interface ApiAdapter {
   uploadStoryboardFrameReference(projectId: string, rowId: string, slot: 'first' | 'last', file: File): Promise<ApiResponse<StoryboardWorkspace>>
   /** 仅解除当前槽位绑定，历史素材仍由后端保留用于审计。 */
   clearStoryboardFrameReference(projectId: string, rowId: string, slot: 'first' | 'last'): Promise<ApiResponse<StoryboardWorkspace>>
+  /** 从相邻镜头承接边界帧：首帧取上镜尾帧，尾帧取下镜首帧。 */
+  inheritStoryboardFrameReference(projectId: string, rowId: string, slot: 'first' | 'last'): Promise<ApiResponse<StoryboardWorkspace>>
   reviewStoryboards(projectId: string, payload: StoryboardReviewBatchPayload): Promise<ApiResponse<StoryboardWorkspace>>
   previewStoryboardTuning(projectId: string, payload: StoryboardTuningPayload): Promise<ApiResponse<StoryboardTuningPreview>>
   applyStoryboardTuning(projectId: string, payload: StoryboardTuningPayload): Promise<ApiResponse<StoryboardWorkspace>>
@@ -802,17 +971,27 @@ export interface ApiAdapter {
   getEpisodeCutTask(projectId: string, episodeNo: number, taskId: string): Promise<ApiResponse<EpisodeCutTask>>
   listEpisodeExports(params?: { status?: string; page?: number; pageSize?: number }): Promise<ApiResponse<EpisodeCutTaskList>>
   listProductImageTemplates(params?: { category?: string; featured?: boolean }): Promise<ApiResponse<ProductImageTemplate[]>>
-  previewProductImageCredits(payload: Pick<ProductImageGeneratePayload, 'count' | 'model' | 'prompt' | 'splitSellingPoints' | 'templateId'>): Promise<ApiResponse<ProductImageCreditPreview>>
+  previewProductImageCredits(payload: Pick<ProductImageGeneratePayload, 'count' | 'model' | 'prompt' | 'splitSellingPoints' | 'templateId' | 'resolution' | 'quality' | 'background' | 'outputFormat' | 'outputCompression'>): Promise<ApiResponse<ProductImageCreditPreview>>
   splitProductSellingPoints(payload: { batchId?: string; prompt: string; count: number; style?: string; aspectRatio?: string }): Promise<ApiResponse<ProductSellingPoint[]>>
-  generateProductImages(payload: ProductImageGeneratePayload): Promise<ApiResponse<ProductImageGenerateResult>>
+  optimizeProductImagePrompt(payload: { prompt: string; mode: 'single' | 'marketing' | 'free' }): Promise<ApiResponse<{ optimizedPrompt: string }>>
+  generateProductImages(payload: ProductImageGeneratePayload, onProgress?: (progress: number, step: string) => void): Promise<ApiResponse<ProductImageGenerateResult>>
+  getProductImageTask(batchId: string): Promise<ApiResponse<import('~/entities/product-image/types').ProductImageTaskStatus>>
   listProductImageHistory(params?: { favoritesOnly?: boolean; limit?: number }): Promise<ApiResponse<ProductImageHistoryBatch[]>>
   getProductImageHistory(batchId: string): Promise<ApiResponse<ProductImageHistoryBatch>>
   setProductImageFavorite(batchId: string, resultId: string, isFavorite: boolean): Promise<ApiResponse<ProductImageResult>>
   deleteProductImageHistory(batchId: string): Promise<ApiResponse<{ batchId: string; deleted: boolean }>>
   /** 商品视频前台与模板中心共用的运营快照。 */
   getProductVideoHome(): Promise<ApiResponse<ProductVideoHome>>
+  analyzeProductVideoReference(file: File): Promise<ApiResponse<ProductVideoReferenceAnalysis>>
+  analyzeProductVideoReferenceLink(url: string): Promise<ApiResponse<ProductVideoReferenceAnalysis>>
+  inspectProductVideoReferenceLink(text: string): Promise<ApiResponse<ProductVideoReferenceLinkInspection>>
+  optimizeProductVideoScript(payload: { script: string; productDetails: string; durationSec: number }): Promise<ApiResponse<ProductVideoScriptOptimization>>
+  getDigitalHumanAvailability(): Promise<ApiResponse<DigitalHumanAvailability>>
+  quoteDigitalHuman(script: string): Promise<ApiResponse<DigitalHumanQuote>>
+  createDigitalHumanTask(payload: { script: string; resolution: string }): Promise<ApiResponse<ProductVideoTask>>
+  listDigitalHumanTasks(): Promise<ApiResponse<ProductVideoTask[]>>
   listProductVideoTemplates(params?: { category?: string; featured?: boolean }): Promise<ApiResponse<ProductVideoTemplate[]>>
-  previewProductVideoCredits(payload: Pick<ProductVideoCreatePayload, 'templateId' | 'durationSec' | 'resultCount' | 'model'>): Promise<ApiResponse<ProductVideoCreditPreview>>
+  previewProductVideoCredits(payload: Pick<ProductVideoCreatePayload, 'templateId' | 'durationSec' | 'resultCount' | 'model' | 'resolution' | 'referenceVideoToken'>): Promise<ApiResponse<ProductVideoCreditPreview>>
   createProductVideoTask(payload: ProductVideoCreatePayload): Promise<ApiResponse<ProductVideoTask>>
   getProductVideoTask(taskId: string): Promise<ApiResponse<ProductVideoTask>>
   listProductVideoTasks(): Promise<ApiResponse<ProductVideoTask[]>>

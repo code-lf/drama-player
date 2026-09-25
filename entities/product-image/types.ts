@@ -63,6 +63,11 @@ export interface ProductImageGeneratePayload {
   splitSellingPoints: boolean
   aspectRatio: string
   resolution: string
+  /** 质量及格式与报价一起提交，避免页面预估和实际任务命中不同价格档位。 */
+  quality: 'low' | 'medium' | 'high'
+  background: 'auto' | 'transparent' | 'opaque'
+  outputFormat: 'png' | 'jpeg'
+  outputCompression?: number
   style: string
   /** 当前工作台场景用于服务端选择专用提示词结构，旧客户端不传时仍按商品图处理。 */
   workspaceMode?: 'product' | 'poster' | 'edit' | 'free'
@@ -92,6 +97,15 @@ export interface ProductImageGenerateResult {
   results: ProductImageResult[]
 }
 
+/** 异步批次状态可在页面刷新后独立查询。 */
+export interface ProductImageTaskStatus {
+  batchId: string
+  status: string
+  progress: number
+  currentStep: string
+  errorMessage: string
+}
+
 /** 一次可恢复的商品图生成批次；供应商内部请求与异常不暴露给用户端。 */
 export interface ProductImageHistoryBatch {
   id: string
@@ -104,6 +118,8 @@ export interface ProductImageHistoryBatch {
   requiredCredits: number
   count: number
   status: string
+  progress?: number
+  currentStep?: string
   aspectRatio: string
   resolution: string
   style: string

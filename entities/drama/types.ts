@@ -217,6 +217,10 @@ export interface DramaScriptScene {
   content: string
   dialogues: string[]
   suggestions: string[]
+  /** 人工编辑尚未发布时用于场次着色和一键还原，不会触碰当前生产资产。 */
+  hasUnpublishedChanges: boolean
+  unpublishedOriginalContent: string
+  unpublishedChangedAt: string
 }
 
 export interface DramaReviewDimension {
@@ -448,6 +452,8 @@ export interface DramaAnalysis {
   currentScriptVersion: string
   confirmedScriptVersionId: string
   analysisSnapshotId: string
+  /** 当前正式剧本之上的人工场次草稿；正式发布后清空，差异留在版本记录中。 */
+  unpublishedSceneChanges: Record<string, Record<string, unknown>>
 }
 
 export interface DramaProjectDetail {

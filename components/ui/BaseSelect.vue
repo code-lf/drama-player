@@ -7,7 +7,8 @@ export interface BaseSelectOption {
   description?: string
   badge?: string
   disabled?: boolean
-  preview?: '16:9' | '4:3' | '3:4' | '9:16' | '21:9'
+  // 比例预览直接保存“宽:高”，由组件动态计算形状，不限制固定比例枚举。
+  preview?: string
 }
 
 const props = withDefaults(defineProps<{
@@ -59,12 +60,16 @@ const selectClass = computed(() => {
   return classes.join(' ')
 })
 
-const previewClassMap: Record<NonNullable<BaseSelectOption['preview']>, string> = {
-  '16:9': 'h-2.5 w-5',
-  '4:3': 'h-3 w-4',
-  '3:4': 'h-4 w-3',
-  '9:16': 'h-5 w-2.5',
-  '21:9': 'h-2 w-6'
+function getPreviewStyle(preview?: string): Record<string, string> {
+  // 所有比例都按同一个 24px 边界缩放，新增比例无需再补 CSS 类名。
+  const [width, height] = String(preview || '').split(':').map(Number)
+  if (!width || !height) return {}
+  const maxEdge = 24
+  const scale = maxEdge / Math.max(width, height)
+  return {
+    width: `${Math.max(7, Math.round(width * scale))}px`,
+    height: `${Math.max(7, Math.round(height * scale))}px`
+  }
 }
 </script>
 
@@ -108,13 +113,13 @@ const previewClassMap: Record<NonNullable<BaseSelectOption['preview']>, string> 
           </span>
         </span>
         <template v-else>
-          <span v-if="selectedOption?.preview" class="base-select-preview" :class="previewClassMap[selectedOption.preview]" />
+          <span v-if="selectedOption?.preview" class="base-select-preview" :style="getPreviewStyle(selectedOption.preview)" />
           <span class="truncate">{{ selectedOption?.label || placeholder }}</span>
           <UBadge v-if="selectedOption?.badge" :label="selectedOption.badge" color="primary" variant="soft" size="xs" />
         </template>
       </template>
       <template #item-leading="{ item }">
-        <span v-if="item.preview" class="base-select-preview" :class="previewClassMap[item.preview]" />
+        <span v-if="item.preview" class="base-select-preview" :style="getPreviewStyle(item.preview)" />
       </template>
       <template #empty>{{ emptyText }}</template>
     </USelect>

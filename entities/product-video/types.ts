@@ -29,7 +29,7 @@ export interface ProductVideoResult {
 export interface ProductVideoTask {
   id: string
   template: ProductVideoTemplate | null
-  creationType: 'product' | 'model' | 'image_to_video' | 'digital_human'
+  creationType: 'product' | 'model' | 'image_to_video' | 'reference_video' | 'digital_human'
   prompt: string
   sourceImages: string[]
   status: 'queued' | 'running' | 'succeeded' | 'failed'
@@ -63,6 +63,51 @@ export interface ProductVideoCreatePayload {
   resolution: string
   resultCount: number
   model?: string
+  referenceVideoToken?: string
+}
+
+/** 视频同款的上传分析结果；用户可以编辑 suggestedPrompt 再一键制作。 */
+export interface ProductVideoReferenceAnalysis {
+  referenceVideoToken: string
+  videoUrl: string
+  durationSec: number
+  suggestedPrompt: string
+  visualHook: string
+  pacing: string
+  analysisAvailable: boolean
+  transcript: string
+  transcriptStatus: string
+  scriptDraft: string
+}
+
+/** 平台分享链接仅做来源识别；未获授权媒体时必须由用户上传视频。 */
+export interface ProductVideoReferenceLinkInspection {
+  platform: string
+  url: string
+  requiresUpload: boolean
+  message: string
+}
+
+/** AI 改写返回可编辑脚本与实际送入视频模型的描述，两者不可混用。 */
+export interface ProductVideoScriptOptimization {
+  script: string
+  prompt: string
+  hook: string
+}
+
+export interface DigitalHumanAvailability {
+  available: boolean
+  maxSeconds: number
+  message: string
+}
+
+export interface DigitalHumanQuote {
+  estimatedSeconds: number
+  creditsPerSecond: number
+  requiredCredits: number
+  currentBalance: number
+  balanceAfter: number
+  sufficient: boolean
 }
 
 export interface ProductVideoCreditPreview {

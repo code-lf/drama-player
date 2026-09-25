@@ -3,6 +3,7 @@ import type {
   DramaAnalyzePayload,
   DramaAssetGeneratePayload,
   DramaAssetProfile,
+  DramaAssetVisualPromptDraft,
   DramaAssetRepairRequest,
   DramaVisualBible,
   DramaWorkspaceAssetStatus,
@@ -20,6 +21,7 @@ import type {
   DramaScriptIngestPayload,
   DramaScriptSceneUpdatePayload,
   DramaScriptOptimizationPayload,
+  DramaProductionSyncAction,
   DramaSuggestionSourceRangePayload,
   DramaStoryboardGeneratePayload,
   StoryboardDirectorSegmentsPayload,
@@ -34,6 +36,15 @@ import type {
   StoryboardVideoPromptGeneratePayload,
 } from '~/shared/api/types'
 import type { EpisodeCutSavePayload } from '~/entities/drama/episodeCutTypes'
+import type { DramaProjectDetail } from '~/entities/drama/types'
+
+// 最近项目卡片悬停时可提前拉取详情；短 TTL 且只供下一次打开消费，避免复用陈旧项目快照。
+const projectDetailPrefetches = new Map<string, { promise: Promise<DramaProjectDetail>; expiresAt: number }>()
+const projectDetailPrefetchTtlMs = 15_000
+
+function requestProjectDetail(projectId: string): Promise<DramaProjectDetail> {
+  return callApi('drama/getProject', adapter => adapter.getDramaProject(projectId))
+}
 
 export const dramaService = {
   async getRuntimeConfig() {
@@ -46,6 +57,37 @@ export const dramaService = {
 
   async createProject(payload?: DramaProjectCreatePayload) {
     return callApi('drama/createProject', (adapter) => adapter.createDramaProject(payload ?? {}))
+  },
+
+  async getVisualStyles() {
+    return callApi('drama/getVisualStyles', adapter => adapter.getDramaVisualStyles!())
+  },
+
+  async getProductionStatus(projectId: string) {
+    return callApi('drama/getProductionStatus', adapter => adapter.getDramaProductionStatus!(projectId))
+  },
+
+  async getProductionVersionContent(projectId: string, productionVersionId: string) {
+    return callApi(
+      'drama/getProductionVersionContent',
+      adapter => adapter.getDramaProductionVersionContent!(projectId, productionVersionId),
+    )
+  },
+
+  async scanProductionImpact(projectId: string) {
+    return callApi('drama/scanProductionImpact', adapter => adapter.scanDramaProductionImpact!(projectId))
+  },
+
+  async quoteProductionSync(projectId: string, action: DramaProductionSyncAction) {
+    return callApi('drama/quoteProductionSync', adapter => adapter.quoteDramaProductionSync!(projectId, action))
+  },
+
+  async executeProductionSync(projectId: string, action: DramaProductionSyncAction, impactReportId: string) {
+    return callApi('drama/executeProductionSync', adapter => adapter.executeDramaProductionSync!(projectId, action, impactReportId))
+  },
+
+  async acceptExistingProduction(projectId: string, targetScriptVersion = '') {
+    return callApi('drama/acceptExistingProduction', adapter => adapter.acceptExistingDramaProduction!(projectId, targetScriptVersion))
   },
 
   async getProjects(page = 1, pageSize = 10) {
@@ -61,7 +103,36 @@ export const dramaService = {
   },
 
   async getProject(projectId: string) {
-    return callApi('drama/getProject', (adapter) => adapter.getDramaProject(projectId))
+    const prefetched = projectDetailPrefetches.get(projectId)
+    if (prefetched && prefetched.expiresAt > Date.now()) {
+      // 命中后立即移除，后续重新进入必须读取最新项目状态。
+      projectDetailPrefetches.delete(projectId)
+      return prefetched.promise
+    }
+    projectDetailPrefetches.delete(projectId)
+    return requestProjectDetail(projectId)
+  },
+
+  async prefetchProject(projectId: string): Promise<void> {
+    if (!projectId) return
+    const existing = projectDetailPrefetches.get(projectId)
+    if (existing && existing.expiresAt > Date.now()) return
+
+    // 卡片悬停预取仅保留少量项目，避免用户快速扫过列表时占用过多内存和请求。
+    while (projectDetailPrefetches.size >= 4) {
+      const oldestKey = projectDetailPrefetches.keys().next().value
+      if (!oldestKey) break
+      projectDetailPrefetches.delete(oldestKey)
+    }
+
+    const promise = requestProjectDetail(projectId)
+    projectDetailPrefetches.set(projectId, { promise, expiresAt: Date.now() + projectDetailPrefetchTtlMs })
+    // 预取失败不应产生未处理 Promise 警告；真正打开项目时仍会走正常请求并展示错误。
+    void promise.catch(() => {
+      if (projectDetailPrefetches.get(projectId)?.promise === promise) {
+        projectDetailPrefetches.delete(projectId)
+      }
+    })
   },
 
   async getAssetWorkspace(projectId: string) {
@@ -86,6 +157,14 @@ export const dramaService = {
 
   async updateAssetProfile(projectId: string, profile: Pick<DramaAssetProfile, 'asset_type' | 'asset_key'>, payload: { name?: string; is_required?: boolean; production_status?: DramaWorkspaceAssetStatus; selected_asset_id?: string; data?: Record<string, unknown> }) {
     return callApi('drama/updateAssetProfile', (adapter) => adapter.updateDramaAssetProfile!(projectId, profile.asset_type, profile.asset_key, payload))
+  },
+
+  async previewAssetVisualPrompt(projectId: string, profile: Pick<DramaAssetProfile, 'asset_type' | 'asset_key'>): Promise<DramaAssetVisualPromptDraft> {
+    return callApi('drama/previewAssetVisualPrompt', (adapter) => adapter.previewDramaAssetVisualPrompt!(projectId, profile.asset_type, profile.asset_key))
+  },
+
+  async confirmAssetVisualPrompt(projectId: string, profile: Pick<DramaAssetProfile, 'asset_type' | 'asset_key'>, prompt: string, baseHash: string): Promise<DramaAssetVisualPromptDraft> {
+    return callApi('drama/confirmAssetVisualPrompt', (adapter) => adapter.confirmDramaAssetVisualPrompt!(projectId, profile.asset_type, profile.asset_key, { prompt, base_hash: baseHash }))
   },
 
   async deleteAssetProfile(projectId: string, assetType: DramaWorkspaceAssetType, assetKey: string) {
@@ -265,6 +344,10 @@ export const dramaService = {
     return callApi('drama/getStoryboardWorkspace', adapter => adapter.getStoryboardWorkspace(projectId, episodeNo))
   },
 
+  async getStoryboardPlanHistory(projectId: string, episodeNo = 1, planVersionId = '') {
+    return callApi('drama/getStoryboardPlanHistory', adapter => adapter.getStoryboardPlanHistory(projectId, episodeNo, planVersionId))
+  },
+
   async updateStoryboardDirectorSegments(projectId: string, rowId: string, payload: StoryboardDirectorSegmentsPayload) {
     return callApi('drama/updateStoryboardDirectorSegments', adapter => adapter.updateStoryboardDirectorSegments(projectId, rowId, payload))
   },
@@ -283,6 +366,10 @@ export const dramaService = {
 
   async clearStoryboardFrameReference(projectId: string, rowId: string, slot: 'first' | 'last') {
     return callApi('drama/clearStoryboardFrameReference', adapter => adapter.clearStoryboardFrameReference(projectId, rowId, slot))
+  },
+
+  async inheritStoryboardFrameReference(projectId: string, rowId: string, slot: 'first' | 'last') {
+    return callApi('drama/inheritStoryboardFrameReference', adapter => adapter.inheritStoryboardFrameReference(projectId, rowId, slot))
   },
 
   async reviewStoryboards(projectId: string, payload: StoryboardReviewBatchPayload) {

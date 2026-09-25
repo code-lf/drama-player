@@ -4,6 +4,7 @@ import QRCode from 'qrcode'
 import type { CreditLedgerItem, CreditPackage, PaymentOrder } from '~/entities/account/types'
 import CreditAmount from '~/components/ui/CreditAmount.vue'
 import CreditIcon from '~/components/ui/CreditIcon.vue'
+import RedeemCodeDialog from '~/features/support/components/RedeemCodeDialog.vue'
 import { accountService } from '~/shared/api/services/accountService'
 
 interface Props {
@@ -14,6 +15,7 @@ interface Props {
 }
 
 const props = defineProps<Props>()
+const emit = defineEmits<{ redeemed: [] }>()
 const route = useRoute()
 const router = useRouter()
 
@@ -22,6 +24,7 @@ type LedgerFilter = 'all' | 'consume' | 'recharge' | 'grant'
 type PaymentMethod = 'wechat' | 'alipay'
 
 const activeBillingView = ref<BillingView>('recharge')
+const isRedeemDialogOpen = ref(false)
 const selectedBillingPackageId = ref('')
 const purchaseDialogPackageId = ref('')
 const paymentSuccessPackageId = ref('')
@@ -431,10 +434,13 @@ function closeSuccessPage(): void {
         <h1 class="text-[32px] font-black tracking-[-0.05em]">积分充值</h1>
         <p class="mt-2 text-[13px] font-semibold text-[#8492a8]">购买积分，用于角色、场景、分镜与视频生成等 AI 创作任务。</p>
       </div>
-      <button class="flex items-center gap-1.5 pt-2 text-[12px] font-black text-[#0d63ff] hover:text-[#0050d5]" type="button" @click="openLedgerDrawer">
-        <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M7 4h10v16H7zM9.5 8h5M9.5 12h5M9.5 16h3" stroke-linecap="round" stroke-linejoin="round" /></svg>
-        交易记录
-      </button>
+      <div class="flex shrink-0 items-center gap-3 pt-2">
+        <button class="rounded-[10px] border border-[#d5e4fa] bg-white px-4 py-2 text-[12px] font-black text-[#075fff] transition hover:bg-[#edf4ff]" type="button" @click="isRedeemDialogOpen = true">兑换码</button>
+        <button class="flex items-center gap-1.5 text-[12px] font-black text-[#0d63ff] hover:text-[#0050d5]" type="button" @click="openLedgerDrawer">
+          <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M7 4h10v16H7zM9.5 8h5M9.5 12h5M9.5 16h3" stroke-linecap="round" stroke-linejoin="round" /></svg>
+          交易记录
+        </button>
+      </div>
     </div>
 
     <div class="mb-6 flex items-center gap-2 rounded-[13px] bg-[#eef4ff] p-1.5 shadow-[0_8px_22px_rgba(15,23,42,0.03)]">
@@ -530,6 +536,7 @@ function closeSuccessPage(): void {
         <svg viewBox="0 0 24 24" class="mt-0.5 h-4 w-4 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 4h14v16H5zM8 8h8M8 12h8M8 16h5" stroke-linecap="round" stroke-linejoin="round" /></svg>
         积分实时到账，可用于角色、场景、分镜和视频生成；实际消耗以生成前显示的预计积分为准。
       </div>
+
     </template>
 
     <section v-else class="rounded-[18px] border border-[#e1eaf5] bg-white p-5 shadow-[0_14px_42px_rgba(15,23,42,0.05)]">
@@ -561,6 +568,8 @@ function closeSuccessPage(): void {
         </table>
       </div>
     </section>
+
+    <RedeemCodeDialog :open="isRedeemDialogOpen" @close="isRedeemDialogOpen = false" @redeemed="emit('redeemed')" />
 
     <Teleport to="body">
       <div v-if="isLedgerDrawerOpen" class="fixed inset-0 z-[120] bg-slate-950/20" @click.self="closeLedgerDrawer">

@@ -4,6 +4,7 @@ import { useAuthStore } from '~/features/auth/store/useAuthStore'
 import { announcementService } from '~/shared/api/services/announcementService'
 import { ANNOUNCEMENT_READ_CHANGED_EVENT, persistAnnouncementReadIds, restoreAnnouncementReadIds as restoreStoredAnnouncementReadIds } from '~/shared/utils/announcementReadState'
 import { sanitizeAnnouncementContent } from '~/shared/utils/sanitizeAnnouncementContent'
+import { announcementExcerpt } from '~/shared/utils/announcementExcerpt'
 
 const authStore = useAuthStore()
 const router = useRouter()
@@ -29,14 +30,6 @@ function restoreReadIds(): void {
 
 function persistReadIds(): void {
   persistAnnouncementReadIds(currentUserKey.value, readIds.value)
-}
-
-function plainTextContent(content: string): string {
-  if (!content) return ''
-  if (!import.meta.client) return content.replace(/<[^>]+>/g, '').trim()
-  const container = document.createElement('div')
-  container.innerHTML = sanitizeAnnouncementContent(content)
-  return (container.textContent || '').replace(/\s+/g, ' ').trim()
 }
 
 function relativeTime(value: string): string {
@@ -209,7 +202,7 @@ onBeforeUnmount(() => {
                 <span v-else class="h-1.5 w-1.5 shrink-0 rounded-full bg-[#cbd5e1]"></span>
                 <span class="truncate text-[14px] font-black text-[#1f2937]">{{ item.title }}</span>
               </span>
-              <span class="mt-1 block truncate text-[12px] font-semibold text-[#7b8aa3]">{{ plainTextContent(item.content) || '点击查看公告详情' }}</span>
+              <span class="mt-1 block truncate text-[12px] font-semibold text-[#7b8aa3]">{{ announcementExcerpt(item.content) || '点击查看公告详情' }}</span>
             </span>
 
             <span class="shrink-0 self-start pt-1 text-[12px] font-semibold text-[#8a98ad]">{{ relativeTime(item.updatedAt || item.createdAt) }}</span>
