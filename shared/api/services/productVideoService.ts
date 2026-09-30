@@ -33,7 +33,7 @@ export const productVideoService = {
   listTemplates(params?: { category?: string; featured?: boolean }) {
     return callApi('productVideo/templates', (adapter) => adapter.listProductVideoTemplates(params))
   },
-  previewCredits(payload: Pick<ProductVideoCreatePayload, 'templateId' | 'durationSec' | 'resultCount' | 'model' | 'resolution' | 'referenceVideoToken'>) {
+  previewCredits(payload: Pick<ProductVideoCreatePayload, 'templateId' | 'durationSec' | 'resultCount' | 'model' | 'resolution' | 'referenceVideoToken'> & Partial<ProductVideoCreatePayload>) {
     return callApi('productVideo/creditPreview', (adapter) => adapter.previewProductVideoCredits(payload))
   },
   createTask(payload: ProductVideoCreatePayload) {

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // 显式导入全局功能协议弹窗，避免 components/system 目录前缀导致自动组件名不一致。
 import FeatureLegalConsentDialog from '~/components/system/FeatureLegalConsentDialog.vue'
+import ActionConfirmDialog from '~/components/system/ActionConfirmDialog.vue'
 </script>
 
 <template>
@@ -11,5 +12,6 @@ import FeatureLegalConsentDialog from '~/components/system/FeatureLegalConsentDi
       <NuxtPage />
     </NuxtLayout>
     <FeatureLegalConsentDialog />
+    <ActionConfirmDialog />
   </UApp>
 </template>

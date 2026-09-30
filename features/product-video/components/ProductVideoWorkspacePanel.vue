@@ -1,10 +1,16 @@
 <script setup lang="ts">
+import { useActionDialog } from '~/composables/useActionDialog'
+const { confirm: confirmAction } = useActionDialog()
 import type { DigitalHumanAvailability, ProductVideoReferenceAnalysis, ProductVideoReferenceLinkInspection, ProductVideoTask, ProductVideoTemplate } from '~/entities/product-video/types'
 import CreditAmount from '~/components/ui/CreditAmount.vue'
 import { useAccountStore } from '~/features/billing/store/useAccountStore'
 import { productVideoService } from '~/shared/api/services/productVideoService'
 import { generationProfileService } from '~/shared/api/services/generationProfileService'
 import { PRODUCT_REFERENCE_IMAGE_MAX_BYTES, PRODUCT_REFERENCE_IMAGE_MAX_MB } from '~/shared/constants/uploadLimits'
+import LibraryPicker from '~/features/library/components/LibraryPicker.vue'
+import { libraryService } from '~/shared/api/services/libraryService'
+import { request } from '~/shared/api/adapters/httpAdapter'
+import type { LibraryItem, LibraryReference, LibraryVersion } from '~/entities/library/types'
 
 type WorkspaceView = 'home' | 'create' | 'templates' | 'digital' | 'progress' | 'result'
 type CreationType = ProductVideoTask['creationType']
@@ -35,6 +41,79 @@ const templates = ref<ProductVideoTemplate[]>([])
 const recentTasks = ref<ProductVideoTask[]>([])
 const activeTemplateId = ref('')
 const sourceImages = ref<string[]>([])
+const referenceImageLimit = ref(0)
+const libraryEnabled = ref(false), libraryPickerOpen = ref(false), libraryPickerType = ref('image')
+const sourceLibraryRefs = reactive<Record<string, LibraryReference>>({})
+const libraryVideo = ref<LibraryReference | null>(null)
+const libraryAnalysisDraft = ref<LibraryReference | null>(null)
+const libraryDocuments = ref<LibraryReference[]>([])
+const pendingLibraryUploads = ref<Array<{ file: File; preview: string; error: string; kind: 'image' | 'video' }>>([])
+// 槽位包含处理中与失败草稿，避免连续选择文件时突破合计上限。
+const imageUploadsInFlight = ref(0)
+const creationRequestId = ref(''), creationRequestFingerprint = ref('')
+function libraryInputs() {
+  const legacy: string[] = [], refs: LibraryReference[] = [], order: string[] = []
+  for (const image of sourceImages.value) {
+    if (sourceLibraryRefs[image]) { order.push(`library:${refs.length}`); refs.push(sourceLibraryRefs[image]!) }
+    else { order.push(`upload:${legacy.length}`); legacy.push(image) }
+  }
+  for (const reference of [...libraryDocuments.value, ...(creationType.value === 'reference_video' && libraryVideo.value ? [libraryVideo.value] : [])]) { order.push(`library:${refs.length}`); refs.push(reference) }
+  return { sourceImages: legacy, libraryRefs: refs, inputOrder: order }
+}
+/** 同版本分析由后端复用，不把预览地址当作视频输入凭证。 */
+async function analyzeLibraryVideo(reference: LibraryReference, retry = false) {
+  referenceAnalyzing.value = true
+  libraryAnalysisDraft.value = reference
+  libraryVideo.value = null
+  try {
+    const value = await request<any>('/library/reference-video/analyze', { method: 'POST', body: reference, query: { retry } })
+    libraryVideo.value = reference
+    applyReferenceAnalysis({ referenceVideoToken: '', videoUrl: libraryService.previewUrl(value.video_url), durationSec: value.duration_sec,
+      suggestedPrompt: value.suggested_prompt, visualHook: value.visual_hook, pacing: value.pacing,
+      analysisAvailable: value.analysis_available, transcript: value.transcript, transcriptStatus: value.transcript_status, scriptDraft: value.script_draft })
+    libraryAnalysisDraft.value = null
+  } finally { referenceAnalyzing.value = false }
+}
+async function selectLibrary(values: Array<{ item: LibraryItem; version: LibraryVersion; reference: LibraryReference }>) {
+  try {
+    for (const value of values) {
+      if (value.item.media_type === 'video') { referenceSource.value = 'upload'; await analyzeLibraryVideo(value.reference) }
+      else if (value.item.media_type === 'document') libraryDocuments.value.push(value.reference)
+      else {
+        const preview = libraryService.previewUrl(value.version.preview_url)
+        sourceLibraryRefs[preview] = value.reference; sourceImages.value.push(preview)
+      }
+    }
+  } catch (exception) { message.value = (exception as Error).message }
+}
+async function ingestUpload(file: File, preview: string, kind: 'image' | 'video', retry = false) {
+  const item = await libraryService.upload(file, 'other')
+  const reference = { item_id: item.id, version_id: item.versions[0]!.id, purpose: kind === 'video' ? 'reference_video' : 'reference' }
+  if (kind === 'video') {
+    // 上传入库已成功，分析失败走独立重试，不能谎称文件没有保存或再次上传同一文件。
+    try { await analyzeLibraryVideo(reference, retry) }
+    catch (exception) { message.value = `视频已保存到个人资料，但分析未完成：${(exception as Error).message}` }
+  }
+  else { sourceLibraryRefs[preview] = reference; sourceImages.value.push(preview) }
+}
+async function retryLibraryUpload(index: number) {
+  const pending = pendingLibraryUploads.value[index]
+  if (!pending) return
+  try { await ingestUpload(pending.file, pending.preview, pending.kind, true); pendingLibraryUploads.value.splice(index, 1) }
+  catch (exception) { pending.error = (exception as Error).message }
+}
+async function useUploadOnce(index: number) {
+  const pending = pendingLibraryUploads.value[index]
+  if (!pending || !await confirmAction('确认仅用于本次创作？文件不会保存到个人资料，也不会自动开始生成。')) return
+  if (pending.kind === 'image') sourceImages.value.push(pending.preview)
+  else { libraryVideo.value = null; applyReferenceAnalysis(await productVideoService.analyzeReference(pending.file)) }
+  pendingLibraryUploads.value.splice(index, 1)
+}
+async function saveLibraryResult(taskId: string, resultId: string) {
+  try { await libraryService.saveResult('product_video', taskId, resultId); message.value = '已保存到个人资料。' }
+  catch (exception) { message.value = (exception as Error).message }
+}
+onMounted(async () => { try { libraryEnabled.value = (await libraryService.capabilities()).video_picker } catch { libraryEnabled.value = false } })
 const prompt = ref('突出上传商品的真实外观、材质与核心卖点，以自然镜头和清晰节奏制作短视频。')
 const durationSec = ref(10)
 const aspectRatio = ref('9:16')
@@ -150,7 +229,7 @@ function openMode(mode: CreationType): void {
 
 function selectReferenceSource(source: 'link' | 'upload' | 'script'): void {
   /** 脚本入口不携带参考视频；上传入口继续使用已有的签名参考片及视频输入报价。 */
-  if (source !== referenceSource.value) referenceAnalysis.value = null
+  if (source !== referenceSource.value) { referenceAnalysis.value = null; libraryVideo.value = null }
   referenceSource.value = source
   creationType.value = source === 'script' ? 'product' : 'reference_video'
   message.value = ''
@@ -166,7 +245,7 @@ function applyReferenceAnalysis(result: ProductVideoReferenceAnalysis): void {
 watch(referenceLinkText, () => {
   // 用户修改已解析的链接后，旧凭证不再代表当前输入，必须重新识别/导入。
   referenceLinkInspection.value = null
-  if (referenceSource.value === 'link') referenceAnalysis.value = null
+  if (referenceSource.value === 'link') { referenceAnalysis.value = null; libraryVideo.value = null }
 })
 
 async function inspectReferenceLink(): Promise<void> {
@@ -231,6 +310,13 @@ async function handleReferenceUpload(event: Event): Promise<void> {
   const file = input.files?.[0]
   input.value = ''
   if (!file) return
+  if (libraryEnabled.value) {
+    referenceAnalyzing.value = true
+    try { await ingestUpload(file, '', 'video') }
+    catch (exception) { pendingLibraryUploads.value.push({ file, preview: '', kind: 'video', error: (exception as Error).message }) }
+    finally { referenceAnalyzing.value = false }
+    return
+  }
   referenceAnalysis.value = null
   if (file.type !== 'video/mp4' || file.size > 50 * 1024 * 1024) {
     message.value = '参考视频仅支持 30 秒内的 MP4，文件不超过 50MB。'
@@ -256,7 +342,7 @@ async function startDigitalHuman(): Promise<void> {
       message.value = `预计消耗 ${quote.requiredCredits} 点，当前余额 ${quote.currentBalance} 点。`
       return
     }
-    if (!window.confirm(`口播约 ${quote.estimatedSeconds} 秒，预计消耗 ${quote.requiredCredits} 点。确认生成吗？`)) return
+    if (!await confirmAction(`口播约 ${quote.estimatedSeconds} 秒，预计消耗 ${quote.requiredCredits} 点。确认生成吗？`)) return
     const task = await productVideoService.createDigitalHumanTask({ script: digitalScript.value.trim(), resolution: digitalResolution.value })
     activeTask.value = task
     if (accountStore.profile) accountStore.profile.creditBalance = task.balanceAfter
@@ -287,6 +373,7 @@ async function loadGenerationProfile(): Promise<void> {
     const profile = await generationProfileService.get('product_video')
     const schema = profile.input_schema || {}
     const defaults = profile.default_params || {}
+    referenceImageLimit.value = Math.max(0, Number(schema.max_reference_count ?? 0))
     const ratiosRaw = schema.aspect_ratio || schema.aspect_ratios
     const resolutionsRaw = schema.resolution || schema.resolutions
     const durationRule = (schema.duration_sec || {}) as { min?: number; max?: number }
@@ -319,7 +406,7 @@ async function loadTemplates(): Promise<void> {
 }
 
 function handleUpload(event: Event): void {
-  const files = Array.from((event.target as HTMLInputElement).files || []).slice(0, Math.max(0, 3 - sourceImages.value.length))
+  const files = Array.from((event.target as HTMLInputElement).files || []).slice(0, Math.max(0, referenceImageLimit.value - sourceImages.value.length - imageUploadsInFlight.value - pendingLibraryUploads.value.filter(value => value.kind === 'image').length))
   files.forEach((file) => {
     if (!file.type.startsWith('image/')) {
       message.value = '仅支持上传 JPG、PNG、WebP 商品图片'
@@ -330,13 +417,25 @@ function handleUpload(event: Event): void {
       return
     }
     const reader = new FileReader()
-    reader.onload = () => sourceImages.value.push(String(reader.result || ''))
+    imageUploadsInFlight.value++
+    reader.onerror = () => { imageUploadsInFlight.value--; message.value = '文件读取失败，请重新选择。' }
+    reader.onload = async () => {
+      const preview = String(reader.result || '')
+      try {
+        if (!libraryEnabled.value) sourceImages.value.push(preview)
+        else await ingestUpload(file, preview, 'image')
+      }
+      catch (exception) { pendingLibraryUploads.value.push({ file, preview, kind: 'image', error: (exception as Error).message }) }
+      finally { imageUploadsInFlight.value-- }
+    }
     reader.readAsDataURL(file)
   })
   ;(event.target as HTMLInputElement).value = ''
 }
 
 async function startCreation(): Promise<void> {
+  if (loading.value || referenceAnalyzing.value || imageUploadsInFlight.value) { message.value = '请等待当前上传或请求完成。'; return }
+  if (pendingLibraryUploads.value.length) { message.value = '请先处理未入库文件：重试保存或明确选择仅用于本次创作。'; return }
   message.value = ''
   if (!activeTemplate.value) {
     message.value = '请先选择一个视频模板'
@@ -346,11 +445,11 @@ async function startCreation(): Promise<void> {
     message.value = '请至少上传一张商品或人物素材'
     return
   }
-  if (studioMode.value === 'reference' && referenceSource.value === 'link' && !referenceAnalysis.value?.referenceVideoToken) {
+  if (studioMode.value === 'reference' && referenceSource.value === 'link' && !referenceAnalysis.value?.referenceVideoToken && !libraryVideo.value) {
     message.value = '分享链接不能直接读取视频。请切换到「上传视频」或「粘贴脚本」后继续。'
     return
   }
-  if (creationType.value === 'reference_video' && !referenceAnalysis.value?.referenceVideoToken) {
+  if (creationType.value === 'reference_video' && !referenceAnalysis.value?.referenceVideoToken && !libraryVideo.value) {
     message.value = '请先上传并分析参考视频。'
     return
   }
@@ -366,6 +465,7 @@ async function startCreation(): Promise<void> {
     loading.value = true
     // 新默认模型按清晰度和秒数计费；必须取得服务端实时报价并由用户确认后才创建付费任务。
     const quote = await productVideoService.previewCredits({
+      ...libraryInputs(), prompt: finalPrompt, aspectRatio: aspectRatio.value,
       templateId: activeTemplate.value.id,
       durationSec: durationSec.value,
       resultCount: resultCount.value,
@@ -377,12 +477,15 @@ async function startCreation(): Promise<void> {
       message.value = `预计消耗 ${quote.requiredCredits} 点，当前余额 ${quote.currentBalance} 点，请先充值。`
       return
     }
-    if (!window.confirm(`本次生成 ${resultCount.value} 个 ${durationSec.value} 秒视频（${resolution.value.toUpperCase()}），预计消耗 ${quote.requiredCredits} 点。当前余额 ${quote.currentBalance} 点，扣后余额 ${quote.balanceAfter} 点。确认生成吗？`)) return
+    if (!await confirmAction(`本次生成 ${resultCount.value} 个 ${durationSec.value} 秒视频（${resolution.value.toUpperCase()}），输入参考视频 ${quote.referenceVideoSeconds || 0} 秒（已计入费用），预计消耗 ${quote.requiredCredits} 点。当前余额 ${quote.currentBalance} 点，扣后余额 ${quote.balanceAfter} 点。确认生成吗？`)) return
+    const fingerprint = JSON.stringify({ ...libraryInputs(), prompt: finalPrompt, template: activeTemplate.value.id, duration: durationSec.value, resolution: resolution.value, aspect: aspectRatio.value, count: resultCount.value, model: props.defaultVideoModel, token: referenceAnalysis.value?.referenceVideoToken })
+    if (fingerprint !== creationRequestFingerprint.value) { creationRequestId.value = crypto.randomUUID(); creationRequestFingerprint.value = fingerprint }
     const task = await productVideoService.createTask({
+      ...libraryInputs(), inputSnapshotId: quote.inputSnapshotId, requestId: creationRequestId.value,
       templateId: activeTemplate.value.id,
       creationType: creationType.value,
       prompt: finalPrompt,
-      sourceImages: sourceImages.value,
+      sourceImages: libraryInputs().sourceImages,
       durationSec: durationSec.value,
       aspectRatio: aspectRatio.value,
       resolution: resolution.value,
@@ -440,6 +543,11 @@ function resetCreation(): void {
   activeTask.value = null
   sourceImages.value = []
   referenceAnalysis.value = null
+  libraryVideo.value = null
+  libraryAnalysisDraft.value = null
+  libraryDocuments.value = []
+  Object.keys(sourceLibraryRefs).forEach(key => delete sourceLibraryRefs[key])
+  creationRequestId.value = ''; creationRequestFingerprint.value = ''
   message.value = ''
   view.value = 'home'
 }
@@ -452,6 +560,11 @@ onBeforeUnmount(stopPolling)
 
 <template>
   <section class="product-video-shell mx-auto max-w-[1460px]">
+    <LibraryPicker v-model:open="libraryPickerOpen" kind="video" :model="defaultVideoModel" :media-type="libraryPickerType" :remaining="libraryPickerType === 'video' ? 1 : libraryPickerType === 'document' ? 3 - libraryDocuments.length : referenceImageLimit - sourceImages.length - imageUploadsInFlight - pendingLibraryUploads.filter(value => value.kind === 'image').length" @select="selectLibrary" />
+    <div v-if="libraryEnabled && view === 'create'" class="flex gap-3 mb-4 text-sm text-blue-600"><button @click="libraryPickerType = 'image'; libraryPickerOpen = true">商品图片：从资料库选择</button><button v-if="studioMode === 'reference'" @click="libraryPickerType = 'video'; libraryPickerOpen = true">参考视频：从资料库选择</button><button @click="libraryPickerType = 'document'; libraryPickerOpen = true">引用参考原文</button></div>
+    <button v-if="libraryEnabled && activeTask && selectedResult?.videoUrl && view === 'result'" class="mb-3 text-blue-600 text-sm" @click="saveLibraryResult(activeTask.id, selectedResult.id)">保存当前视频到个人资料</button>
+    <button v-if="libraryAnalysisDraft && !referenceAnalyzing" class="mb-3 text-blue-600 text-sm" @click="analyzeLibraryVideo(libraryAnalysisDraft, true).catch(error => message = error.message)">重试所选资料视频分析</button>
+    <div v-for="(pending, index) in pendingLibraryUploads" :key="index" class="p-3 bg-amber-50 text-sm mb-3">{{ pending.file.name }}：{{ pending.error }}<button class="ml-3" @click="retryLibraryUpload(index)">重试保存</button><button class="ml-3" @click="useUploadOnce(index)">仅用于本次创作</button><button class="ml-3" @click="pendingLibraryUploads.splice(index, 1)">移除此文件</button></div>
     <div v-if="message" class="mb-4 flex items-center justify-between rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-bold text-rose-600">
       <span>{{ message }}</span><button type="button" class="text-rose-500" @click="message = ''">关闭</button>
     </div>
@@ -505,7 +618,7 @@ onBeforeUnmount(stopPolling)
           </div>
           <div v-if="studioMode === 'reference' && (referenceSource !== 'link' || referenceAnalysis)" class="pv-field"><div class="pv-field-head"><b>2. 参考脚本 / 你的成片文案</b><span>{{ referenceScript.length }}/800</span></div><textarea v-model="referenceScript" maxlength="800" class="pv-script-input" placeholder="粘贴参考视频口播、文字脚本，或直接写自己的短片文案；可手动修改"></textarea><p class="pv-field-hint">上传或导入视频后会填入原创草稿；你可以随时修改。最终生成会以当前编辑内容为准。</p></div>
           <div v-if="studioMode === 'reference' && (referenceSource !== 'link' || referenceAnalysis)" class="pv-field"><div class="pv-field-head"><b>3. 你的商品卖点</b><button type="button" :disabled="optimizingScript" @click="optimizeReferenceScript"><span class="i-lucide-sparkles"></span> {{ optimizingScript ? 'AI 改写中…' : 'AI 提炼并优化脚本' }}</button></div><textarea v-model="productDetails" maxlength="1000" placeholder="填写自己的商品名称、真实卖点、目标受众和希望强调的转化信息"></textarea></div>
-          <div class="pv-field"><div class="pv-field-head"><b>上传你的商品素材</b><span>最多 3 张</span></div><div class="pv-upload-list"><div v-for="(image, index) in sourceImages" :key="image" class="pv-upload-thumb"><img :src="image" alt="已上传素材" /><button type="button" @click="sourceImages.splice(index, 1)">×</button></div><label v-if="sourceImages.length < 3" class="pv-upload-trigger"><span class="i-lucide-plus"></span><small>上传商品图</small><input type="file" accept="image/png,image/jpeg,image/webp" multiple @change="handleUpload" /></label></div></div>
+          <div class="pv-field"><div class="pv-field-head"><b>上传你的商品素材</b><span>最多 {{ referenceImageLimit }} 张</span></div><div class="pv-upload-list"><div v-for="(image, index) in sourceImages" :key="image" class="pv-upload-thumb"><img :src="image" alt="已上传素材" /><button type="button" @click="sourceImages.splice(index, 1)">×</button></div><label v-if="sourceImages.length < referenceImageLimit" class="pv-upload-trigger"><span class="i-lucide-plus"></span><small>上传商品图</small><input type="file" accept="image/png,image/jpeg,image/webp" multiple @change="handleUpload" /></label></div></div>
           <div v-if="studioMode === 'trending'" class="pv-field"><div class="pv-field-head"><b>灵感模板</b><button type="button" @click="view = 'templates'; loadTemplates()">更换模板 <span class="i-lucide-chevron-right"></span></button></div><div class="pv-mini-template-grid"><button v-for="template in effectiveTemplates.slice(0, 5)" :key="template.id" type="button" :class="{ active: activeTemplateId === template.id }" @click="selectTemplate(template)"><img :src="siteAsset(template.coverUrl)" :alt="template.name" /><small>{{ template.name }}</small></button></div></div>
           <div class="pv-field"><div class="pv-field-head"><b>{{ studioMode === 'reference' ? '4. 视频画面描述（可编辑）' : '创意描述' }}</b><span>{{ prompt.length }}/1500</span></div><textarea v-model="prompt" maxlength="1500" :placeholder="studioMode === 'reference' ? 'AI 改写后自动填入，也可自己描述商品画面、动作与节奏' : '描述商品、人物、画面风格与想突出的卖点'"></textarea></div>
           <div class="pv-field"><div class="pv-field-head"><b>视频设置</b></div><div class="pv-setting-grid"><label>比例<select v-model="aspectRatio"><option v-for="ratio in aspectRatioOptions" :key="ratio" :value="ratio">{{ ratio }}</option></select></label><label>时长<select v-model.number="durationSec"><option v-for="second in durationOptions" :key="second" :value="second">{{ second }} 秒</option></select></label><label>生成数量<select v-model.number="resultCount"><option :value="1">1 个</option><option :value="2">2 个</option><option :value="4">4 个</option></select></label><label>清晰度<select v-model="resolution"><option v-for="item in resolutionOptions" :key="item" :value="item">{{ item.toUpperCase() }}</option></select></label></div></div>

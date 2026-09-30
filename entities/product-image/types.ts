@@ -1,4 +1,6 @@
 export interface ProductImageReference {
+  /** 库引用只提交编号，dataUrl 仅用于页面短期预览。 */
+  libraryRef?: import('~/entities/library/types').LibraryReference
   name: string
   dataUrl: string
 }
@@ -29,6 +31,7 @@ export interface ProductSellingPoint {
 }
 
 export interface ProductImageCreditPreview {
+  inputSnapshotId?: string
   provider: string
   model: string
   requiredCredits: number
@@ -52,6 +55,9 @@ export interface ProductImageResult {
 }
 
 export interface ProductImageGeneratePayload {
+  libraryRefs?: import('~/entities/library/types').LibraryReference[]
+  inputOrder?: string[]
+  inputSnapshotId?: string
   /** 一次点击生成的稳定批次号，用于串联规划、生图、历史和管理端审计。 */
   batchId?: string
   prompt: string

@@ -7,7 +7,7 @@ export const productImageService = {
     return callApi('productImage/listTemplates', (adapter) => adapter.listProductImageTemplates(params))
   },
 
-  async previewCredits(payload: Pick<ProductImageGeneratePayload, 'count' | 'model' | 'prompt' | 'splitSellingPoints' | 'templateId' | 'resolution' | 'quality' | 'background' | 'outputFormat' | 'outputCompression'>) {
+  async previewCredits(payload: Pick<ProductImageGeneratePayload, 'count' | 'model' | 'prompt' | 'splitSellingPoints' | 'templateId' | 'resolution' | 'quality' | 'background' | 'outputFormat' | 'outputCompression'> & Partial<ProductImageGeneratePayload>) {
     return callApi('productImage/previewCredits', (adapter) => adapter.previewProductImageCredits(payload))
   },
 

@@ -15,6 +15,7 @@ import PlaceholderWorkspacePanel from '~/features/dashboard/components/Placehold
 import ProjectDirectoryPanel from '~/features/projects/components/ProjectDirectoryPanel.vue'
 import ProductImageWorkspacePanel from '~/features/product-image/components/ProductImageWorkspacePanel.vue'
 import ProductVideoWorkspacePanel from '~/features/product-video/components/ProductVideoWorkspacePanel.vue'
+import LibraryWorkspacePanel from '~/features/library/components/LibraryWorkspacePanel.vue'
 import { useAccountStore } from '~/features/billing/store/useAccountStore'
 import { useThemeStore } from '~/features/ui/store/useThemeStore'
 import { useAuthStore } from '~/features/auth/store/useAuthStore'
@@ -30,7 +31,7 @@ import {
 import type { EpisodeCutTask } from '~/entities/drama/episodeCutTypes'
 
 type DashboardMenuKey = 'drama' | 'product' | 'product-video' | 'billing' | 'none'
-type DashboardWorkspaceView = 'console' | 'projects' | 'exports' | 'billing' | 'announcements' | 'help'
+type DashboardWorkspaceView = 'console' | 'projects' | 'exports' | 'billing' | 'announcements' | 'help' | 'library'
 type CreativeIntent = 'drama' | 'ad' | 'general'
 type ScriptInputMode = 'text' | 'file'
 type DramaSubmissionStage = 'idle' | 'creating' | 'uploading' | 'starting' | 'navigating'
@@ -1076,6 +1077,11 @@ async function loadExportTasks(): Promise<void> {
 }
 
 function syncWorkspaceRouteState(path: string): void {
+  if (path === '/dashboard-library') {
+    activeMenu.value = 'none'
+    activeWorkspaceView.value = 'library'
+    return
+  }
   // 根据当前路由恢复左侧菜单高亮与主内容区，保证浏览器刷新后仍停在原页面。
   if (path === '/dashboard-projects') {
     activeMenu.value = 'none'
@@ -1500,6 +1506,7 @@ onBeforeUnmount(() => {
             @open-project="openDramaProject"
           />
 
+          <LibraryWorkspacePanel v-else-if="activeWorkspaceView === 'library'" />
           <ProductImageWorkspacePanel
             v-else-if="activeMenu === 'product'"
             :current-credit-balance="currentCreditBalance"

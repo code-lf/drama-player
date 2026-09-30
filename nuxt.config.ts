@@ -110,6 +110,8 @@ export default defineNuxtConfig({
     '/dashboard-canvas': { ssr: false },
     '/dashboard-exports': { ssr: false },
     '/dashboard-help': { ssr: false },
+    // 资料管理复用工作台登录态和站内浮层，同样只在浏览器端初始化。
+    '/dashboard-library': { ssr: false },
     '/dashboard-product': { ssr: false },
     '/dashboard-product-video': { ssr: false },
     '/dashboard-projects': { ssr: false }

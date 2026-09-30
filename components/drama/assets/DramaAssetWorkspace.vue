@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { useActionDialog } from '~/composables/useActionDialog'
+const { confirm: confirmAction, prompt: promptAction } = useActionDialog()
 import {
   AlertTriangle, BriefcaseBusiness, Check, CircleHelp, Clock3,
   Image as ImageIcon, Layers3, LockKeyhole, Maximize2, MoreHorizontal, Mountain,
@@ -15,6 +17,10 @@ import BaseSelect, { type BaseSelectOption } from '~/components/ui/BaseSelect.vu
 import BaseTooltip from '~/components/ui/BaseTooltip.vue'
 import LivButton from '~/components/liv-ui/LivButton.vue'
 import LivDialog from '~/components/liv-ui/LivDialog.vue'
+import LibraryPicker from '~/features/library/components/LibraryPicker.vue'
+import { libraryService } from '~/shared/api/services/libraryService'
+import { request } from '~/shared/api/adapters/httpAdapter'
+import type { LibraryItem, LibraryReference, LibraryVersion } from '~/entities/library/types'
 import type {
   DramaAssetConsistencyEstimate,
   DramaAssetGenerationEstimate,
@@ -36,6 +42,78 @@ const props = withDefaults(defineProps<{
   coverImageUrl: '',
   allowHistoricalWorkspace: false,
 })
+const libraryEnabled = ref(false), libraryPickerOpen = ref(false)
+const libraryTarget = ref<DramaAssetProfile | null>(null)
+const candidateOpen = ref(false), libraryCandidates = ref<Array<{ profile_id: string; profile_name: string; item: LibraryItem; status: string; message: string }>>([])
+const candidateSelections = ref<string[]>([])
+const libraryFeedback = ref('')
+const pendingLibraryUploads = ref<Array<{ file: File; profile: DramaAssetProfile; error: string }>>([])
+onMounted(async () => { try { libraryEnabled.value = (await libraryService.capabilities()).drama_picker } catch { libraryEnabled.value = false } })
+function chooseLibrary(profile: DramaAssetProfile) { libraryTarget.value = profile; libraryPickerOpen.value = true }
+async function bindLibrary(values: Array<{ item: LibraryItem; version: LibraryVersion; reference: LibraryReference }>) {
+  const profile = libraryTarget.value, value = values[0]
+  if (!profile || !value) return false
+  const replace = !!profile.selected_asset_id
+  if (replace && !await confirmAction('确认将当前资产选择替换为此资料版本？旧镜头和历史作品不会自动更换。')) return false
+  try {
+    const result = await request<{ status: string; message: string }>(`/library/drama/projects/${props.projectId}/bind`, { method: 'POST', body: { profile_id: profile.id, reference: value.reference, replace } })
+    libraryFeedback.value = result.status === 'bound' ? '已绑定，仍需按原流程确认使用。' : result.message || '未能绑定，请检查资料状态。'
+    await loadWorkspace(true)
+    return result.status === 'bound'
+  } catch (exception) { libraryFeedback.value = (exception as Error).message; return false }
+}
+async function saveLibrary(profile: DramaAssetProfile, assetId = profile.selected_asset_id) {
+  if (!assetId) return
+  try { await libraryService.saveResult('drama_asset', assetId, '', profile.asset_type === 'role' ? 'character' : profile.asset_type); libraryFeedback.value = '已保存到个人资料。' }
+  catch (exception) { libraryFeedback.value = (exception as Error).message }
+}
+async function variantLibrary(profile: DramaAssetProfile) {
+  if (!profile.selected_asset_id) return
+  const state = await promptAction('请输入新服装或新场景状态（创建后须到个人资料上传新版本）')
+  if (!state?.trim()) return
+  try {
+    const item = await libraryService.saveResult('drama_asset', profile.selected_asset_id, '', profile.asset_type === 'role' ? 'character' : profile.asset_type)
+    await request('/library/variants', { method: 'POST', body: { reference: { item_id: item.id, version_id: item.versions[0]!.id, purpose: profile.asset_type }, name: `${profile.name} · 变体`, state: { [profile.asset_type === 'role' ? 'costume' : 'scene_state']: state.trim() } } })
+    libraryFeedback.value = '变体已保存到个人资料。请在资料管理中上传新版本；不会把旧图自动当作新形象。'
+  } catch (exception) { libraryFeedback.value = (exception as Error).message }
+}
+async function showLibraryCandidates() {
+  try {
+    const result = await request<{ items: typeof libraryCandidates.value; message: string }>(`/library/drama/projects/${props.projectId}/candidates`)
+    // 已选定资产沿用原项目结果，前端也过滤旧服务可能返回的重复建议；后端绑定仍独立校验以防并发覆盖。
+    const selectedIds = new Set((workspace.value?.assets || []).filter(profile => profile.selected_asset_id).map(profile => profile.id))
+    libraryCandidates.value = result.items.filter(value => !selectedIds.has(value.profile_id))
+    candidateSelections.value = []; libraryFeedback.value = result.message; candidateOpen.value = true
+  } catch (exception) { libraryFeedback.value = (exception as Error).message }
+}
+async function confirmLibraryCandidates() {
+  const values = libraryCandidates.value.filter(value => candidateSelections.value.includes(`${value.profile_id}:${value.item.id}`))
+  // 同一资产需求只能确认一个候选，避免整批被后端拒绝或顺序覆盖。
+  if (new Set(values.map(value => value.profile_id)).size !== values.length) { libraryFeedback.value = '同一资产请选择一个候选后再确认。'; return }
+  try {
+    const result = await request<{ results: Array<{ status: string; message: string }> }>(`/library/drama/projects/${props.projectId}/batch-bind`, { method: 'POST', body: { bindings: values.map(value => ({ profile_id: value.profile_id, reference: { item_id: value.item.id, version_id: value.item.versions[0]!.id, purpose: 'reference' } })) } })
+    libraryFeedback.value = result.results.map(value => value.status === 'bound' ? '已绑定' : value.message || '资料缺失').join('；')
+    candidateOpen.value = false; await loadWorkspace(true)
+  } catch (exception) { libraryFeedback.value = (exception as Error).message }
+}
+async function ingestDramaUpload(profile: DramaAssetProfile, file: File) {
+  const item = await libraryService.upload(file, profile.asset_type === 'role' ? 'character' : profile.asset_type)
+  libraryTarget.value = profile
+  const bound = await bindLibrary([{ item, version: item.versions[0]!, reference: { item_id: item.id, version_id: item.versions[0]!.id, purpose: profile.asset_type } }])
+  if (!bound) throw new Error(libraryFeedback.value || '资料已入库但未绑定，请保留草稿并手动确认。')
+}
+async function retryLibraryUpload(index: number) {
+  const value = pendingLibraryUploads.value[index]
+  if (!value) return
+  try { await ingestDramaUpload(value.profile, value.file); pendingLibraryUploads.value.splice(index, 1) }
+  catch (exception) { value.error = (exception as Error).message }
+}
+async function useUploadOnce(index: number) {
+  const value = pendingLibraryUploads.value[index]
+  if (!value || !await confirmAction('确认仅用于本次创作？不会入个人资料，也不会自动生成。')) return
+  try { workspace.value = await dramaService.uploadAssetReference(props.projectId, value.profile.asset_type, value.profile.asset_key, value.file); pendingLibraryUploads.value.splice(index, 1) }
+  catch (exception) { value.error = (exception as Error).message }
+}
 const emit = defineEmits<{
   continue: []
   /** 将资产资料门禁状态交给项目页，避免未就绪时仍展示版本同步等无效操作。 */
@@ -1462,6 +1540,11 @@ function assetMenuItems(profile: DramaAssetProfile): BaseMenuItem[] {
   return [
     { key: 'detail', label: '查看详情', icon: ImageIcon },
     { key: 'upload', label: '上传样本图', icon: Upload },
+    ...(libraryEnabled.value ? [
+      { key: 'library-bind', label: '从资料库绑定', icon: Layers3 },
+      { key: 'library-save', label: '保存到个人资料', icon: Layers3, disabled: !profile.selected_asset_id },
+      { key: 'library-variant', label: '创建变体', icon: Layers3, disabled: !profile.selected_asset_id },
+    ] : []),
     {
       key: 'regenerate',
       label: generationState.label,
@@ -1486,6 +1569,9 @@ function handleAssetMenu(profile: DramaAssetProfile, item: BaseMenuItem): void {
     uploadTarget.value = profile
     menuUploadInput.value?.click()
   } else if (item.key === 'regenerate') regenerateProfile(profile)
+  else if (item.key === 'library-bind') chooseLibrary(profile)
+  else if (item.key === 'library-save') void saveLibrary(profile)
+  else if (item.key === 'library-variant') void variantLibrary(profile)
   else if (item.key === 'lock') void lockProfile(profile, profile.production_status !== 'locked')
   else if (item.key === 'delete') void removeProfile(profile)
 }
@@ -1499,6 +1585,11 @@ async function uploadReference(profile: DramaAssetProfile, event: Event): Promis
   const file = input.files?.[0]
   input.value = ''
   if (!file) return
+  if (libraryEnabled.value) {
+    try { await ingestDramaUpload(profile, file) }
+    catch (exception) { pendingLibraryUploads.value.push({ profile, file, error: (exception as Error).message }) }
+    return
+  }
   actionBusy.value = `upload:${profile.id}`
   try {
     workspace.value = await dramaService.uploadAssetReference(props.projectId, profile.asset_type, profile.asset_key, file)
@@ -1645,6 +1736,10 @@ onBeforeUnmount(() => {
 
 <template>
   <section class="asset-workspace">
+    <LibraryPicker v-model:open="libraryPickerOpen" kind="drama" media-type="image" :remaining="1" :initial-category="libraryTarget?.asset_type === 'role' ? 'character' : libraryTarget?.asset_type || ''" @select="bindLibrary" />
+    <div v-if="libraryEnabled" class="mb-3 flex flex-wrap gap-3 text-sm"><button class="text-blue-600" @click="showLibraryCandidates">集中确认资料复用建议</button><button v-if="selectedProfile" class="text-blue-600" @click="chooseLibrary(selectedProfile)">从库绑定当前资产</button><button v-if="selectedProfile?.selected_asset_id" class="text-blue-600" @click="saveLibrary(selectedProfile)">保存当前资产到个人资料</button><button v-if="selectedProfile?.selected_asset_id" class="text-blue-600" @click="variantLibrary(selectedProfile)">创建变体</button><span>{{ libraryFeedback }}</span></div>
+    <div v-for="(value, index) in pendingLibraryUploads" :key="index" class="p-3 bg-amber-50 text-sm">{{ value.file.name }}：{{ value.error }}<button class="ml-3" @click="retryLibraryUpload(index)">重试保存</button><button class="ml-3" @click="useUploadOnce(index)">仅用于本次创作</button></div>
+    <LivDialog v-model:open="candidateOpen" title="集中确认资料复用建议" description="只按明确身份与状态匹配；已有确认项不会被批量覆盖。" width="lg"><p>{{ libraryFeedback }}</p><p v-if="!libraryCandidates.length">待选择的资产暂无明确来源匹配；已选资产会继续沿用，在资产菜单中也可手动从资料库选择。</p><label v-for="value in libraryCandidates" :key="`${value.profile_id}:${value.item.id}`" class="block py-3 border-b"><input v-model="candidateSelections" type="checkbox" :value="`${value.profile_id}:${value.item.id}`" :disabled="value.status !== 'candidate'"> {{ value.profile_name }} → {{ value.item.name }} <span class="text-amber-700">{{ value.message }}</span></label><button class="mt-4 text-blue-600" :disabled="!candidateSelections.length" @click="confirmLibraryCandidates">批量确认所选建议</button></LivDialog>
     <!-- 首个接口只负责读取工作区状态，不伪造三段式任务进度，也不让正常加载看起来像连接故障。 -->
     <div v-if="loading" class="asset-initial-loading" aria-live="polite" aria-busy="true">
       <div class="initial-loading-card">
@@ -2066,6 +2161,7 @@ onBeforeUnmount(() => {
             <!-- 左栏只负责图片与版本选择，图片不会再和表单挤在同一个网格里。 -->
             <aside class="asset-media-column">
               <h3>{{ typeMeta[selectedProfile.asset_type].label }}预览</h3>
+              <div v-if="libraryEnabled" class="flex flex-wrap gap-2 text-sm text-blue-600 mb-3"><button @click="chooseLibrary(selectedProfile)">从资料库绑定</button><button v-if="selectedProfile.selected_asset_id" @click="saveLibrary(selectedProfile)">保存到个人资料</button><button v-if="selectedProfile.selected_asset_id" @click="variantLibrary(selectedProfile)">创建变体</button><span>{{ libraryFeedback }}</span></div>
               <div class="hero-image" :class="`media-${selectedProfile.asset_type}`">
                 <FluidImage :src="assetImage(selectedProfile)" :alt="selectedProfile.name" wrapper-class="h-full w-full" img-class="object-contain" />
                 <div v-if="!assetImage(selectedProfile)" class="image-placeholder-label large"><ImageIcon :size="34" /><span>尚未生成资产图</span></div>
@@ -2090,6 +2186,7 @@ onBeforeUnmount(() => {
                 </button>
                 <button class="media-version create-version" @click="requestEstimate([profileTarget(selectedProfile)])"><Plus :size="22" /><span>生成新版本</span></button>
               </div>
+              <div v-if="libraryEnabled" class="mt-3 text-sm"><p>保存历史结果到个人资料</p><button v-for="(version, index) in selectedProfile.versions" :key="version.id" class="mr-3 text-blue-600" @click="saveLibrary(selectedProfile, version.id)">版本 {{ index + 1 }}</button></div>
             </aside>
 
             <!-- 中栏承载可编辑资料；三种资产共享基础信息，再按类型渲染专有字段。 -->

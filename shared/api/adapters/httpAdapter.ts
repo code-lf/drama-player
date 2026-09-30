@@ -571,6 +571,7 @@ interface BackendProductSellingPointResponse {
 }
 
 interface BackendProductImageCreditPreviewResponse {
+  input_snapshot_id?: string
   provider: string
   model: string
   required_credits: number
@@ -1455,6 +1456,7 @@ function mapProductSellingPoint(raw: BackendProductSellingPointResponse): Produc
 
 function mapProductImageCreditPreview(raw: BackendProductImageCreditPreviewResponse): ProductImageCreditPreview {
   return {
+    inputSnapshotId: raw.input_snapshot_id || '',
     provider: raw.provider || '',
     model: raw.model || '',
     requiredCredits: raw.required_credits || 0,
@@ -1534,6 +1536,8 @@ function buildProductImagePayload(payload: ProductImageGeneratePayload) {
   // 商品图请求统一在这里转成后端 snake_case，页面组件只维护 camelCase。
   return {
     batch_id: payload.batchId || '',
+    library_refs: payload.libraryRefs || [], input_order: payload.inputOrder || [],
+    input_snapshot_id: payload.inputSnapshotId || '',
     prompt: payload.prompt,
     source_prompt: payload.sourcePrompt || payload.prompt,
     model: payload.model || '',
@@ -1627,6 +1631,8 @@ function mapProductVideoTask(raw: any): ProductVideoTask {
 
 function buildProductVideoPayload(payload: ProductVideoCreatePayload) {
   return {
+    library_refs: payload.libraryRefs || [], input_order: payload.inputOrder || [],
+    input_snapshot_id: payload.inputSnapshotId || '', request_id: payload.requestId || '',
     template_id: payload.templateId,
     creation_type: payload.creationType,
     prompt: payload.prompt,
@@ -2592,7 +2598,8 @@ function buildEpisodeCutPayload(payload: EpisodeCutSavePayload) {
   }
 }
 
-async function request<T>(path: string, options?: Parameters<typeof $fetch<T>>[1], consentPromptsRemaining = 3): Promise<T> {
+// 新增独立业务模块共用同一鉴权、协议拦截和异常处理，不复制登录令牌逻辑。
+export async function request<T>(path: string, options?: Parameters<typeof $fetch<T>>[1], consentPromptsRemaining = 3): Promise<T> {
   const config = useRuntimeConfig()
   const baseUrl = config.public.apiBase as string
   let accessToken = ''
@@ -2916,6 +2923,9 @@ export const httpAdapter: ApiAdapter = {
     const response = await request<BackendProductImageCreditPreviewResponse>('/product-image/credit-preview', {
       method: 'POST',
       body: {
+        library_refs: payload.libraryRefs || [], input_order: payload.inputOrder || [],
+        aspect_ratio: payload.aspectRatio || '1:1',
+        reference_images: (payload.referenceImages || []).map(image => ({ name: image.name, data_url: image.dataUrl })),
         prompt: payload.prompt,
         model: payload.model || '',
         template_id: payload.templateId || '',
@@ -3103,8 +3113,9 @@ export const httpAdapter: ApiAdapter = {
   },
 
   async previewProductVideoCredits(payload) {
-    const response = await request<any>('/product-video/credit-preview', { method: 'POST', body: buildProductVideoPayload({ ...payload, creationType: 'product', prompt: '', sourceImages: [], aspectRatio: '9:16' }) })
+    const response = await request<any>('/product-video/credit-preview', { method: 'POST', body: buildProductVideoPayload({ creationType: 'product', prompt: '', sourceImages: [], aspectRatio: '9:16', ...payload }) })
     const result: ProductVideoCreditPreview = {
+      inputSnapshotId: response?.input_snapshot_id || '', referenceVideoSeconds: Number(response?.reference_video_seconds || 0),
       provider: String(response?.provider || ''),
       model: String(response?.model || ''),
       requiredCredits: Number(response?.required_credits || 0),

@@ -1078,8 +1078,16 @@ onBeforeUnmount(() => {
 
 @media (max-width: 720px) {
   .login-hero {
+    /* 侧边浏览器和手机窄屏优先让登录表单进入首屏，营销卡片留给宽屏展示。 */
     padding: 24px 16px;
+    gap: 20px;
+    align-content: start;
   }
+
+  .hero-copy { margin-top: 16px; }
+  .hero-copy h1 { font-size: clamp(24px, 6vw, 34px); line-height: 1.22; }
+  .hero-copy p { margin-top: 10px; font-size: 14px; }
+  .feature-row { display: none; }
 
   .login-panel {
     min-height: auto;

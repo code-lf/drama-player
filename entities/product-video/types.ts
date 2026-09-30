@@ -54,6 +54,10 @@ export interface ProductVideoHome {
 }
 
 export interface ProductVideoCreatePayload {
+  libraryRefs?: import('~/entities/library/types').LibraryReference[]
+  inputOrder?: string[]
+  inputSnapshotId?: string
+  requestId?: string
   templateId: string
   creationType: ProductVideoTask['creationType']
   prompt: string
@@ -111,6 +115,8 @@ export interface DigitalHumanQuote {
 }
 
 export interface ProductVideoCreditPreview {
+  inputSnapshotId?: string
+  referenceVideoSeconds?: number
   provider: string
   model: string
   requiredCredits: number

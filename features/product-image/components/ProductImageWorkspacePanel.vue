@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { useActionDialog } from '~/composables/useActionDialog'
+const { confirm: confirmAction } = useActionDialog()
 import type { Component } from 'vue'
 import { ChevronDown, ChevronUp, CircleHelp, Download, History, Image as ImageIcon, ImageUp, Lightbulb, PanelsTopLeft, Plus, RotateCcw, Sparkles, SquarePen, Star, Trash2, WandSparkles } from '@lucide/vue'
 import type { ProductImageCreditPreview, ProductImageGenerateResult, ProductImageHistoryBatch, ProductImageReference, ProductImageResult, ProductSellingPoint } from '~/entities/product-image/types'
@@ -10,6 +12,9 @@ import { useAccountStore } from '~/features/billing/store/useAccountStore'
 import { productImageService } from '~/shared/api/services/productImageService'
 import { generationProfileService } from '~/shared/api/services/generationProfileService'
 import { PRODUCT_REFERENCE_IMAGE_MAX_BYTES, PRODUCT_REFERENCE_IMAGE_MAX_MB } from '~/shared/constants/uploadLimits'
+import LibraryPicker from '~/features/library/components/LibraryPicker.vue'
+import { libraryService } from '~/shared/api/services/libraryService'
+import type { LibraryItem, LibraryVersion, LibraryReference } from '~/entities/library/types'
 
 type WorkspaceMode = 'product' | 'poster' | 'edit' | 'free'
 type CreationMethod = 'single' | 'marketing'
@@ -62,6 +67,46 @@ const outputCompression = ref(85)
 // 单图默认只生成一张；只有用户选择“营销套图”时才自动切换为三张。
 const count = ref(1)
 const referenceImages = ref<ProductImageReference[]>([])
+const libraryEnabled = ref(false), libraryPickerOpen = ref(false)
+const documentRefs = ref<LibraryReference[]>([])
+// 入库失败保留文件和预览；只有用户明确确认才能沿原上传契约提交。
+const pendingUploads = ref<Array<{ file: File; reference: ProductImageReference; error: string }>>([])
+// 上传处理中禁止生成和再次占用槽位，失败草稿也计入素材数量。
+const referenceUploading = ref(false)
+function libraryInputs() {
+  const legacy: ProductImageReference[] = [], refs: LibraryReference[] = [], order: string[] = []
+  for (const image of referenceImages.value) {
+    if (image.libraryRef) { order.push(`library:${refs.length}`); refs.push(image.libraryRef) }
+    else { order.push(`upload:${legacy.length}`); legacy.push(image) }
+  }
+  for (const doc of documentRefs.value) { order.push(`library:${refs.length}`); refs.push(doc) }
+  return { referenceImages: legacy, libraryRefs: refs, inputOrder: order }
+}
+function selectLibrary(values: Array<{ item: LibraryItem; version: LibraryVersion; reference: LibraryReference }>) {
+  for (const value of values) {
+    if (value.item.media_type === 'document') documentRefs.value.push(value.reference)
+    else referenceImages.value.push({ name: value.item.name, dataUrl: libraryService.previewUrl(value.version.preview_url), libraryRef: value.reference })
+  }
+}
+async function retryLibraryUpload(index: number) {
+  const pending = pendingUploads.value[index]
+  if (!pending) return
+  try {
+    const item = await libraryService.upload(pending.file, 'other')
+    referenceImages.value.push({ ...pending.reference, libraryRef: { item_id: item.id, version_id: item.versions[0]!.id, purpose: 'reference' } })
+    pendingUploads.value.splice(index, 1)
+  } catch (exception) { pending.error = (exception as Error).message }
+}
+async function useUploadOnce(index: number) {
+  const pending = pendingUploads.value[index]
+  if (!pending || !await confirmAction('文件未保存到个人资料。确认仅用于本次创作？不会自动开始生成。')) return
+  referenceImages.value.push(pending.reference); pendingUploads.value.splice(index, 1)
+}
+async function saveToLibrary(batchId: string, resultId: string) {
+  try { await libraryService.saveResult('product_image', batchId, resultId); infoMessage.value = '已保存到个人资料。' }
+  catch (exception) { errorMessage.value = (exception as Error).message }
+}
+onMounted(async () => { try { libraryEnabled.value = (await libraryService.capabilities()).image_picker } catch { libraryEnabled.value = false } })
 const sellingPoints = ref<ProductSellingPoint[]>([])
 const creditPreview = ref<ProductImageCreditPreview | null>(null)
 const creditPreviewLoading = ref(false)
@@ -177,6 +222,7 @@ async function loadGenerationProfile(): Promise<void> {
     const profile = await generationProfileService.get('product_image')
     const schema = profile.input_schema || {}
     const defaults = profile.default_params || {}
+    referenceImageLimit.value = Math.max(0, Number(schema.max_reference_count ?? 0))
     const ratiosRaw = schema.aspect_ratio || schema.aspect_ratios
     const resolutionsRaw = schema.resolution || schema.resolutions
     const qualitiesRaw = schema.quality || schema.qualities
@@ -238,8 +284,8 @@ const posterFieldConfig = computed(() => ({
 }[posterTheme.value]))
 
 const normalizedBalance = computed(() => Number(props.currentCreditBalance || 0))
-// 千问 Image 3.0 的图生图接口最多接收三张参考图；其他已配置模型沿用原有上限。
-const referenceImageLimit = computed(() => selectedModel.value.startsWith('qwen-image-3.0') ? 3 : 6)
+// 数量来源是后端功能能力快照；未知时不允许新增素材，避免扩展模型能力。
+const referenceImageLimit = ref(0)
 const activeImageModelOptions = computed<BaseSelectOption[]>(() => {
   const defaultModel = props.defaultImageModel || selectedModel.value || 'qwen-image-3.0'
   const options = props.imageModelOptions.map(option => ({
@@ -295,7 +341,7 @@ watch(background, (value) => {
   if (value === 'transparent') outputFormat.value = 'png'
 })
 
-watch([() => buildPrompt(), activeMode, creationMethod, count, selectedModel, resolution, quality, background, outputFormat, outputCompression], () => {
+watch([() => buildPrompt(), activeMode, creationMethod, count, selectedModel, aspectRatio, resolution, quality, background, outputFormat, outputCompression, () => libraryInputs().libraryRefs, () => referenceImages.value.map(image => image.name)], () => {
   // 报价随输入和模型切换失效；短暂防抖后读取与真正扣费相同的后端报价接口。
   creditPreview.value = null
   creditPreviewFailed.value = false
@@ -310,6 +356,8 @@ watch([() => buildPrompt(), activeMode, creationMethod, count, selectedModel, re
   creditPreviewTimer = setTimeout(async () => {
     try {
       const preview = await productImageService.previewCredits({
+        // 自动预估与点击生成使用相同的有序素材，避免资料引用未进入报价快照。
+        ...libraryInputs(), aspectRatio: aspectRatio.value,
         prompt: assembledPrompt,
         model: selectedModel.value,
         templateId: '',
@@ -481,14 +529,23 @@ async function withLoading<T>(key: string, action: () => Promise<T>): Promise<T 
 
 async function handleReferenceUpload(event: Event): Promise<void> {
   const input = event.target as HTMLInputElement
-  const files = Array.from(input.files || []).slice(0, Math.max(0, referenceImageLimit.value - referenceImages.value.length))
+  if (referenceUploading.value) { input.value = ''; return }
+  const files = Array.from(input.files || []).slice(0, Math.max(0, referenceImageLimit.value - referenceImages.value.length - pendingUploads.value.length))
   if (!files.length) return
+  referenceUploading.value = true
   try {
-    const nextImages = await Promise.all(files.map(readFileAsReference))
-    referenceImages.value = [...referenceImages.value, ...nextImages].slice(0, referenceImageLimit.value)
+    for (const file of files) {
+      const reference = await readFileAsReference(file)
+      if (!libraryEnabled.value) { referenceImages.value.push(reference); continue }
+      try {
+        const item = await libraryService.upload(file, 'other')
+        referenceImages.value.push({ ...reference, libraryRef: { item_id: item.id, version_id: item.versions[0]!.id, purpose: 'reference' } })
+      } catch (exception) { pendingUploads.value.push({ file, reference, error: (exception as Error).message }) }
+    }
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : '参考图读取失败，请重试。'
   } finally {
+    referenceUploading.value = false
     input.value = ''
   }
 }
@@ -525,6 +582,7 @@ async function refreshCreditPreview(): Promise<ProductImageCreditPreview | undef
   const requestId = ++creditPreviewRequestId
   creditPreviewLoading.value = true
   const result = await withLoading('preview', () => productImageService.previewCredits({
+    ...libraryInputs(), aspectRatio: aspectRatio.value,
     prompt: assembledPrompt,
     model: selectedModel.value,
     templateId: '',
@@ -542,6 +600,9 @@ async function refreshCreditPreview(): Promise<ProductImageCreditPreview | undef
 }
 
 async function generateImages(): Promise<void> {
+  if (loadingKey.value) return
+  if (referenceUploading.value) { errorMessage.value = '素材正在上传，请等待保存完成。'; return }
+  if (pendingUploads.value.length) { errorMessage.value = '请先重试入库或明确选择仅用于本次创作。草稿仍已保留。'; return }
   const assembledPrompt = buildPrompt()
   if (!assembledPrompt.trim()) {
     errorMessage.value = '请先补充创作需求。'
@@ -589,6 +650,7 @@ async function generateImages(): Promise<void> {
     startGenerationProgress(false)
   }
   const result = await withLoading('generate', () => productImageService.generate({
+    ...libraryInputs(), inputSnapshotId: preview.inputSnapshotId,
     batchId: generationBatchId,
     prompt: assembledPrompt,
     sourcePrompt: prompt.value.trim(),
@@ -614,7 +676,7 @@ async function generateImages(): Promise<void> {
     // 高级设置的负向提示词用于排除不希望出现的元素，默认留空不改变既有生成效果。
     negativePrompt: negativePrompt.value.trim(),
     plannedSellingPoints: confirmedPlan,
-    referenceImages: referenceImages.value
+    referenceImages: libraryInputs().referenceImages
   }, (percent, step) => {
     // 供应商实际进度覆盖计时动画；刷新后仍可在历史批次找回任务。
     supplierProgress.value = percent
@@ -744,7 +806,7 @@ async function toggleFavorite(batchId: string, item: ProductImageResult): Promis
 }
 
 async function deleteHistoryBatch(batch: ProductImageHistoryBatch): Promise<void> {
-  if (!window.confirm(`删除这次生成的 ${batch.results.length} 张历史图片记录？已下载的图片不会受影响。`)) return
+  if (!await confirmAction(`删除这次生成的 ${batch.results.length} 张历史图片记录？已下载的图片不会受影响。`)) return
   try {
     await productImageService.deleteHistory(batch.id)
     historyBatches.value = historyBatches.value.filter(item => item.id !== batch.id)
@@ -770,6 +832,9 @@ function continueFromHistory(item: ProductImageResult): void {
 
 <template>
   <section class="product-studio">
+    <LibraryPicker v-model:open="libraryPickerOpen" kind="image" :model="selectedModel" :remaining="Math.max(0, referenceImageLimit - referenceImages.length - pendingUploads.length)" :document-remaining="Math.max(0, 3 - documentRefs.length)" @select="selectLibrary" />
+    <div v-if="libraryEnabled" class="flex flex-wrap gap-3 text-sm mb-3"><button type="button" class="text-blue-600" @click="libraryPickerOpen = true">从资料库选择</button><span v-for="(doc, index) in documentRefs" :key="doc.version_id">参考原文 {{ doc.start }}–{{ doc.end }} <button @click="documentRefs.splice(index, 1)">移除</button></span><button v-if="activeResult && generateResult" type="button" class="text-blue-600" @click="saveToLibrary(generateResult.batchId, activeResult.id)">保存当前结果到个人资料</button></div>
+    <div v-for="(pending, index) in pendingUploads" :key="index" class="p-3 bg-amber-50 text-sm" role="alert">{{ pending.file.name }}：{{ pending.error }}<button class="ml-3 text-blue-600" @click="retryLibraryUpload(index)">重试保存</button><button class="ml-3" @click="useUploadOnce(index)">仅用于本次创作</button><button class="ml-3" @click="pendingUploads.splice(index, 1)">移除此文件</button></div>
     <header class="studio-heading">
       <h1>AI 图片创作</h1>
       <p>多种模式满足不同创作需求，轻松生成高质量图片</p>
@@ -943,6 +1008,7 @@ function continueFromHistory(item: ProductImageResult): void {
           <p>{{ batch.sourcePrompt || batch.compiledPrompt }}</p>
           <div class="history-images">
             <div v-for="item in batch.results" :key="item.id" class="history-image">
+              <button v-if="libraryEnabled" type="button" class="absolute left-2 top-2 z-10 !w-auto !px-2 text-xs" @click="saveToLibrary(batch.id, item.id)">保存到资料</button>
               <FluidImage :src="item.imageUrl" :alt="item.sellingPoint?.title || '历史图片'" wrapper-class="h-full w-full" img-class="object-contain" loading-label="历史图片" fallback-text="图片加载失败" />
               <div class="history-image__actions"><button type="button" title="预览" @click="openImagePreview(batch.results, batch.results.indexOf(item))"><ImageIcon :size="15" /></button><button type="button" title="下载" @click="downloadResult(item)"><Download :size="15" /></button><button type="button" title="继续修改" @click="continueFromHistory(item)"><SquarePen :size="15" /></button><button type="button" :title="item.isFavorite ? '取消收藏' : '收藏'" @click="toggleFavorite(batch.id, item)"><Star :size="15" :fill="item.isFavorite ? 'currentColor' : 'none'" /></button></div>
             </div>
@@ -952,7 +1018,7 @@ function continueFromHistory(item: ProductImageResult): void {
     </LivDialog>
     <LivDialog v-model:open="imagePreviewOpen" title="图片预览" description="可切换图片、缩放并下载原图。" width="xl">
       <div v-if="imagePreviewItems[imagePreviewIndex]" class="image-preview-panel">
-        <div class="image-preview-panel__canvas"><img :src="imagePreviewItems[imagePreviewIndex].imageUrl" alt="生成图片大图" :style="{ transform: `scale(${imagePreviewScale})` }"></div>
+        <div class="image-preview-panel__canvas"><img :src="imagePreviewItems[imagePreviewIndex]?.imageUrl" alt="生成图片大图" :style="{ transform: `scale(${imagePreviewScale})` }"></div>
         <div class="image-preview-panel__actions">
           <button type="button" :disabled="imagePreviewIndex === 0" @click="moveImagePreview(-1)">上一张</button>
           <span>{{ imagePreviewIndex + 1 }} / {{ imagePreviewItems.length }}</span>

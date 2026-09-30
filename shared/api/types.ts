@@ -971,7 +971,7 @@ export interface ApiAdapter {
   getEpisodeCutTask(projectId: string, episodeNo: number, taskId: string): Promise<ApiResponse<EpisodeCutTask>>
   listEpisodeExports(params?: { status?: string; page?: number; pageSize?: number }): Promise<ApiResponse<EpisodeCutTaskList>>
   listProductImageTemplates(params?: { category?: string; featured?: boolean }): Promise<ApiResponse<ProductImageTemplate[]>>
-  previewProductImageCredits(payload: Pick<ProductImageGeneratePayload, 'count' | 'model' | 'prompt' | 'splitSellingPoints' | 'templateId' | 'resolution' | 'quality' | 'background' | 'outputFormat' | 'outputCompression'>): Promise<ApiResponse<ProductImageCreditPreview>>
+  previewProductImageCredits(payload: Pick<ProductImageGeneratePayload, 'count' | 'model' | 'prompt' | 'splitSellingPoints' | 'templateId' | 'resolution' | 'quality' | 'background' | 'outputFormat' | 'outputCompression'> & Partial<ProductImageGeneratePayload>): Promise<ApiResponse<ProductImageCreditPreview>>
   splitProductSellingPoints(payload: { batchId?: string; prompt: string; count: number; style?: string; aspectRatio?: string }): Promise<ApiResponse<ProductSellingPoint[]>>
   optimizeProductImagePrompt(payload: { prompt: string; mode: 'single' | 'marketing' | 'free' }): Promise<ApiResponse<{ optimizedPrompt: string }>>
   generateProductImages(payload: ProductImageGeneratePayload, onProgress?: (progress: number, step: string) => void): Promise<ApiResponse<ProductImageGenerateResult>>
@@ -991,7 +991,7 @@ export interface ApiAdapter {
   createDigitalHumanTask(payload: { script: string; resolution: string }): Promise<ApiResponse<ProductVideoTask>>
   listDigitalHumanTasks(): Promise<ApiResponse<ProductVideoTask[]>>
   listProductVideoTemplates(params?: { category?: string; featured?: boolean }): Promise<ApiResponse<ProductVideoTemplate[]>>
-  previewProductVideoCredits(payload: Pick<ProductVideoCreatePayload, 'templateId' | 'durationSec' | 'resultCount' | 'model' | 'resolution' | 'referenceVideoToken'>): Promise<ApiResponse<ProductVideoCreditPreview>>
+  previewProductVideoCredits(payload: Pick<ProductVideoCreatePayload, 'templateId' | 'durationSec' | 'resultCount' | 'model' | 'resolution' | 'referenceVideoToken'> & Partial<ProductVideoCreatePayload>): Promise<ApiResponse<ProductVideoCreditPreview>>
   createProductVideoTask(payload: ProductVideoCreatePayload): Promise<ApiResponse<ProductVideoTask>>
   getProductVideoTask(taskId: string): Promise<ApiResponse<ProductVideoTask>>
   listProductVideoTasks(): Promise<ApiResponse<ProductVideoTask[]>>

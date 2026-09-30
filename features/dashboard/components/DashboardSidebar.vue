@@ -1,10 +1,11 @@
 <script setup lang="ts">
 const { $siteAsset: siteAsset } = useNuxtApp()
 import CreditIcon from '~/components/ui/CreditIcon.vue'
+import { libraryService } from '~/shared/api/services/libraryService'
 
 interface Props {
   activeMenu: 'drama' | 'product' | 'product-video' | 'none'
-  activeWorkspaceView: 'console' | 'projects' | 'exports' | 'billing' | 'announcements' | 'help'
+  activeWorkspaceView: 'console' | 'projects' | 'exports' | 'billing' | 'announcements' | 'help' | 'library'
   billingView: 'recharge' | 'orders'
   currentCreditBalance: number | string
   loggedIn: boolean
@@ -15,6 +16,12 @@ interface Props {
 
 const props = withDefaults(defineProps<Props>(), {
   avatarUrl: ''
+})
+// 资料库入口默认隐藏，能力接口失败也不影响原菜单与现有创作工作流。
+const libraryEnabled = ref(false)
+onMounted(async () => {
+  try { libraryEnabled.value = (await libraryService.capabilities()).enabled }
+  catch { libraryEnabled.value = false }
 })
 
 const emit = defineEmits<{
@@ -181,6 +188,19 @@ const toolMenuItems = [
           <path d="M4 7.5A2.5 2.5 0 0 1 6.5 5H10l2 2.5h5.5A2.5 2.5 0 0 1 20 10v7a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 17V7.5Z" stroke-linejoin="round" />
         </svg>
         <span>我的项目</span>
+      </NuxtLink>
+      <!-- 资料库属于跨项目可复用的个人资产，放在项目管理下，与项目及导出记录并列。 -->
+      <NuxtLink
+        v-if="libraryEnabled"
+        to="/dashboard-library"
+        class="group mt-3 flex h-[48px] items-center gap-3 rounded-[13px] px-5 text-[15px] font-bold transition"
+        :class="activeWorkspaceView === 'library' ? 'bg-[#f0f4ff] text-[#005FFE]' : 'text-[#53627c] hover:bg-[#f6f8fc] hover:text-[#005FFE]'"
+      >
+        <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="4" y="5" width="16" height="15" rx="2.5" />
+          <path d="M8 10h8M8 14h8M8 18h5" stroke-linecap="round" />
+        </svg>
+        <span>素材与资料</span>
       </NuxtLink>
       <NuxtLink
         to="/dashboard-exports"
