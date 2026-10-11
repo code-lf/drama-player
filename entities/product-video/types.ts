@@ -29,7 +29,7 @@ export interface ProductVideoResult {
 export interface ProductVideoTask {
   id: string
   template: ProductVideoTemplate | null
-  creationType: 'product' | 'model' | 'image_to_video' | 'reference_video' | 'digital_human'
+  creationType: 'product' | 'model' | 'image_to_video' | 'reference_video' | 'reference_script' | 'digital_human'
   prompt: string
   sourceImages: string[]
   status: 'queued' | 'running' | 'succeeded' | 'failed'

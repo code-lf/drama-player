@@ -127,6 +127,17 @@ if (process.env.CAPTURE_DIAGNOSTICS === '1') {
   console.log(diagnostics.result?.value || '')
   if (runtimeErrors.length) console.log(JSON.stringify({ runtimeErrors }, null, 2))
 }
+// 页面冒烟检查可指定必需文案；缺失时直接失败，避免只留截图却误报验收通过。
+if (process.env.CAPTURE_EXPECT_TEXT) {
+  const expected = JSON.parse(process.env.CAPTURE_EXPECT_TEXT)
+  const result = await send('Runtime.evaluate', {
+    expression: `JSON.stringify(${JSON.stringify(expected)}.filter(text => !document.body.innerText.includes(text)))`,
+    returnByValue: true,
+  })
+  const missing = JSON.parse(result.result?.value || '[]')
+  if (missing.length) throw new Error(`缺少页面文案：${missing.join('、')}`)
+  console.log(`页面文案检查通过：${expected.join('、')}`)
+}
 const screenshot = await send('Page.captureScreenshot', {
   format: 'png',
   fromSurface: true,

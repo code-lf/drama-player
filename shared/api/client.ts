@@ -97,6 +97,14 @@ function extractApiErrorStatus(error: unknown): number {
   )
 }
 
+/** 独立业务页也复用后端错误详情，避免把税号校验或状态冲突显示成笼统网络错误。 */
+export function getApiErrorMessage(error: unknown, fallback = '操作失败，请稍后重试。'): string {
+  const detail = extractApiErrorDetail(error)
+  if (detail !== undefined && !Array.isArray(detail)) return normalizeApiErrorMessage(detail)
+  if (Array.isArray(detail)) return '请检查必填字段和填写格式。'
+  return error instanceof ApiClientError ? error.message : fallback
+}
+
 export async function callApi<T>(endpoint: string, task: (adapter: ApiAdapter) => Promise<ApiResponse<T>>): Promise<T> {
   const adapter = pickAdapter()
 

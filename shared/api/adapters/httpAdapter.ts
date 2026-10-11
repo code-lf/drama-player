@@ -1034,6 +1034,7 @@ interface BackendStoryboardWorkspaceResponse {
   source_summary: string
   source_script_version: string
   production_version_id?: string
+  supports_last_frame_input?: boolean
   visual_bible_version_id?: string
   visual_bible: Record<string, unknown>
   asset_readiness: Record<string, unknown>
@@ -1602,7 +1603,7 @@ function mapProductVideoTask(raw: any): ProductVideoTask {
   return {
     id: String(raw?.id || ''),
     template: raw?.template ? mapProductVideoTemplate(raw.template) : null,
-    creationType: ['product', 'model', 'image_to_video', 'reference_video', 'digital_human'].includes(String(raw?.creation_type)) ? raw.creation_type : 'product',
+    creationType: ['product', 'model', 'image_to_video', 'reference_video', 'reference_script', 'digital_human'].includes(String(raw?.creation_type)) ? raw.creation_type : 'product',
     prompt: String(raw?.prompt || ''),
     sourceImages: Array.isArray(raw?.source_images) ? raw.source_images.map(String) : [],
     status: ['queued', 'running', 'succeeded', 'failed'].includes(String(raw?.status)) ? raw.status : 'queued',
@@ -1948,6 +1949,7 @@ function mapStoryboardWorkspace(raw: BackendStoryboardWorkspaceResponse): Storyb
     sourceSummary: raw.source_summary || '',
     sourceScriptVersion: raw.source_script_version || '',
     productionVersionId: raw.production_version_id || '',
+    supportsLastFrameInput: Boolean(raw.supports_last_frame_input),
     visualBibleVersionId: raw.visual_bible_version_id || '',
     visualBible: raw.visual_bible || {},
     assetReadiness: raw.asset_readiness || {},
@@ -2046,6 +2048,7 @@ function buildStoryboardVideoBatchPayload(payload: StoryboardVideoBatchPayload) 
     quality_policy: payload.qualityPolicy || 'smart',
     allow_missing_references: Boolean(payload.allowMissingReferences),
     row_ids: payload.rowIds || [],
+    max_credits: payload.maxCredits,
     idempotency_key: payload.idempotencyKey || ''
   }
 }

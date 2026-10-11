@@ -393,6 +393,8 @@ export interface StoryboardVideoBatchPayload {
   /** 用户已在生成确认弹窗中接受“无参考图生成”的一致性风险。 */
   allowMissingReferences?: boolean
   rowIds?: string[]
+  /** 本次提交的最高点数；报价变化超过该值时服务端拒绝排队。 */
+  maxCredits?: number
   idempotencyKey?: string
 }
 

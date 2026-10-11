@@ -227,6 +227,13 @@ export interface StoryboardTimingContract {
 }
 
 export interface StoryboardRuntimeExtra {
+  /** 失败镜头的实际扣点与退点流水，由服务端核对后返回，不能根据状态自行推断。 */
+  video_billing?: {
+    take_id: string
+    charged_credits: number
+    refunded_credits: number
+    refund_status: 'refunded' | 'pending' | 'not_charged'
+  }
   /** 当前镜头生成时采用的参考输入模式，刷新工作区后仍保留用户选择。 */
   videoInputMode?: StoryboardVideoInputMode
   video_input_mode?: StoryboardVideoInputMode
@@ -354,6 +361,8 @@ export interface StoryboardWorkspace {
   sourceSummary: string
   sourceScriptVersion: string
   productionVersionId: string
+  /** 当前项目锁定的视频模型是否接受尾帧图片，由服务端模型能力配置决定。 */
+  supportsLastFrameInput: boolean
   visualBibleVersionId: string
   visualBible: Record<string, unknown>
   assetReadiness: { ready?: boolean; legacy?: boolean; blockers?: string[] }

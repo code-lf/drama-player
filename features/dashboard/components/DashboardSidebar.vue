@@ -4,9 +4,9 @@ import CreditIcon from '~/components/ui/CreditIcon.vue'
 import { libraryService } from '~/shared/api/services/libraryService'
 
 interface Props {
-  activeMenu: 'drama' | 'product' | 'product-video' | 'none'
+  activeMenu: 'drama' | 'product' | 'product-video' | 'music' | 'none'
   activeWorkspaceView: 'console' | 'projects' | 'exports' | 'billing' | 'announcements' | 'help' | 'library'
-  billingView: 'recharge' | 'orders'
+  billingView: 'recharge' | 'orders' | 'invoices'
   currentCreditBalance: number | string
   loggedIn: boolean
   nickname: string
@@ -26,14 +26,14 @@ onMounted(async () => {
 
 const emit = defineEmits<{
   requestFeedback: []
-  featureMenuClick: [menu: 'drama' | 'product' | 'product-video']
+  featureMenuClick: [menu: 'drama' | 'product' | 'product-video' | 'music']
 }>()
 
 /**
  * 当前功能菜单再次点击时只触发协议查看，不重复导航并重建整个控制台。
  * 切换到其他功能时保留 NuxtLink 的默认导航行为，目标页面会执行首次协议检查。
  */
-function handleFeatureMenuClick(event: MouseEvent, menu: 'drama' | 'product' | 'product-video'): void {
+function handleFeatureMenuClick(event: MouseEvent, menu: 'drama' | 'product' | 'product-video' | 'music'): void {
   if (props.activeMenu === menu) event.preventDefault()
   emit('featureMenuClick', menu)
 }
@@ -62,6 +62,13 @@ const toolMenuItems = [
     label: '商品视频',
     to: '/dashboard-product-video',
     icon: 'video',
+    tag: 'AI'
+  },
+  {
+    key: 'music',
+    label: '音乐生成',
+    to: '/dashboard-music',
+    icon: 'music',
     tag: 'AI'
   }
 ] as const
@@ -138,6 +145,7 @@ const toolMenuItems = [
             <path d="m14 14 1.2-1.2a2 2 0 0 1 2.8 0L20 15" stroke-linecap="round" stroke-linejoin="round" />
             <path d="M8 9.2h.01" stroke-linecap="round" />
           </svg>
+          <svg v-else-if="item.icon === 'music'" viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l11-2v13M9 9l11-2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/></svg>
           <svg v-else viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2">
             <rect x="3.5" y="6" width="12.5" height="12" rx="2" />
             <path d="m16 10 4.5-2.5v9L16 14" stroke-linejoin="round" />
@@ -164,10 +172,10 @@ const toolMenuItems = [
         <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 4h12v16H6zM9 8h6M9 12h6M9 16h3" stroke-linecap="round" stroke-linejoin="round" /></svg>
         订单记录
       </NuxtLink>
-      <button class="flex h-[44px] w-full items-center gap-3 rounded-[11px] px-4 text-left text-[13px] font-bold text-[#9aa6b7]" type="button" disabled>
+      <NuxtLink to="/dashboard-billing?view=invoices" class="flex h-[44px] w-full items-center gap-3 rounded-[11px] px-4 text-left text-[13px] font-bold transition" :class="billingView === 'invoices' ? 'bg-[#eff4ff] text-[#005FFE]' : 'text-[#53627c] hover:bg-[#f6f8fc] hover:text-[#005FFE]'">
         <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16v13H4zM7 7V5h10v2M8 11h8M8 15h5" stroke-linecap="round" stroke-linejoin="round" /></svg>
         发票管理
-      </button>
+      </NuxtLink>
       <NuxtLink to="/dashboard-announcements" class="group flex h-[44px] items-center gap-3 rounded-[11px] px-4 text-[13px] font-bold text-[#53627c] transition hover:bg-[#f6f8fc] hover:text-[#005FFE]">
         <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="8.5" /><path d="M12 16.5v-.1M12 13c0-2.1 2.5-2 2.5-4A2.5 2.5 0 0 0 12 6.5 2.7 2.7 0 0 0 9.3 9" stroke-linecap="round" /></svg>
         常见问题

@@ -16,6 +16,7 @@ import ProjectDirectoryPanel from '~/features/projects/components/ProjectDirecto
 import ProductImageWorkspacePanel from '~/features/product-image/components/ProductImageWorkspacePanel.vue'
 import ProductVideoWorkspacePanel from '~/features/product-video/components/ProductVideoWorkspacePanel.vue'
 import LibraryWorkspacePanel from '~/features/library/components/LibraryWorkspacePanel.vue'
+import MusicWorkspacePanel from '~/features/music/components/MusicWorkspacePanel.vue'
 import { useAccountStore } from '~/features/billing/store/useAccountStore'
 import { useThemeStore } from '~/features/ui/store/useThemeStore'
 import { useAuthStore } from '~/features/auth/store/useAuthStore'
@@ -30,7 +31,7 @@ import {
 } from '~/shared/constants/dramaVisualStyles'
 import type { EpisodeCutTask } from '~/entities/drama/episodeCutTypes'
 
-type DashboardMenuKey = 'drama' | 'product' | 'product-video' | 'billing' | 'none'
+type DashboardMenuKey = 'drama' | 'product' | 'product-video' | 'music' | 'billing' | 'none'
 type DashboardWorkspaceView = 'console' | 'projects' | 'exports' | 'billing' | 'announcements' | 'help' | 'library'
 type CreativeIntent = 'drama' | 'ad' | 'general'
 type ScriptInputMode = 'text' | 'file'
@@ -81,6 +82,7 @@ const featureNotice = computed(() => {
   if (activeWorkspaceView.value !== 'console') return null
   const code = activeMenu.value === 'product' ? 'image_generation_terms'
     : activeMenu.value === 'product-video' ? 'video_generation_terms'
+    : activeMenu.value === 'music' ? 'ai_content_rules'
     : activeMenu.value === 'drama' ? 'drama_creation_terms'
     : ''
   const document = legalDocuments.value.find(item => item.code === code)
@@ -308,11 +310,21 @@ const currentCreditBalance = computed(() => {
   // 登录 session 里可能缓存着旧余额（例如后台刚调账到 200），这里不再回退读取 session，避免前台长期显示 0。
   return accountStore.profile?.creditBalance ?? 0
 })
-const billingPackages = computed(() => accountStore.packages)
+const billingPackages = computed(() => {
+  // 老接口或浏览器缓存可能仍返回“不可购买的新客卡”；用户端再收口一次，不能展示灰卡。
+  // 同积分档的活动价与原价互斥，用户始终只看到一个 1000 点入口。
+  const eligiblePromos = new Set(accountStore.packages
+    .filter(pkg => pkg.promotionType === 'new_customer' && pkg.eligible)
+    .map(pkg => pkg.creditsAmount))
+  return accountStore.packages.filter(pkg => {
+    if (pkg.promotionType === 'new_customer') return pkg.eligible
+    return !eligiblePromos.has(pkg.creditsAmount)
+  })
+})
 const billingLedgers = computed(() => accountStore.ledgerPage.items)
 const isBillingLoading = computed(() => accountStore.loadingProfile || accountStore.loadingPackages || accountStore.loadingLedgers)
 // 充值中心左侧导航需要知道当前是充值页还是订单页，状态由 URL query 保证刷新后仍一致。
-const billingView = computed<'recharge' | 'orders'>(() => route.query.view === 'orders' ? 'orders' : 'recharge')
+const billingView = computed<'recharge' | 'orders' | 'invoices'>(() => route.query.view === 'orders' || route.query.view === 'invoices' ? route.query.view : 'recharge')
 const pageNumberList = computed(() => {
   // 分页按钮最多展示 5 个页码，避免页数多时横向撑开太长。
   const total = totalProjectPages.value
@@ -1107,6 +1119,12 @@ function syncWorkspaceRouteState(path: string): void {
     return
   }
 
+  if (path === '/dashboard-music') {
+    activeMenu.value = 'music'
+    activeWorkspaceView.value = 'console'
+    return
+  }
+
   if (path === '/dashboard-billing') {
     activeMenu.value = 'none'
     activeWorkspaceView.value = 'billing'
@@ -1173,6 +1191,7 @@ function featureConsentCodeForPath(path: string): string | null {
   if (path === '/dashboard') return 'drama_creation_terms'
   if (path === '/dashboard-product') return 'image_generation_terms'
   if (path === '/dashboard-product-video') return 'video_generation_terms'
+  if (path === '/dashboard-music') return 'ai_content_rules'
   return null
 }
 
@@ -1185,7 +1204,7 @@ async function checkFeatureEntryConsent(featureCode: string): Promise<void> {
       const accepted = await supportService.getLegalAcceptanceStatus()
       if (sequence !== legalEntryCheckSequence) return
       // 通用 AI 规则与功能专属条款在一个弹窗中合并展示，后端仍分别保存版本留痕。
-      const missingCodes = ['ai_content_rules', featureCode].filter(code => !accepted[code])
+      const missingCodes = [...new Set(['ai_content_rules', featureCode])].filter(code => !accepted[code])
       if (missingCodes.length) {
         const confirmed = await requestFeatureConsent(missingCodes)
         if (!confirmed || sequence !== legalEntryCheckSequence) return
@@ -1205,12 +1224,12 @@ watch(
   { immediate: true }
 )
 
-function handleFeatureMenuClick(menu: 'drama' | 'product' | 'product-video'): void {
+function handleFeatureMenuClick(menu: 'drama' | 'product' | 'product-video' | 'music'): void {
   // 已在当前页面时路由不会变化，因此用户明确再次点击菜单时直接打开对应协议。
   // 这里不依赖状态接口，既可补看已同意条款，也能避免热更新或初始化时序造成漏弹。
-  const paths = { drama: '/dashboard', product: '/dashboard-product', 'product-video': '/dashboard-product-video' }
+  const paths = { drama: '/dashboard', product: '/dashboard-product', 'product-video': '/dashboard-product-video', music: '/dashboard-music' }
   if (route.path !== paths[menu] || isBooting.value) return
-  const codes = { drama: 'drama_creation_terms', product: 'image_generation_terms', 'product-video': 'video_generation_terms' }
+  const codes = { drama: 'drama_creation_terms', product: 'image_generation_terms', 'product-video': 'video_generation_terms', music: 'ai_content_rules' }
   // 用户主动点击当前菜单查看时，同样用合并弹窗展示通用规则和功能规则。
   void requestFeatureConsent(['ai_content_rules', codes[menu]])
 }
@@ -1520,6 +1539,8 @@ onBeforeUnmount(() => {
             :default-video-model="selectedVideoModel"
           />
 
+          <MusicWorkspacePanel v-else-if="activeMenu === 'music'" />
+
           <BillingWorkspacePanel
             v-else-if="activeWorkspaceView === 'billing'"
             :billing-ledgers="billingLedgers"
@@ -1697,7 +1718,8 @@ onBeforeUnmount(() => {
                       v-if="isVisualStyleMenuOpen"
                       class="absolute bottom-[calc(100%+12px)] left-0 z-[120] w-[760px] max-w-[calc(100vw-80px)] rounded-[16px] border border-[#dbe7f7] bg-white p-3 shadow-[0_18px_48px_rgba(15,23,42,0.14)]"
                     >
-                      <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                      <!-- 风格数量可由后端继续扩充；面板固定高度并允许滚轮/触控纵向浏览。 -->
+                      <div class="grid max-h-[420px] gap-3 overflow-y-auto overscroll-contain pr-1 sm:grid-cols-2 lg:grid-cols-3">
                         <button
                           v-for="item in visualStyleOptions"
                           :key="item.value"

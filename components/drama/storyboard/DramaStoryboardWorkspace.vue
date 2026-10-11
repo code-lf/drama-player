@@ -184,7 +184,15 @@ const segmentEditorVisible = ref(false)
 const segmentDraft = ref<StoryboardDirectorSegment[]>([])
 const advancedSegmentId = ref('')
 const batchEstimate = ref<StoryboardBatchEstimate | null>(null)
+/** 试做样片只改变本次提交的镜头范围，模型、画质和资产配置与整集报价完全相同。 */
+const fullGenerationEstimate = ref<StoryboardBatchEstimate | null>(null)
+const generationMode = ref<'full' | 'sample'>('full')
+const sampleCandidateRowId = ref('')
+/** 默认锁定确认页报价；用户可以自行调低或调高本批预算上限。 */
+const spendingCapInput = ref('')
 const batchConfirmVisible = ref(false)
+/** 同一份确认参数在网络超时后沿用请求号，避免重复扣点与重复生成。 */
+const batchSubmissionKeys = new Map<string, string>()
 /** 失败镜头重试的二次确认气泡开关。 */
 const retryFailedPopoverOpen = ref(false)
 const pendingGenerationIds = ref<string[]>([])
@@ -198,16 +206,22 @@ const assetWorkspace = ref<DramaAssetWorkspace | null>(null)
 const assetManagerType = ref<DramaWorkspaceAssetType>('role')
 const assetManagerMode = ref<'list' | 'create' | 'edit'>('list')
 const assetEditorProfile = ref<DramaAssetProfile | null>(null)
+// 分镜侧栏与资产弹窗共用同一预览器；只读查看图片，不改变镜头绑定或资产版本。
+const assetImagePreview = ref<{ url: string; name: string } | null>(null)
 const assetDraft = ref<Record<string, any>>({})
 const assetBindingDraft = reactive<Record<DramaWorkspaceAssetType, string[]>>({ role: [], scene: [], prop: [] })
 const assetStageDraft = ref<Record<string, string>>({})
 const managedVoiceUploadInput = ref<HTMLInputElement | null>(null)
 let eventSource: EventSource | null = null
 let pollTimer: number | null = null
+let workspaceRetryTimer: number | null = null
+let workspaceRetryAttempts = 0
 let shotTuningTimer: number | null = null
 
 type StoryboardFrameSlot = 'first' | 'last'
-const frameSlots: StoryboardFrameSlot[] = ['first', 'last']
+// 按当前项目制作版本的模型能力显示槽位；切换全局默认模型不会改变旧项目。
+const supportsLastFrameInput = computed(() => Boolean(workspace.value?.supportsLastFrameInput))
+const frameSlots = computed<StoryboardFrameSlot[]>(() => supportsLastFrameInput.value ? ['first', 'last'] : ['first'])
 
 interface StoryboardFrameReference {
   asset_id?: string
@@ -235,6 +249,15 @@ const currentRow = computed(() => workspace.value?.rows.find(row => row.id === c
 const eligibleGenerationRows = computed(() => {
   const eligibleIds = new Set(batchEstimate.value?.eligibleRowIds || [])
   return (workspace.value?.rows || []).filter(row => eligibleIds.has(row.id))
+})
+/** 依赖前镜尾帧的镜头单独试做会改变输入条件，只允许独立镜头作正式样片。 */
+const sampleEligibleRows = computed(() => {
+  const estimate = fullGenerationEstimate.value
+  if (!estimate) return []
+  const dependentIds = new Set((estimate.warnings || [])
+    .filter(item => item.reason.includes('等待相邻前镜'))
+    .map(item => item.rowId || item.row_id || ''))
+  return (workspace.value?.rows || []).filter(row => estimate.eligibleRowIds.includes(row.id) && !dependentIds.has(row.id))
 })
 const generationDirectorSegmentCount = computed(() => eligibleGenerationRows.value.reduce(
   (total, row) => total + row.directorSegments.length,
@@ -421,6 +444,10 @@ const hasRunningTasks = computed(() => {
   const runActive = ['queued', 'running', 'generating'].includes(workspace.value?.run.status || '')
   return runActive || (workspace.value?.rows || []).some(row =>
     ['queued', 'running', 'pending'].includes(row.videoStatus)
+    // Worker 可能先写入失败状态、随后才完成退款；在退款确认前继续短时轮询。
+    || (row.videoStatus === 'failed'
+      && row.extra.video_billing?.refund_status === 'pending'
+      && Date.now() - Date.parse(row.takes.at(-1)?.createdAt || '') < 10 * 60 * 1000)
     || ['queued', 'running'].includes(row.previsualizationStatus)
     || row.takes.some(take => ['queued', 'running'].includes(String(take.qc?.status || '')))
   )
@@ -500,7 +527,10 @@ function continuityCheckState(kind: ContinuityCheckKind): ContinuityCheckState {
     if (!selectedRow.value.propKeys.length) return 'neutral'
     return dimensionNeedsReview('关键道具') ? 'warning' : dimensionPassed('关键道具') ? 'passed' : 'pending'
   }
-  return dimensionNeedsReview('帧间连续性') ? 'warning' : dimensionPassed('帧间连续性') ? 'passed' : 'pending'
+  // 跨镜头检查只有在后端确实取得前镜尾帧时才纳入状态，避免把未执行项算作通过。
+  const adjacentChecked = (selectedTakeQc.value.visual as Record<string, unknown> | undefined)?.adjacent_tail_checked === true
+  const dimensions = adjacentChecked ? ['帧间连续性', '相邻镜头接续'] : ['帧间连续性']
+  return dimensionNeedsReview(...dimensions) ? 'warning' : dimensionPassed(...dimensions) ? 'passed' : 'pending'
 }
 
 function continuityCheckResult(kind: ContinuityCheckKind) {
@@ -508,14 +538,16 @@ function continuityCheckResult(kind: ContinuityCheckKind) {
   if (kind === 'prop' && state === 'neutral') return '无需检查'
   if (state === 'passed') return '抽帧通过'
   if (state === 'warning') return '建议复核'
-  return '待生成验证'
+  return selectedTake.value?.videoUrl ? '待质检验证' : '待生成验证'
 }
 
 function continuityCheckEvidence(kind: ContinuityCheckKind) {
   const state = continuityCheckState(kind)
   if (kind === 'role') return state === 'passed' ? '首中尾帧与角色参考比对' : '生成后比对角色与服装参考'
   if (kind === 'prop') return state === 'neutral' ? '本镜头未绑定关键道具' : state === 'passed' ? '首中尾帧与道具参考比对' : '生成后比对道具状态参考'
-  return state === 'passed' ? '已抽取首、中、尾帧比对' : '生成后抽取首、中、尾帧比对'
+  const adjacentChecked = (selectedTakeQc.value.visual as Record<string, unknown> | undefined)?.adjacent_tail_checked === true
+  if (state === 'passed') return adjacentChecked ? '已比对本镜首中尾帧及相邻前镜尾帧' : '已抽取本镜首、中、尾帧比对'
+  return selectedTake.value?.videoUrl ? '等待本镜首、中、尾帧质检结果' : '生成后抽取本镜首、中、尾帧比对'
 }
 
 function visualCheckEvidence(...dimensionNames: string[]) {
@@ -533,8 +565,14 @@ function continuityCheckTooltip(kind: ContinuityCheckKind) {
   if (kind === 'prop') return selectedRow.value.propKeys.length
     ? `${visualCheckEvidence('关键道具') ? `检测依据：${visualCheckEvidence('关键道具')}\n\n` : ''}检查当前视频首、中、尾帧中的关键道具，与本镜头已确认道具参考进行比对。`
     : '本镜头没有绑定关键道具，因此不执行道具状态比对。'
-  const evidence = visualCheckEvidence('帧间连续性')
-  return `${evidence ? `检测依据：${evidence}\n\n` : ''}检查当前视频的首、中、尾帧之间是否存在突兀跳变。跨镜头末帧到首帧的画面比对将在后续质检中单独展示。`
+  const adjacentChecked = (selectedTakeQc.value.visual as Record<string, unknown> | undefined)?.adjacent_tail_checked === true
+  const evidence = adjacentChecked
+    ? visualCheckEvidence('帧间连续性', '相邻镜头接续')
+    : visualCheckEvidence('帧间连续性')
+  const adjacentNote = adjacentChecked
+    ? '本次还比对了同场景、角色可接续的已采用前镜尾帧与当前首帧；请结合「相邻镜头接续」检测依据复核。'
+    : '只有前镜已有采用视频及尾帧，且两镜场景和角色可接续时，才会补充跨镜头比对。'
+  return `${evidence ? `检测依据：${evidence}\n\n` : ''}检查当前视频的首、中、尾帧之间是否存在突兀跳变。${adjacentNote}`
 }
 
 const overviewGenerationRows = computed(() => (workspace.value?.rows || []).filter(row => row.videoStatus === 'idle'))
@@ -609,7 +647,7 @@ async function setVideoInputMode(mode: StoryboardVideoInputMode): Promise<void> 
     overviewEstimateSignature.value = ''
     void ensureOverviewEstimate(true)
     void ensureRowEstimate(row)
-    showNotice(`已切换为${mode === 'first_last_frame' ? '首尾帧模式' : '全能参考模式'}。已保存的图片不会被删除。`)
+    showNotice(`已切换为${mode === 'first_last_frame' ? (supportsLastFrameInput.value ? '首尾帧模式' : '首帧模式') : '全能参考模式'}。已保存的图片不会被删除。`)
   } catch (error) {
     videoInputMode.value = previous
     row.extra = { ...(row.extra || {}), videoInputMode: previous, video_input_mode: previous }
@@ -839,7 +877,9 @@ function thumbnailFor(row: StoryboardRow): string {
 
 /** 将后端返回的失败原因统一整理成用户能直接理解的问题描述。 */
 function failedRowIssueText(row: StoryboardRow): string {
-  return row.videoErrorMessage || row.generationErrorMessage || '视频生成失败，当前没有更具体的错误说明。'
+  const message = row.videoErrorMessage || row.generationErrorMessage || '视频生成失败，当前没有更具体的错误说明。'
+  // 历史错误文案含“不会扣点”的概括说法；镜头任务实际先扣后退，到账以服务端流水为准。
+  return message.replace(/本次失败不会扣除积分[，,]?/g, '').replace(/免费重试/g, '重试').trim()
 }
 
 /**
@@ -1343,7 +1383,7 @@ function adjacentFrameActionLabel(slot: StoryboardFrameSlot): string {
  * 首帧只承接上一镜头尾帧，尾帧只承接下一镜头首帧，避免误把同一张图填入两个槽位。
  */
 function inheritableAdjacentFrameSlots(row: StoryboardRow): StoryboardFrameSlot[] {
-  return frameSlots.filter(slot => canInheritAdjacentFrame(row, slot))
+  return frameSlots.value.filter(slot => canInheritAdjacentFrame(row, slot))
 }
 
 /** 一键导入入口始终展示，并明确告诉用户当前缺少哪一侧的来源帧。 */
@@ -1361,6 +1401,7 @@ async function uploadFrameReference(slot: StoryboardFrameSlot, event: Event): Pr
   const file = input.files?.[0]
   const row = selectedRow.value
   input.value = ''
+  if (slot === 'last' && !supportsLastFrameInput.value) return
   if (!file || !row) return
   if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
     showNotice('首尾帧仅支持 PNG、JPG 或 WEBP 图片。', 'error')
@@ -1403,6 +1444,7 @@ async function clearFrameReference(slot: StoryboardFrameSlot): Promise<void> {
 /** 明确点击后由后端复制引用关系，不下载图片、不重复产生素材文件。 */
 async function inheritFrameReference(slot: StoryboardFrameSlot): Promise<void> {
   const row = selectedRow.value
+  if (slot === 'last' && !supportsLastFrameInput.value) return
   if (!row || !canInheritAdjacentFrame(row, slot)) return
   actionBusy.value = `frame-${slot}-${row.id}`
   try {
@@ -1482,7 +1524,44 @@ function actionErrorMessage(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback
 }
 
+/** 失败原因与积分到账分开提示；同一镜头版本各提示一次，避免轮询反复弹窗。 */
+const notifiedVideoFailures = new Set<string>()
+const notifiedVideoRefunds = new Set<string>()
+
+function notifyFailedVideoRows(next: StoryboardWorkspace): void {
+  if (!import.meta.client) return
+  for (const row of next.rows) {
+    if (row.videoStatus !== 'failed') continue
+    const billing = row.extra.video_billing
+    const latestTake = row.takes.at(-1)
+    const takeId = billing?.take_id || latestTake?.id || row.id
+    if (!notifiedVideoFailures.has(takeId)) {
+      notifiedVideoFailures.add(takeId)
+      toast.add({
+        title: `镜头 ${rowNumber(row)} 生成失败`,
+        description: failedRowIssueText(row),
+        color: 'error',
+        icon: 'i-lucide-circle-alert',
+        close: true,
+        duration: 10000,
+      })
+    }
+    if (billing?.refund_status === 'refunded' && !notifiedVideoRefunds.has(takeId)) {
+      notifiedVideoRefunds.add(takeId)
+      toast.add({
+        title: '积分已返回',
+        description: `镜头 ${rowNumber(row)} 本次扣除的 ${billing.refunded_credits} 积分已退回账户。`,
+        color: 'success',
+        icon: 'i-lucide-circle-check',
+        close: true,
+        duration: 8000,
+      })
+    }
+  }
+}
+
 function updateWorkspace(next: StoryboardWorkspace): void {
+  notifyFailedVideoRows(next)
   workspace.value = next
   // 工作区刷新后以服务端保存的模式为准，避免异步刷新把用户刚选的模式覆盖成旧值。
   if (selectedRow.value) videoInputMode.value = inputModeFor(selectedRow.value)
@@ -1492,15 +1571,33 @@ function updateWorkspace(next: StoryboardWorkspace): void {
 
 async function loadWorkspace(background = false): Promise<void> {
   if (!props.projectId) return
+  // 事件流和定时轮询可能同时到达；后台请求尚未完成时不再叠加相同读取。
+  if (background && refreshing.value) return
   if (background) refreshing.value = true
   else loading.value = true
   errorMessage.value = ''
   try {
     updateWorkspace(await dramaService.getStoryboardWorkspace(props.projectId, currentEpisodeNo.value))
+    workspaceRetryAttempts = 0
+    if (workspaceRetryTimer) window.clearTimeout(workspaceRetryTimer)
+    workspaceRetryTimer = null
     void ensureOverviewEstimate()
     if (selectedRow.value) void ensureRowEstimate(selectedRow.value)
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '镜头工作台暂时无法加载。'
+    // API 重启造成的 502 只是读取失败，不代表后台任务重跑；保留最后一次成功的镜头。
+    const detail = error instanceof Error ? error.message : ''
+    errorMessage.value = /502|503|504|Bad Gateway|fetch failed/i.test(detail)
+      ? '服务短暂中断，已保留上次加载的镜头，正在自动重连。'
+      : detail || '镜头工作台暂时无法加载，正在自动重试。'
+    if (import.meta.client && !workspaceRetryTimer && workspaceRetryAttempts < 5) {
+      const delay = Math.min(3000 * 2 ** workspaceRetryAttempts, 15000)
+      workspaceRetryAttempts += 1
+      workspaceRetryTimer = window.setTimeout(() => {
+        workspaceRetryTimer = null
+        // 首次读取失败尚无缓存时继续显示加载态；已有缓存只在后台静默更新。
+        void loadWorkspace(Boolean(workspace.value))
+      }, delay)
+    }
   } finally {
     loading.value = false
     refreshing.value = false
@@ -1693,6 +1790,8 @@ async function prepareGeneration(rowIds: string[]): Promise<void> {
   if (!rowIds.length) return
   actionBusy.value = 'estimate-batch'
   try {
+    generationMode.value = 'full'
+    fullGenerationEstimate.value = null
     pendingGenerationIds.value = rowIds
     batchEstimate.value = await dramaService.estimateStoryboardVideoBatch(props.projectId, {
       episodeNo: currentEpisodeNo.value,
@@ -1703,12 +1802,59 @@ async function prepareGeneration(rowIds: string[]): Promise<void> {
       // 这里仅生成报价与风险确认内容，不会直接创建供应商任务。
       allowMissingReferences: true
     })
+    fullGenerationEstimate.value = batchEstimate.value
+    spendingCapInput.value = String(batchEstimate.value.estimatedCredits)
+    // 优先选择有角色、场景和对白的镜头，样片更容易暴露正式制作中的一致性问题。
+    const candidates = sampleEligibleRows.value
+    sampleCandidateRowId.value = [...candidates].sort((left, right) => {
+      const score = (row: StoryboardRow) => Number(row.roleKeys.length > 0) * 4 + Number(row.sceneKeys.length > 0) * 2 + Number(Boolean(row.dialogue.trim()))
+      return score(right) - score(left) || left.sortIndex - right.sortIndex
+    })[0]?.id || ''
     batchConfirmVisible.value = true
   } catch (error) {
     showNotice(actionErrorMessage(error, '生成预估失败，请稍后重试。'), 'error')
   } finally {
     actionBusy.value = ''
   }
+}
+
+/** 单镜头样片必须重新向服务端报价，不能用整集明细相减推算扣点。 */
+async function prepareSampleGeneration(): Promise<void> {
+  const rowId = sampleCandidateRowId.value
+  const row = workspace.value?.rows.find(item => item.id === rowId)
+  if (!row || !sampleEligibleRows.value.some(item => item.id === rowId)) return
+  actionBusy.value = 'estimate-sample'
+  try {
+    const estimate = await dramaService.estimateStoryboardVideoBatch(props.projectId, {
+      episodeNo: currentEpisodeNo.value,
+      rowIds: [rowId],
+      qualityPolicy: qualityPolicy.value,
+      resolution: projectResolution.value,
+      videoInputMode: inputModeForRows([row]),
+      allowMissingReferences: true
+    })
+    if (!estimate.eligibleRowIds.includes(rowId)) {
+      showNotice('当前镜头暂不能试做，请选择其他镜头。', 'error')
+      return
+    }
+    batchEstimate.value = estimate
+    spendingCapInput.value = String(estimate.estimatedCredits)
+    pendingGenerationIds.value = [rowId]
+    generationMode.value = 'sample'
+  } catch (error) {
+    showNotice(actionErrorMessage(error, '样片报价失败，请稍后重试。'), 'error')
+  } finally {
+    actionBusy.value = ''
+  }
+}
+
+/** 返回原整集报价，不重新请求模型，也不改变已经保存的镜头方案。 */
+function restoreFullGeneration(): void {
+  if (!fullGenerationEstimate.value) return
+  batchEstimate.value = fullGenerationEstimate.value
+  spendingCapInput.value = String(fullGenerationEstimate.value.estimatedCredits)
+  pendingGenerationIds.value = [...fullGenerationEstimate.value.eligibleRowIds]
+  generationMode.value = 'full'
 }
 
 /**
@@ -1729,23 +1875,44 @@ async function prepareWorkbenchGeneration(): Promise<void> {
 
 async function startGeneration(): Promise<void> {
   if (!batchEstimate.value?.sufficient || !batchEstimate.value.eligibleRowIds.length) return
+  const maxCredits = Number(spendingCapInput.value)
+  if (!Number.isSafeInteger(maxCredits) || maxCredits < batchEstimate.value.estimatedCredits || maxCredits < 1) {
+    showNotice('本批点数上限必须是不低于当前报价的正整数。', 'error')
+    return
+  }
   // 退出选择模式会清空本轮报价，因此先保存提交数量供成功提示使用。
   const submittedCount = batchEstimate.value.eligibleRowIds.length
   actionBusy.value = 'start-batch'
   try {
-    await dramaService.createStoryboardVideoBatch(props.projectId, {
+    const requestPayload = {
       episodeNo: currentEpisodeNo.value,
-      rowIds: pendingGenerationIds.value,
+      rowIds: [...pendingGenerationIds.value],
       qualityPolicy: qualityPolicy.value,
       resolution: projectResolution.value,
       videoInputMode: inputModeForRows((workspace.value?.rows || []).filter(row => pendingGenerationIds.value.includes(row.id))),
       // 只有确认弹窗确实展示过缺图风险，才允许正式提交降级为纯提示词生成。
       allowMissingReferences: hasMissingReferenceWarning.value,
-      idempotencyKey: `${props.projectId}:${currentEpisodeNo.value}:${Date.now()}`
-    })
+      maxCredits
+    }
+    const signature = JSON.stringify({ projectId: props.projectId, ...requestPayload })
+    const storageKey = `storyboard-batch-request:${props.projectId}:${currentEpisodeNo.value}:${signature}`
+    let idempotencyKey = batchSubmissionKeys.get(signature)
+    if (!idempotencyKey) {
+      try { idempotencyKey = sessionStorage.getItem(storageKey) || undefined } catch { /* 禁用存储时仍保持组件内幂等。 */ }
+    }
+    if (!idempotencyKey) {
+      idempotencyKey = `${props.projectId}:${globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`}`
+      batchSubmissionKeys.set(signature, idempotencyKey)
+      try { sessionStorage.setItem(storageKey, idempotencyKey) } catch { /* 私密模式下使用内存请求号。 */ }
+    }
+    await dramaService.createStoryboardVideoBatch(props.projectId, { ...requestPayload, idempotencyKey })
+    batchSubmissionKeys.delete(signature)
+    try { sessionStorage.removeItem(storageKey) } catch { /* 存储不可用不影响提交结果。 */ }
     batchConfirmVisible.value = false
     exitSelectionMode()
-    showNotice(`已提交 ${submittedCount} 个视频片段，任务会在后台继续执行。`)
+    showNotice(generationMode.value === 'sample'
+      ? '样片已按正式模型和参数提交；满意后可继续生成其余镜头，样片不会重复生成。'
+      : `已提交 ${submittedCount} 个视频片段，任务会在后台继续执行。`)
     await loadWorkspace(true)
   } catch (error) {
     showNotice(actionErrorMessage(error, '批量生成提交失败，请稍后重试。'), 'error')
@@ -2078,10 +2245,16 @@ async function openAssetManager(profileKey = ''): Promise<void> {
 }
 
 function closeAssetManager(): void {
+  assetImagePreview.value = null
   assetManagerVisible.value = false
   assetManagerMode.value = 'list'
   assetEditorProfile.value = null
   assetDraft.value = {}
+}
+
+function openAssetImagePreview(url: string, name: string): void {
+  if (!url) return
+  assetImagePreview.value = { url, name }
 }
 
 function startCreateAsset(type: DramaWorkspaceAssetType): void {
@@ -2402,6 +2575,8 @@ onMounted(async () => {
 })
 onBeforeUnmount(() => {
   stopRealtimeTracking()
+  if (workspaceRetryTimer) window.clearTimeout(workspaceRetryTimer)
+  workspaceRetryTimer = null
   // 弹窗关闭或页面卸载时清理轮询，避免后台任务完成后还触发旧页面刷新。
   stopMicroEditPolling()
   stopMicroEditRegionDrag()
@@ -2737,7 +2912,7 @@ function startMicroEditPolling(editId: string): void {
       <span>完成后会恢复当前集的真实制作状态。</span>
     </div>
 
-    <div v-else-if="errorMessage" class="workspace-state workspace-state--error">
+    <div v-else-if="errorMessage && !workspace" class="workspace-state workspace-state--error">
       <AlertTriangle :size="24" />
       <strong>镜头工作台暂时无法加载</strong>
       <span>{{ errorMessage }}</span>
@@ -2745,6 +2920,7 @@ function startMicroEditPolling(editId: string): void {
     </div>
 
     <template v-else-if="workspace">
+      <div v-if="errorMessage" class="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-800" role="status">{{ errorMessage }}</div>
       <template v-if="currentView === 'overview'">
         <header class="production-header">
           <div class="episode-brief">
@@ -2822,6 +2998,7 @@ function startMicroEditPolling(editId: string): void {
                             <span>{{ titleFor(row) }}</span>
                           </div>
                           <p>{{ failedRowIssueText(row) }}</p>
+                          <p v-if="row.extra.video_billing?.refund_status === 'refunded'">本次扣除的 {{ row.extra.video_billing.refunded_credits }} 点已退回账户。</p>
                           <div v-if="failedRowEvidence(row)" class="failed-shot-item__evidence">
                             <img :src="failedRowEvidence(row)?.url" :alt="`镜头 ${rowPosition(row)} ${failedRowEvidence(row)?.label}`" />
                             <span>{{ failedRowEvidence(row)?.label }}</span>
@@ -2897,7 +3074,7 @@ function startMicroEditPolling(editId: string): void {
             >
               <LoaderCircle v-if="actionBusy === 'estimate-batch'" :size="15" class="spin" />
               <CreditIcon v-else size="md" class="button-credit-icon" />
-              生成全部可制作视频片段
+              {{ workspace?.rows.some(row => row.videoStatus === 'success') ? '继续生成剩余可制作镜头' : '生成全部可制作视频片段' }}
             </button>
           </div>
         </header>
@@ -3189,7 +3366,7 @@ function startMicroEditPolling(editId: string): void {
                   @click="setVideoInputMode('first_last_frame')"
                 >
                   <Film :size="15" />
-                  <span><b>首尾帧模式</b><small>只发送首帧 / 尾帧边界图片</small></span>
+                  <span><b>{{ supportsLastFrameInput ? '首尾帧模式' : '首帧模式' }}</b><small>{{ supportsLastFrameInput ? '只发送首帧 / 尾帧边界图片' : '当前模型只接收首帧图片' }}</small></span>
                 </button>
               </div>
               <div v-if="videoInputMode === 'universal_reference'" class="video-input-mode-note">
@@ -3198,7 +3375,7 @@ function startMicroEditPolling(editId: string): void {
               </div>
               <div v-else class="video-input-mode-note video-input-mode-note--warning">
                 <AlertTriangle :size="15" />
-                <span>当前为首尾帧模式，本次只会发送下方首帧 / 尾帧。角色、场景、道具资产不会与首尾帧混发；切换模式不会删除已保存素材。</span>
+                <span>{{ supportsLastFrameInput ? '当前为首尾帧模式，本次只会发送下方首帧 / 尾帧。' : '当前模型只支持首帧输入，本次不会发送尾帧。' }}角色、场景、道具资产不会与边界帧混发；切换模式不会删除已保存素材。</span>
               </div>
               <div v-if="videoInputMode === 'first_last_frame'" class="frame-reference-import-toolbar">
                 <div>
@@ -3270,15 +3447,27 @@ function startMicroEditPolling(editId: string): void {
                   </div>
                 </article>
               </div>
+              <!-- 模型能力被后台关闭时，保留历史尾帧供用户查看和移除，不能悄悄删除已有素材。 -->
+              <div
+                v-if="videoInputMode === 'first_last_frame' && !supportsLastFrameInput && frameReferenceUrl(selectedRow, 'last')"
+                class="video-input-mode-note video-input-mode-note--warning"
+              >
+                <AlertTriangle :size="15" />
+                <span>此镜头保存过尾帧，但当前模型不支持尾帧输入。请移除尾帧后重新报价；图片不会被自动删除。</span>
+                <button type="button" :disabled="Boolean(actionBusy)" @click="clearFrameReference('last')">移除旧尾帧</button>
+              </div>
             </section>
 
             <section class="take-section">
               <div class="section-heading"><div><strong>镜头版本</strong><span>每次生成都会保留新版本</span></div></div>
               <div v-if="selectedRow.takes.length" class="take-list">
                 <button v-for="take in selectedRow.takes" :key="take.id" type="button" class="take-card" :class="{ selected: take.isSelected || take.id === selectedRow.selectedTakeId }" @click="selectTake(take)">
-                  <img v-if="take.posterUrl" :src="take.posterUrl" :alt="`版本 ${take.versionNo}`" />
-                  <!-- 视频尚未返回封面时复用全站动态图片占位组件，排队、生成中和失败态都不再显示空白灰块。 -->
-                  <AnimatedPlaceholder v-else class="take-card__empty" />
+                  <div class="take-card__media">
+                    <img v-if="take.posterUrl" :src="take.posterUrl" :alt="`版本 ${take.versionNo}`" />
+                    <!-- 供应商尚未返回封面时保留轻量占位；真实排队或生成中才叠加浅色跳动点。 -->
+                    <AnimatedPlaceholder v-else class="take-card__empty" />
+                    <span v-if="['queued', 'pending', 'running'].includes(take.status)" class="take-card__loading" role="status" :aria-label="takeStatusText(take.status)"><i /><i /><i /></span>
+                  </div>
                   <span>版本 {{ take.versionNo }}</span>
                   <b>{{ takeStatusText(take.status) }}</b>
                   <CheckCircle2 v-if="take.isSelected || take.id === selectedRow.selectedTakeId" :size="17" />
@@ -3357,7 +3546,7 @@ function startMicroEditPolling(editId: string): void {
               <div class="section-heading"><div><strong>已绑定资产</strong><span>按角色、场景和道具使用当前确认版本</span></div><LivButton variant="ghost" size="sm" @click="openAssetManager()"><template #icon><Pencil :size="15" /></template>管理资产</LivButton></div>
               <div v-if="boundAssets(selectedRow).length" class="bound-assets">
                 <article v-for="asset in boundAssets(selectedRow)" :key="`${asset.type}-${asset.name}`">
-                  <img v-if="asset.selected_url" :src="asset.selected_url" :alt="asset.name" />
+                  <button v-if="asset.selected_url" type="button" class="bound-asset-preview" :aria-label="`预览${asset.name}资产图片`" title="点击查看大图" @click="openAssetImagePreview(asset.selected_url, asset.name)"><img :src="asset.selected_url" :alt="asset.name" /></button>
                   <span v-else class="asset-icon"><ImageIcon :size="18" /></span>
                   <div><small>{{ assetTypeLabel(asset.type) }}</small><strong>{{ asset.name }}</strong><em v-if="assetStageLabel(selectedRow, asset)">{{ assetStageLabel(selectedRow, asset) }}</em></div>
                   <BaseMenu :items="boundAssetMenuItems()" @select="handleBoundAssetMenu(asset, $event)"><template #trigger><MoreHorizontal :size="16" /></template></BaseMenu>
@@ -3674,7 +3863,7 @@ function startMicroEditPolling(editId: string): void {
       <LivDialog
         v-if="batchEstimate"
         v-model:open="batchConfirmVisible"
-        :title="batchEstimate.eligibleRowIds.length ? '确认生成视频' : '暂时无法生成视频'"
+        :title="batchEstimate.eligibleRowIds.length ? generationMode === 'sample' ? '确认试做正式样片' : '确认生成视频' : '暂时无法生成视频'"
         :description="batchEstimate.eligibleRowIds.length ? '确认本次视频片段、总时长与点数。提交后会进入后台队列，排队、生成和完成状态均会在顶部提示。' : '请先处理下方问题，再重新点击生成视频。'"
         width="lg"
       >
@@ -3690,6 +3879,21 @@ function startMicroEditPolling(editId: string): void {
                 <p v-else>按当前已确认的镜头方案批量生成，每张分镜卡对应 1 个连续视频片段，并保留独立版本。</p>
               </div>
               <span class="generation-target__badge">方案已确认</span>
+            </div>
+
+            <div v-if="fullGenerationEstimate && fullGenerationEstimate.eligibleRowIds.length > 1 && sampleEligibleRows.length" class="generation-sample-choice">
+              <template v-if="generationMode === 'full'">
+                <div><strong>想先验证效果？</strong><p>可先试做 1 个独立镜头；使用与整集相同的模型、画质和资产，成功后直接保留到成片。依赖前镜尾帧的镜头不单独试做。</p></div>
+                <label for="sample-shot-select">试做镜头</label>
+                <select id="sample-shot-select" v-model="sampleCandidateRowId" :disabled="actionBusy === 'estimate-sample'">
+                  <option v-for="row in sampleEligibleRows" :key="row.id" :value="row.id">镜头 {{ rowNumber(row) }} · {{ titleFor(row) }}</option>
+                </select>
+                <LivButton variant="secondary" :loading="actionBusy === 'estimate-sample'" :disabled="!sampleCandidateRowId" @click="prepareSampleGeneration">查看该镜头报价</LivButton>
+              </template>
+              <template v-else>
+                <div><strong>这是正式样片，不是低清草稿</strong><p>本次只扣所选镜头的点数；满意后从整集入口继续生成尚未完成的镜头。</p></div>
+                <LivButton variant="secondary" @click="restoreFullGeneration">返回整集报价</LivButton>
+              </template>
             </div>
 
             <div class="generation-confirm-metrics">
@@ -3719,6 +3923,11 @@ function startMicroEditPolling(editId: string): void {
                 <small>{{ batchEstimate.sufficient ? '余额充足，可以开始生成' : '余额不足，请先充值' }}</small>
               </div>
             </div>
+            <label class="generation-budget-cap" for="generation-budget-cap-input">
+              <span>本批点数上限</span>
+              <input id="generation-budget-cap-input" v-model="spendingCapInput" type="number" min="1" step="1" inputmode="numeric">
+              <small>默认等于当前报价。提交前服务端重新核价，若超过此上限则停止排队，不会超额生成。</small>
+            </label>
 
             <div class="generation-audio-summary" :class="{ 'generation-audio-summary--warning': generationAudioSummary.warning }">
               <div class="generation-audio-summary__title">
@@ -3751,8 +3960,8 @@ function startMicroEditPolling(editId: string): void {
           <div class="confirm-note"><ShieldCheck :size="17" /><span>任务使用本次确认的剧本、镜头方案、资产版本与声音设计；每次生成都会创建独立版本。</span></div>
         <template #footer>
           <LivButton variant="secondary" @click="batchConfirmVisible = false">{{ batchEstimate.eligibleRowIds.length ? '取消' : '返回检查' }}</LivButton>
-          <LivButton v-if="batchEstimate.eligibleRowIds.length" variant="primary" :loading="actionBusy === 'start-batch'" :disabled="!batchEstimate.sufficient" @click="startGeneration">
-            <template #icon><CreditIcon size="lg" class="generation-credit-icon" /></template>{{ hasMissingReferenceWarning ? '确认风险并强制生成' : '确认并生成视频' }}
+          <LivButton v-if="batchEstimate.eligibleRowIds.length" variant="primary" :loading="actionBusy === 'start-batch'" :disabled="!batchEstimate.sufficient || actionBusy === 'estimate-sample'" @click="startGeneration">
+            <template #icon><CreditIcon size="lg" class="generation-credit-icon" /></template>{{ generationMode === 'sample' ? '确认并生成这段样片' : hasMissingReferenceWarning ? '确认风险并生成整集' : '确认并生成视频' }}
           </LivButton>
         </template>
       </LivDialog>
@@ -3800,9 +4009,11 @@ function startMicroEditPolling(editId: string): void {
                 <article v-for="profile in managedAssets" :key="profile.id" :class="{ selected: assetIsBound(profile) }">
                   <div class="asset-choice-main">
                     <UCheckbox :model-value="assetIsBound(profile)" aria-label="绑定当前资产" @click.stop @update:model-value="toggleAssetBinding(profile)" />
-                    <div class="asset-choice-visual">
-                      <img v-if="profileImage(profile)" :src="profileImage(profile)" :alt="profile.name" />
-                      <span v-else class="asset-choice-placeholder">
+                    <button v-if="profileImage(profile)" type="button" class="asset-choice-visual asset-choice-visual--preview" :aria-label="`预览${profile.name}资产图片`" title="点击查看大图" @click.stop="openAssetImagePreview(profileImage(profile), profile.name)">
+                      <img :src="profileImage(profile)" :alt="profile.name" />
+                    </button>
+                    <div v-else class="asset-choice-visual">
+                      <span class="asset-choice-placeholder">
                         <UserRound v-if="profile.asset_type === 'role'" :size="24" />
                         <Mountain v-else-if="profile.asset_type === 'scene'" :size="24" />
                         <Package v-else :size="24" />
@@ -3868,7 +4079,12 @@ function startMicroEditPolling(editId: string): void {
 
               <section v-if="assetEditorProfile?.versions.length" class="asset-version-editor">
                 <div class="section-heading"><div><strong>图片版本</strong><span>选中的版本会作为镜头参考图。</span></div></div>
-                <div><button v-for="version in assetEditorProfile.versions" :key="version.id" type="button" :class="{ active: version.id === assetEditorProfile.selected_asset_id }" @click="chooseManagedVersion(assetEditorProfile, version.id)"><img :src="version.image_url" :alt="`${assetEditorProfile.name}图片版本`" /><span>{{ version.id === assetEditorProfile.selected_asset_id ? '当前版本' : '选择此版本' }}</span><CheckCircle2 v-if="version.id === assetEditorProfile.selected_asset_id" :size="15" /></button></div>
+                <div>
+                  <article v-for="version in assetEditorProfile.versions" :key="version.id" :class="{ active: version.id === assetEditorProfile.selected_asset_id }">
+                    <button type="button" class="asset-version-preview" :aria-label="`预览${assetEditorProfile.name}图片版本`" title="点击查看大图" @click="openAssetImagePreview(version.image_url, assetEditorProfile.name)"><img :src="version.image_url" :alt="`${assetEditorProfile.name}图片版本`" /></button>
+                    <button type="button" class="asset-version-select" @click="chooseManagedVersion(assetEditorProfile, version.id)"><span>{{ version.id === assetEditorProfile.selected_asset_id ? '当前版本' : '选择此版本' }}</span><CheckCircle2 v-if="version.id === assetEditorProfile.selected_asset_id" :size="15" /></button>
+                  </article>
+                </div>
               </section>
             </main>
           </div>
@@ -3877,6 +4093,10 @@ function startMicroEditPolling(editId: string): void {
             <template v-if="assetManagerMode === 'list'"><LivButton variant="secondary" @click="closeAssetManager">取消</LivButton><LivButton variant="primary" :loading="actionBusy === 'save-asset-bindings'" @click="saveAssetBindings"><template #icon><Check :size="16" /></template>绑定资产</LivButton></template>
             <template v-else><LivButton variant="secondary" @click="assetManagerMode = 'list'">返回列表</LivButton><LivButton variant="primary" :loading="actionBusy === 'save-managed-asset'" @click="saveManagedAsset"><template #icon><Check :size="16" /></template>保存资产资料</LivButton></template>
           </template>
+      </LivDialog>
+
+      <LivDialog :open="Boolean(assetImagePreview)" :title="assetImagePreview?.name || '资产图片预览'" description="仅查看图片，不会更改当前镜头的资产绑定。" width="xl" @update:open="value => !value && (assetImagePreview = null)">
+        <div class="asset-image-preview"><img v-if="assetImagePreview" :src="assetImagePreview.url" :alt="assetImagePreview.name" /></div>
       </LivDialog>
 
       <!--
@@ -4325,8 +4545,15 @@ function startMicroEditPolling(editId: string): void {
 .take-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 9px; }
 .take-card { position: relative; min-width: 0; overflow: hidden; display: grid; grid-template-columns: 54px 1fr; grid-template-rows: 1fr 1fr; gap: 1px 8px; align-items: center; padding: 6px; border: 1px solid var(--sb-line); border-radius: 6px; background: white; text-align: left; cursor: pointer; }
 .take-card.selected { border-color: var(--sb-blue); background: #f7faff; }
-.take-card img, .take-card__empty { grid-row: 1 / 3; width: 54px; height: 42px; object-fit: cover; border-radius: 4px; background: #eef2f6; }
+.take-card__media { position: relative; grid-row: 1 / 3; width: 54px; height: 42px; overflow: hidden; border-radius: 4px; background: #eef2f6; }
+.take-card__media img, .take-card__empty { width: 100%; height: 100%; object-fit: cover; border-radius: 4px; background: #eef2f6; }
 .take-card__empty { display: grid; place-items: center; color: #8492a6; }
+.take-card__loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 3px; background: rgba(17, 40, 76, .24); }
+.take-card__loading i { width: 5px; height: 5px; border-radius: 50%; background: #eff6ff; box-shadow: 0 0 5px rgba(255, 255, 255, .65); animation: take-loading-dot 1.1s ease-in-out infinite; }
+.take-card__loading i:nth-child(2) { animation-delay: .16s; }
+.take-card__loading i:nth-child(3) { animation-delay: .32s; }
+@keyframes take-loading-dot { 0%, 60%, 100% { opacity: .4; transform: translateY(1px); } 30% { opacity: 1; transform: translateY(-2px); } }
+@media (prefers-reduced-motion: reduce) { .take-card__loading i { animation: none; opacity: .9; } }
 .take-card span { font-size: 12px; font-weight: 700; }
 .take-card b { color: var(--sb-muted); font-size: 10px; font-weight: 500; }
 .take-card svg { position: absolute; right: 6px; top: 6px; color: var(--sb-blue); }
@@ -4371,7 +4598,9 @@ function startMicroEditPolling(editId: string): void {
 .director-list article :deep(.base-menu-trigger), .bound-assets article :deep(.base-menu-trigger) { width: 28px; height: 28px; border: 0; border-radius: 5px; background: #f5f7fa; color: #667085; }
 .bound-assets { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .bound-assets article { min-width: 0; display: grid; grid-template-columns: 42px 1fr auto; gap: 8px; align-items: center; padding: 7px; border: 1px solid var(--sb-line); border-radius: 6px; }
-.bound-assets img, .asset-icon { width: 42px; height: 42px; object-fit: cover; border-radius: 4px; background: #edf2f7; }
+.bound-asset-preview, .bound-assets img, .asset-icon { width: 42px; height: 42px; object-fit: cover; border-radius: 4px; background: #edf2f7; }
+.bound-asset-preview { display: block; overflow: hidden; padding: 0; border: 0; cursor: zoom-in; }
+.bound-asset-preview:hover, .bound-asset-preview:focus-visible { outline: 2px solid var(--sb-blue); outline-offset: 2px; }
 .asset-icon { display: grid; place-items: center; color: #7e8ba0; }
 .bound-assets article div { min-width: 0; display: flex; flex-direction: column; }
 .bound-assets small { color: var(--sb-muted); }
@@ -4571,6 +4800,15 @@ function startMicroEditPolling(editId: string): void {
 .generation-target strong { display: block; overflow: hidden; margin-top: 5px; color: #172033; font-size: 17px; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
 .generation-target p { margin: 6px 0 0; color: #52647d; font-size: 14px; line-height: 1.65; }
 .generation-target .generation-target__badge { flex: 0 0 auto; padding: 5px 8px; border-radius: 5px; background: #e8f7ef; color: #15804b; font-size: 12px; }
+.generation-sample-choice { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 13px 15px; border: 1px solid #cbdcf7; border-radius: 8px; background: #f8fbff; }
+.generation-sample-choice > div { flex: 1 1 100%; }
+.generation-sample-choice strong { color: #193453; font-size: 14px; }
+.generation-sample-choice p { margin: 3px 0 0; color: #60728d; font-size: 12px; line-height: 1.5; }
+.generation-sample-choice label { color: #425471; font-size: 12px; font-weight: 650; }
+.generation-sample-choice select { flex: 1 1 180px; min-width: 0; max-width: 330px; height: 36px; padding: 0 10px; border: 1px solid #cbd6e6; border-radius: 6px; background: white; color: #243550; font-size: 13px; }
+.generation-budget-cap { display: grid; grid-template-columns: auto minmax(100px, 170px); align-items: center; gap: 7px 12px; margin: 14px 0; color: #314563; font-size: 13px; font-weight: 650; }
+.generation-budget-cap input { width: 100%; height: 36px; padding: 0 10px; border: 1px solid #cbd6e6; border-radius: 6px; background: white; color: #193453; font: inherit; }
+.generation-budget-cap small { grid-column: 1 / -1; color: #687b96; font-size: 12px; font-weight: 400; line-height: 1.5; }
 .generation-confirm-metrics { display: grid; grid-template-columns: repeat(3, 1fr); overflow: hidden; border: 1px solid #e1e8f2; border-radius: 8px; background: #fff; }
 .generation-confirm-metrics > div { min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 18px 12px; border-right: 1px solid #e7edf5; }
 .generation-confirm-metrics > div:last-child { border-right: 0; }
@@ -4715,6 +4953,8 @@ function startMicroEditPolling(editId: string): void {
 .asset-choice-main { width: 100%; min-width: 0; display: grid; grid-template-columns: 20px 72px minmax(0, 1fr) 30px; gap: 10px; align-items: center; padding: 10px; text-align: left; cursor: pointer; outline: none; }
 .asset-choice-main:focus-visible { box-shadow: inset 0 0 0 2px rgba(20,104,255,.35); }
 .asset-choice-visual { width: 72px; height: 72px; overflow: hidden; border: 1px solid #e5eaf2; border-radius: 6px; background: #eef2f7; }
+.asset-choice-visual--preview { display: block; padding: 0; cursor: zoom-in; }
+.asset-choice-visual--preview:hover, .asset-choice-visual--preview:focus-visible { border-color: var(--sb-blue); outline: 2px solid rgba(20, 104, 255, .25); }
 .asset-choice-visual img, .asset-choice-placeholder { width: 100%; height: 100%; object-fit: cover; }
 .asset-choice-placeholder { display: grid; place-items: center; color: #8190a5; }
 .asset-choice-copy { min-width: 0; display: flex; flex-direction: column; gap: 5px; }
@@ -4742,11 +4982,17 @@ function startMicroEditPolling(editId: string): void {
 .asset-voice-actions > span { color: var(--sb-muted); font-size: 11px; }
 .asset-voice-editor audio { width: 100%; height: 36px; margin-top: 10px; }
 .asset-version-editor > div:last-child { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 9px; }
-.asset-version-editor button { position: relative; overflow: hidden; padding: 5px; border: 1px solid var(--sb-line); border-radius: 7px; background: white; cursor: pointer; }
-.asset-version-editor button.active { border-color: var(--sb-blue); }
+.asset-version-editor article { position: relative; overflow: hidden; padding: 5px; border: 1px solid var(--sb-line); border-radius: 7px; background: white; }
+.asset-version-editor article.active { border-color: var(--sb-blue); }
+.asset-version-editor button { border: 0; background: transparent; cursor: pointer; }
+.asset-version-preview { display: block; width: 100%; padding: 0; cursor: zoom-in !important; }
+.asset-version-preview:focus-visible { outline: 2px solid var(--sb-blue); outline-offset: -2px; }
+.asset-version-select { display: block; width: 100%; padding: 2px 0; text-align: center; }
 .asset-version-editor img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 4px; }
 .asset-version-editor button span { display: block; margin-top: 4px; color: #475467; font-size: 10px; }
-.asset-version-editor button svg { position: absolute; right: 8px; top: 8px; color: #12a15c; }
+.asset-version-editor button svg { position: absolute; right: 8px; bottom: 8px; color: #12a15c; }
+.asset-image-preview { display: flex; min-height: 220px; max-height: 74vh; align-items: center; justify-content: center; overflow: auto; border-radius: 8px; background: #101b2d; }
+.asset-image-preview img { display: block; max-width: 100%; max-height: 74vh; object-fit: contain; }
 .asset-manager-footer { display: flex; justify-content: flex-end; gap: 8px; padding: 13px 20px; border-top: 1px solid var(--sb-line); background: white; }
 .spin { animation: spin 1s linear infinite; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }

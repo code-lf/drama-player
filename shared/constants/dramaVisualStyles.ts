@@ -12,6 +12,7 @@ export interface DramaVisualStyleContract {
   lighting: string
   negative_elements: string[]
   runtime_style_prefix: string
+  audio_performance_style?: string
 }
 
 export interface DramaVisualStyleOption {
@@ -25,6 +26,8 @@ export interface DramaVisualStyleOption {
 // 后端不可用时的唯一前端兜底目录；首页和项目页必须共同复用，禁止再维护第二套名称。
 export const fallbackDramaVisualStyleOptions: DramaVisualStyleOption[] = [
   { styleId: 'oriental_fantasy_live_action', label: '东方玄幻 · 古装影视写实', value: '东方玄幻 · 古装影视写实', description: '真人古装 · 电影光影', image: '/landing/case-truth.png' },
+  // 使用用户提供并压缩后的原图，直接指向独立 OSS 风格封面，不走站点素材映射。
+  { styleId: 'hong_kong_costume_drama_live_action', label: '港风古装 · 经典港剧写实', value: '港风古装 · 经典港剧写实', description: '怀旧港剧 · 鲜明对白', image: 'https://flairshufei.oss-cn-beijing.aliyuncs.com/livliv/drama/style-covers/hong-kong-costume-41d113a48989034a.webp' },
   { styleId: 'urban_emotion_live_action', label: '都市情感 · 现代影视写实', value: '都市情感 · 现代影视写实', description: '现代真人 · 细腻表演', image: '/landing/case-city.png' },
   { styleId: 'ancient_xianxia_aesthetic', label: '古风仙侠 · 唯美国风', value: '古风仙侠 · 唯美国风', description: '清透柔光 · 诗意留白', image: '/landing/tool-character.png' },
   { styleId: 'anime_japanese_2d', label: '二次元动画 · 日系2D', value: '二次元动画 · 日系2D', description: '二维线稿 · 赛璐璐渲染', image: '/landing/case-youth.png' },

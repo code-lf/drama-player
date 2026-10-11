@@ -57,7 +57,8 @@ function libraryInputs() {
     if (sourceLibraryRefs[image]) { order.push(`library:${refs.length}`); refs.push(sourceLibraryRefs[image]!) }
     else { order.push(`upload:${legacy.length}`); legacy.push(image) }
   }
-  for (const reference of [...libraryDocuments.value, ...(creationType.value === 'reference_video' && libraryVideo.value ? [libraryVideo.value] : [])]) { order.push(`library:${refs.length}`); refs.push(reference) }
+  // 视频可用于分析脚本，但只有当前模型支持视频输入时才进入生成快照。
+  for (const reference of [...libraryDocuments.value, ...(referenceUsesVideoInput.value && libraryVideo.value ? [libraryVideo.value] : [])]) { order.push(`library:${refs.length}`); refs.push(reference) }
   return { sourceImages: legacy, libraryRefs: refs, inputOrder: order }
 }
 /** 同版本分析由后端复用，不把预览地址当作视频输入凭证。 */
@@ -121,6 +122,15 @@ const resolution = ref('720p')
 const aspectRatioOptions = ref(['9:16', '1:1', '16:9'])
 const resolutionOptions = ref(['480p', '720p'])
 const durationOptions = ref(Array.from({ length: 12 }, (_, index) => index + 4))
+// 默认模型和可选模型都来自同一份功能能力快照；切换时同步时长、画幅和清晰度。
+const activeVideoModel = ref(props.defaultVideoModel)
+const modelOptions = ref<Array<{ code: string; name: string; inputSchema: Record<string, any>; supportsReferenceVideo: boolean }>>([])
+const userCanSelectModel = ref(false)
+// Grok 走「分析参考片 → 脚本和商品图生成」，Seedance 可保留原视频输入路径。
+const referenceUsesVideoInput = computed(() => creationType.value === 'reference_video'
+  && Boolean(modelOptions.value.find(item => item.code === activeVideoModel.value)?.supportsReferenceVideo))
+const referenceAnalysisOnly = computed(() => studioMode.value === 'reference'
+  && creationType.value === 'reference_video' && !referenceUsesVideoInput.value)
 const resultCount = ref(2)
 const activeTask = ref<ProductVideoTask | null>(null)
 const selectedCategory = ref('全部')
@@ -219,6 +229,7 @@ function openMode(mode: CreationType): void {
   const defaultCode = mode === 'model' ? 'look-natural' : 'product-hero'
   activeTemplateId.value = effectiveTemplates.value.find(item => item.code === defaultCode)?.id || ''
   if (mode === 'reference_video') {
+    // 保留当前默认模型；参考片仅用于提炼脚本时不暗中切换到 Seedance。
     referenceSource.value = 'link'
     prompt.value = ''
   }
@@ -228,7 +239,7 @@ function openMode(mode: CreationType): void {
 }
 
 function selectReferenceSource(source: 'link' | 'upload' | 'script'): void {
-  /** 脚本入口不携带参考视频；上传入口继续使用已有的签名参考片及视频输入报价。 */
+  /** 脚本入口不携带参考视频；视频入口是否把原片送入生成由当前模型能力决定。 */
   if (source !== referenceSource.value) { referenceAnalysis.value = null; libraryVideo.value = null }
   referenceSource.value = source
   creationType.value = source === 'script' ? 'product' : 'reference_video'
@@ -371,15 +382,30 @@ async function loadHome(): Promise<void> {
 async function loadGenerationProfile(): Promise<void> {
   try {
     const profile = await generationProfileService.get('product_video')
-    const schema = profile.input_schema || {}
+    activeVideoModel.value = String(profile.model?.code || props.defaultVideoModel)
+    userCanSelectModel.value = Boolean(profile.supports_user_model_selection && profile.selection_mode === 'advanced_optional')
+    modelOptions.value = [
+      { code: activeVideoModel.value, name: String(profile.model?.name || activeVideoModel.value), inputSchema: profile.input_schema || {}, supportsReferenceVideo: Number(profile.input_schema?.max_reference_video_count ?? 1) > 0 },
+      ...(userCanSelectModel.value ? (profile.allowed_models || []).filter((item: any) => item.code !== activeVideoModel.value).map((item: any) => ({
+        code: String(item.code), name: String(item.name || item.code), inputSchema: item.input_schema || {}, supportsReferenceVideo: Number(item.input_schema?.max_reference_video_count ?? 1) > 0,
+      })) : []),
+    ]
     const defaults = profile.default_params || {}
-    referenceImageLimit.value = Math.max(0, Number(schema.max_reference_count ?? 0))
+    applyModelSchema(modelOptions.value[0]?.inputSchema || {}, defaults)
+  } catch (error) {
+    // 能力接口失败时仅保留安全默认值，后端仍会在报价和提交前拒绝非法参数。
+    console.warn('[livliv] 商品视频功能配置加载失败，已使用安全默认值', error)
+  }
+}
+
+function applyModelSchema(schema: Record<string, any>, defaults: Record<string, any> = {}): void {
+    referenceImageLimit.value = Math.max(0, Number(schema.max_reference_count ?? 3))
     const ratiosRaw = schema.aspect_ratio || schema.aspect_ratios
     const resolutionsRaw = schema.resolution || schema.resolutions
     const durationRule = (schema.duration_sec || {}) as { min?: number; max?: number }
-    // 商品视频接口当前只接受这三种比例；不能把剧本视频模型的其它规格直接展示出来。
+    // 页面展示后台白名单与商品视频接口的交集，不向模型提交不支持的规格。
     if (Array.isArray(ratiosRaw)) {
-      const allowedRatios = new Set(['9:16', '1:1', '16:9'])
+      const allowedRatios = new Set(['9:16', '1:1', '16:9', '3:2', '2:3'])
       const supported = ratiosRaw.map(String).filter(value => allowedRatios.has(value))
       if (supported.length) aspectRatioOptions.value = supported
     }
@@ -387,13 +413,21 @@ async function loadGenerationProfile(): Promise<void> {
     const minDuration = Math.max(1, Number(durationRule.min || 4))
     const maxDuration = Math.max(minDuration, Number(durationRule.max || 15))
     durationOptions.value = Array.from({ length: maxDuration - minDuration + 1 }, (_, index) => minDuration + index)
-    aspectRatio.value = String(defaults.aspect_ratio || aspectRatio.value)
-    resolution.value = String(defaults.resolution || resolution.value).toLowerCase()
-    durationSec.value = Number(defaults.duration_sec || durationSec.value)
-  } catch (error) {
-    // 能力接口失败时仅保留安全默认值，后端仍会在报价和提交前拒绝非法参数。
-    console.warn('[livliv] 商品视频功能配置加载失败，已使用安全默认值', error)
-  }
+    aspectRatio.value = aspectRatioOptions.value.includes(String(defaults.aspect_ratio || aspectRatio.value)) ? String(defaults.aspect_ratio || aspectRatio.value) : aspectRatioOptions.value[0] || '9:16'
+    const preferredResolution = String(defaults.resolution || resolution.value).toLowerCase()
+    resolution.value = resolutionOptions.value.includes(preferredResolution) ? preferredResolution : resolutionOptions.value[0] || '720p'
+    const preferredDuration = Number(defaults.duration_sec || durationSec.value)
+    durationSec.value = durationOptions.value.includes(preferredDuration) ? preferredDuration : durationOptions.value[0] || 10
+}
+
+function selectVideoModel(code: string): void {
+  const selected = modelOptions.value.find(item => item.code === code)
+  if (!selected) return
+  activeVideoModel.value = code
+  if (selected) applyModelSchema(selected.inputSchema)
+  // 模型不同则报价和幂等输入也不同，不能复用上一个模型的请求编号。
+  creationRequestId.value = ''
+  creationRequestFingerprint.value = ''
 }
 
 async function loadTemplates(): Promise<void> {
@@ -463,35 +497,32 @@ async function startCreation(): Promise<void> {
   }
   try {
     loading.value = true
-    // 新默认模型按清晰度和秒数计费；必须取得服务端实时报价并由用户确认后才创建付费任务。
-    const quote = await productVideoService.previewCredits({
-      ...libraryInputs(), prompt: finalPrompt, aspectRatio: aspectRatio.value,
-      templateId: activeTemplate.value.id,
-      durationSec: durationSec.value,
-      resultCount: resultCount.value,
-      resolution: resolution.value,
-      model: props.defaultVideoModel,
-      referenceVideoToken: creationType.value === 'reference_video' ? referenceAnalysis.value?.referenceVideoToken : undefined
-    })
+    // 一次点击先冻结输入；用户在报价弹窗期间修改表单，不会让正式任务换模型或换计费模式。
+    const frozenInputs = libraryInputs()
+    const frozenCreationType = referenceAnalysisOnly.value ? 'reference_script' : creationType.value
+    const frozenAnalysisOnly = referenceAnalysisOnly.value
+    const frozenRequest = {
+      ...frozenInputs, prompt: finalPrompt, templateId: activeTemplate.value.id,
+      durationSec: durationSec.value, resultCount: resultCount.value,
+      resolution: resolution.value, aspectRatio: aspectRatio.value,
+      model: activeVideoModel.value,
+      referenceVideoToken: referenceUsesVideoInput.value ? referenceAnalysis.value?.referenceVideoToken : undefined
+    }
+    // 报价和创建使用同一份冻结参数；Grok 不携带原视频，Seedance 保留视频输入报价。
+    const quote = await productVideoService.previewCredits(frozenRequest)
     if (!quote.sufficient) {
       message.value = `预计消耗 ${quote.requiredCredits} 点，当前余额 ${quote.currentBalance} 点，请先充值。`
       return
     }
-    if (!await confirmAction(`本次生成 ${resultCount.value} 个 ${durationSec.value} 秒视频（${resolution.value.toUpperCase()}），输入参考视频 ${quote.referenceVideoSeconds || 0} 秒（已计入费用），预计消耗 ${quote.requiredCredits} 点。当前余额 ${quote.currentBalance} 点，扣后余额 ${quote.balanceAfter} 点。确认生成吗？`)) return
-    const fingerprint = JSON.stringify({ ...libraryInputs(), prompt: finalPrompt, template: activeTemplate.value.id, duration: durationSec.value, resolution: resolution.value, aspect: aspectRatio.value, count: resultCount.value, model: props.defaultVideoModel, token: referenceAnalysis.value?.referenceVideoToken })
+    const referenceCostNote = frozenAnalysisOnly
+      ? '参考视频只用于提炼脚本，不传给生成模型，也不计入视频输入费用。'
+      : quote.referenceVideoSeconds ? `输入参考视频 ${quote.referenceVideoSeconds} 秒（已计入费用）。` : ''
+    if (!await confirmAction(`本次使用 ${quote.model} 生成 ${frozenRequest.resultCount} 个 ${frozenRequest.durationSec} 秒视频（${frozenRequest.resolution.toUpperCase()}）。${referenceCostNote}预计消耗 ${quote.requiredCredits} 点。当前余额 ${quote.currentBalance} 点，扣后余额 ${quote.balanceAfter} 点。确认生成吗？`)) return
+    const fingerprint = JSON.stringify({ ...frozenRequest, creationType: frozenCreationType })
     if (fingerprint !== creationRequestFingerprint.value) { creationRequestId.value = crypto.randomUUID(); creationRequestFingerprint.value = fingerprint }
     const task = await productVideoService.createTask({
-      ...libraryInputs(), inputSnapshotId: quote.inputSnapshotId, requestId: creationRequestId.value,
-      templateId: activeTemplate.value.id,
-      creationType: creationType.value,
-      prompt: finalPrompt,
-      sourceImages: libraryInputs().sourceImages,
-      durationSec: durationSec.value,
-      aspectRatio: aspectRatio.value,
-      resolution: resolution.value,
-      resultCount: resultCount.value,
-      model: props.defaultVideoModel,
-      referenceVideoToken: creationType.value === 'reference_video' ? referenceAnalysis.value?.referenceVideoToken : undefined
+      ...frozenRequest, inputSnapshotId: quote.inputSnapshotId, requestId: creationRequestId.value,
+      creationType: frozenCreationType,
     })
     activeTask.value = task
     // 任务扣点成功后先同步当前页面余额；后台账本仍以接口返回为准，刷新后会重新拉取。
@@ -560,7 +591,7 @@ onBeforeUnmount(stopPolling)
 
 <template>
   <section class="product-video-shell mx-auto max-w-[1460px]">
-    <LibraryPicker v-model:open="libraryPickerOpen" kind="video" :model="defaultVideoModel" :media-type="libraryPickerType" :remaining="libraryPickerType === 'video' ? 1 : libraryPickerType === 'document' ? 3 - libraryDocuments.length : referenceImageLimit - sourceImages.length - imageUploadsInFlight - pendingLibraryUploads.filter(value => value.kind === 'image').length" @select="selectLibrary" />
+    <LibraryPicker v-model:open="libraryPickerOpen" kind="video" :model="activeVideoModel" :media-type="libraryPickerType" :analysis-only="libraryPickerType === 'video'" :remaining="libraryPickerType === 'video' ? 1 : libraryPickerType === 'document' ? 3 - libraryDocuments.length : referenceImageLimit - sourceImages.length - imageUploadsInFlight - pendingLibraryUploads.filter(value => value.kind === 'image').length" @select="selectLibrary" />
     <div v-if="libraryEnabled && view === 'create'" class="flex gap-3 mb-4 text-sm text-blue-600"><button @click="libraryPickerType = 'image'; libraryPickerOpen = true">商品图片：从资料库选择</button><button v-if="studioMode === 'reference'" @click="libraryPickerType = 'video'; libraryPickerOpen = true">参考视频：从资料库选择</button><button @click="libraryPickerType = 'document'; libraryPickerOpen = true">引用参考原文</button></div>
     <button v-if="libraryEnabled && activeTask && selectedResult?.videoUrl && view === 'result'" class="mb-3 text-blue-600 text-sm" @click="saveLibraryResult(activeTask.id, selectedResult.id)">保存当前视频到个人资料</button>
     <button v-if="libraryAnalysisDraft && !referenceAnalyzing" class="mb-3 text-blue-600 text-sm" @click="analyzeLibraryVideo(libraryAnalysisDraft, true).catch(error => message = error.message)">重试所选资料视频分析</button>
@@ -621,6 +652,8 @@ onBeforeUnmount(stopPolling)
           <div class="pv-field"><div class="pv-field-head"><b>上传你的商品素材</b><span>最多 {{ referenceImageLimit }} 张</span></div><div class="pv-upload-list"><div v-for="(image, index) in sourceImages" :key="image" class="pv-upload-thumb"><img :src="image" alt="已上传素材" /><button type="button" @click="sourceImages.splice(index, 1)">×</button></div><label v-if="sourceImages.length < referenceImageLimit" class="pv-upload-trigger"><span class="i-lucide-plus"></span><small>上传商品图</small><input type="file" accept="image/png,image/jpeg,image/webp" multiple @change="handleUpload" /></label></div></div>
           <div v-if="studioMode === 'trending'" class="pv-field"><div class="pv-field-head"><b>灵感模板</b><button type="button" @click="view = 'templates'; loadTemplates()">更换模板 <span class="i-lucide-chevron-right"></span></button></div><div class="pv-mini-template-grid"><button v-for="template in effectiveTemplates.slice(0, 5)" :key="template.id" type="button" :class="{ active: activeTemplateId === template.id }" @click="selectTemplate(template)"><img :src="siteAsset(template.coverUrl)" :alt="template.name" /><small>{{ template.name }}</small></button></div></div>
           <div class="pv-field"><div class="pv-field-head"><b>{{ studioMode === 'reference' ? '4. 视频画面描述（可编辑）' : '创意描述' }}</b><span>{{ prompt.length }}/1500</span></div><textarea v-model="prompt" maxlength="1500" :placeholder="studioMode === 'reference' ? 'AI 改写后自动填入，也可自己描述商品画面、动作与节奏' : '描述商品、人物、画面风格与想突出的卖点'"></textarea></div>
+          <div v-if="userCanSelectModel && modelOptions.length > 1" class="pv-field"><div class="pv-field-head"><b>视频模型</b></div><div class="pv-setting-grid"><label>本次使用<select :value="activeVideoModel" @change="selectVideoModel(($event.target as HTMLSelectElement).value)"><option v-for="item in modelOptions" :key="item.code" :value="item.code">{{ item.name }}</option></select></label></div><p class="pv-field-hint">切换模型后，时长、清晰度和比例将按当前模型能力重新匹配，生成前仍会显示实际报价。</p></div>
+          <p v-if="studioMode === 'reference' && creationType === 'reference_video'" class="pv-field-hint">{{ referenceAnalysisOnly ? '当前模型仅使用提炼后的脚本与商品图生成新视频；原参考片不传给供应商，不收取视频输入费用。' : '当前模型可接收原参考视频；报价包含输入视频时长。' }}</p>
           <div class="pv-field"><div class="pv-field-head"><b>视频设置</b></div><div class="pv-setting-grid"><label>比例<select v-model="aspectRatio"><option v-for="ratio in aspectRatioOptions" :key="ratio" :value="ratio">{{ ratio }}</option></select></label><label>时长<select v-model.number="durationSec"><option v-for="second in durationOptions" :key="second" :value="second">{{ second }} 秒</option></select></label><label>生成数量<select v-model.number="resultCount"><option :value="1">1 个</option><option :value="2">2 个</option><option :value="4">4 个</option></select></label><label>清晰度<select v-model="resolution"><option v-for="item in resolutionOptions" :key="item" :value="item">{{ item.toUpperCase() }}</option></select></label></div></div>
           <footer class="pv-form-footer"><div><span>当前点数</span><CreditAmount :value="props.currentCreditBalance" size="sm" tone="accent" /></div><div><span>生成费用</span><b>提交前获取实时报价</b></div><button type="button" :disabled="loading || referenceAnalyzing" @click="startCreation"><span class="i-lucide-sparkles"></span>{{ loading ? '正在获取报价…' : '一键生成视频' }}</button></footer>
         </div>

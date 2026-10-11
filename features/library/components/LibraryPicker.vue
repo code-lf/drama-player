@@ -4,7 +4,7 @@ import type { LibraryItem, LibraryReference, LibraryVersion } from '~/entities/l
 import { libraryService } from '~/shared/api/services/libraryService'
 import { request } from '~/shared/api/adapters/httpAdapter'
 
-const props = defineProps<{ open: boolean; kind: 'image' | 'video' | 'drama'; model?: string; remaining: number; mediaType?: string; documentRemaining?: number; initialCategory?: string }>()
+const props = defineProps<{ open: boolean; kind: 'image' | 'video' | 'drama'; model?: string; remaining: number; mediaType?: string; analysisOnly?: boolean; documentRemaining?: number; initialCategory?: string }>()
 const emit = defineEmits<{ 'update:open': [value: boolean]; select: [values: Array<{ item: LibraryItem; version: LibraryVersion; reference: LibraryReference }>] }>()
 const scope = ref('personal'), category = ref(''), query = ref(''), page = ref(1)
 const mediaFilter = ref('')
@@ -27,7 +27,8 @@ async function load() {
   try {
     const result = await request<{ items: typeof entries.value; total: number }>('/library/selection-options', { query: {
       scope: scope.value, category: category.value, query: query.value, page: page.value, kind: props.kind,
-      model: props.model || '', media_type: props.mediaType || mediaFilter.value
+      model: props.model || '', media_type: props.mediaType || mediaFilter.value,
+      analysis_only: props.analysisOnly && (props.mediaType || mediaFilter.value) === 'video'
     } })
     if (current === revision) {
       entries.value = result.items; total.value = result.total; error.value = ''
