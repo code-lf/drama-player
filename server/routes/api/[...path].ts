@@ -1,4 +1,5 @@
-import { getRequestURL, proxyRequest } from 'h3'
+import { getRequestURL, proxyRequest, setResponseStatus } from 'h3'
+import { handleLibraryFallback } from '../../utils/libraryFallback'
 
 /**
  * 将用户端所有 `/api/*` 请求转发给 FastAPI。
@@ -31,5 +32,46 @@ export default defineEventHandler(async (event) => {
 
   // proxyRequest 会透传请求方法、查询参数、请求体以及必要请求头，并把后端响应流直接返回浏览器。
   // 因此普通 JSON、文件上传和 SSE 长连接都不需要在用户端重复实现转发逻辑。
-  return proxyRequest(event, targetUrl)
+  try {
+    return await proxyRequest(event, targetUrl)
+  } catch (proxyError: unknown) {
+    // 当外部后端由于网络策略、TLS 协议或服务未启动导致连接中断时，为基础配置接口提供兜底，
+    // 保证前端基础页面（维护检测、登录外观、站点静态资源、公告栏）平稳降级，不会出现整站崩溃。
+    if (apiPath === '/config/site-assets') {
+      return {
+        asset_base_url: '',
+        asset_version: '1',
+        raster_extension: '.webp'
+      }
+    }
+    if (apiPath === '/system/maintenance') {
+      return {
+        server_time: new Date().toISOString(),
+        items: []
+      }
+    }
+    if (apiPath === '/login-appearance') {
+      return {
+        title: 'Livliv',
+        subtitle: 'AI 漫剧与短剧创作平台',
+        icp_record: '',
+        icp_record_url: '',
+        public_security_record: '',
+        public_security_record_url: ''
+      }
+    }
+    if (apiPath.startsWith('/announcements')) {
+      return []
+    }
+    if (apiPath.startsWith('/library')) {
+      return await handleLibraryFallback(event, apiPath, requestUrl)
+    }
+
+    setResponseStatus(event, 502)
+    return {
+      success: false,
+      code: 'BACKEND_CONNECTION_ERROR',
+      message: '后端 API 连接失败，请检查网络或后端服务状态。'
+    }
+  }
 })

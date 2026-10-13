@@ -208,7 +208,7 @@ const toolMenuItems = [
           <rect x="4" y="5" width="16" height="15" rx="2.5" />
           <path d="M8 10h8M8 14h8M8 18h5" stroke-linecap="round" />
         </svg>
-        <span>素材与资料</span>
+        <span>资料库</span>
       </NuxtLink>
       <NuxtLink
         to="/dashboard-exports"

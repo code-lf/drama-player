@@ -12,13 +12,13 @@ const loading = ref(false)
 const now = ref(Date.now())
 const serverOffset = ref(0)
 const route = useRoute()
-const fullNotice = computed(() => items.value.find(item => item.mode === 'full' && item.blocking))
+const fullNotice = computed(() => Array.isArray(items.value) ? items.value.find(item => item?.mode === 'full' && item?.blocking) : undefined)
 // 登录页含注册入口，充值中心保持开放；其余工作区以维护页替代，不让新用户无法注册。
 const essentialPage = computed(() => ['/login', '/register', '/dashboard-billing'].includes(route.path.replace(/\/$/, '')))
 const full = computed(() => essentialPage.value ? undefined : fullNotice.value)
 const blocked = useState<boolean>('maintenance:full-blocked', () => false)
 watch(full, value => { blocked.value = Boolean(value) }, { immediate: true })
-const current = computed(() => fullNotice.value || items.value.find(item => item.blocking) || items.value[0])
+const current = computed(() => fullNotice.value || (Array.isArray(items.value) ? items.value.find(item => item?.blocking) || items.value[0] : undefined))
 const detailsOpen = ref(false)
 let poll: ReturnType<typeof setInterval> | undefined
 let clock: ReturnType<typeof setInterval> | undefined
@@ -41,10 +41,19 @@ async function refresh(): Promise<void> {
   loading.value = true
   try {
     const value = await request<{ server_time: string; items: MaintenanceItem[] }>('/system/maintenance')
-    serverOffset.value = new Date(value.server_time).getTime() - Date.now()
-    items.value = value.items; now.value = Date.now() + serverOffset.value; failed.value = false
-    localStorage.setItem('livliv:maintenance:last-status', JSON.stringify(value))
-  } catch { failed.value = true }
+    if (value && Array.isArray(value.items)) {
+      serverOffset.value = value.server_time ? (new Date(value.server_time).getTime() - Date.now()) : 0
+      items.value = value.items
+      now.value = Date.now() + serverOffset.value
+      failed.value = false
+      localStorage.setItem('livliv:maintenance:last-status', JSON.stringify(value))
+    } else {
+      items.value = []
+    }
+  } catch {
+    items.value = Array.isArray(items.value) ? items.value : []
+    failed.value = true
+  }
   finally { loading.value = false }
 }
 onMounted(() => {

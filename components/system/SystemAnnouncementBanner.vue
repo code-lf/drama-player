@@ -73,9 +73,9 @@ async function loadAnnouncements(): Promise<void> {
           .map((item) => item.id)
       )
     }
-  } catch (error) {
-    // 公告加载失败不影响主流程，只打印日志方便后续排查。
-    console.error('[livliv] 系统公告加载失败', error)
+  } catch {
+    // 公告加载失败不影响主流程，优雅降级为空公告列表
+    announcements.value = []
   } finally {
     loading.value = false
   }
