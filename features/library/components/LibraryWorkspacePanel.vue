@@ -119,6 +119,28 @@ function addVersion(item: LibraryItem, event: Event) {
   pendingVersion.value = { item, file }
 }
 
+/** 切换个人/平台资料时清除上一库的筛选，避免沿用“视频”等条件造成素材库为空的错觉。 */
+function changeScope(nextScope: 'personal' | 'public') {
+  if (scope.value === nextScope) return
+  category.value = ''
+  mediaType.value = ''
+  query.value = ''
+  archived.value = false
+  scope.value = nextScope
+}
+
+/** 一键恢复当前库的完整列表，方便从空筛选直接回到素材总览。 */
+function clearFilters() {
+  // 类型和用途由 watch 自动刷新；只有搜索词时需要主动刷新，避免同一次清空发起重复请求。
+  const watchedFilterChanged = Boolean(category.value || mediaType.value)
+  category.value = ''
+  mediaType.value = ''
+  query.value = ''
+  page.value = 1
+  if (!watchedFilterChanged) void refresh()
+}
+
+/** 直接呈现后台可公开的原因，不把所有业务错误都覆盖成网络异常。 */
 function messageFor(exception: unknown): string {
   const value = exception as { data?: { detail?: string | { message?: string } }; message?: string }
   const detail = value.data?.detail
@@ -375,20 +397,20 @@ onMounted(initialize)
             <button
               class="flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-xs font-bold transition-all"
               :class="scope === 'personal' && !archived ? 'bg-white text-blue-600 shadow-xs' : 'text-slate-600 hover:text-slate-900'"
-              @click="scope = 'personal'; archived = false"
+              @click="changeScope('personal')"
             >
               <span>个人资料</span>
-              <span v-if="scope === 'personal' && !archived" class="rounded-full bg-blue-50 px-1.5 py-0.2 text-[10px] text-blue-600 tabular-nums">
+              <span v-if="scope === 'personal' && !archived" class="rounded-full bg-blue-50 px-1.5 py-0.5 text-[10px] text-blue-600 tabular-nums">
                 {{ total }}
               </span>
             </button>
             <button
               class="flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-xs font-bold transition-all"
               :class="scope === 'public' ? 'bg-white text-blue-600 shadow-xs' : 'text-slate-600 hover:text-slate-900'"
-              @click="scope = 'public'; archived = false"
+              @click="changeScope('public')"
             >
               <span>平台公共素材</span>
-              <span v-if="scope === 'public'" class="rounded-full bg-blue-50 px-1.5 py-0.2 text-[10px] text-blue-600 tabular-nums">
+              <span v-if="scope === 'public'" class="rounded-full bg-blue-50 px-1.5 py-0.5 text-[10px] text-blue-600 tabular-nums">
                 {{ total }}
               </span>
             </button>
@@ -522,7 +544,7 @@ onMounted(initialize)
         <button
           v-if="query || category || mediaType"
           class="mt-4 inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-          @click="query = ''; category = ''; mediaType = ''; refresh()"
+          @click="clearFilters"
         >
           <RotateCcw class="h-3.5 w-3.5" />
           <span>清除筛选</span>
@@ -605,7 +627,7 @@ onMounted(initialize)
                   </p>
                   <div class="flex items-center gap-1.5 text-[11px]">
                     <span
-                      class="inline-flex items-center gap-1 rounded-sm px-1.5 py-0.2 font-semibold"
+                      class="inline-flex items-center gap-1 rounded-sm px-1.5 py-0.5 font-semibold"
                       :class="currentVersion(item).parse_status === 'ready' ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'"
                     >
                       <Check v-if="currentVersion(item).parse_status === 'ready'" class="h-3 w-3" />

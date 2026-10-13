@@ -88,6 +88,8 @@ onBeforeUnmount(() => {
     <button
       type="button"
       :disabled="disabled"
+      aria-haspopup="listbox"
+      :aria-expanded="isOpen"
       class="group inline-flex items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white font-medium text-slate-700 shadow-xs transition-all duration-150 hover:border-slate-300 hover:bg-slate-50/80 focus:border-blue-500 focus:outline-hidden focus:ring-2 focus:ring-blue-500/20 disabled:cursor-not-allowed disabled:opacity-50"
       :class="[
         size === 'xs' ? 'h-7 px-2.5 text-xs' : size === 'sm' ? 'h-9 px-3 text-xs' : 'h-10 px-3.5 text-sm',
@@ -124,16 +126,20 @@ onBeforeUnmount(() => {
     >
       <div
         v-if="isOpen"
+        role="listbox"
         class="absolute z-50 mt-1.5 max-h-60 overflow-y-auto rounded-xl border border-slate-100 bg-white p-1.5 shadow-xl ring-1 ring-black/5 focus:outline-hidden"
         :class="[
           align === 'right' ? 'right-0' : 'left-0',
           block ? 'w-full' : 'min-w-[140px] max-w-[240px]'
         ]"
       >
-        <div
+        <button
           v-for="option in options"
           :key="String(option.value)"
-          class="group/item flex items-center justify-between rounded-lg px-2.5 py-2 text-xs font-medium cursor-pointer transition-colors"
+          type="button"
+          role="option"
+          :aria-selected="String(option.value) === String(modelValue)"
+          class="group/item flex w-full items-center justify-between rounded-lg px-2.5 py-2 text-left text-xs font-medium cursor-pointer transition-colors"
           :class="[
             String(option.value) === String(modelValue)
               ? 'bg-blue-50 text-blue-600 font-bold'
@@ -149,7 +155,7 @@ onBeforeUnmount(() => {
           <div class="flex items-center gap-1.5 shrink-0">
             <span
               v-if="option.badge"
-              class="rounded-sm bg-slate-100 px-1 py-0.2 text-[9px] font-semibold text-slate-600 group-hover/item:bg-blue-100 group-hover/item:text-blue-700"
+              class="rounded-sm bg-slate-100 px-1 py-0.5 text-[9px] font-semibold text-slate-600 group-hover/item:bg-blue-100 group-hover/item:text-blue-700"
             >
               {{ option.badge }}
             </span>
@@ -158,7 +164,7 @@ onBeforeUnmount(() => {
               class="h-3.5 w-3.5 text-blue-600 shrink-0"
             />
           </div>
-        </div>
+        </button>
 
         <div v-if="options.length === 0" class="py-3 text-center text-xs text-slate-400">
           暂无选项

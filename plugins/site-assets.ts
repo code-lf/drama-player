@@ -13,9 +13,6 @@ export default defineNuxtPlugin(async () => {
   }))
 
   try {
-    if (runtimeConfig.public.apiAdapter === 'mock') {
-      return { provide: { siteAsset } }
-    }
     // SSR 使用后端内部地址，浏览器使用同源 /api；这样首屏 HTML 直接携带 OSS 地址，
     // 不会先请求本地大图再在 hydration 后切换，真正减少首次加载流量。
     const baseUrl = import.meta.server
@@ -23,11 +20,8 @@ export default defineNuxtPlugin(async () => {
       : String(runtimeConfig.public.apiBase || '/api')
     state.value = await $fetch<SiteAssetConfig>(`${baseUrl}/config/site-assets`)
   } catch (error) {
-    // OSS 配置接口不可用时平滑降级使用 public 本地路径，避免阻断页面渲染
-    if (process.env.DEBUG_ASSETS) {
-      const errorMessage = error instanceof Error ? error.message : String(error)
-      console.warn(`[livliv] 站点素材配置读取失败，暂时使用本地静态资源: ${errorMessage}`)
-    }
+    // OSS 配置接口不可用时保留 public 本地路径，避免配置故障导致整站图片全部裂开。
+    console.warn('[livliv] 站点素材配置读取失败，暂时使用本地静态资源。', error)
   }
 
   const siteAsset = (rawPath: string): string => {

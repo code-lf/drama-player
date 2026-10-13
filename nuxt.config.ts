@@ -15,11 +15,11 @@ const nuxtBuildDir = process.env.NUXT_BUILD_DIR || (isProductionBuild ? '.nuxt-b
 // 本地开发仍使用同源 /api 代理，避免开发机访问线上用户数据或遇到跨域问题。
 // NUXT_PUBLIC_API_BASE 可在部署时覆盖；不要填服务器内部 IP 或 HTTP 地址，
 // 否则 HTTPS 页面可能被浏览器的混合内容保护拦截。
-const defaultApiBase = process.env.NUXT_PUBLIC_API_BASE || 'https://livliv.suyoulink.cn/api'
+const defaultApiBase = process.env.NUXT_PUBLIC_API_BASE || (isProductionBuild ? 'https://livliv.suyoulink.cn/api' : '/api')
 // Nuxt dev 代理的后端目标地址统一收口到配置项，便于后续切换后端端口或机器地址。
 // 这里要显式带上 `/api` 前缀，否则浏览器请求 `/api/config/runtime` 时会被转发成后端的 `/config/runtime`，
 // 最终命中不到 FastAPI 已挂载的 `/api` 路由树。
-const localApiProxyTarget = process.env.NUXT_LOCAL_API_PROXY_TARGET || 'https://livliv.suyoulink.cn/api'
+const localApiProxyTarget = process.env.NUXT_LOCAL_API_PROXY_TARGET || 'http://127.0.0.1:8000/api'
 // 支付宝异步通知在本地联调时会先经过 cpolar，再由 Nuxt 的 /api 代理转给 FastAPI。
 // Vite 默认拒绝未知 Host，因此只允许当前明确配置的隧道域名；不要使用 allowedHosts: true，
 // 否则会放大 DNS rebinding 风险。域名变化时可用逗号分隔的环境变量覆盖。
@@ -118,15 +118,9 @@ export default defineNuxtConfig({
     '/dashboard-projects': { ssr: false }
   },
 
-  // 开发服务配置
-  devServer: {
-    host: '0.0.0.0',
-    port: 3000
-  },
-
   // 运行时配置：
   // - 浏览器生产环境使用线上 HTTPS API，本地开发使用 /api 代理
-  // - AI Studio 沙箱默认使用内置 mockAdapter，提供完整的端到端演示体验
+  // - 通过环境变量可切换 mock/http，联调时无需改业务代码
   runtimeConfig: {
     // 服务端渲染首页时直接请求 FastAPI，确保首屏输出的就是 OSS 图片地址。
     // 生产环境可用 NUXT_API_SERVER_BASE 指向容器内 API 地址，浏览器不会看到该配置。
@@ -148,30 +142,30 @@ export default defineNuxtConfig({
       },
 
   // 这里额外把别名同步给 Vite。
-  vite: {
-    server: {
-      host: '0.0.0.0',
-      port: 3000,
-      allowedHosts: true
-    },
-    resolve: {
-      alias: isProductionBuild
-        ? {}
-        : {
+  // 原因是当前报错发生在 `vite:import-analysis` 阶段，仅配置 Nuxt alias 还不够稳定。
+  vite: isProductionBuild
+    ? undefined
+    : {
+        server: {
+          allowedHosts: devAllowedHosts
+        },
+        resolve: {
+          alias: {
             '#app-manifest': devAppManifestPath
           }
-    }
-  },
+        }
+      },
 
-  // Nitro 部署配置
-  nitro: {
-    preset: 'node-server',
-    alias: isProductionBuild
-      ? {}
-      : {
+  // Nitro 只需要同步开发期的模块别名。
+  // `/api` 转发已经统一放到 server/routes/api/[...path].ts，开发服务、preview 和生产包
+  // 都会走同一份代理逻辑，避免之前“本地开发正常、直接启动生产包却 404”的环境差异。
+  nitro: isProductionBuild
+    ? undefined
+    : {
+        alias: {
           '#app-manifest': devAppManifestPath
         }
-  },
+      },
 
   // TypeScript 严格模式
   typescript: {
