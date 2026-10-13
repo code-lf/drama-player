@@ -11,10 +11,11 @@ const devAppManifestPath = fileURLToPath(new URL('./app-manifest-dev.mjs', impor
 const isBuildCommand = process.argv.some((argument) => argument === 'build' || argument.endsWith('/build') || argument.endsWith('\\build'))
 const isProductionBuild = process.env.NODE_ENV === 'production' || isBuildCommand
 const nuxtBuildDir = process.env.NUXT_BUILD_DIR || (isProductionBuild ? '.nuxt-build' : '.nuxt-app')
-// 浏览器在开发和生产环境都默认请求同源 /api，分别由开发代理或服务器 Nginx 转发。
-// public 配置会下发给访问者，不能默认填 127.0.0.1，否则会请求访问者自己的电脑。
-// 独立 API 域名仍可通过 NUXT_PUBLIC_API_BASE 显式配置，服务器内部地址仅用于代理目标。
-const defaultApiBase = process.env.NUXT_PUBLIC_API_BASE || '/api'
+// 生产浏览器请求明确指向已验证的 HTTPS API 入口；该地址由 Nginx 转发给 FastAPI。
+// 本地开发仍使用同源 /api 代理，避免开发机访问线上用户数据或遇到跨域问题。
+// NUXT_PUBLIC_API_BASE 可在部署时覆盖；不要填服务器内部 IP 或 HTTP 地址，
+// 否则 HTTPS 页面可能被浏览器的混合内容保护拦截。
+const defaultApiBase = process.env.NUXT_PUBLIC_API_BASE || (isProductionBuild ? 'https://livliv.suyoulink.cn/api' : '/api')
 // Nuxt dev 代理的后端目标地址统一收口到配置项，便于后续切换后端端口或机器地址。
 // 这里要显式带上 `/api` 前缀，否则浏览器请求 `/api/config/runtime` 时会被转发成后端的 `/config/runtime`，
 // 最终命中不到 FastAPI 已挂载的 `/api` 路由树。
@@ -118,7 +119,7 @@ export default defineNuxtConfig({
   },
 
   // 运行时配置：
-  // - 默认指向本地后端 `ai-create-video-api`
+  // - 浏览器生产环境使用线上 HTTPS API，本地开发使用 /api 代理
   // - 通过环境变量可切换 mock/http，联调时无需改业务代码
   runtimeConfig: {
     // 服务端渲染首页时直接请求 FastAPI，确保首屏输出的就是 OSS 图片地址。
