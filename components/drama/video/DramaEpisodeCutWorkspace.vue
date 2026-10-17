@@ -335,7 +335,7 @@ async function playWholeEpisode(): Promise<void> {
       await playerRef.value.play()
     } catch {
       isSequencePlaying.value = false
-      actionMessage.value = '当前镜头地址无法播放，可能是供应商临时链接已过期，请回分镜重新生成。'
+      actionMessage.value = '当前镜头地址无法播放，可能是播放链接已过期，请回分镜重新生成。'
     }
   }
 }
@@ -585,7 +585,7 @@ onBeforeUnmount(() => {
 <template>
   <section class="episode-cut-workspace">
     <div v-if="loading" class="flex min-h-[620px] items-center justify-center rounded-[28px] border border-[#e5eaf2] bg-white">
-      <LoaderCircle class="h-7 w-7 animate-spin text-[#2563eb]" />
+      <LoaderCircle class="h-7 w-7 animate-spin text-[#4F46E5]" />
       <span class="ml-3 text-sm font-medium text-[#64748b]">正在恢复第 {{ episodeNo }} 集成片草稿…</span>
     </div>
 
@@ -614,7 +614,7 @@ onBeforeUnmount(() => {
               <div class="flex items-center gap-2 min-[1180px]:mt-3 min-[1180px]:grid min-[1180px]:grid-cols-2">
                 <button
                   type="button"
-                  class="inline-flex items-center justify-center gap-2 rounded-xl bg-[#eff6ff] px-3.5 py-2 text-sm font-bold text-[#2563eb] transition hover:bg-[#dbeafe]"
+                  class="inline-flex items-center justify-center gap-2 rounded-xl bg-[#EEF2FF] px-3.5 py-2 text-sm font-bold text-[#4F46E5] transition hover:bg-[#E0E7FF]"
                   :disabled="!orderedClips.length"
                   @click="playWholeEpisode"
                 >
@@ -686,22 +686,22 @@ onBeforeUnmount(() => {
                 <h3 class="text-base font-bold text-[#0f172a]">导出设置</h3>
                 <p class="mt-1 text-xs text-[#94a3b8]">正式成片由后端异步合成</p>
               </div>
-              <span class="rounded-lg bg-[#eff6ff] px-2.5 py-1 text-xs font-bold text-[#2563eb]">MP4</span>
+              <span class="rounded-lg bg-[#EEF2FF] px-2.5 py-1 text-xs font-bold text-[#4F46E5]">MP4</span>
             </div>
             <div class="mt-3 grid grid-cols-2 gap-2">
               <label v-if="workspaceMode === 'advanced'" class="compact-setting col-span-2">
                 <span>导出方式</span>
-                <select v-model="exportMode" class="compact-select">
+                <LivSelect v-model="exportMode" class="compact-select">
                   <option value="fast">快速导出（推荐，不烧字幕）</option>
                   <option value="standard">标准成片（字幕/水印/BGM）</option>
-                </select>
+                </LivSelect>
               </label>
               <label v-if="workspaceMode === 'advanced'" class="compact-setting">
                 <span>清晰度</span>
-                <select class="compact-select" :value="exportSettings.resolution || '720p'" @change="updateExportSetting('resolution', ($event.target as HTMLSelectElement).value)">
+                <LivSelect class="compact-select" :value="exportSettings.resolution || '720p'" @change="updateExportSetting('resolution', ($event.target as HTMLSelectElement).value)">
                   <option value="720p">720P</option>
                   <option value="1080p">1080P</option>
-                </select>
+                </LivSelect>
               </label>
               <div v-if="workspaceMode === 'advanced'" class="compact-setting"><span>格式</span><strong>H.264/AAC</strong></div>
               <label class="compact-setting">
@@ -732,7 +732,7 @@ onBeforeUnmount(() => {
                 <h3 class="text-base font-bold text-[#0f172a]">轻量时间轴</h3>
                 <p class="mt-1 text-xs text-[#64748b]">模型原生对白、环境音与音效绑定在镜头内，仅开放交付必需控制。</p>
               </div>
-              <span class="rounded-full bg-[#eff6ff] px-3 py-1.5 text-xs font-semibold text-[#2563eb]">
+              <span class="rounded-full bg-[#EEF2FF] px-3 py-1.5 text-xs font-semibold text-[#4F46E5]">
                 {{ orderedClips.length }} 个镜头
               </span>
             </div>
@@ -747,7 +747,7 @@ onBeforeUnmount(() => {
                 </div>
 
                 <div class="track-row">
-                  <div class="track-label"><Film class="h-4 w-4 text-[#2563eb]" /><span>镜头</span></div>
+                  <div class="track-label"><Film class="h-4 w-4 text-[#4F46E5]" /><span>镜头</span></div>
                   <div class="track-content flex gap-2">
                     <button
                       v-for="clip in orderedClips"
@@ -830,7 +830,7 @@ onBeforeUnmount(() => {
                 <h3 class="text-base font-bold text-[#0f172a]">镜头 {{ selectedRow.shotNo }} 控制</h3>
                 <p class="mt-1 max-w-[720px] line-clamp-2 text-sm text-[#64748b]">{{ selectedRow.sceneDescription }}</p>
               </div>
-              <select
+              <LivSelect
                 class="control-select min-w-[150px]"
                 :value="selectedClip.takeId"
                 @change="updateSelectedTake(($event.target as HTMLSelectElement).value)"
@@ -839,7 +839,7 @@ onBeforeUnmount(() => {
                 <option v-for="take in selectedRow.takes" :key="take.id" :value="take.id">
                   v{{ take.versionNo }} · {{ take.status }}
                 </option>
-              </select>
+              </LivSelect>
             </div>
             <div class="mt-5 grid gap-4 md:grid-cols-4">
               <label class="control-field">
@@ -856,7 +856,7 @@ onBeforeUnmount(() => {
               </label>
             </div>
             <label class="mt-4 inline-flex cursor-pointer items-center gap-2 text-sm font-semibold text-[#334155]">
-              <input v-model="selectedClip.nativeAudioMuted" type="checkbox" class="h-4 w-4 rounded border-[#cbd5e1] text-[#2563eb]">
+              <input v-model="selectedClip.nativeAudioMuted" type="checkbox" class="h-4 w-4 rounded border-[#cbd5e1] text-[#4F46E5]">
               整体静音本镜头（对白、环境音、音效会一起静音）
             </label>
             </section>
@@ -904,7 +904,7 @@ onBeforeUnmount(() => {
                   <button
                     v-if="issue.action && issue.rowId"
                     type="button"
-                    class="shrink-0 text-xs font-semibold text-[#2563eb]"
+                    class="shrink-0 text-xs font-semibold text-[#4F46E5]"
                     @click="issue.rowId && (selectClip(issue.rowId), issue.action === '回分镜修复' && emit('edit-storyboard', issue.rowId))"
                   >
                     {{ issue.action }}
@@ -917,12 +917,12 @@ onBeforeUnmount(() => {
           <section v-if="workspaceMode === 'advanced'" class="rounded-[24px] border border-[#e3e9f2] bg-white p-5 shadow-[0_12px_40px_rgba(15,23,42,0.05)]">
             <h3 class="text-[17px] font-bold text-[#0f172a]">BGM 设置</h3>
             <input ref="bgmInputRef" type="file" accept="audio/*" class="hidden" @change="uploadBgm">
-            <button type="button" class="mt-4 flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-[#93c5fd] bg-[#eff6ff] px-4 py-3 text-sm font-semibold text-[#2563eb]" @click="bgmInputRef?.click()">
+            <button type="button" class="mt-4 flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-[#A5B4FC] bg-[#EEF2FF] px-4 py-3 text-sm font-semibold text-[#4F46E5]" @click="bgmInputRef?.click()">
               <Upload class="h-4 w-4" /> {{ draft.bgmUrl ? '替换 BGM' : '上传 BGM' }}
             </button>
             <label class="setting-row mt-4">
               <span>BGM 音量</span>
-              <span class="font-semibold text-[#2563eb]">{{ draft.bgmGain }}%</span>
+              <span class="font-semibold text-[#4F46E5]">{{ draft.bgmGain }}%</span>
             </label>
             <input v-model.number="draft.bgmGain" type="range" min="0" max="100" step="5" class="mt-2 w-full">
             <div class="mt-4 grid grid-cols-2 gap-3">
@@ -949,11 +949,11 @@ onBeforeUnmount(() => {
             </label>
             <label class="setting-row">
               <span>文字位置</span>
-              <select class="control-select" :value="String(subtitleStyle.position || 'bottom')" @change="updateSubtitleStyle('position', ($event.target as HTMLSelectElement).value)">
+              <LivSelect class="control-select" :value="String(subtitleStyle.position || 'bottom')" @change="updateSubtitleStyle('position', ($event.target as HTMLSelectElement).value)">
                 <option value="top">画面顶部</option>
                 <option value="middle">画面中部</option>
                 <option value="bottom">画面底部</option>
-              </select>
+              </LivSelect>
             </label>
             <label class="setting-row">
               <span>字幕颜色</span>
@@ -982,21 +982,20 @@ onBeforeUnmount(() => {
                       {{ formatTaskDate(task.createdAt) }} · {{ formatTaskStage(task.stage) }}
                     </p>
                   </div>
-                  <span class="shrink-0 rounded-full px-2 py-1 text-[11px] font-bold" :class="task.status === 'completed' ? 'bg-[#dcfce7] text-[#15803d]' : task.status === 'failed' ? 'bg-[#fee2e2] text-[#b91c1c]' : 'bg-[#dbeafe] text-[#1d4ed8]'">
+                  <span class="shrink-0 rounded-full px-2 py-1 text-[11px] font-bold" :class="task.status === 'completed' ? 'bg-[#dcfce7] text-[#15803d]' : task.status === 'failed' ? 'bg-[#fee2e2] text-[#b91c1c]' : 'bg-[#E0E7FF] text-[#1d4ed8]'">
                     {{ task.status === 'completed' ? '已完成' : task.status === 'failed' ? '失败' : `${task.progress}%` }}
                   </span>
                 </div>
                 <div class="mt-2 flex items-center justify-between text-xs text-[#94a3b8]">
                   <span>{{ formatFileSize(task.outputSizeBytes) }}</span>
-                  <a v-if="task.outputUrl" :href="task.outputUrl" target="_blank" rel="noopener" class="font-semibold text-[#2563eb]">下载</a>
-                  <button v-else-if="['queued', 'running'].includes(task.status)" type="button" class="font-semibold text-[#2563eb]" @click="pollTask(task)">查看进度</button>
+                  <a v-if="task.outputUrl" :href="task.outputUrl" target="_blank" rel="noopener" class="font-semibold text-[#4F46E5]">下载</a>
+                  <button v-else-if="['queued', 'running'].includes(task.status)" type="button" class="font-semibold text-[#4F46E5]" @click="pollTask(task)">查看进度</button>
                 </div>
                 <p v-if="task.errorMessage" class="mt-2 line-clamp-2 text-xs leading-5 text-[#b91c1c]">{{ task.errorMessage }}</p>
               </div>
             </div>
-            <p v-else class="mt-4 rounded-xl border border-dashed border-[#dbe4f0] py-5 text-center text-xs text-[#94a3b8]">
-              {{ exportHistoryLoading ? '正在读取导出记录…' : '本集还没有导出任务' }}
-            </p>
+            <DashboardSkeleton v-else-if="exportHistoryLoading" :rows="3" />
+            <p v-else class="mt-4 rounded-xl border border-dashed border-[#dbe4f0] py-5 text-center text-xs text-[#94a3b8]">本集还没有导出任务</p>
           </section>
         </aside>
       </div>
@@ -1006,7 +1005,7 @@ onBeforeUnmount(() => {
           <p v-if="actionMessage" class="max-w-[760px] truncate text-sm font-medium text-[#475569]">{{ actionMessage }}</p>
           <p v-else class="text-sm text-[#64748b]">正式成片由后端异步合成，浏览器播放器只用于即时预览。</p>
           <div v-if="currentTask && ['queued', 'running'].includes(currentTask.status)" class="mt-2 h-1.5 w-72 max-w-full overflow-hidden rounded-full bg-[#e2e8f0]">
-            <div class="h-full rounded-full bg-[#2563eb] transition-all" :style="{ width: `${Math.max(8, currentTask.progress)}%` }" />
+            <div class="h-full rounded-full bg-[#4F46E5] transition-all" :style="{ width: `${Math.max(8, currentTask.progress)}%` }" />
           </div>
           <p v-if="currentTask && ['queued', 'running'].includes(currentTask.status)" class="mt-1 text-xs text-[#94a3b8]">
             {{ currentTaskStageLabel }} · 关闭页面不会取消任务
@@ -1111,8 +1110,8 @@ onBeforeUnmount(() => {
 
 .clip-block:hover,
 .clip-block--active {
-  border-color: #60a5fa;
-  background: #eff6ff;
+  border-color: #818CF8;
+  background: #EEF2FF;
   box-shadow: 0 0 0 2px rgb(37 99 235 / 8%);
 }
 
@@ -1236,7 +1235,7 @@ onBeforeUnmount(() => {
 .control-field input:focus,
 .caption-input:focus,
 .control-select:focus {
-  border-color: #60a5fa;
+  border-color: #818CF8;
   box-shadow: 0 0 0 3px rgb(37 99 235 / 8%);
 }
 
@@ -1294,7 +1293,7 @@ onBeforeUnmount(() => {
 }
 
 .compact-select:focus {
-  border-color: #60a5fa;
+  border-color: #818CF8;
   box-shadow: 0 0 0 3px rgb(37 99 235 / 8%);
 }
 
@@ -1309,7 +1308,7 @@ onBeforeUnmount(() => {
 
 .footer-primary {
   border-radius: 12px;
-  background: linear-gradient(135deg, #2563eb, #4f46e5);
+  background: linear-gradient(135deg, #4F46E5, #4f46e5);
   padding: 12px 22px;
   color: white;
   font-size: 14px;

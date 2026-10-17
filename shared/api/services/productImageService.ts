@@ -1,7 +1,16 @@
-import type { ProductImageGeneratePayload } from '~/entities/product-image/types'
+import type { ProductImageGeneratePayload, ImageSafetyRepair } from '~/entities/product-image/types'
 import { callApi } from '~/shared/api/client'
+import { request, buildProductImagePayload } from '~/shared/api/adapters/httpAdapter'
 
 export const productImageService = {
+  /** 只获取一次持久化的合规文字候选，不创建或重试图片任务。 */
+  async safetyRepair(batchId: string) {
+    return request<ImageSafetyRepair>(`/product-image/history/${batchId}/safety-repair`, { method: 'POST' })
+  },
+  /** 会话工作台只等待任务创建，进度和结果交给可恢复的独立轮询。 */
+  async createTask(payload: ProductImageGeneratePayload) {
+    return request<{ batch_id: string }>('/product-image/tasks', { method: 'POST', body: buildProductImagePayload(payload) })
+  },
   /** 商品图模板由运营后台下发，支持后续持续扩容。 */
   async listTemplates(params?: { category?: string; featured?: boolean }) {
     return callApi('productImage/listTemplates', (adapter) => adapter.listProductImageTemplates(params))

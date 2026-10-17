@@ -1,6 +1,40 @@
 @import "tailwindcss";
 @import "@nuxt/ui";
 
+/* 使用用户提供的可变字体；swap 保证字体尚未加载时页面仍可阅读。 */
+@font-face {
+  font-family: "Google Sans Flex";
+  src: url("/fonts/GoogleSansFlex-Variable.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 1 1000;
+  font-display: swap;
+}
+
+/* Google Sans Flex 不包含中文：使用随站点发布的思源黑体，避免依赖各电脑不同的系统字形。 */
+@font-face {
+  font-family: "Liv Noto Sans SC";
+  src: url("/fonts/NotoSansSC-Variable.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+/* 中文优先使用系统苹方；Windows 等无苹方环境使用本地中文字体，英文和数字继续使用 Google Sans Flex。 */
+@theme {
+  /* 旧蓝色工具类同步品牌色阶；不改图片内容及用户色板中的蓝色预设。 */
+  --color-blue-50: #EEF2FF;
+  --color-blue-100: #E0E7FF;
+  --color-blue-200: #C7D2FE;
+  --color-blue-300: #A5B4FC;
+  --color-blue-400: #818CF8;
+  --color-blue-500: #4F46E5;
+  --color-blue-600: #4338CA;
+  --color-blue-700: #3730A3;
+  --color-blue-800: #312E81;
+  --color-blue-900: #1E1B4B;
+  --font-sans: "Google Sans Flex", "PingFang SC", "Liv Noto Sans SC", "Microsoft YaHei", sans-serif;
+}
+
 /*
  * Tailwind 4 迁移期继续读取项目现有语义色和阴影配置，避免业务页面一次性重写。
  * 新增通用控件优先使用 Nuxt UI 主题变量，业务布局仍可消费现有 bg/panel/textMain 等类名。
@@ -12,6 +46,8 @@
  * 页面只消费这些语义变量，不再自行添加任意字号、控件高度、圆角和阴影。
  */
 :root {
+  /* 导航菜单使用苹方风格；不分发苹果字体文件，无苹方时可靠回退到本地中文字体。 */
+  --liv-font-menu: "PingFang SC", "Liv Noto Sans SC", sans-serif;
   --liv-font-caption: 12px;
   --liv-font-secondary: 13px;
   --liv-font-body: 14px;
@@ -30,9 +66,14 @@
   --liv-space-4: 16px;
   --liv-space-6: 24px;
   --liv-space-8: 32px;
-  --liv-ui-primary: #1768ff;
-  --liv-ui-primary-hover: #0e5ae8;
-  --liv-ui-primary-soft: #eef4ff;
+  --liv-ui-primary: #4F46E5;
+  /* 深底上的文字/图标采用浅版靛蓝；实心按钮及用户气泡继续使用主色。 */
+  --liv-ui-primary-foreground: #818CF8;
+  --liv-ui-primary-deep: #3730A3;
+  /* 封装组件在深浅主题均使用准确主色，文字高亮另用柔和色阶。 */
+  --ui-primary: #4F46E5;
+  --liv-ui-primary-hover: #4338CA;
+  --liv-ui-primary-soft: #EEF2FF;
   --liv-ui-border: #dce5f2;
   --liv-ui-border-strong: #b8cdf1;
   --liv-ui-text: #172033;
@@ -43,11 +84,68 @@
   --liv-ui-success: #159a62;
   --liv-ui-overlay: rgba(15, 23, 42, 0.48);
   --liv-ui-dialog-shadow: 0 28px 80px rgba(15, 35, 65, 0.22);
+  /* 设置弹窗令牌：标题、正文、注释各一档，后续设置统一复用。 */
+  --liv-settings-title: 18px;
+  --liv-settings-body: 14px;
+  --liv-settings-note: 12px;
+  /* 协议授权复选框保持 16px 正方形；容器与标签保留正文行高和点击区域。 */
+  --liv-settings-checkbox-size: 16px;
+  --liv-settings-checkbox-radius: 4px;
+  --liv-settings-radius: 24px;
+  --liv-settings-panel: #1b1b20;
+  --liv-settings-text: #f4f4f5;
+  --liv-settings-muted: #a1a1aa;
+  /* 开关固定为修长轨道，防止全局 button 间距规则撑成近圆形。 */
+  --liv-switch-width: 40px;
+  --liv-switch-height: 22px;
+  --liv-switch-thumb: 18px;
+  --liv-switch-travel: 18px;
 }
+
+/* 只统一设置外观；组件库负责焦点锁定、Esc、遮罩和键盘切换。 */
+.liv-settings-dialog{max-width:560px!important;width:calc(100vw - 32px);border-radius:var(--liv-settings-radius)!important;background:var(--liv-settings-panel)!important;color:var(--liv-settings-text);font-family:var(--font-sans);box-shadow:0 24px 80px #0006}
+.liv-settings-header{position:relative;display:flex;justify-content:center;border:0!important;padding:24px 48px 16px!important;text-align:center}
+.liv-settings-title{font-size:var(--liv-settings-title)!important;font-weight:600!important;line-height:26px!important;color:var(--liv-settings-text)}
+.liv-settings-body{padding:0 24px!important;font-size:var(--liv-settings-body);font-weight:400;line-height:1.7}
+.liv-settings-footer{display:block!important;border:0!important;padding:20px 24px 24px!important}
+.liv-settings-copy{margin:0 0 16px;color:var(--liv-settings-muted);font-size:var(--liv-settings-body);line-height:1.7}
+.liv-settings-row{display:flex;align-items:center;gap:12px;min-height:36px;font-size:var(--liv-settings-body);font-weight:500;line-height:20px}
+.liv-settings-note{margin:8px 0 0;font-size:var(--liv-settings-note);font-weight:400;line-height:1.6;color:var(--liv-settings-muted)}
+/* 复用 UCheckbox 的语义／键盘／勾选状态，只统一设置弹窗的外观规格。 */
+.liv-settings-consent{align-items:flex-start!important;gap:8px!important}
+.liv-settings-consent [data-slot=container]{display:flex;align-items:flex-start;height:24px}
+.liv-settings-consent [role=checkbox]{box-sizing:border-box!important;width:var(--liv-settings-checkbox-size)!important;min-width:var(--liv-settings-checkbox-size)!important;max-width:var(--liv-settings-checkbox-size)!important;height:var(--liv-settings-checkbox-size)!important;min-height:var(--liv-settings-checkbox-size)!important;max-height:var(--liv-settings-checkbox-size)!important;flex:none!important;padding:0!important;margin-top:4px;gap:0!important;border-radius:var(--liv-settings-checkbox-radius)!important}
+.liv-settings-consent [data-slot=label]{font-size:var(--liv-settings-body)!important;line-height:1.7!important;font-weight:400!important;color:var(--liv-settings-text)}
+/* 工作台提示使用 UApp 右上角通知栈，深色表面与正文规格统一。 */
+.liv-workspace-toast{background:var(--liv-settings-panel)!important;color:var(--liv-settings-text)!important;border:1px solid var(--color-border-soft);font-size:14px;line-height:1.7}
+.liv-workspace-toast [data-slot=title]{color:var(--liv-settings-text)!important;font-size:14px}
+/* 分区式确认设置复用统一弹窗，标题靠左、说明置下、操作区靠右。 */
+.liv-settings-sectioned .liv-settings-header{display:block;text-align:left;padding:24px 48px 20px 24px!important;border-bottom:1px solid var(--color-border-soft)!important}
+.liv-settings-sectioned .liv-settings-footer{display:flex!important;justify-content:flex-end;gap:8px;border-top:1px solid var(--color-border-soft)!important}
+.liv-settings-sectioned .liv-settings-footer>button{min-width:72px}
+.liv-settings-sectioned .liv-settings-footer>.liv-button:not(.liv-settings-button-primary){background:var(--liv-number-surface);color:var(--liv-settings-text)}
+.liv-rule-sections>section{padding:24px 0;border-bottom:1px solid var(--color-border-soft)}
+.liv-rule-sections>section:last-child{border-bottom:0}
+.liv-rule-sections h3{margin:0 0 12px;font-size:var(--liv-settings-body);font-weight:600}
+.liv-rule-group{border:1px solid var(--color-border-soft);border-radius:16px;background:var(--liv-number-surface);overflow:hidden}
+.liv-rule-row{justify-content:space-between;padding:16px;border-bottom:1px solid var(--color-border-soft);margin:0}
+.liv-rule-row:last-child{border-bottom:0}.liv-rule-row>span{display:grid;gap:4px;min-width:0}
+.liv-rule-row strong{font-weight:500}.liv-rule-row small{font-size:var(--liv-settings-note);line-height:1.6;color:var(--liv-settings-muted)}
+.liv-rule-threshold{display:grid;grid-template-columns:minmax(0,1fr) 160px;align-items:center;gap:16px}
+@media(max-width:480px){.liv-rule-threshold{grid-template-columns:1fr}.liv-rule-threshold>div:last-child{width:100%}}
+.liv-settings-button{height:40px!important;min-height:40px!important;border-radius:999px!important;font-size:var(--liv-settings-body)!important;font-weight:500!important;line-height:20px!important;justify-content:center}
+.liv-settings-button-primary{color:#fff!important;background:var(--liv-ui-primary)!important}.liv-settings-button-primary:hover{background:var(--liv-ui-primary-hover)!important}
+.liv-settings-dialog>[data-slot]{border-color:transparent!important}.liv-settings-close{position:absolute!important;right:16px;top:20px;width:32px;height:32px;border-radius:50%;color:var(--liv-settings-muted)!important}
+.liv-settings-row [role=switch]{background:#494950!important}.liv-settings-row [role=switch][data-state=checked]{background:var(--liv-ui-primary)!important}.liv-settings-row [role=switch] [data-slot=thumb]{background:#fff!important}
+/* 只覆盖组件外观尺寸，不重做 USwitch 的语义、焦点或键盘交互。 */
+.liv-settings-row [role=switch]{box-sizing:border-box!important;display:inline-flex!important;align-items:center!important;justify-content:flex-start!important;width:var(--liv-switch-width)!important;min-width:var(--liv-switch-width)!important;height:var(--liv-switch-height)!important;min-height:var(--liv-switch-height)!important;padding:0!important;gap:0!important;border:2px solid transparent!important;flex:none!important;border-radius:999px!important}
+.liv-settings-row [role=switch] [data-slot=thumb]{width:var(--liv-switch-thumb)!important;height:var(--liv-switch-thumb)!important;min-width:var(--liv-switch-thumb)!important;flex:0 0 var(--liv-switch-thumb)!important;transform:translateX(0)!important;translate:none!important}
+.liv-settings-row [role=switch][data-state=checked] [data-slot=thumb]{transform:translateX(var(--liv-switch-travel))!important}
+.liv-settings-readonly{margin-top:16px;justify-content:space-between}.liv-settings-readonly small{font-size:var(--liv-settings-note);font-weight:400;color:var(--liv-settings-muted)}
 
 @layer components {
   .liv-focus-ring {
-    @apply outline-none focus-visible:ring-2 focus-visible:ring-[#1768ff]/25 focus-visible:ring-offset-2;
+    @apply outline-none focus-visible:ring-2 focus-visible:ring-[#4F46E5]/25 focus-visible:ring-offset-2;
   }
 
   .liv-field-label {
@@ -62,6 +160,25 @@
   }
 }
 
+/* 原生表单控件也继承全局字体，避免按钮与输入框退回浏览器默认字体。 */
+button,
+input,
+textarea,
+select {
+  font-family: inherit;
+}
+
+/* 菜单容器集中设置字体，其链接、按钮和文字自然继承，不在每个条目重复写字体栈。 */
+.dashboard-sidebar nav {
+  font-family: var(--liv-font-menu);
+}
+
+.dashboard-sidebar nav a,
+.dashboard-sidebar nav button,
+.dashboard-sidebar nav span {
+  font-family: inherit;
+}
+
 html,
 body,
 #__nuxt {
@@ -70,7 +187,8 @@ body,
 
 body {
   margin: 0;
-  font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+  font-family: var(--font-sans);
+  font-optical-sizing: auto;
   background:
     radial-gradient(circle at 16% 8%, rgba(82, 128, 255, 0.16), transparent 28%),
     radial-gradient(circle at 78% 2%, rgba(0, 206, 255, 0.12), transparent 22%),

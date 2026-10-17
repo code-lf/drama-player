@@ -22,6 +22,7 @@ const current = computed(() => fullNotice.value || (Array.isArray(items.value) ?
 const detailsOpen = ref(false)
 let poll: ReturnType<typeof setInterval> | undefined
 let clock: ReturnType<typeof setInterval> | undefined
+let lastReadAt = 0
 const names: Record<string, string> = { drama: '短剧创作', image: '图片创作', video: '视频创作', music: '音乐生成' }
 const remaining = computed(() => {
   const target = current.value?.estimated_resume_at
@@ -37,7 +38,9 @@ function time(value: string | null): string {
 }
 /** 断连时保留最近一次公告，不能把请求失败误判为维护已结束。 */
 async function refresh(): Promise<void> {
-  if (loading.value) return
+  // focus 与定时器共用冷却，切换标签不能反复打维护接口。
+  if (loading.value || Date.now()-lastReadAt<30000) return
+  lastReadAt=Date.now()
   loading.value = true
   try {
     const value = await request<{ server_time: string; items: MaintenanceItem[] }>('/system/maintenance')

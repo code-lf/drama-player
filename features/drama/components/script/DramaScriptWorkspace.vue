@@ -622,7 +622,7 @@ function identifiedTagClass(tag: string) {
   if (/男主|女主|角色|人物|师徒|宗门|配角|身份/.test(tag)) return 'border-[#bbf7d0] bg-[#f0fdf4] text-[#15803d]'
   if (/热血|温情|冷峻|治愈|悲|爽|压抑|氛围/.test(tag)) return 'border-[#fed7aa] bg-[#fff7ed] text-[#c2410c]'
   if (/复仇|对抗|冲突|权斗|争斗|宿敌/.test(tag)) return 'border-[#fecaca] bg-[#fff1f2] text-[#dc2626]'
-  if (/成长|觉醒|蜕变|守护|命运|逆袭/.test(tag)) return 'border-[#bfdbfe] bg-[#eff6ff] text-[#1d4ed8]'
+  if (/成长|觉醒|蜕变|守护|命运|逆袭/.test(tag)) return 'border-[#C7D2FE] bg-[#EEF2FF] text-[#1d4ed8]'
   if (/灵根|秘境|法则|世界观|灵气/.test(tag)) return 'border-[#a5f3fc] bg-[#ecfeff] text-[#0e7490]'
 
   const fallbackPalette = [
@@ -1546,7 +1546,7 @@ function suggestionPrimaryStatusClass(item: OptimizationSuggestion) {
   const status = getSuggestionPrimaryStatus(item)
   if (status === 'ready' || status === 'adopted' || status === 'strength') return 'bg-[#ecfdf5] text-[#047857]'
   if (status === 'archived') return 'bg-[#f1f5f9] text-[#64748b]'
-  if (status === 'generating') return 'bg-[#eff6ff] text-[#1d4ed8]'
+  if (status === 'generating') return 'bg-[#EEF2FF] text-[#1d4ed8]'
   if (status === 'stale' || status === 'location_ambiguous') return 'bg-[#f5f3ff] text-[#6d28d9]'
   if (status === 'failed' || status === 'location_missing') return 'bg-[#fff1f2] text-[#be123c]'
   if (status === 'ignored') return 'bg-[#f1f5f9] text-[#64748b]'
@@ -1566,7 +1566,7 @@ function suggestionDraftStatusLabel(item: OptimizationSuggestion) {
 function suggestionDraftStatusClass(item: OptimizationSuggestion) {
   const status = getSuggestionDraftStatus(item)
   if (status === 'generated') return 'bg-[#ecfdf5] text-[#047857]'
-  if (status === 'generating') return 'bg-[#eff6ff] text-[#1d4ed8]'
+  if (status === 'generating') return 'bg-[#EEF2FF] text-[#1d4ed8]'
   if (status === 'stale') return 'bg-[#f5f3ff] text-[#6d28d9]'
   if (status === 'failed') return 'bg-[#fff1f2] text-[#be123c]'
   return 'bg-[#f8fafc] text-[#64748b]'
@@ -1867,7 +1867,7 @@ const suggestionDiffFilters: Array<{ key: SuggestionDiffFilter; label: string }>
 function diffLineClass(kind: SuggestionDiffKind, side: 'original' | 'suggested') {
   if (kind === 'deleted') return 'border-[#fb7185] bg-[#fff5f6] text-[#9f1239]'
   if (kind === 'added') return 'border-[#34d399] bg-[#f2fbf7] text-[#065f46]'
-  if (kind === 'modified') return 'border-[#60a5fa] bg-[#f3f7ff] text-[#1e40af]'
+  if (kind === 'modified') return 'border-[#818CF8] bg-[#f3f7ff] text-[#1e40af]'
   if (kind === 'moved') return 'border-[#a78bfa] bg-[#f8f6ff] text-[#5b21b6]'
   return side === 'original' ? 'border-transparent text-[#334155]' : 'border-transparent text-[#0f172a]'
 }
@@ -1998,7 +1998,7 @@ function relationToneFromRole(role: string, index: number): RelationGraphNode['t
 
 function relationColorFromLabel(label: string, backendColor: string) {
   if (/敌|冲突|压迫|对立/.test(label)) return '#ef4444'
-  if (/守护|合作|共鸣|盟友/.test(label)) return '#2563eb'
+  if (/守护|合作|共鸣|盟友/.test(label)) return '#4F46E5'
   if (/依附|跟随|利益/.test(label)) return '#f59e0b'
   if (/价值|理念|师徒|亲缘/.test(label)) return '#7c3aed'
   return backendColor || '#64748b'
@@ -2123,10 +2123,10 @@ const relationshipSummaryEmptyText = computed(() => {
 
 const arcIconList = [Heart, Target, Flame, ShieldCheck]
 const arcToneList = [
-  'text-[#2563eb] bg-[#eff6ff] border-[#bfdbfe]',
+  'text-[#4F46E5] bg-[#EEF2FF] border-[#C7D2FE]',
   'text-[#059669] bg-[#ecfdf5] border-[#bbf7d0]',
   'text-[#f97316] bg-[#fff7ed] border-[#fed7aa]',
-  'text-[#2563eb] bg-[#eff6ff] border-[#bfdbfe]'
+  'text-[#4F46E5] bg-[#EEF2FF] border-[#C7D2FE]'
 ]
 
 const characterArcSteps = computed<CharacterArcStep[]>(() => {
@@ -2398,7 +2398,7 @@ const reviewScopeLabel = computed(() => {
 const productionEstimateMetrics = computed<ProductionEstimateMetric[]>(() => {
   if (activeTab.value === 'characters') {
     return [
-      { key: 'roles', label: '核心人物', value: `${relationGraphNodes.value.length}个`, icon: Users, color: '#0f67ff' },
+      { key: 'roles', label: '核心人物', value: `${relationGraphNodes.value.length}个`, icon: Users, color: '#4F46E5' },
       { key: 'relations', label: '关键关系', value: `${keyRelationshipCount.value}组`, icon: GitBranch, color: '#7c3aed' },
       { key: 'arcs', label: '完整人物弧光', value: `${completeArcCount.value}条`, icon: Route, color: '#10b981' },
       { key: 'pending-relations', label: '待强化关系', value: `${pendingRelationshipCount.value}组`, icon: AlertTriangle, color: '#f59e0b' },
@@ -2410,14 +2410,14 @@ const productionEstimateMetrics = computed<ProductionEstimateMetric[]>(() => {
     if (episodeReviewScope.value === 'current') {
       return [
         { key: 'duration', label: '预计时长', value: currentEpisodeStructureModel.value?.estimatedDuration || '待确认', icon: Clock, color: '#10b981' },
-        { key: 'scenes', label: '场次数', value: `${currentEpisodeStructureModel.value?.sceneCount || currentSceneList.value.length || 0}场`, icon: ListChecks, color: '#0f67ff' },
+        { key: 'scenes', label: '场次数', value: `${currentEpisodeStructureModel.value?.sceneCount || currentSceneList.value.length || 0}场`, icon: ListChecks, color: '#4F46E5' },
         { key: 'passed', label: '优秀判断', value: `${currentEpisodePassedCount.value}项`, icon: CheckCircle2, color: '#10b981' },
         { key: 'warnings', label: '待优化判断', value: `${currentEpisodeWarningCount.value}项`, icon: AlertTriangle, color: '#f59e0b' },
-        { key: 'status', label: '当前状态', value: getEpisodeStatus(props.selectedEpisodeNo), icon: Target, color: getEpisodeStatus(props.selectedEpisodeNo) === '待优化' ? '#f59e0b' : '#0f67ff' }
+        { key: 'status', label: '当前状态', value: getEpisodeStatus(props.selectedEpisodeNo), icon: Target, color: getEpisodeStatus(props.selectedEpisodeNo) === '待优化' ? '#f59e0b' : '#4F46E5' }
       ]
     }
     return [
-      { key: 'episodes', label: '总集数', value: `${totalEpisodes.value}集`, icon: ListChecks, color: '#0f67ff' },
+      { key: 'episodes', label: '总集数', value: `${totalEpisodes.value}集`, icon: ListChecks, color: '#4F46E5' },
       { key: 'duration', label: '预计总时长', value: totalSeasonDuration.value, icon: Clock, color: '#10b981' },
       { key: 'hooks', label: '钩子完整集数', value: `${hookCompleteEpisodeCount.value}/${totalEpisodes.value}`, icon: Target, color: '#7c3aed' },
       { key: 'key-episodes', label: '重点优化集数', value: `${keyEpisodeCount.value}集`, icon: AlertTriangle, color: '#f59e0b' },
@@ -2429,18 +2429,18 @@ const productionEstimateMetrics = computed<ProductionEstimateMetric[]>(() => {
     return [
       { key: 'word-count', label: '当前场字数', value: `${currentSceneWordCount.value}字`, icon: BookOpen, color: '#7c3aed' },
       { key: 'duration', label: '预计时长', value: currentSceneDuration.value, icon: Clock, color: '#10b981' },
-      { key: 'dialogue', label: '对白占比', value: `${currentSceneDialogueRatio.value}%`, icon: FileText, color: '#0f67ff' },
+      { key: 'dialogue', label: '对白占比', value: `${currentSceneDialogueRatio.value}%`, icon: FileText, color: '#4F46E5' },
       { key: 'narration', label: '旁白占比', value: `${currentSceneNarrationRatio.value}%`, icon: Route, color: '#64748b' },
       { key: 'suggestions', label: '待处理建议', value: `${reviewModel.value.warnings.length}条`, icon: AlertTriangle, color: '#f59e0b' }
     ]
   }
 
   return [
-    { key: 'episodes', label: '总集数', value: `${totalEpisodes.value}集`, icon: ListChecks, color: '#0f67ff' },
+    { key: 'episodes', label: '总集数', value: `${totalEpisodes.value}集`, icon: ListChecks, color: '#4F46E5' },
     { key: 'roles', label: '主要角色', value: `${productionEstimate.value.roles}个`, icon: Users, color: '#7c3aed' },
     { key: 'scene-assets', label: '场景资产', value: `${productionEstimate.value.sceneAssets}个`, icon: GitBranch, color: '#10b981' },
     { key: 'props', label: '关键道具', value: `${productionEstimate.value.props}个`, icon: Target, color: '#f59e0b' },
-    { key: 'duration', label: '预计成片时长', value: totalSeasonDuration.value, icon: Clock, color: '#0f67ff' }
+    { key: 'duration', label: '预计成片时长', value: totalSeasonDuration.value, icon: Clock, color: '#4F46E5' }
   ]
 })
 
@@ -2491,7 +2491,7 @@ const seasonPhaseCards = computed<SeasonPhaseCard[]>(() => {
     'border-[#feddb3] bg-[#fff8ee]',
     'border-[#e4d8ff] bg-[#f8f5ff]'
   ]
-  const iconClasses = ['text-[#0f67ff]', 'text-[#10b981]', 'text-[#f59e0b]', 'text-[#7c3aed]']
+  const iconClasses = ['text-[#4F46E5]', 'text-[#10b981]', 'text-[#f59e0b]', 'text-[#7c3aed]']
   const phaseCount = Math.min(4, episodes.length)
   const baseSize = Math.floor(episodes.length / phaseCount)
   const remainder = episodes.length % phaseCount
@@ -2571,7 +2571,7 @@ function setEpisodeListFilter(filter: EpisodeListFilter) {
 
 function episodeStatusClass(status: string) {
   if (status === '待优化') return 'bg-[#fff7ed] text-[#f97316]'
-  if (status === '已处理') return 'bg-[#eef5ff] text-[#0f67ff]'
+  if (status === '已处理') return 'bg-[#eef5ff] text-[#4F46E5]'
   if (status === '分析失败') return 'bg-[#fff1f2] text-[#ef4444]'
   if (status === '待补全') return 'bg-[#fff7ed] text-[#f97316]'
   if (status === '分析中') return 'bg-[#f1f5f9] text-[#64748b]'
@@ -2817,7 +2817,7 @@ function optimizationStepVisualState(index: number): OptimizationStepVisualState
 function optimizationStepCircleClass(index: number) {
   const state = optimizationStepVisualState(index)
   if (state === 'done') return 'border-[#22c55e] bg-[#22c55e] text-white'
-  if (state === 'active') return 'border-[#2563eb] bg-white text-[#2563eb] shadow-[0_0_0_5px_rgba(37,99,235,0.10)]'
+  if (state === 'active') return 'border-[#4F46E5] bg-white text-[#4F46E5] shadow-[0_0_0_5px_rgba(37,99,235,0.10)]'
   if (state === 'failed') return 'border-[#ef4444] bg-[#fff1f2] text-[#dc2626]'
   return 'border-[#dbe4f0] bg-white text-[#94a3b8]'
 }
@@ -3760,7 +3760,7 @@ defineExpose({ openAllSuggestions })
     >
       <div
         class="flex h-20 w-20 items-center justify-center rounded-full"
-        :class="isInitialAnalysisFailed ? 'bg-[#fff1f2] text-[#dc2626]' : 'bg-[#eef5ff] text-[#0f67ff]'"
+        :class="isInitialAnalysisFailed ? 'bg-[#fff1f2] text-[#dc2626]' : 'bg-[#eef5ff] text-[#4F46E5]'"
       >
         <CirclePause v-if="isInitialAnalysisFailed" class="h-9 w-9" />
         <RefreshCw v-else class="h-9 w-9 animate-spin" />
@@ -3770,16 +3770,16 @@ defineExpose({ openAllSuggestions })
       <div class="mt-5 flex items-center gap-3 text-sm font-semibold text-[#315173]">
         <span>{{ structureNodeProgress !== null ? '基础解析进度' : '整体进度' }} {{ analysisOverallProgress }}%</span>
         <span class="h-1.5 w-48 overflow-hidden rounded-full bg-[#e2e8f0]">
-          <span class="block h-full rounded-full transition-all duration-500" :class="isInitialAnalysisFailed ? 'bg-[#dc2626]' : 'bg-[#0f67ff]'" :style="{ width: `${analysisOverallProgress}%` }" />
+          <span class="block h-full rounded-full transition-all duration-500" :class="isInitialAnalysisFailed ? 'bg-[#dc2626]' : 'bg-[#4F46E5]'" :style="{ width: `${analysisOverallProgress}%` }" />
         </span>
       </div>
       <div class="mt-10 grid w-full max-w-[1180px] gap-4 sm:grid-cols-2 xl:grid-cols-5">
         <article
           v-for="stage in analysisProgressStages"
           :key="stage.key"
-          class="min-h-[168px] rounded-[20px] border border-[#dbeafe] bg-[#f8fbff] px-5 py-5 text-center"
+          class="min-h-[168px] rounded-[20px] border border-[#E0E7FF] bg-[#f8fbff] px-5 py-5 text-center"
         >
-          <div class="mx-auto flex h-11 w-11 items-center justify-center rounded-full border border-[#bfdbfe] bg-white text-[#0f67ff]">
+          <div class="mx-auto flex h-11 w-11 items-center justify-center rounded-full border border-[#C7D2FE] bg-white text-[#4F46E5]">
             <RefreshCw v-if="stage.status === 'running'" class="h-5 w-5 animate-spin" />
             <Check v-else-if="stage.status === 'succeeded'" class="h-5 w-5 text-[#059669]" />
             <AlertTriangle v-else-if="stage.status === 'failed'" class="h-5 w-5 text-[#dc2626]" />
@@ -3788,17 +3788,17 @@ defineExpose({ openAllSuggestions })
           </div>
           <p class="mt-3 text-base font-semibold text-[#0f172a]">{{ stage.title }}</p>
           <p class="mt-1 text-xs leading-5 text-[#64748b]">{{ stage.description }}</p>
-          <p class="mt-3 text-sm font-semibold" :class="stage.status === 'failed' ? 'text-[#dc2626]' : stage.status === 'succeeded' ? 'text-[#059669]' : 'text-[#0f67ff]'">{{ analysisStageStatusLabel(stage.status, stage.key) }}</p>
+          <p class="mt-3 text-sm font-semibold" :class="stage.status === 'failed' ? 'text-[#dc2626]' : stage.status === 'succeeded' ? 'text-[#059669]' : 'text-[#4F46E5]'">{{ analysisStageStatusLabel(stage.status, stage.key) }}</p>
         </article>
       </div>
       <p v-if="!isInitialAnalysisFailed" class="mt-5 text-center text-sm text-[#64748b]">这些节点来自基础解析的真实输出检查点；完成后进入剧本页，体检与封面在后台继续处理。</p>
-      <p v-if="isStructureLongRunning" class="mt-5 max-w-[620px] rounded-[12px] bg-[#eff6ff] px-4 py-3 text-center text-sm leading-6 text-[#315173]">
+      <p v-if="isStructureLongRunning" class="mt-5 max-w-[620px] rounded-[12px] bg-[#EEF2FF] px-4 py-3 text-center text-sm leading-6 text-[#315173]">
         模型仍在处理，可离开页面后返回查看；完成后会自动进入剧本工作台。
       </p>
       <button
         v-if="currentAnalysisRun.status === 'failed'"
         type="button"
-        class="mt-8 rounded-[18px] bg-[#0f67ff] px-8 py-4 text-base font-semibold text-white shadow-[0_18px_42px_rgba(15,103,255,0.2)]"
+        class="mt-8 rounded-[18px] bg-[#4F46E5] px-8 py-4 text-base font-semibold text-white shadow-[0_18px_42px_rgba(15,103,255,0.2)]"
         :disabled="isBusy"
         @click="retryFailedStructureAnalysis"
       >
@@ -3808,16 +3808,16 @@ defineExpose({ openAllSuggestions })
 
     <div
       v-else-if="!isScriptWorkbenchReady"
-      class="flex min-h-[520px] flex-col items-center justify-center rounded-[32px] border border-dashed border-[#bfdbfe] bg-white p-10 text-center shadow-[0_18px_60px_rgba(15,23,42,0.06)]"
+      class="flex min-h-[520px] flex-col items-center justify-center rounded-[32px] border border-dashed border-[#C7D2FE] bg-white p-10 text-center shadow-[0_18px_60px_rgba(15,23,42,0.06)]"
     >
-      <FileText class="h-14 w-14 text-[#0f67ff]" />
+      <FileText class="h-14 w-14 text-[#4F46E5]" />
       <h2 class="mt-6 text-[30px] font-semibold tracking-[-0.04em]">当前还没有剧本解析结果</h2>
       <p class="mt-3 max-w-[620px] text-base leading-8 text-[#64748b]">
         点击下方按钮后，系统会自动解析故事结构、人物关系、分集节奏和完整剧本，并在正式制作资产前完成剧本体检。
       </p>
       <button
         type="button"
-        class="mt-8 rounded-[18px] bg-[#0f67ff] px-10 py-4 text-base font-semibold text-white shadow-[0_18px_42px_rgba(15,103,255,0.22)] disabled:opacity-60"
+        class="mt-8 rounded-[18px] bg-[#4F46E5] px-10 py-4 text-base font-semibold text-white shadow-[0_18px_42px_rgba(15,103,255,0.22)] disabled:opacity-60"
         :disabled="isBusy"
         @click="analyzeAction"
       >
@@ -3835,7 +3835,7 @@ defineExpose({ openAllSuggestions })
           发布 {{ pendingDraftVersion }}
         </button>
       </div>
-      <div v-if="currentAnalysisRun.structureReady && !currentAnalysisRun.reviewsReady" class="rounded-[16px] border border-[#bfdbfe] bg-[#eff6ff] px-4 py-3 text-sm leading-6 text-[#315173]">
+      <div v-if="currentAnalysisRun.structureReady && !currentAnalysisRun.reviewsReady" class="rounded-[16px] border border-[#C7D2FE] bg-[#EEF2FF] px-4 py-3 text-sm leading-6 text-[#315173]">
         基础解析已完成，专业体检后台进行中；体检结论不会阻塞资产制作，也不会修改已冻结的生产快照。
       </div>
       <div v-else-if="scriptReviewsStale" class="flex flex-wrap items-center justify-between gap-3 rounded-[16px] border border-[#fde68a] bg-[#fffbeb] px-4 py-3 text-sm leading-6 text-[#92400e]">
@@ -3845,7 +3845,7 @@ defineExpose({ openAllSuggestions })
           <button type="button" class="rounded-[10px] bg-[#f59e0b] px-4 py-2 text-xs font-semibold text-white" :disabled="reReviewQuoteBusy" @click="reReviewConfirmVisible = true">{{ reReviewButtonLabel }}</button>
         </div>
       </div>
-      <div class="mb-5 flex flex-wrap items-center justify-between gap-4 rounded-[20px] border border-[#dbeafe] bg-[#f8fbff] px-5 py-4">
+      <div class="mb-5 flex flex-wrap items-center justify-between gap-4 rounded-[20px] border border-[#E0E7FF] bg-[#f8fbff] px-5 py-4">
         <div class="flex items-start gap-3">
           <CheckCircle2 v-if="currentAnalysisRun.structureReady" class="mt-0.5 h-5 w-5 shrink-0 text-[#16a34a]" />
           <AlertTriangle v-else class="mt-0.5 h-5 w-5 shrink-0 text-[#dc2626]" />
@@ -3864,7 +3864,7 @@ defineExpose({ openAllSuggestions })
             </p>
           </div>
         </div>
-        <button type="button" class="rounded-[10px] border border-[#bfdbfe] bg-white px-4 py-2 text-sm font-semibold text-[#0f67ff]" @click="toggleProfessionalAnalysis">
+        <button type="button" class="rounded-[10px] border border-[#C7D2FE] bg-white px-4 py-2 text-sm font-semibold text-[#4F46E5]" @click="toggleProfessionalAnalysis">
           {{ showProfessionalAnalysis ? '收起体检详情' : '展开体检详情' }}
         </button>
       </div>
@@ -3879,7 +3879,7 @@ defineExpose({ openAllSuggestions })
                   :key="tab.key"
                   type="button"
                   class="flex items-center gap-2 border-b-2 px-5 py-3 text-sm font-semibold transition"
-                  :class="activeTab === tab.key ? 'border-[#0f67ff] text-[#0f67ff]' : 'border-transparent text-[#64748b] hover:text-[#0f172a]'"
+                  :class="activeTab === tab.key ? 'border-[#4F46E5] text-[#4F46E5]' : 'border-transparent text-[#64748b] hover:text-[#0f172a]'"
                   @click="activeTab = tab.key"
                 >
                   <component :is="tab.icon" class="h-4 w-4" />
@@ -3888,7 +3888,7 @@ defineExpose({ openAllSuggestions })
               </div>
             </div>
 
-            <p v-if="!showProfessionalAnalysis" class="mt-4 rounded-[14px] border border-[#dbeafe] bg-[#f8fbff] px-4 py-3 text-sm leading-6 text-[#475569]">
+            <p v-if="!showProfessionalAnalysis" class="mt-4 rounded-[14px] border border-[#E0E7FF] bg-[#f8fbff] px-4 py-3 text-sm leading-6 text-[#475569]">
               当前已收起右侧体检评分；故事概览、人物关系、分集结构和完整剧本仍可正常查看与编辑。
             </p>
 
@@ -3899,16 +3899,16 @@ defineExpose({ openAllSuggestions })
               </span>
               <button v-if="historicalSuggestionCount" type="button" class="rounded-[9px] border border-[#86efac] bg-white px-3 py-2 text-xs font-semibold text-[#15803d]" @click="openHistorySuggestions">查看优化记录</button>
             </div>
-            <div v-else-if="pendingDraftVersionItem && !scriptReviewsStale" class="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-[16px] border border-[#bfdbfe] bg-[#eff6ff] px-4 py-3 text-sm leading-6 text-[#1e40af]">
+            <div v-else-if="pendingDraftVersionItem && !scriptReviewsStale" class="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-[16px] border border-[#C7D2FE] bg-[#EEF2FF] px-4 py-3 text-sm leading-6 text-[#1e40af]">
               <span><b>工作草稿 {{ pendingDraftVersionItem.version }} 已创建。</b> 发布前所有当前建议仍可继续生成、调整并累计采纳；发布后未处理建议会失效并归档。</span>
-              <button type="button" class="rounded-[9px] bg-[#0f67ff] px-4 py-2 text-xs font-semibold text-white" @click="pendingOptimizedDetail = effectiveProjectDetail; globalResultVisible = true">预览并发布</button>
+              <button type="button" class="rounded-[9px] bg-[#4F46E5] px-4 py-2 text-xs font-semibold text-white" @click="pendingOptimizedDetail = effectiveProjectDetail; globalResultVisible = true">预览并发布</button>
             </div>
 
             <section v-if="activeTab === 'overview'" class="mt-6 space-y-5">
               <article class="grid items-start gap-5 rounded-[22px] border border-[#dfe8f6] bg-white p-6 md:grid-cols-[156px_minmax(0,1fr)]">
-                <div class="aspect-[3/4] w-[156px] shrink-0 overflow-hidden rounded-[18px] border border-[#dbeafe] bg-gradient-to-br from-[#dff7ff] via-[#eaf7f1] to-[#dbeafe] shadow-[0_14px_32px_rgba(15,103,255,0.12)]">
+                <div class="aspect-[3/4] w-[156px] shrink-0 overflow-hidden rounded-[18px] border border-[#E0E7FF] bg-gradient-to-br from-[#dff7ff] via-[#eaf7f1] to-[#E0E7FF] shadow-[0_14px_32px_rgba(15,103,255,0.12)]">
                   <div v-if="isProjectCoverGenerating" class="flex h-full w-full flex-col items-center justify-center px-4 text-center">
-                    <span class="flex h-12 w-12 items-center justify-center rounded-full bg-white/75 text-[#0f67ff] shadow-sm">
+                    <span class="flex h-12 w-12 items-center justify-center rounded-full bg-white/75 text-[#4F46E5] shadow-sm">
                       <RefreshCw class="h-6 w-6 animate-spin" />
                     </span>
                     <p class="mt-4 text-sm font-semibold text-[#315173]">封面生成中</p>
@@ -3932,18 +3932,18 @@ defineExpose({ openAllSuggestions })
                   <div v-else-if="currentAnalysisRun.coverStatus === 'failed'" class="flex h-full flex-col items-center justify-center px-4 text-center">
                     <AlertTriangle class="h-6 w-6 text-[#dc2626]" />
                     <p class="mt-3 text-sm font-semibold text-[#991b1b]">封面生成失败</p>
-                    <button type="button" class="mt-3 rounded-[10px] border border-[#bfdbfe] bg-white px-3 py-2 text-xs font-semibold text-[#0f67ff]" @click="regenerateCoverAction">重试封面</button>
+                    <button type="button" class="mt-3 rounded-[10px] border border-[#C7D2FE] bg-white px-3 py-2 text-xs font-semibold text-[#4F46E5]" @click="regenerateCoverAction">重试封面</button>
                   </div>
                   <div v-else class="flex h-full w-full items-center justify-center px-5 text-center text-sm font-semibold text-[#315173]">封面等待生成</div>
                 </div>
                 <div class="min-w-0">
-                  <h3 class="flex items-center gap-2 text-lg font-semibold"><FileText class="h-5 w-5 text-[#0f67ff]" /> 项目概览</h3>
+                  <h3 class="flex items-center gap-2 text-lg font-semibold"><FileText class="h-5 w-5 text-[#4F46E5]" /> 项目概览</h3>
                   <p class="mt-4 text-[15px] leading-8 text-[#334155]">{{ analysis?.synopsis || analysis?.logline || '暂无项目概览，请先重新解析剧本。' }}</p>
                   <div class="mt-5 grid gap-4 text-sm md:grid-cols-4">
                     <div v-for="item in [{ key: 'genre', label: '题材', value: normalizedGenre }, { key: 'theme', label: '核心主题', value: resolvedCoreTheme }, { key: 'audience', label: '目标受众', value: resolvedTargetAudience }, { key: 'type', label: '故事类型', value: resolvedStoryType }]" :key="item.key" class="relative min-w-0 border-r border-[#e8eef7] pr-3 last:border-r-0">
                       <p class="text-[#94a3b8]">{{ item.label }}</p>
                       <button type="button" class="mt-1 block w-full truncate text-left font-semibold" :title="item.value" @click="expandedOverviewField = expandedOverviewField === item.key ? '' : item.key" @blur="expandedOverviewField = ''">{{ item.value }}</button>
-                      <div v-if="expandedOverviewField === item.key" class="absolute left-0 top-full z-30 mt-2 w-[280px] rounded-[12px] border border-[#dbeafe] bg-white p-3 text-sm font-medium leading-6 text-[#334155] shadow-xl">{{ item.value }}</div>
+                      <div v-if="expandedOverviewField === item.key" class="absolute left-0 top-full z-30 mt-2 w-[280px] rounded-[12px] border border-[#E0E7FF] bg-white p-3 text-sm font-medium leading-6 text-[#334155] shadow-xl">{{ item.value }}</div>
                     </div>
                   </div>
                   <div v-if="analysis?.tags?.length" class="mt-4">
@@ -3957,16 +3957,16 @@ defineExpose({ openAllSuggestions })
 
               <article class="rounded-[22px] border border-[#dfe8f6] bg-white p-6">
                 <div class="flex items-center justify-between">
-                  <h3 class="flex items-center gap-2 text-lg font-semibold"><BookOpen class="h-5 w-5 text-[#0f67ff]" /> 大纲</h3>
-                  <button class="text-sm font-semibold text-[#0f67ff]" @click="outlineDrawerVisible = true">展开完整大纲 <ChevronRight class="inline h-4 w-4" /></button>
+                  <h3 class="flex items-center gap-2 text-lg font-semibold"><BookOpen class="h-5 w-5 text-[#4F46E5]" /> 大纲</h3>
+                  <button class="text-sm font-semibold text-[#4F46E5]" @click="outlineDrawerVisible = true">展开完整大纲 <ChevronRight class="inline h-4 w-4" /></button>
                 </div>
                 <p class="mt-4 text-[15px] leading-8 text-[#334155]">{{ analysis?.outline || '暂无大纲内容，请先重新解析剧本。' }}</p>
               </article>
 
               <article class="rounded-[22px] border border-[#dfe8f6] bg-white p-6">
                 <div class="flex items-center justify-between">
-                  <h3 class="flex items-center gap-2 text-lg font-semibold"><Users class="h-5 w-5 text-[#0f67ff]" /> 人物小传</h3>
-                  <button class="text-sm font-semibold text-[#0f67ff]" @click="openCharacterTab">查看人物关系 <ChevronRight class="inline h-4 w-4" /></button>
+                  <h3 class="flex items-center gap-2 text-lg font-semibold"><Users class="h-5 w-5 text-[#4F46E5]" /> 人物小传</h3>
+                  <button class="text-sm font-semibold text-[#4F46E5]" @click="openCharacterTab">查看人物关系 <ChevronRight class="inline h-4 w-4" /></button>
                 </div>
                 <div v-if="displayCharacterBios.length" class="mt-4 grid gap-4 md:grid-cols-3">
                   <div v-for="bio in displayCharacterBios.slice(0, 3)" :key="bio.key" class="rounded-[18px] border border-[#e2e8f0] bg-[#fbfdff] p-5">
@@ -3990,8 +3990,8 @@ defineExpose({ openAllSuggestions })
 
               <article class="rounded-[22px] border border-[#dfe8f6] bg-white p-6">
                 <div class="flex items-center justify-between">
-                  <h3 class="flex items-center gap-2 text-lg font-semibold"><GitBranch class="h-5 w-5 text-[#0f67ff]" /> 分集剧情摘要</h3>
-                  <button class="text-sm font-semibold text-[#0f67ff]" @click="openEpisodeTab">查看分集结构 <ChevronRight class="inline h-4 w-4" /></button>
+                  <h3 class="flex items-center gap-2 text-lg font-semibold"><GitBranch class="h-5 w-5 text-[#4F46E5]" /> 分集剧情摘要</h3>
+                  <button class="text-sm font-semibold text-[#4F46E5]" @click="openEpisodeTab">查看分集结构 <ChevronRight class="inline h-4 w-4" /></button>
                 </div>
                 <div v-if="seasonEpisodeCards.length" class="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
                   <div v-for="episode in seasonEpisodeCards" :key="episode.episodeNo" class="rounded-[16px] border border-[#e2e8f0] p-4 text-sm leading-6 text-[#475569]">
@@ -4036,7 +4036,7 @@ defineExpose({ openAllSuggestions })
                     <template v-else>暂无人物详情，请重新解析剧本。</template>
                   </p>
                   <div v-if="selectedCharacter?.traits?.length" class="mt-3 flex flex-wrap gap-2">
-                    <span v-for="trait in selectedCharacter.traits.slice(0, 4)" :key="trait" class="rounded-full bg-[#eef5ff] px-2 py-1 text-xs text-[#0f67ff]">{{ trait }}</span>
+                    <span v-for="trait in selectedCharacter.traits.slice(0, 4)" :key="trait" class="rounded-full bg-[#eef5ff] px-2 py-1 text-xs text-[#4F46E5]">{{ trait }}</span>
                   </div>
                 </article>
                 <article class="rounded-[18px] border border-[#dfe8f6] bg-white p-4">
@@ -4055,7 +4055,7 @@ defineExpose({ openAllSuggestions })
                         <div class="relative z-10 mx-auto flex h-11 w-11 items-center justify-center rounded-full border bg-white" :class="step.tone">
                           <component :is="step.icon" class="h-5 w-5" />
                         </div>
-                        <p class="mt-2 text-[11px] font-semibold text-[#0f67ff]">{{ step.episodeLabel }}</p>
+                        <p class="mt-2 text-[11px] font-semibold text-[#4F46E5]">{{ step.episodeLabel }}</p>
                         <p class="mt-3 text-sm font-semibold text-[#0f172a]">{{ step.title }}</p>
                         <div class="mt-2 space-y-1 text-left text-[11px] leading-4 text-[#64748b]">
                           <p v-if="step.externalEvent"><b class="text-[#334155]">外部：</b>{{ step.externalEvent }}</p>
@@ -4066,7 +4066,7 @@ defineExpose({ openAllSuggestions })
                   </div>
                   <div v-else class="mt-4 rounded-[12px] border border-dashed border-[#cbd8ea] bg-[#f8fbff] px-4 py-5 text-center">
                     <p class="text-sm text-[#64748b]">{{ characterArcEmptyText }}</p>
-                    <button type="button" class="mt-3 inline-flex items-center rounded-[9px] border border-[#bfd3f3] bg-white px-3 py-2 text-sm font-semibold text-[#0f67ff] hover:bg-[#eff6ff] disabled:cursor-not-allowed disabled:opacity-60" :disabled="isCharacterArcReviewRunning" @click="retryCharacterArcReview">
+                    <button type="button" class="mt-3 inline-flex items-center rounded-[9px] border border-[#bfd3f3] bg-white px-3 py-2 text-sm font-semibold text-[#4F46E5] hover:bg-[#EEF2FF] disabled:cursor-not-allowed disabled:opacity-60" :disabled="isCharacterArcReviewRunning" @click="retryCharacterArcReview">
                       <RefreshCw class="mr-1.5 h-4 w-4" :class="isCharacterArcReviewRunning ? 'animate-spin' : ''" />{{ characterArcRetryLabel }}
                     </button>
                   </div>
@@ -4077,11 +4077,11 @@ defineExpose({ openAllSuggestions })
             <section v-else-if="activeTab === 'episodes'" class="mt-5 grid gap-5 lg:grid-cols-[240px_minmax(0,1fr)]">
               <aside class="rounded-[20px] border border-[#dfe8f6] bg-white p-4">
                 <div class="mb-3 flex gap-2 text-sm">
-                  <button type="button" class="rounded-[10px] px-3 py-2 font-semibold transition" :class="episodeListFilter === 'all' ? 'bg-[#e8f1ff] text-[#0f67ff]' : 'border border-[#dbe7f7] text-[#64748b]'" @click="setEpisodeListFilter('all')">全部 {{ episodeSummaries.length }}</button>
+                  <button type="button" class="rounded-[10px] px-3 py-2 font-semibold transition" :class="episodeListFilter === 'all' ? 'bg-[#e8f1ff] text-[#4F46E5]' : 'border border-[#dbe7f7] text-[#64748b]'" @click="setEpisodeListFilter('all')">全部 {{ episodeSummaries.length }}</button>
                   <button type="button" class="rounded-[10px] px-3 py-2 font-semibold transition" :class="episodeListFilter === 'pending' ? 'bg-[#fff7ed] text-[#ea580c]' : 'border border-[#dbe7f7] text-[#64748b]'" @click="setEpisodeListFilter('pending')">待优化 {{ pendingEpisodeCount }}</button>
                 </div>
                 <div class="space-y-2">
-                  <button v-for="episode in filteredEpisodeSummaries" :key="episode.episodeNo" type="button" class="w-full rounded-[14px] border px-3 py-3 text-left text-sm transition" :class="episode.episodeNo === selectedEpisodeNo ? 'border-[#0f67ff] bg-[#eef5ff]' : 'border-[#e2e8f0] bg-white hover:border-[#bfdbfe]'" @click="setSelectedEpisode(episode.episodeNo)">
+                  <button v-for="episode in filteredEpisodeSummaries" :key="episode.episodeNo" type="button" class="w-full rounded-[14px] border px-3 py-3 text-left text-sm transition" :class="episode.episodeNo === selectedEpisodeNo ? 'border-[#4F46E5] bg-[#eef5ff]' : 'border-[#e2e8f0] bg-white hover:border-[#C7D2FE]'" @click="setSelectedEpisode(episode.episodeNo)">
                     <span class="flex items-center justify-between gap-2"><b>第{{ episode.episodeNo }}集</b><span class="rounded-full px-2 py-0.5 text-[11px] font-semibold" :class="episodeStatusClass(getEpisodeStatus(episode.episodeNo))">{{ getEpisodeStatusLabel(episode.episodeNo) }}</span></span>
                     <p class="mt-1 truncate text-xs text-[#64748b]">{{ episode.title }}</p>
                   </button>
@@ -4101,7 +4101,7 @@ defineExpose({ openAllSuggestions })
                   </div>
                   <div class="mt-5 grid gap-3 md:grid-cols-4">
                     <div v-for="item in episodeStructure" :key="item.label" class="flex min-h-[220px] flex-col rounded-[18px] border border-[#e2e8f0] bg-[#fbfdff] p-4">
-                      <component :is="item.icon" class="h-5 w-5 text-[#0f67ff]" />
+                      <component :is="item.icon" class="h-5 w-5 text-[#4F46E5]" />
                       <h4 class="mt-3 font-semibold">{{ item.label }} <span class="text-xs text-[#64748b]">{{ item.time }}</span></h4>
                       <p class="mt-2 text-sm leading-6 text-[#475569]">{{ item.text }}</p>
                       <div class="mt-auto flex items-center justify-between gap-2 pt-4">
@@ -4109,7 +4109,7 @@ defineExpose({ openAllSuggestions })
                         <button
                           v-if="episodeBeatSceneLabel(item.sceneRefs)"
                           type="button"
-                          class="rounded-[8px] border border-[#dbe7f7] bg-white px-2.5 py-1 text-xs font-medium text-[#64748b] hover:border-[#93c5fd] hover:text-[#0f67ff]"
+                          class="rounded-[8px] border border-[#dbe7f7] bg-white px-2.5 py-1 text-xs font-medium text-[#64748b] hover:border-[#A5B4FC] hover:text-[#4F46E5]"
                           title="在完整剧本中定位场次"
                           @click="openEpisodeBeatScene(item.sceneRefs)"
                         >
@@ -4124,7 +4124,7 @@ defineExpose({ openAllSuggestions })
                       <button
                         v-if="currentEpisodeSuggestionCount > 0"
                         type="button"
-                        class="inline-flex items-center gap-1 rounded-[9px] bg-[#eef5ff] px-3 py-1.5 text-xs font-semibold text-[#0f67ff] hover:bg-[#dbeafe]"
+                        class="inline-flex items-center gap-1 rounded-[9px] bg-[#eef5ff] px-3 py-1.5 text-xs font-semibold text-[#4F46E5] hover:bg-[#E0E7FF]"
                         @click="openCurrentEpisodeSuggestions"
                       >
                         查看本集 {{ currentEpisodeSuggestionCount }} 条问题 <ChevronRight class="h-3.5 w-3.5" />
@@ -4158,7 +4158,7 @@ defineExpose({ openAllSuggestions })
                           <button
                             v-if="item.suggestionId"
                             type="button"
-                            class="mt-3 inline-flex items-center gap-1 rounded-[9px] bg-[#eef5ff] px-3 py-2 text-xs font-semibold text-[#0f67ff] hover:bg-[#dbeafe]"
+                            class="mt-3 inline-flex items-center gap-1 rounded-[9px] bg-[#eef5ff] px-3 py-2 text-xs font-semibold text-[#4F46E5] hover:bg-[#E0E7FF]"
                             @click.stop="openSuggestionDetail(item.suggestionId)"
                           >
                             {{ suggestionDraftLabelById(item.suggestionId) }} <ChevronRight class="h-3.5 w-3.5" />
@@ -4190,7 +4190,7 @@ defineExpose({ openAllSuggestions })
                 <p class="mt-2 text-sm text-[#64748b]">共 {{ totalEpisodes }} 集 · {{ totalScriptSceneCount }} 场</p>
                 <div class="mt-4 space-y-2">
                   <div v-for="episode in episodeSummaries" :key="episode.episodeNo" class="overflow-hidden rounded-[14px] border border-[#e2e8f0] bg-white">
-                    <button type="button" class="flex w-full items-center justify-between gap-3 px-3 py-3 text-left text-sm" :class="selectedEpisodeNo === episode.episodeNo ? 'bg-[#f4f8ff] text-[#0f67ff]' : 'text-[#0f172a]'" @click="toggleEpisodeScenes(episode.episodeNo)">
+                    <button type="button" class="flex w-full items-center justify-between gap-3 px-3 py-3 text-left text-sm" :class="selectedEpisodeNo === episode.episodeNo ? 'bg-[#f4f8ff] text-[#4F46E5]' : 'text-[#0f172a]'" @click="toggleEpisodeScenes(episode.episodeNo)">
                       <span class="min-w-0"><b>第{{ episode.episodeNo }}集</b><span class="ml-1 text-xs text-[#64748b]">{{ episode.title.replace(/^第\d+集[｜|：:\s]*/, '') }}</span></span>
                       <span class="text-lg leading-none">{{ expandedEpisodeNo === episode.episodeNo ? '⌄' : '›' }}</span>
                     </button>
@@ -4201,7 +4201,7 @@ defineExpose({ openAllSuggestions })
                         type="button"
                         class="w-full rounded-[10px] px-3 py-2 text-left text-xs transition"
                         :class="selectedEpisodeNo === episode.episodeNo && selectedSceneIndex === scenePosition
-                          ? scene.hasUnpublishedChanges ? 'bg-[#ffedd5] text-[#c2410c] ring-1 ring-[#fb923c]' : 'bg-[#e8f1ff] text-[#0f67ff]'
+                          ? scene.hasUnpublishedChanges ? 'bg-[#ffedd5] text-[#c2410c] ring-1 ring-[#fb923c]' : 'bg-[#e8f1ff] text-[#4F46E5]'
                           : scene.hasUnpublishedChanges ? 'bg-[#fff7ed] text-[#c2410c] hover:bg-[#ffedd5]' : 'text-[#475569] hover:bg-white'"
                         @click="selectScene(episode.episodeNo, scenePosition)"
                       >
@@ -4217,13 +4217,13 @@ defineExpose({ openAllSuggestions })
                 <div class="flex flex-wrap items-center justify-between gap-3 border-b border-[#e2e8f0] pb-3">
                   <div class="flex flex-wrap items-center gap-2">
                     <span class="text-sm font-semibold text-[#334155]">AI 改写工具</span>
-                    <button type="button" class="inline-flex h-9 items-center gap-1.5 rounded-[8px] border border-[#bfdbfe] bg-white px-3 text-xs font-semibold text-[#0f67ff] transition hover:bg-[#eff6ff]" @click="requestSceneOptimization('增强冲突')"><Zap class="h-3.5 w-3.5" />增强冲突</button>
-                    <button type="button" class="inline-flex h-9 items-center gap-1.5 rounded-[8px] border border-[#bfdbfe] bg-white px-3 text-xs font-semibold text-[#0f67ff] transition hover:bg-[#eff6ff]" @click="requestSceneOptimization('缩短对白')"><Scissors class="h-3.5 w-3.5" />缩短对白</button>
-                    <button type="button" class="inline-flex h-9 items-center gap-1.5 rounded-[8px] border border-[#bfdbfe] bg-white px-3 text-xs font-semibold text-[#0f67ff] transition hover:bg-[#eff6ff]" @click="requestSceneOptimization('检查逻辑')"><ShieldCheck class="h-3.5 w-3.5" />检查逻辑</button>
-                    <button type="button" class="inline-flex h-9 items-center gap-1.5 rounded-[8px] border border-[#bfdbfe] bg-white px-3 text-xs font-semibold text-[#0f67ff] transition hover:bg-[#eff6ff]" @click="requestSceneOptimization('提炼钩子')"><Flame class="h-3.5 w-3.5" />提炼钩子</button>
+                    <button type="button" class="inline-flex h-9 items-center gap-1.5 rounded-[8px] border border-[#C7D2FE] bg-white px-3 text-xs font-semibold text-[#4F46E5] transition hover:bg-[#EEF2FF]" @click="requestSceneOptimization('增强冲突')"><Zap class="h-3.5 w-3.5" />增强冲突</button>
+                    <button type="button" class="inline-flex h-9 items-center gap-1.5 rounded-[8px] border border-[#C7D2FE] bg-white px-3 text-xs font-semibold text-[#4F46E5] transition hover:bg-[#EEF2FF]" @click="requestSceneOptimization('缩短对白')"><Scissors class="h-3.5 w-3.5" />缩短对白</button>
+                    <button type="button" class="inline-flex h-9 items-center gap-1.5 rounded-[8px] border border-[#C7D2FE] bg-white px-3 text-xs font-semibold text-[#4F46E5] transition hover:bg-[#EEF2FF]" @click="requestSceneOptimization('检查逻辑')"><ShieldCheck class="h-3.5 w-3.5" />检查逻辑</button>
+                    <button type="button" class="inline-flex h-9 items-center gap-1.5 rounded-[8px] border border-[#C7D2FE] bg-white px-3 text-xs font-semibold text-[#4F46E5] transition hover:bg-[#EEF2FF]" @click="requestSceneOptimization('提炼钩子')"><Flame class="h-3.5 w-3.5" />提炼钩子</button>
                   </div>
                   <div class="flex items-center gap-3 text-xs">
-                    <span class="font-semibold text-[#0f67ff]">原文 {{ totalScriptWordCount }} 字</span>
+                    <span class="font-semibold text-[#4F46E5]">原文 {{ totalScriptWordCount }} 字</span>
                     <span :class="sceneSaveFailed ? 'text-[#dc2626]' : 'text-[#64748b]'">{{ sceneSaveStatusLabel }}</span>
                   </div>
                 </div>
@@ -4239,7 +4239,7 @@ defineExpose({ openAllSuggestions })
                     </div>
                   </div>
                 </div>
-                <div class="mt-4 flex items-center justify-between gap-3 rounded-t-[14px] border border-b-0 px-4 py-2.5" :class="currentScene?.hasUnpublishedChanges ? 'border-[#fdba74] bg-[#fff7ed]' : 'border-[#bfdbfe] bg-[#eff6ff]'">
+                <div class="mt-4 flex items-center justify-between gap-3 rounded-t-[14px] border border-b-0 px-4 py-2.5" :class="currentScene?.hasUnpublishedChanges ? 'border-[#fdba74] bg-[#fff7ed]' : 'border-[#C7D2FE] bg-[#EEF2FF]'">
                   <div class="min-w-0">
                     <b class="block truncate text-sm text-[#0f172a]">第{{ selectedEpisodeNo }}集 · 场{{ selectedSceneIndex + 1 }} {{ currentScene?.title || '' }}</b>
                     <span class="mt-0.5 block truncate text-xs text-[#64748b]">{{ [currentScene?.place, currentScene?.timeOfDay].filter(Boolean).join(' · ') || '当前场次' }}</span>
@@ -4254,7 +4254,7 @@ defineExpose({ openAllSuggestions })
                   ref="sourceScriptContainerRef"
                   v-model="editableCurrentSceneContent"
                   class="min-h-[560px] w-full resize-y rounded-b-[14px] border bg-white p-5 font-sans text-[15px] leading-8 text-[#0f172a] outline-none transition"
-                  :class="currentScene?.hasUnpublishedChanges ? 'border-[#fdba74] focus:border-[#f97316] focus:ring-2 focus:ring-[#ffedd5]' : 'border-[#bfdbfe] focus:border-[#0f67ff] focus:ring-2 focus:ring-[#dbeafe]'"
+                  :class="currentScene?.hasUnpublishedChanges ? 'border-[#fdba74] focus:border-[#f97316] focus:ring-2 focus:ring-[#ffedd5]' : 'border-[#C7D2FE] focus:border-[#4F46E5] focus:ring-2 focus:ring-[#E0E7FF]'"
                   :aria-label="`编辑第${selectedEpisodeNo}集场${selectedSceneIndex + 1}正文`"
                   spellcheck="false"
                   @select="captureSourceSelection"
@@ -4274,17 +4274,17 @@ defineExpose({ openAllSuggestions })
             <div class="flex items-center justify-between">
               <h3 class="text-xl font-semibold">{{ reviewPanelTitle }}</h3>
               <div class="flex items-center gap-2 text-xs text-[#64748b]">
-                <select v-if="activeTab === 'full'" v-model="textReviewScope" class="rounded-[8px] border border-[#dbe7f7] bg-white px-2 py-1.5 outline-none">
+                <LivSelect v-if="activeTab === 'full'" v-model="textReviewScope" class="rounded-[8px] border border-[#dbe7f7] bg-white px-2 py-1.5 outline-none">
                   <option value="scene">当前场</option>
                   <option value="episode">当前集</option>
                   <option value="full">全剧</option>
-                </select>
+                </LivSelect>
                 <span v-else>{{ reviewScopeLabel }}</span>
                 <button type="button" class="text-[#94a3b8]" title="查看当前维度建议" @click="openSuggestionDrawer(activeTab === 'characters' ? 'character' : activeTab === 'episodes' ? 'episode' : activeTab === 'full' ? 'text' : 'story')"><RefreshCw class="h-4 w-4" /></button>
               </div>
             </div>
             <div v-if="isCurrentReviewPending" class="mt-6 rounded-[16px] border border-[#dbe7f7] bg-[#f8fbff] px-5 py-8 text-center">
-              <RefreshCw class="mx-auto h-7 w-7 animate-spin text-[#0f67ff]" />
+              <RefreshCw class="mx-auto h-7 w-7 animate-spin text-[#4F46E5]" />
               <p class="mt-3 font-semibold text-[#0f172a]">{{ isCurrentReviewAutoBackfilling ? '自动补全中' : `${reviewPanelTitle}正在生成` }}</p>
               <p class="mt-2 text-sm leading-6 text-[#64748b]">{{ isCurrentReviewAutoBackfilling ? '综合体检返回内容不完整，系统正在免费补全当前维度，不影响进入资产制作。' : '基础剧本结构已经可用，本项专业体检会在后台独立完成。' }}</p>
             </div>
@@ -4296,7 +4296,7 @@ defineExpose({ openAllSuggestions })
                   <p class="mt-2 break-words text-sm leading-6 text-[#7f1d1d]">{{ currentReviewNode?.errorMessage || '本次体检未完成，已有剧本内容和其它体检结果不受影响。' }}</p>
                   <button
                     type="button"
-                    class="mt-4 rounded-[10px] bg-[#0f67ff] px-4 py-2.5 text-sm font-semibold text-white disabled:bg-[#94a3b8]"
+                    class="mt-4 rounded-[10px] bg-[#4F46E5] px-4 py-2.5 text-sm font-semibold text-white disabled:bg-[#94a3b8]"
                     :disabled="busyKey === `analysis-node:${reviewNodeKey}`"
                     @click="retryCurrentReviewNode"
                   >
@@ -4305,9 +4305,9 @@ defineExpose({ openAllSuggestions })
                 </div>
               </div>
             </div>
-            <div v-else-if="isCurrentReviewSkipped" class="mt-6 rounded-[16px] border border-[#bfdbfe] bg-[#f8fbff] px-5 py-6">
+            <div v-else-if="isCurrentReviewSkipped" class="mt-6 rounded-[16px] border border-[#C7D2FE] bg-[#f8fbff] px-5 py-6">
               <div class="flex items-start gap-3">
-                <CheckCircle2 class="mt-0.5 h-5 w-5 shrink-0 text-[#0f67ff]" />
+                <CheckCircle2 class="mt-0.5 h-5 w-5 shrink-0 text-[#4F46E5]" />
                 <div>
                   <p class="font-semibold text-[#0f172a]">本项体检已跳过</p>
                   <p class="mt-2 text-sm leading-6 text-[#64748b]">剧本基础结构与资产候选已保留。你可以先进入资产制作，后续随时回到此处补做体检。</p>
@@ -4315,12 +4315,12 @@ defineExpose({ openAllSuggestions })
               </div>
             </div>
             <div v-if="isCurrentReviewReady && activeTab === 'characters'" class="mt-4 inline-flex rounded-[10px] border border-[#dbe7f7] bg-[#f8fafc] p-1 text-sm font-semibold">
-              <button type="button" class="rounded-[7px] px-3 py-1.5 transition" :class="characterReviewMode === 'system' ? 'bg-white text-[#0f67ff] shadow-sm' : 'text-[#64748b]'" @click="characterReviewMode = 'system'">人物体系</button>
-              <button type="button" class="rounded-[7px] px-3 py-1.5 transition" :class="characterReviewMode === 'person' ? 'bg-white text-[#0f67ff] shadow-sm' : 'text-[#64748b]'" @click="characterReviewMode = 'person'">当前人物</button>
+              <button type="button" class="rounded-[7px] px-3 py-1.5 transition" :class="characterReviewMode === 'system' ? 'bg-white text-[#4F46E5] shadow-sm' : 'text-[#64748b]'" @click="characterReviewMode = 'system'">人物体系</button>
+              <button type="button" class="rounded-[7px] px-3 py-1.5 transition" :class="characterReviewMode === 'person' ? 'bg-white text-[#4F46E5] shadow-sm' : 'text-[#64748b]'" @click="characterReviewMode = 'person'">当前人物</button>
             </div>
             <div v-if="isCurrentReviewReady && activeTab === 'episodes'" class="mt-4 inline-flex rounded-[10px] border border-[#dbe7f7] bg-[#f8fafc] p-1 text-sm font-semibold">
-              <button type="button" class="rounded-[7px] px-3 py-1.5 transition" :class="episodeReviewScope === 'current' ? 'bg-white text-[#0f67ff] shadow-sm' : 'text-[#64748b]'" @click="episodeReviewScope = 'current'">当前集</button>
-              <button type="button" class="rounded-[7px] px-3 py-1.5 transition" :class="episodeReviewScope === 'season' ? 'bg-white text-[#0f67ff] shadow-sm' : 'text-[#64748b]'" @click="episodeReviewScope = 'season'">全季</button>
+              <button type="button" class="rounded-[7px] px-3 py-1.5 transition" :class="episodeReviewScope === 'current' ? 'bg-white text-[#4F46E5] shadow-sm' : 'text-[#64748b]'" @click="episodeReviewScope = 'current'">当前集</button>
+              <button type="button" class="rounded-[7px] px-3 py-1.5 transition" :class="episodeReviewScope === 'season' ? 'bg-white text-[#4F46E5] shadow-sm' : 'text-[#64748b]'" @click="episodeReviewScope = 'season'">全季</button>
             </div>
             <p v-if="isCurrentReviewReady && activeTab === 'full'" class="mt-2 text-xs text-[#94a3b8]">{{ reviewScopeLabel }}</p>
             <div v-if="isCurrentReviewReady && activeTab === 'episodes' && episodeReviewScope === 'current'" class="mt-6 rounded-[16px] border border-[#dbe7f7] bg-[#f8fbff] p-4">
@@ -4359,16 +4359,16 @@ defineExpose({ openAllSuggestions })
                 :key="item.title"
                 type="button"
                 class="grid w-full grid-cols-[minmax(0,1fr)_auto] gap-3 rounded-[14px] border px-3 py-3 text-left text-sm transition"
-                :class="item.status === 'warning' && item.suggestionId ? 'cursor-pointer border-[#fed7aa] bg-[#fffbf5] hover:border-[#0f67ff] hover:bg-[#f8fbff]' : 'cursor-pointer border-[#e2e8f0] hover:border-[#bfdbfe] hover:bg-[#f8fbff]'"
+                :class="item.status === 'warning' && item.suggestionId ? 'cursor-pointer border-[#fed7aa] bg-[#fffbf5] hover:border-[#4F46E5] hover:bg-[#f8fbff]' : 'cursor-pointer border-[#e2e8f0] hover:border-[#C7D2FE] hover:bg-[#f8fbff]'"
                 @click="openReviewIssue(item)"
               >
                 <div class="min-w-0">
                   <span class="flex items-center gap-2 font-medium"><CheckCircle2 v-if="item.status !== 'warning'" class="h-4 w-4 shrink-0 text-[#10b981]" /><AlertTriangle v-else class="h-4 w-4 shrink-0 text-[#f97316]" /> {{ item.title }}</span>
                   <p v-if="item.detail" class="mt-1 pl-6 text-xs leading-5 text-[#64748b]">{{ item.detail }}</p>
                 </div>
-                <span class="shrink-0 text-right" :class="item.status === 'warning' ? 'text-[#f97316]' : item.status === 'good' ? 'text-[#2563eb]' : 'text-[#10b981]'">
+                <span class="shrink-0 text-right" :class="item.status === 'warning' ? 'text-[#f97316]' : item.status === 'good' ? 'text-[#4F46E5]' : 'text-[#10b981]'">
                   {{ reviewStatusLabel(item.status) }}
-                  <small v-if="item.status === 'warning' && item.suggestionId" class="mt-1 flex items-center justify-end gap-0.5 text-[11px] font-semibold text-[#0f67ff]">{{ suggestionDraftLabelById(item.suggestionId) }} <ChevronRight class="h-3 w-3" /></small>
+                  <small v-if="item.status === 'warning' && item.suggestionId" class="mt-1 flex items-center justify-end gap-0.5 text-[11px] font-semibold text-[#4F46E5]">{{ suggestionDraftLabelById(item.suggestionId) }} <ChevronRight class="h-3 w-3" /></small>
                   <small v-else-if="item.status !== 'warning'" class="mt-1 block text-[11px] font-normal text-[#94a3b8]">查看依据</small>
                 </span>
               </button>
@@ -4385,11 +4385,11 @@ defineExpose({ openAllSuggestions })
               </div>
             </div>
             <div v-if="isCurrentReviewReady" class="mt-5 flex gap-3">
-              <button type="button" class="flex-1 rounded-[14px] border border-[#dbe7f7] px-4 py-3 font-semibold text-[#0f67ff]" @click="openSuggestionDrawer(activeTab === 'characters' ? 'character' : activeTab === 'episodes' ? 'episode' : activeTab === 'full' ? 'text' : 'story')">{{ reviewButtonLabels.secondary }}</button>
-              <button v-if="activeTab === 'characters'" type="button" class="flex-1 rounded-[14px] bg-[#0f67ff] px-4 py-3 font-semibold text-white" @click="characterOptimizeSettingsVisible = true">{{ reviewButtonLabels.primary }}</button>
-              <button v-else-if="activeTab === 'episodes'" type="button" class="flex-1 rounded-[14px] bg-[#0f67ff] px-4 py-3 font-semibold text-white" @click="episodeOptimizeSettingsVisible = true">{{ reviewButtonLabels.primary }}</button>
-              <button v-else-if="activeTab === 'full'" type="button" class="flex-1 rounded-[14px] bg-[#0f67ff] px-4 py-3 font-semibold text-white" @click="requestSceneOptimization('AI 优化当前场')">{{ reviewButtonLabels.primary }}</button>
-              <button v-else type="button" class="flex-1 rounded-[14px] bg-[#0f67ff] px-4 py-3 font-semibold text-white" @click="globalOptimizeSettingsVisible = true">{{ reviewButtonLabels.primary }}</button>
+              <button type="button" class="flex-1 rounded-[14px] border border-[#dbe7f7] px-4 py-3 font-semibold text-[#4F46E5]" @click="openSuggestionDrawer(activeTab === 'characters' ? 'character' : activeTab === 'episodes' ? 'episode' : activeTab === 'full' ? 'text' : 'story')">{{ reviewButtonLabels.secondary }}</button>
+              <button v-if="activeTab === 'characters'" type="button" class="flex-1 rounded-[14px] bg-[#4F46E5] px-4 py-3 font-semibold text-white" @click="characterOptimizeSettingsVisible = true">{{ reviewButtonLabels.primary }}</button>
+              <button v-else-if="activeTab === 'episodes'" type="button" class="flex-1 rounded-[14px] bg-[#4F46E5] px-4 py-3 font-semibold text-white" @click="episodeOptimizeSettingsVisible = true">{{ reviewButtonLabels.primary }}</button>
+              <button v-else-if="activeTab === 'full'" type="button" class="flex-1 rounded-[14px] bg-[#4F46E5] px-4 py-3 font-semibold text-white" @click="requestSceneOptimization('AI 优化当前场')">{{ reviewButtonLabels.primary }}</button>
+              <button v-else type="button" class="flex-1 rounded-[14px] bg-[#4F46E5] px-4 py-3 font-semibold text-white" @click="globalOptimizeSettingsVisible = true">{{ reviewButtonLabels.primary }}</button>
             </div>
           </div>
         </aside>
@@ -4398,8 +4398,8 @@ defineExpose({ openAllSuggestions })
       <div class="fixed inset-x-0 bottom-0 z-20 border-t border-[#dfe8f6] bg-white/90 px-5 py-2.5 shadow-[0_-8px_28px_rgba(15,23,42,0.05)] backdrop-blur-md">
         <div class="mx-auto flex max-w-[1920px] flex-col items-center justify-center gap-2">
           <ol v-if="confirmScriptBusy" class="flex w-full max-w-[760px] flex-wrap items-center justify-center gap-x-4 gap-y-1 text-xs text-[#64748b]" aria-label="进入资产制作进度">
-            <li v-for="(step, index) in assetTransitionSteps" :key="step.label" class="flex items-center gap-1.5" :class="step.state === 'running' ? 'font-semibold text-[#0f67ff]' : step.state === 'done' ? 'text-[#059669]' : ''">
-              <span class="flex h-5 w-5 items-center justify-center rounded-full border text-[10px]" :class="step.state === 'running' ? 'border-[#0f67ff] bg-[#e8f1ff]' : step.state === 'done' ? 'border-[#10b981] bg-[#ecfdf5]' : 'border-[#cbd5e1]'">{{ step.state === 'done' ? '✓' : index + 1 }}</span>
+            <li v-for="(step, index) in assetTransitionSteps" :key="step.label" class="flex items-center gap-1.5" :class="step.state === 'running' ? 'font-semibold text-[#4F46E5]' : step.state === 'done' ? 'text-[#059669]' : ''">
+              <span class="flex h-5 w-5 items-center justify-center rounded-full border text-[10px]" :class="step.state === 'running' ? 'border-[#4F46E5] bg-[#e8f1ff]' : step.state === 'done' ? 'border-[#10b981] bg-[#ecfdf5]' : 'border-[#cbd5e1]'">{{ step.state === 'done' ? '✓' : index + 1 }}</span>
               <span>{{ step.label }}</span>
             </li>
           </ol>
@@ -4411,7 +4411,7 @@ defineExpose({ openAllSuggestions })
           <span :title="canConfirmScriptVersion ? '冻结当前剧本版本，核算完整资产资料提炼费用，确认后再进入资产制作。' : '基础剧本结构完成后即可确认版本。'">
             <button
               type="button"
-              class="flex h-11 w-[min(460px,calc(100vw-40px))] items-center justify-center gap-2 rounded-[10px] bg-[#0f67ff] px-5 text-sm font-semibold text-white shadow-[0_8px_22px_rgba(15,103,255,0.18)] disabled:cursor-not-allowed disabled:bg-[#94a3b8] disabled:shadow-none"
+              class="flex h-11 w-[min(460px,calc(100vw-40px))] items-center justify-center gap-2 rounded-[10px] bg-[#4F46E5] px-5 text-sm font-semibold text-white shadow-[0_8px_22px_rgba(15,103,255,0.18)] disabled:cursor-not-allowed disabled:bg-[#94a3b8] disabled:shadow-none"
               :disabled="sceneSaveBusy || confirmScriptBusy || assetPreparationSubmitBusy || !canConfirmScriptVersion"
               @click="confirmCurrentScriptVersion"
             >
@@ -4436,7 +4436,7 @@ defineExpose({ openAllSuggestions })
           <div class="grid grid-cols-2 overflow-hidden rounded-[14px] border border-[#dbe7f7] bg-[#f8fbff]">
             <div class="border-r border-[#dbe7f7] p-4">
               <p class="text-xs text-[#64748b]">预计消耗</p>
-              <p class="mt-1 flex items-center gap-1 text-2xl font-bold text-[#0f67ff]"><Zap class="h-5 w-5" />{{ assetPreparationEstimate.required_credits }} <span class="text-sm font-medium">点</span></p>
+              <p class="mt-1 flex items-center gap-1 text-2xl font-bold text-[#4F46E5]"><Zap class="h-5 w-5" />{{ assetPreparationEstimate.required_credits }} <span class="text-sm font-medium">点</span></p>
             </div>
             <div class="p-4">
               <p class="text-xs text-[#64748b]">当前余额</p>
@@ -4480,11 +4480,11 @@ defineExpose({ openAllSuggestions })
       </LivDialog>
 
       <LivDialog :open="modeDialogVisible" title="调整内容模式" description="切换后将重新执行内容结构分析、人物关系识别、分集节奏分析与 AI 体检。" width="md" @update:open="modeDialogVisible = $event">
-          <p class="mt-4 text-sm text-[#475569]">当前识别模式：<span class="rounded-full bg-[#e8f1ff] px-2 py-1 font-semibold text-[#0f67ff]">{{ modeLabel }}</span></p>
+          <p class="mt-4 text-sm text-[#475569]">当前识别模式：<span class="rounded-full bg-[#e8f1ff] px-2 py-1 font-semibold text-[#4F46E5]">{{ modeLabel }}</span></p>
           <div class="mt-5 space-y-3">
-            <label v-for="mode in modeOptions" :key="mode.value" class="flex cursor-pointer items-center gap-4 rounded-[18px] border p-4" :class="pendingMode === mode.value ? 'border-[#0f67ff] bg-[#f8fbff]' : 'border-[#e2e8f0]'">
+            <label v-for="mode in modeOptions" :key="mode.value" class="flex cursor-pointer items-center gap-4 rounded-[18px] border p-4" :class="pendingMode === mode.value ? 'border-[#4F46E5] bg-[#f8fbff]' : 'border-[#e2e8f0]'">
               <input v-model="pendingMode" :value="mode.value" type="radio" class="h-4 w-4">
-              <span class="flex h-12 w-12 items-center justify-center rounded-[14px] bg-[#eef5ff] text-xl text-[#0f67ff]">{{ mode.icon }}</span>
+              <span class="flex h-12 w-12 items-center justify-center rounded-[14px] bg-[#eef5ff] text-xl text-[#4F46E5]">{{ mode.icon }}</span>
               <span><b>{{ mode.label }}</b><p class="mt-1 text-sm text-[#64748b]">{{ mode.desc }}</p></span>
             </label>
           </div>
@@ -4496,7 +4496,7 @@ defineExpose({ openAllSuggestions })
 
       <div v-if="modeSwitchProgressVisible" class="fixed inset-0 z-[90] flex items-center justify-center bg-[#0f172a]/45 p-4">
         <div class="w-full max-w-[620px] rounded-[24px] bg-white p-8 text-center shadow-2xl">
-          <RefreshCw class="mx-auto h-12 w-12 animate-spin text-[#0f67ff]" />
+          <RefreshCw class="mx-auto h-12 w-12 animate-spin text-[#4F46E5]" />
           <h3 class="mt-4 text-2xl font-semibold">正在按新内容模式重新分析</h3>
           <p class="mt-2 text-[#64748b]">系统将重新解析结构、人物关系、分集节奏与剧本体检。</p>
         </div>
@@ -4510,16 +4510,16 @@ defineExpose({ openAllSuggestions })
             <section class="rounded-[16px] border border-[#e2e8f0] p-5"><h4 class="font-semibold">完整大纲</h4><p class="mt-2 whitespace-pre-line leading-8 text-[#334155]">{{ analysis?.outline || '暂无完整大纲' }}</p></section>
             <section class="rounded-[16px] border border-[#e2e8f0] p-5"><h4 class="font-semibold">全季剧情推进</h4><div class="mt-3 space-y-3"><p v-for="episode in seasonEpisodeCards" :key="episode.episodeNo" class="rounded-[12px] bg-[#f8fbff] p-3 text-sm leading-6"><b>第{{ episode.episodeNo }}集 · {{ episode.title }}</b><br><span class="text-[#64748b]">{{ episode.coreEvent }}</span></p></div></section>
           </div>
-          <div v-if="outlineEditMode" class="mt-6 rounded-[16px] border border-[#bfdbfe] bg-[#f8fbff] p-4">
+          <div v-if="outlineEditMode" class="mt-6 rounded-[16px] border border-[#C7D2FE] bg-[#f8fbff] p-4">
             <label class="text-sm font-semibold">告诉 AI 你希望怎样调整大纲</label>
-            <textarea v-model="outlineDraftInstruction" class="mt-3 h-28 w-full rounded-[12px] border border-[#dbe7f7] bg-white p-3 outline-none focus:border-[#0f67ff]" placeholder="例如：保留人物设定，把第3集冲突提前，但不要改变结局" />
+            <textarea v-model="outlineDraftInstruction" class="mt-3 h-28 w-full rounded-[12px] border border-[#dbe7f7] bg-white p-3 outline-none focus:border-[#4F46E5]" placeholder="例如：保留人物设定，把第3集冲突提前，但不要改变结局" />
             <p class="mt-2 text-xs text-[#64748b]">系统将创建大纲优化草稿，不会覆盖当前正式版本。</p>
           </div>
         </div>
         <div class="flex shrink-0 justify-end gap-3 border-t border-[#e2e8f0] bg-white px-7 py-4 shadow-[0_-8px_24px_rgba(15,23,42,0.04)]">
           <button class="rounded-[10px] border px-5 py-3" @click="outlineDrawerVisible = false">关闭</button>
-          <button v-if="!outlineEditMode" class="rounded-[10px] bg-[#0f67ff] px-5 py-3 font-semibold text-white" @click="outlineEditMode = true">编辑大纲</button>
-          <button v-else class="rounded-[10px] bg-[#0f67ff] px-5 py-3 font-semibold text-white disabled:bg-[#94a3b8]" :disabled="!outlineDraftInstruction.trim()" @click="createOutlineDraft">生成大纲草稿</button>
+          <button v-if="!outlineEditMode" class="rounded-[10px] bg-[#4F46E5] px-5 py-3 font-semibold text-white" @click="outlineEditMode = true">编辑大纲</button>
+          <button v-else class="rounded-[10px] bg-[#4F46E5] px-5 py-3 font-semibold text-white disabled:bg-[#94a3b8]" :disabled="!outlineDraftInstruction.trim()" @click="createOutlineDraft">生成大纲草稿</button>
         </div>
       </LivDrawer>
 
@@ -4544,16 +4544,16 @@ defineExpose({ openAllSuggestions })
           <div><p class="text-[#64748b]">影响范围</p><b class="text-2xl">{{ affectedEpisodeCount }}集 / {{ affectedLocationCount }}处</b></div>
         </div>
         <div v-if="suggestionBatchResultMessage" class="mt-4 rounded-[12px] border border-[#bbf7d0] bg-[#f0fdf4] px-4 py-3 text-sm font-medium text-[#166534]">{{ suggestionBatchResultMessage }}</div>
-        <div v-if="suggestionEpisodeFilter !== null" class="mt-4 flex items-center justify-between rounded-[12px] border border-[#bfdbfe] bg-[#eff6ff] px-3 py-2 text-sm text-[#1d4ed8]">
+        <div v-if="suggestionEpisodeFilter !== null" class="mt-4 flex items-center justify-between rounded-[12px] border border-[#C7D2FE] bg-[#EEF2FF] px-3 py-2 text-sm text-[#1d4ed8]">
           <span class="font-semibold">正在查看第 {{ suggestionEpisodeFilter }} 集相关问题</span>
-          <button type="button" class="text-xs font-semibold hover:text-[#0f67ff]" @click="clearSuggestionEpisodeFilter">查看全部集数</button>
+          <button type="button" class="text-xs font-semibold hover:text-[#4F46E5]" @click="clearSuggestionEpisodeFilter">查看全部集数</button>
         </div>
         <div class="mt-4 flex flex-wrap gap-2">
           <button
             v-for="filter in suggestionFilterOptions"
             :key="filter.key"
             class="rounded-full px-4 py-2 text-sm font-semibold"
-            :class="suggestionFilter === filter.key ? 'bg-[#0f67ff] text-white' : 'border border-[#dbe7f7] text-[#475569]'"
+            :class="suggestionFilter === filter.key ? 'bg-[#4F46E5] text-white' : 'border border-[#dbe7f7] text-[#475569]'"
             @click="setSuggestionFilter(filter.key)"
           >
             {{ filter.label }}
@@ -4566,7 +4566,7 @@ defineExpose({ openAllSuggestions })
             :key="status.key"
             type="button"
             class="rounded-[8px] px-3 py-1.5 text-xs font-semibold transition"
-            :class="suggestionStatusFilter === status.key ? 'bg-[#e8f1ff] text-[#0f67ff]' : 'text-[#64748b] hover:bg-[#f8fafc]'"
+            :class="suggestionStatusFilter === status.key ? 'bg-[#e8f1ff] text-[#4F46E5]' : 'text-[#64748b] hover:bg-[#f8fafc]'"
             @click="setSuggestionStatusFilter(status.key)"
           >
             {{ status.label }}
@@ -4581,15 +4581,15 @@ defineExpose({ openAllSuggestions })
           <p class="mt-2 text-sm leading-6 text-[#64748b]">
             AI 未发现会明显影响剧情质量或后续制作的问题，可查看其他维度，或重新进行剧本体检。
           </p>
-          <div class="mt-5 flex justify-center gap-3"><button class="rounded-[10px] border px-4 py-2 text-sm" @click="setSuggestionFilter('all')">查看其他维度</button><button class="rounded-[10px] bg-[#0f67ff] px-4 py-2 text-sm font-semibold text-white" @click="emit('refresh')">刷新体检结果</button></div>
+          <div class="mt-5 flex justify-center gap-3"><button class="rounded-[10px] border px-4 py-2 text-sm" @click="setSuggestionFilter('all')">查看其他维度</button><button class="rounded-[10px] bg-[#4F46E5] px-4 py-2 text-sm font-semibold text-white" @click="emit('refresh')">刷新体检结果</button></div>
         </div>
         <div v-else class="mt-5 space-y-3">
-          <article v-for="(item, itemIndex) in filteredSuggestions" :key="item.id" class="cursor-pointer rounded-[18px] border border-[#e2e8f0] p-4 transition hover:border-[#93c5fd] hover:bg-[#fbfdff]" @click="openSuggestionDetail(item.id)">
+          <article v-for="(item, itemIndex) in filteredSuggestions" :key="item.id" class="cursor-pointer rounded-[18px] border border-[#e2e8f0] p-4 transition hover:border-[#A5B4FC] hover:bg-[#fbfdff]" @click="openSuggestionDetail(item.id)">
             <div class="flex items-start gap-3">
-              <div class="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-[#e8f1ff] text-sm font-bold text-[#0f67ff]">{{ itemIndex + 1 }}</div>
+              <div class="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-[#e8f1ff] text-sm font-bold text-[#4F46E5]">{{ itemIndex + 1 }}</div>
               <div class="min-w-0 flex-1">
                 <div class="flex items-start justify-between gap-3">
-                  <div><p class="text-xs font-semibold text-[#0f67ff]">问题 {{ itemIndex + 1 }}</p><span class="mt-2 inline-flex rounded-full px-2 py-1 text-xs font-semibold" :class="item.actionable ? priorityClass(item.priority) : 'bg-[#ecfdf5] text-[#059669]'">{{ item.actionable ? (item.priority === 'high' ? '高优先级' : item.priority === 'low' ? '低优先级' : '中优先级') : '已达标' }}</span><h4 class="mt-3 text-lg font-semibold">{{ item.title }}</h4></div>
+                  <div><p class="text-xs font-semibold text-[#4F46E5]">问题 {{ itemIndex + 1 }}</p><span class="mt-2 inline-flex rounded-full px-2 py-1 text-xs font-semibold" :class="item.actionable ? priorityClass(item.priority) : 'bg-[#ecfdf5] text-[#059669]'">{{ item.actionable ? (item.priority === 'high' ? '高优先级' : item.priority === 'low' ? '低优先级' : '中优先级') : '已达标' }}</span><h4 class="mt-3 text-lg font-semibold">{{ item.title }}</h4></div>
                   <div class="flex shrink-0 items-center gap-2">
                     <span class="rounded-[8px] px-2.5 py-1 text-xs font-semibold" :class="suggestionPrimaryStatusClass(item)">{{ suggestionPrimaryStatusLabel(item) }}</span>
                     <input v-if="item.actionable && !isSuggestionHistory(item) && suggestionStatusFilter === 'pending' && getSuggestionDraftStatus(item) !== 'generating'" type="checkbox" :checked="selectedSuggestionIds.includes(item.id)" @click.stop @change="toggleSuggestionSelection(item.id)">
@@ -4603,7 +4603,7 @@ defineExpose({ openAllSuggestions })
                 { no: 3, label: '优化方向', value: item.advice },
                 { no: 4, label: '影响范围', value: item.impact || item.affected || '仅影响当前建议对应文本范围' }
               ]" :key="detail.no" class="grid grid-cols-[22px_minmax(0,1fr)] gap-2 rounded-[10px] bg-[#f8fafc] px-3 py-2.5">
-                <span class="flex h-5 w-5 items-center justify-center rounded-full bg-[#dbeafe] text-[10px] font-bold text-[#0f67ff]">{{ detail.no }}</span>
+                <span class="flex h-5 w-5 items-center justify-center rounded-full bg-[#E0E7FF] text-[10px] font-bold text-[#4F46E5]">{{ detail.no }}</span>
                 <p><b class="text-[#0f172a]">{{ detail.label }}</b><br><span class="mt-1 inline-block leading-6">{{ detail.value }}</span></p>
               </div>
               <div v-if="item.storyboardReference" class="rounded-[10px] border border-[#ede9fe] bg-[#faf5ff] px-3 py-2.5 text-[#6d28d9]"><b>后续分镜参考</b><p class="mt-1 leading-6">{{ item.storyboardReference }}</p></div>
@@ -4611,10 +4611,10 @@ defineExpose({ openAllSuggestions })
             <div class="mt-4 flex justify-end gap-2">
               <button v-if="item.actionable && !isSuggestionHistory(item) && getSuggestionOperationalStatus(item) === 'pending'" class="rounded-[10px] border px-4 py-2 text-sm" @click.stop="ignoreSuggestion(item.id)">忽略</button>
               <button v-if="getSuggestionDraftStatus(item) === 'generating'" class="rounded-[10px] border px-4 py-2 text-sm font-semibold text-[#94a3b8]" disabled>生成中</button>
-              <button v-else-if="getSuggestionDraftStatus(item) === 'failed'" class="rounded-[10px] bg-[#0f67ff] px-4 py-2 text-sm font-semibold text-white" @click.stop="regenerateSuggestionDraft(item)">{{ suggestionDraftActionLabel(item) }}</button>
-              <button v-else-if="getSuggestionDraftStatus(item) === 'stale'" class="rounded-[10px] bg-[#0f67ff] px-4 py-2 text-sm font-semibold text-white" @click.stop="regenerateSuggestionDraft(item, 'REFRESH_STALE_SUGGESTION')">{{ suggestionDraftActionLabel(item) }}</button>
-              <button v-else-if="getSuggestionOperationalStatus(item) === 'ignored'" class="rounded-[10px] border border-[#0f67ff] px-4 py-2 text-sm font-semibold text-[#0f67ff]" @click.stop="restoreSuggestion(item.id)">恢复建议</button>
-              <button v-else class="rounded-[10px] border border-[#0f67ff] px-4 py-2 text-sm font-semibold text-[#0f67ff]" @click.stop="openSuggestionDetail(item.id)">{{ isSuggestionHistory(item) ? (getSuggestionOperationalStatus(item) === 'adopted' ? '查看优化记录' : '查看历史建议') : item.actionable ? (item.sourceLocator?.status === 'ambiguous' ? '确认原文范围' : hasCompleteSuggestionDraft(item) ? '查看方案' : suggestionDraftActionLabel(item)) : '查看依据' }}</button>
+              <button v-else-if="getSuggestionDraftStatus(item) === 'failed'" class="rounded-[10px] bg-[#4F46E5] px-4 py-2 text-sm font-semibold text-white" @click.stop="regenerateSuggestionDraft(item)">{{ suggestionDraftActionLabel(item) }}</button>
+              <button v-else-if="getSuggestionDraftStatus(item) === 'stale'" class="rounded-[10px] bg-[#4F46E5] px-4 py-2 text-sm font-semibold text-white" @click.stop="regenerateSuggestionDraft(item, 'REFRESH_STALE_SUGGESTION')">{{ suggestionDraftActionLabel(item) }}</button>
+              <button v-else-if="getSuggestionOperationalStatus(item) === 'ignored'" class="rounded-[10px] border border-[#4F46E5] px-4 py-2 text-sm font-semibold text-[#4F46E5]" @click.stop="restoreSuggestion(item.id)">恢复建议</button>
+              <button v-else class="rounded-[10px] border border-[#4F46E5] px-4 py-2 text-sm font-semibold text-[#4F46E5]" @click.stop="openSuggestionDetail(item.id)">{{ isSuggestionHistory(item) ? (getSuggestionOperationalStatus(item) === 'adopted' ? '查看优化记录' : '查看历史建议') : item.actionable ? (item.sourceLocator?.status === 'ambiguous' ? '确认原文范围' : hasCompleteSuggestionDraft(item) ? '查看方案' : suggestionDraftActionLabel(item)) : '查看依据' }}</button>
             </div>
               </div>
             </div>
@@ -4624,13 +4624,13 @@ defineExpose({ openAllSuggestions })
           <button class="flex-1 rounded-[14px] border px-5 py-3" @click="suggestionDrawerVisible = false">稍后处理</button>
           <button
             v-if="suggestionStatusFilter === 'pending' && !scriptReviewsStale"
-            class="flex-1 rounded-[14px] bg-[#0f67ff] px-5 py-3 font-semibold text-white disabled:cursor-not-allowed disabled:bg-[#94a3b8]"
+            class="flex-1 rounded-[14px] bg-[#4F46E5] px-5 py-3 font-semibold text-white disabled:cursor-not-allowed disabled:bg-[#94a3b8]"
             :disabled="!selectedSuggestionIds.length"
             @click="beginSuggestionBatchOptimize"
           >
             生成所选优化稿
           </button>
-          <button v-if="suggestionStatusFilter === 'pending' && !scriptReviewsStale" class="rounded-[14px] border border-[#0f67ff] px-4 py-3 font-semibold text-[#0f67ff]" @click="generateAllSuggestionDrafts">全部建议生成优化稿</button>
+          <button v-if="suggestionStatusFilter === 'pending' && !scriptReviewsStale" class="rounded-[14px] border border-[#4F46E5] px-4 py-3 font-semibold text-[#4F46E5]" @click="generateAllSuggestionDrafts">全部建议生成优化稿</button>
           <button v-if="scriptReviewsStale" class="col-span-2 rounded-[14px] bg-[#f59e0b] px-5 py-3 font-semibold text-white" :disabled="reReviewQuoteBusy" @click="suggestionDrawerVisible = false; reReviewConfirmVisible = true">{{ reReviewButtonLabel }}</button>
         </div>
       </LivDrawer>
@@ -4640,7 +4640,7 @@ defineExpose({ openAllSuggestions })
           <div class="border-b border-[#e8eef7] px-5 py-4 sm:px-7">
             <div class="flex flex-wrap items-center justify-between gap-3">
               <nav class="flex flex-wrap items-center gap-2 text-sm text-[#64748b]" aria-label="建议详情路径">
-                <button type="button" class="flex items-center gap-1 font-semibold text-[#334155] hover:text-[#0f67ff]" @click="closeSuggestionDetail"><ChevronLeft class="h-4 w-4" /> AI 优化建议中心</button>
+                <button type="button" class="flex items-center gap-1 font-semibold text-[#334155] hover:text-[#4F46E5]" @click="closeSuggestionDetail"><ChevronLeft class="h-4 w-4" /> AI 优化建议中心</button>
                 <span>/</span><span>{{ suggestionScopeLabel }}</span><span>/</span><b class="text-[#0f172a]">{{ selectedSuggestion.title }}</b>
               </nav>
               <div class="flex items-center gap-2">
@@ -4652,7 +4652,7 @@ defineExpose({ openAllSuggestions })
 
           <div class="px-5 py-5 sm:px-7">
             <div class="grid gap-3 rounded-[16px] border border-[#dbe7f7] bg-[#fbfdff] px-5 py-4 text-sm lg:grid-cols-3 lg:divide-x lg:divide-[#e2e8f0]">
-              <div class="flex min-w-0 items-center gap-3 lg:pr-5"><Target class="h-5 w-5 shrink-0 text-[#0f67ff]" /><p><span class="text-[#64748b]">优化目标：</span><b>{{ selectedSuggestion.title }}</b></p></div>
+              <div class="flex min-w-0 items-center gap-3 lg:pr-5"><Target class="h-5 w-5 shrink-0 text-[#4F46E5]" /><p><span class="text-[#64748b]">优化目标：</span><b>{{ selectedSuggestion.title }}</b></p></div>
               <div class="flex min-w-0 items-center gap-3 lg:px-5"><GitBranch class="h-5 w-5 shrink-0 text-[#7c3aed]" /><p><span class="text-[#64748b]">影响范围：</span><b>{{ suggestionSourceLocation }}</b></p></div>
               <div class="flex min-w-0 items-center gap-3 lg:pl-5"><CheckCircle2 class="h-5 w-5 shrink-0 text-[#10b981]" /><p><span class="text-[#64748b]">预计影响：</span><b>{{ suggestionImpactLabel }}</b></p></div>
             </div>
@@ -4672,14 +4672,14 @@ defineExpose({ openAllSuggestions })
             <div v-if="hasSuggestionRewrite" class="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-[14px] border border-[#e2e8f0] bg-[#fbfdff] px-4 py-3">
               <p class="text-sm font-semibold text-[#334155]">本次共改动 {{ suggestionDiffTotal }} 处 <span class="ml-2 font-normal text-[#64748b]">新增 {{ suggestionDiffStats.added }} · 修改 {{ suggestionDiffStats.modified }} · 删除 {{ suggestionDiffStats.deleted }} · 调整 {{ suggestionDiffStats.moved }}</span></p>
               <div class="flex flex-wrap gap-2">
-                <button v-for="filter in suggestionDiffFilters" :key="filter.key" type="button" class="rounded-[8px] px-3 py-1.5 text-xs font-semibold transition" :class="suggestionDiffFilter === filter.key ? 'bg-[#0f67ff] text-white' : 'border border-[#dbe7f7] bg-white text-[#64748b]'" @click="suggestionDiffFilter = filter.key">{{ filter.label }}</button>
+                <button v-for="filter in suggestionDiffFilters" :key="filter.key" type="button" class="rounded-[8px] px-3 py-1.5 text-xs font-semibold transition" :class="suggestionDiffFilter === filter.key ? 'bg-[#4F46E5] text-white' : 'border border-[#dbe7f7] bg-white text-[#64748b]'" @click="suggestionDiffFilter = filter.key">{{ filter.label }}</button>
               </div>
             </div>
 
             <div class="mt-5 grid gap-5 lg:grid-cols-2">
               <section class="min-h-[360px] rounded-[18px] border border-[#e2e8f0] bg-white p-5">
                 <div class="flex items-center justify-between gap-3"><div><span class="rounded-[7px] bg-[#f1f5f9] px-2 py-1 text-xs font-semibold">{{ selectedSuggestionIsHistory ? `优化前原文（${selectedSuggestionReviewVersion}）` : '当前原文' }}</span><h3 class="mt-3 font-semibold">{{ suggestionSourceLocation }}</h3></div><span v-if="selectedSuggestionOriginalText" class="text-xs text-[#94a3b8]">{{ selectedSuggestionOriginalText.length }} 字</span></div>
-                <div v-if="sourceResolveBusy && !selectedSuggestionIsHistory" class="mt-10 flex min-h-[220px] flex-col items-center justify-center text-center"><RefreshCw class="h-8 w-8 animate-spin text-[#0f67ff]" /><p class="mt-3 text-sm text-[#64748b]">正在免费定位正式剧本原文...</p></div>
+                <div v-if="sourceResolveBusy && !selectedSuggestionIsHistory" class="mt-10 flex min-h-[220px] flex-col items-center justify-center text-center"><RefreshCw class="h-8 w-8 animate-spin text-[#4F46E5]" /><p class="mt-3 text-sm text-[#64748b]">正在免费定位正式剧本原文...</p></div>
                 <div v-else-if="selectedSuggestionOriginalText" class="mt-5 space-y-1 text-[15px] leading-8 text-[#334155]">
                   <div v-for="(line, index) in originalTextLines" :key="`${index}-${line}`" class="grid grid-cols-[40px_minmax(0,1fr)] items-start gap-1.5 rounded-[8px] border-l-2 border-transparent px-1 py-0.5">
                     <span class="mt-1 inline-flex h-5 w-8 items-center justify-center rounded-[4px] border border-[#dbe3ee] bg-[#f8fafc] text-[11px] font-semibold leading-none text-[#64748b]">{{ String(index + 1).padStart(2, '0') }}</span>
@@ -4693,20 +4693,20 @@ defineExpose({ openAllSuggestions })
                   </div>
                 </div>
                 <div v-else-if="selectedSuggestionIsHistory" class="mt-10 flex min-h-[220px] flex-col items-center justify-center rounded-[14px] border border-dashed border-[#cbd5e1] bg-[#f8fafc] px-6 text-center"><FileText class="h-9 w-9 text-[#64748b]" /><h4 class="mt-4 text-lg font-semibold">历史原文快照未保存</h4><p class="mt-2 max-w-[440px] text-sm leading-6 text-[#64748b]">这条旧建议仍保留诊断与处理状态，但早期数据没有保存对应原文快照，因此不再尝试匹配当前版本正文。</p></div>
-                <div v-else class="mt-10 flex min-h-[220px] flex-col items-center justify-center rounded-[14px] border border-dashed border-[#fecaca] bg-[#fffafa] px-6 text-center"><AlertTriangle class="h-9 w-9 text-[#ef4444]" /><h4 class="mt-4 text-lg font-semibold">尚未定位到真实原文</h4><p class="mt-2 max-w-[440px] text-sm leading-6 text-[#64748b]">系统不会拿诊断证据冒充正文，也不会在没有原文范围时调用模型生成优化稿。</p><button type="button" class="mt-5 rounded-[10px] border border-[#0f67ff] px-5 py-2.5 text-sm font-semibold text-[#0f67ff]" @click="resolveSuggestionSource(selectedSuggestion)">重新定位原文</button></div>
+                <div v-else class="mt-10 flex min-h-[220px] flex-col items-center justify-center rounded-[14px] border border-dashed border-[#fecaca] bg-[#fffafa] px-6 text-center"><AlertTriangle class="h-9 w-9 text-[#ef4444]" /><h4 class="mt-4 text-lg font-semibold">尚未定位到真实原文</h4><p class="mt-2 max-w-[440px] text-sm leading-6 text-[#64748b]">系统不会拿诊断证据冒充正文，也不会在没有原文范围时调用模型生成优化稿。</p><button type="button" class="mt-5 rounded-[10px] border border-[#4F46E5] px-5 py-2.5 text-sm font-semibold text-[#4F46E5]" @click="resolveSuggestionSource(selectedSuggestion)">重新定位原文</button></div>
                 <p v-if="sourceResolveError && !selectedSuggestionIsHistory" class="mt-3 text-sm text-[#be123c]">{{ sourceResolveError }}</p>
-                <button v-if="!selectedSuggestionIsHistory && !sourceResolveBusy && selectedSuggestion.sourceLocator?.status === 'missing'" type="button" class="mt-5 text-sm font-semibold text-[#0f67ff]" @click="goToFullScriptForSourceBinding(selectedSuggestion)">前往完整剧本手动绑定 <ArrowRight class="ml-1 inline h-4 w-4" /></button>
+                <button v-if="!selectedSuggestionIsHistory && !sourceResolveBusy && selectedSuggestion.sourceLocator?.status === 'missing'" type="button" class="mt-5 text-sm font-semibold text-[#4F46E5]" @click="goToFullScriptForSourceBinding(selectedSuggestion)">前往完整剧本手动绑定 <ArrowRight class="ml-1 inline h-4 w-4" /></button>
               </section>
-              <section class="min-h-[360px] rounded-[18px] border border-[#bfdbfe] bg-[#fbfdff] p-5">
-                <div class="flex items-center justify-between gap-3"><div><span class="rounded-[7px] bg-[#0f67ff] px-2 py-1 text-xs font-semibold text-white">{{ selectedSuggestionIsHistory && getSuggestionOperationalStatus(selectedSuggestion) === 'adopted' ? '已采纳优化稿' : 'AI 优化稿' }}</span><h3 class="mt-3 font-semibold">{{ selectedSuggestionIsHistory ? '发布前保存的优化内容' : '与左侧相同范围的完整改写' }}</h3></div><span v-if="hasSuggestionRewrite" class="text-xs text-[#94a3b8]">{{ selectedSuggestionSuggestedText.length }} 字</span></div>
-                <div v-if="!hasSuggestionRewrite" class="mt-10 flex min-h-[245px] flex-col items-center justify-center rounded-[14px] border border-dashed border-[#bfdbfe] bg-white px-6 text-center">
+              <section class="min-h-[360px] rounded-[18px] border border-[#C7D2FE] bg-[#fbfdff] p-5">
+                <div class="flex items-center justify-between gap-3"><div><span class="rounded-[7px] bg-[#4F46E5] px-2 py-1 text-xs font-semibold text-white">{{ selectedSuggestionIsHistory && getSuggestionOperationalStatus(selectedSuggestion) === 'adopted' ? '已采纳优化稿' : 'AI 优化稿' }}</span><h3 class="mt-3 font-semibold">{{ selectedSuggestionIsHistory ? '发布前保存的优化内容' : '与左侧相同范围的完整改写' }}</h3></div><span v-if="hasSuggestionRewrite" class="text-xs text-[#94a3b8]">{{ selectedSuggestionSuggestedText.length }} 字</span></div>
+                <div v-if="!hasSuggestionRewrite" class="mt-10 flex min-h-[245px] flex-col items-center justify-center rounded-[14px] border border-dashed border-[#C7D2FE] bg-white px-6 text-center">
                   <AlertTriangle v-if="getSuggestionDraftStatus(selectedSuggestion) === 'failed'" class="h-9 w-9 text-[#f97316]" />
                   <Clock v-else class="h-9 w-9 text-[#64748b]" />
                   <h4 class="mt-4 text-lg font-semibold">{{ selectedSuggestionIsHistory ? '该历史建议未生成优化稿' : getSuggestionDraftStatus(selectedSuggestion) === 'failed' ? '优化稿生成失败' : '尚未生成具体优化稿' }}</h4>
                   <p class="mt-2 max-w-[440px] text-sm leading-6 text-[#64748b]">{{ selectedSuggestionIsHistory ? '历史诊断内容仍可查看，但发布后不会再为旧建议补生成优化稿；需要当前版本的新建议，请重新体检。' : '诊断建议、问题证据和优化方向已经保留。生成只处理当前建议的完整改写稿，成功后按 Token 扣点，失败不扣点。' }}</p>
                   <p v-if="getSuggestionDraftStatus(selectedSuggestion) === 'failed'" class="mt-2 max-w-[440px] text-xs leading-5 text-[#be123c]">{{ suggestionDraftErrorMessage(selectedSuggestion) }}</p>
                 </div>
-                <textarea v-else-if="suggestionDraftEditing && !selectedSuggestionIsHistory" v-model="suggestionDraftText" class="mt-5 min-h-[270px] w-full resize-y rounded-[12px] border border-[#93c5fd] bg-white p-4 text-[15px] leading-8 text-[#0f172a] outline-none focus:ring-2 focus:ring-[#bfdbfe]" aria-label="编辑AI优化稿" />
+                <textarea v-else-if="suggestionDraftEditing && !selectedSuggestionIsHistory" v-model="suggestionDraftText" class="mt-5 min-h-[270px] w-full resize-y rounded-[12px] border border-[#A5B4FC] bg-white p-4 text-[15px] leading-8 text-[#0f172a] outline-none focus:ring-2 focus:ring-[#C7D2FE]" aria-label="编辑AI优化稿" />
                 <div v-else class="mt-5 space-y-1.5 text-[15px] leading-8">
                   <div
                     v-for="(line, index) in suggestedDiffRows"
@@ -4714,7 +4714,7 @@ defineExpose({ openAllSuggestions })
                     class="relative grid grid-cols-[40px_minmax(0,1fr)] items-start gap-1.5 rounded-[7px] border-l-2 px-1 py-0.5"
                     :class="diffLineClass(line.kind, 'suggested')"
                   >
-                    <span class="mt-1 inline-flex h-5 w-8 items-center justify-center rounded-[4px] border border-[#bfdbfe] bg-[#eff6ff] text-[11px] font-semibold leading-none text-[#2563eb]">{{ String((line.targetIndex ?? line.sourceIndex ?? 0) + 1).padStart(2, '0') }}</span>
+                    <span class="mt-1 inline-flex h-5 w-8 items-center justify-center rounded-[4px] border border-[#C7D2FE] bg-[#EEF2FF] text-[11px] font-semibold leading-none text-[#4F46E5]">{{ String((line.targetIndex ?? line.sourceIndex ?? 0) + 1).padStart(2, '0') }}</span>
                     <div class="min-w-0">
                       <p :class="[line.kind === 'deleted' ? 'line-through decoration-[#fb7185]' : '', line.showType ? 'pr-20' : '']">{{ line.text }}</p>
                       <span
@@ -4733,15 +4733,15 @@ defineExpose({ openAllSuggestions })
                     </span>
                   </div>
                 </div>
-                <div v-if="suggestionDraftEditing" class="mt-4 flex justify-end gap-2"><button type="button" class="rounded-[9px] border px-4 py-2 text-sm" @click="cancelSuggestionDraftEditing">取消编辑</button><button type="button" class="rounded-[9px] bg-[#0f67ff] px-4 py-2 text-sm font-semibold text-white" @click="saveSuggestionDraftEditing">保存调整</button></div>
+                <div v-if="suggestionDraftEditing" class="mt-4 flex justify-end gap-2"><button type="button" class="rounded-[9px] border px-4 py-2 text-sm" @click="cancelSuggestionDraftEditing">取消编辑</button><button type="button" class="rounded-[9px] bg-[#4F46E5] px-4 py-2 text-sm font-semibold text-white" @click="saveSuggestionDraftEditing">保存调整</button></div>
               </section>
             </div>
 
             <div class="mt-5 grid gap-4 lg:grid-cols-[1.18fr_0.82fr_0.82fr]">
               <section class="rounded-[18px] border border-[#e2e8f0] p-5">
                 <h3 class="font-semibold">为什么这样改</h3>
-                <div class="relative mt-4 space-y-3 before:absolute before:bottom-4 before:left-[13px] before:top-4 before:w-px before:bg-[#bfdbfe]">
-                  <article v-for="(step, index) in suggestionReasonSteps" :key="step.label" class="relative flex gap-3"><span class="z-[1] flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#0f67ff] text-sm font-bold text-white">{{ index + 1 }}</span><div class="min-w-0 pb-1"><h4 class="text-sm font-semibold text-[#0f172a]">{{ step.label }}</h4><p class="mt-1 text-xs leading-5 text-[#475569]">{{ step.text }}</p></div></article>
+                <div class="relative mt-4 space-y-3 before:absolute before:bottom-4 before:left-[13px] before:top-4 before:w-px before:bg-[#C7D2FE]">
+                  <article v-for="(step, index) in suggestionReasonSteps" :key="step.label" class="relative flex gap-3"><span class="z-[1] flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#4F46E5] text-sm font-bold text-white">{{ index + 1 }}</span><div class="min-w-0 pb-1"><h4 class="text-sm font-semibold text-[#0f172a]">{{ step.label }}</h4><p class="mt-1 text-xs leading-5 text-[#475569]">{{ step.text }}</p></div></article>
                 </div>
               </section>
 
@@ -4753,7 +4753,7 @@ defineExpose({ openAllSuggestions })
                 </div>
                 <div v-else class="mt-4 space-y-3">
                   <div class="rounded-[12px] border border-[#e2e8f0] bg-white p-4"><div class="flex items-center justify-between gap-2"><p class="text-sm font-semibold">正式版本 {{ pendingOriginalVersion }}</p><span class="rounded-[6px] bg-[#f1f5f9] px-2 py-1 text-[10px] font-semibold text-[#64748b]">当前使用</span></div><p class="mt-1 text-xs leading-5 text-[#64748b]">本次采纳不会直接覆盖正式版本。</p></div>
-                  <div class="rounded-[12px] border border-[#93c5fd] bg-[#eff6ff] p-4"><div class="flex items-center justify-between gap-2"><p class="text-sm font-semibold text-[#0f67ff]">工作草稿 {{ pendingDraftVersionItem?.version || currentOptimizedVersion?.version || '待创建' }}</p><span class="rounded-[6px] bg-[#dcfce7] px-2 py-1 text-[10px] font-semibold text-[#047857]">待写入</span></div><p class="mt-1 text-xs leading-5 text-[#64748b]">采纳后写入草稿，确认版本后才同步后续阶段。</p></div>
+                  <div class="rounded-[12px] border border-[#A5B4FC] bg-[#EEF2FF] p-4"><div class="flex items-center justify-between gap-2"><p class="text-sm font-semibold text-[#4F46E5]">工作草稿 {{ pendingDraftVersionItem?.version || currentOptimizedVersion?.version || '待创建' }}</p><span class="rounded-[6px] bg-[#dcfce7] px-2 py-1 text-[10px] font-semibold text-[#047857]">待写入</span></div><p class="mt-1 text-xs leading-5 text-[#64748b]">采纳后写入草稿，确认版本后才同步后续阶段。</p></div>
                 </div>
               </section>
 
@@ -4765,12 +4765,12 @@ defineExpose({ openAllSuggestions })
                     <button class="w-full rounded-[10px] border border-[#e2e8f0] px-5 py-3 text-sm font-semibold text-[#64748b]" @click="closeSuggestionDetail">关闭记录</button>
                   </template>
                   <template v-else>
-                    <button v-if="selectedSuggestion.actionable && hasSuggestionRewrite" class="flex w-full items-center justify-center rounded-[10px] bg-[#0f67ff] px-5 py-3 text-sm font-semibold text-white" @click="acceptSelectedSuggestion"><Check class="mr-2 h-4 w-4" />采纳到工作草稿</button>
+                    <button v-if="selectedSuggestion.actionable && hasSuggestionRewrite" class="flex w-full items-center justify-center rounded-[10px] bg-[#4F46E5] px-5 py-3 text-sm font-semibold text-white" @click="acceptSelectedSuggestion"><Check class="mr-2 h-4 w-4" />采纳到工作草稿</button>
                     <button v-if="selectedSuggestion.actionable && hasSuggestionRewrite" class="flex w-full items-center justify-center rounded-[10px] border border-[#dbe7f7] px-5 py-3 text-sm font-semibold text-[#334155]" @click="startSuggestionDraftEditing"><Pencil class="mr-2 h-4 w-4" />继续调整</button>
-                    <button v-else-if="selectedSuggestion.actionable && selectedSuggestion.sourceLocator?.status === 'resolved'" class="flex w-full items-center justify-center rounded-[10px] bg-[#0f67ff] px-5 py-3 text-sm font-semibold text-white" @click="regenerateSuggestionDraft(selectedSuggestion, getSuggestionDraftStatus(selectedSuggestion) === 'stale' ? 'REFRESH_STALE_SUGGESTION' : 'REGENERATE_SUGGESTION_DRAFT')"><RefreshCw class="mr-2 h-4 w-4" />{{ suggestionDraftActionLabel(selectedSuggestion) }}</button>
-                    <button v-else-if="selectedSuggestion.actionable && selectedSuggestion.sourceLocator?.status !== 'ambiguous'" class="flex w-full items-center justify-center rounded-[10px] border border-[#0f67ff] px-5 py-3 text-sm font-semibold text-[#0f67ff]" :disabled="sourceResolveBusy" @click="resolveSuggestionSource(selectedSuggestion)"><Target class="mr-2 h-4 w-4" />重新定位原文</button>
+                    <button v-else-if="selectedSuggestion.actionable && selectedSuggestion.sourceLocator?.status === 'resolved'" class="flex w-full items-center justify-center rounded-[10px] bg-[#4F46E5] px-5 py-3 text-sm font-semibold text-white" @click="regenerateSuggestionDraft(selectedSuggestion, getSuggestionDraftStatus(selectedSuggestion) === 'stale' ? 'REFRESH_STALE_SUGGESTION' : 'REGENERATE_SUGGESTION_DRAFT')"><RefreshCw class="mr-2 h-4 w-4" />{{ suggestionDraftActionLabel(selectedSuggestion) }}</button>
+                    <button v-else-if="selectedSuggestion.actionable && selectedSuggestion.sourceLocator?.status !== 'ambiguous'" class="flex w-full items-center justify-center rounded-[10px] border border-[#4F46E5] px-5 py-3 text-sm font-semibold text-[#4F46E5]" :disabled="sourceResolveBusy" @click="resolveSuggestionSource(selectedSuggestion)"><Target class="mr-2 h-4 w-4" />重新定位原文</button>
                     <button v-if="selectedSuggestion.actionable" class="flex w-full items-center justify-center rounded-[10px] border border-[#e2e8f0] px-5 py-3 text-sm text-[#64748b]" @click="ignoreSuggestion(selectedSuggestion.id)"><X class="mr-2 h-4 w-4" />忽略此建议</button>
-                    <button v-else class="w-full rounded-[10px] bg-[#0f67ff] px-5 py-3 text-sm font-semibold text-white" @click="closeSuggestionDetail">关闭</button>
+                    <button v-else class="w-full rounded-[10px] bg-[#4F46E5] px-5 py-3 text-sm font-semibold text-white" @click="closeSuggestionDetail">关闭</button>
                   </template>
                 </div>
               </section>
@@ -4782,7 +4782,7 @@ defineExpose({ openAllSuggestions })
       <div v-if="suggestionAdjustVisible || resultAdjustVisible" class="fixed inset-0 z-[95] flex items-center justify-center bg-[#0f172a]/45 p-4">
         <div class="w-full max-w-[640px] rounded-[24px] bg-white p-6">
           <div class="flex items-center justify-between"><h3 class="text-xl font-semibold">继续调整优化方案</h3><button @click="suggestionAdjustVisible = false; resultAdjustVisible = false"><X class="h-5 w-5" /></button></div>
-          <div class="mt-5 grid gap-3 md:grid-cols-2"><button v-for="item in ['更强烈','更自然','更简短','保留更多原文']" :key="item" class="rounded-[16px] border border-[#dbeafe] p-4 text-left font-semibold text-[#0f67ff]">{{ item }}</button></div>
+          <div class="mt-5 grid gap-3 md:grid-cols-2"><button v-for="item in ['更强烈','更自然','更简短','保留更多原文']" :key="item" class="rounded-[16px] border border-[#E0E7FF] p-4 text-left font-semibold text-[#4F46E5]">{{ item }}</button></div>
           <textarea
             v-model="suggestionAdjustmentInstruction"
             class="mt-4 h-28 w-full rounded-[16px] border border-[#dbe7f7] p-4 outline-none"
@@ -4790,7 +4790,7 @@ defineExpose({ openAllSuggestions })
           />
           <div class="mt-5 flex justify-end gap-3">
             <button class="rounded-[14px] border px-6 py-3" @click="suggestionAdjustVisible = false; resultAdjustVisible = false">取消</button>
-            <button class="rounded-[14px] bg-[#0f67ff] px-6 py-3 font-semibold text-white" @click="regenerateSelectedSuggestion">重新生成建议</button>
+            <button class="rounded-[14px] bg-[#4F46E5] px-6 py-3 font-semibold text-white" @click="regenerateSelectedSuggestion">重新生成建议</button>
           </div>
         </div>
       </div>
@@ -4800,13 +4800,13 @@ defineExpose({ openAllSuggestions })
           <h3 class="text-xl font-semibold">确认生成优化稿</h3>
           <p class="mt-2 text-[#64748b]">本次只生成 {{ pendingDraftGenerationIds.length }} 条建议的优化稿，不会自动修改正式剧本。</p>
           <div class="mt-4 max-h-[300px] space-y-2 overflow-y-auto">
-            <p v-for="quoteItem in suggestionDraftQuote?.items || []" :key="quoteItem.suggestionId" class="flex items-center justify-between gap-4 rounded-[14px] bg-[#f8fbff] px-4 py-3"><span class="min-w-0 truncate">{{ suggestions.find(s => s.id === quoteItem.suggestionId)?.title }}</span><b class="shrink-0 text-[#0f67ff]">约 {{ quoteItem.estimatedCredits }} 点</b></p>
+            <p v-for="quoteItem in suggestionDraftQuote?.items || []" :key="quoteItem.suggestionId" class="flex items-center justify-between gap-4 rounded-[14px] bg-[#f8fbff] px-4 py-3"><span class="min-w-0 truncate">{{ suggestions.find(s => s.id === quoteItem.suggestionId)?.title }}</span><b class="shrink-0 text-[#4F46E5]">约 {{ quoteItem.estimatedCredits }} 点</b></p>
           </div>
-          <div class="mt-4 rounded-[14px] border border-[#bfdbfe] bg-[#eff6ff] p-4 text-sm leading-6 text-[#315173]">
+          <div class="mt-4 rounded-[14px] border border-[#C7D2FE] bg-[#EEF2FF] p-4 text-sm leading-6 text-[#315173]">
             <p>预计合计 <b>{{ suggestionDraftQuote?.totalCredits || 0 }} 点</b>，当前余额 {{ suggestionDraftQuote?.currentBalance || 0 }} 点。</p>
             <p>生成成功后按实际 Token 扣点；失败及系统自动重试不扣点。手动换一个优化稿成功后会重新计费。</p>
           </div>
-          <div class="mt-6 flex justify-end gap-3"><button class="rounded-[14px] border px-6 py-3" @click="suggestionBatchConfirmVisible = false">取消</button><button class="rounded-[14px] bg-[#0f67ff] px-6 py-3 font-semibold text-white disabled:bg-[#94a3b8]" :disabled="!suggestionDraftQuote?.sufficient" @click="confirmSuggestionDraftGeneration">确认生成</button></div>
+          <div class="mt-6 flex justify-end gap-3"><button class="rounded-[14px] border px-6 py-3" @click="suggestionBatchConfirmVisible = false">取消</button><button class="rounded-[14px] bg-[#4F46E5] px-6 py-3 font-semibold text-white disabled:bg-[#94a3b8]" :disabled="!suggestionDraftQuote?.sufficient" @click="confirmSuggestionDraftGeneration">确认生成</button></div>
         </div>
       </div>
 
@@ -4818,15 +4818,15 @@ defineExpose({ openAllSuggestions })
           </div>
           <p class="mt-3 rounded-[14px] bg-[#f8fbff] p-3 text-sm text-[#475569]">将基于当前体检结果生成新的优化版本，不会覆盖当前正式版本。</p>
           <div class="mt-5 grid gap-4 md:grid-cols-3">
-            <label v-for="item in ['全部范围','当前集','自定义范围']" :key="item" class="rounded-[16px] border border-[#dbeafe] p-4"><input type="radio" name="range" :checked="item === '全部范围'"> <span class="ml-2 font-semibold">{{ item }}</span></label>
+            <label v-for="item in ['全部范围','当前集','自定义范围']" :key="item" class="rounded-[16px] border border-[#E0E7FF] p-4"><input type="radio" name="range" :checked="item === '全部范围'"> <span class="ml-2 font-semibold">{{ item }}</span></label>
           </div>
           <h4 class="mt-5 font-semibold">优化重点</h4>
           <div class="mt-3 grid gap-3 md:grid-cols-2">
             <label v-for="item in (characterOptimizeSettingsVisible ? ['补足人物动机','增强人物冲突','完善关系转变','强化人物成长'] : episodeOptimizeSettingsVisible ? ['开场钩子','冲突密度','转折节奏','结尾悬念'] : ['强化开场钩子','补足人物动机','优化分集节奏','强化结尾悬念','降低制作复杂度','精简对白'])" :key="item" class="rounded-[14px] border border-[#e2e8f0] p-3"><input type="checkbox" checked> <span class="ml-2">{{ item }}</span></label>
           </div>
           <h4 class="mt-5 font-semibold">修改强度</h4>
-          <div class="mt-3 grid gap-3 md:grid-cols-3"><label v-for="item in ['保守','平衡','深度重构']" :key="item" class="rounded-[16px] border p-4" :class="item === '平衡' ? 'border-[#0f67ff] bg-[#f8fbff]' : 'border-[#e2e8f0]'"><input type="radio" name="level" :checked="item === '平衡'"> <span class="ml-2">{{ item }}</span></label></div>
-          <div class="mt-6 flex justify-end gap-3"><button class="rounded-[14px] border px-6 py-3" @click="globalOptimizeSettingsVisible = false; characterOptimizeSettingsVisible = false; episodeOptimizeSettingsVisible = false">取消</button><button class="rounded-[14px] bg-[#0f67ff] px-6 py-3 font-semibold text-white" @click="characterOptimizeSettingsVisible ? beginCharacterOptimize() : episodeOptimizeSettingsVisible ? beginEpisodeOptimize() : beginGlobalOptimize()">开始生成优化版本</button></div>
+          <div class="mt-3 grid gap-3 md:grid-cols-3"><label v-for="item in ['保守','平衡','深度重构']" :key="item" class="rounded-[16px] border p-4" :class="item === '平衡' ? 'border-[#4F46E5] bg-[#f8fbff]' : 'border-[#e2e8f0]'"><input type="radio" name="level" :checked="item === '平衡'"> <span class="ml-2">{{ item }}</span></label></div>
+          <div class="mt-6 flex justify-end gap-3"><button class="rounded-[14px] border px-6 py-3" @click="globalOptimizeSettingsVisible = false; characterOptimizeSettingsVisible = false; episodeOptimizeSettingsVisible = false">取消</button><button class="rounded-[14px] bg-[#4F46E5] px-6 py-3 font-semibold text-white" @click="characterOptimizeSettingsVisible ? beginCharacterOptimize() : episodeOptimizeSettingsVisible ? beginEpisodeOptimize() : beginGlobalOptimize()">开始生成优化版本</button></div>
         </div>
       </div>
 
@@ -4834,7 +4834,7 @@ defineExpose({ openAllSuggestions })
         <div class="w-full max-w-[640px] overflow-hidden rounded-[20px] bg-white shadow-[0_24px_70px_rgba(15,23,42,0.24)]">
           <div class="flex items-center justify-between border-b border-[#edf1f7] px-7 py-5">
             <div class="flex min-w-0 items-center gap-3">
-              <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] bg-[#eef5ff] text-[#0f67ff]">
+              <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] bg-[#eef5ff] text-[#4F46E5]">
                 <BrandSparkIcon size="sm" />
               </span>
               <div class="min-w-0">
@@ -4854,9 +4854,9 @@ defineExpose({ openAllSuggestions })
           </div>
 
           <div class="px-7 py-6">
-            <div class="flex items-center gap-3 rounded-[12px] border border-[#dbeafe] bg-[#f7faff] px-4 py-3.5">
+            <div class="flex items-center gap-3 rounded-[12px] border border-[#E0E7FF] bg-[#f7faff] px-4 py-3.5">
               <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-[9px] bg-white shadow-sm">
-                <RefreshCw v-if="optimizationRequestState === 'submitting'" class="h-5 w-5 animate-spin text-[#0f67ff]" />
+                <RefreshCw v-if="optimizationRequestState === 'submitting'" class="h-5 w-5 animate-spin text-[#4F46E5]" />
                 <CheckCircle2 v-else-if="optimizationRequestState === 'success'" class="h-5 w-5 text-[#16a34a]" />
                 <AlertTriangle v-else class="h-5 w-5 text-[#dc2626]" />
               </span>
@@ -4870,7 +4870,7 @@ defineExpose({ openAllSuggestions })
               <div class="absolute left-[12.5%] right-[12.5%] top-[18px] h-px overflow-hidden bg-[#dbe4f0]">
                 <div
                   class="h-full transition-[width] duration-500"
-                  :class="optimizationRequestState === 'success' ? 'bg-[#22c55e]' : 'bg-[#2563eb]'"
+                  :class="optimizationRequestState === 'success' ? 'bg-[#22c55e]' : 'bg-[#4F46E5]'"
                   :style="{ width: optimizationProgressLineWidth }"
                 />
               </div>
@@ -4899,9 +4899,9 @@ defineExpose({ openAllSuggestions })
             <div class="mt-6 flex justify-end gap-3">
             <template v-if="optimizationRequestState === 'failed' && isSingleSuggestionDraftTask">
               <button class="rounded-[10px] border border-[#dbe4f0] px-5 py-2.5 text-sm font-semibold text-[#475569]" @click="returnToFailedSuggestionDetail">返回建议详情</button>
-              <button v-if="optimizationErrorCode === 'INSUFFICIENT_CREDITS'" class="rounded-[10px] bg-[#0f67ff] px-5 py-2.5 text-sm font-semibold text-white" @click="progressVisible = false; navigateTo('/dashboard/billing')">前往充值</button>
-              <button v-else-if="optimizationErrorCode === 'SCRIPT_OPTIMIZATION_VERSION_CONFLICT'" class="rounded-[10px] bg-[#0f67ff] px-5 py-2.5 text-sm font-semibold text-white" @click="retryCurrentSuggestionDraft">重新分析影响范围</button>
-              <button v-else class="rounded-[10px] bg-[#0f67ff] px-5 py-2.5 text-sm font-semibold text-white" @click="retryCurrentSuggestionDraft">重新生成优化稿</button>
+              <button v-if="optimizationErrorCode === 'INSUFFICIENT_CREDITS'" class="rounded-[10px] bg-[#4F46E5] px-5 py-2.5 text-sm font-semibold text-white" @click="progressVisible = false; navigateTo('/dashboard/billing')">前往充值</button>
+              <button v-else-if="optimizationErrorCode === 'SCRIPT_OPTIMIZATION_VERSION_CONFLICT'" class="rounded-[10px] bg-[#4F46E5] px-5 py-2.5 text-sm font-semibold text-white" @click="retryCurrentSuggestionDraft">重新分析影响范围</button>
+              <button v-else class="rounded-[10px] bg-[#4F46E5] px-5 py-2.5 text-sm font-semibold text-white" @click="retryCurrentSuggestionDraft">重新生成优化稿</button>
             </template>
             <button v-else-if="optimizationRequestState !== 'submitting'" class="rounded-[10px] border border-[#dbe4f0] px-5 py-2.5 text-sm font-semibold text-[#475569]" @click="progressVisible = false">关闭</button>
             </div>
@@ -4922,7 +4922,7 @@ defineExpose({ openAllSuggestions })
           <div class="min-h-0 flex-1 overflow-y-auto bg-gradient-to-b from-white to-[#f8fbff] p-5">
             <div class="grid gap-3 sm:grid-cols-3">
               <div class="flex items-center gap-3 rounded-[14px] border border-[#dbe4f0] px-4 py-3"><Heart class="h-6 w-6 text-[#10b981]" /><div><p class="text-xs text-[#64748b]">剧本健康度</p><b class="text-xl">{{ healthScore }} → {{ pendingReviewScore }}</b></div></div>
-              <div class="flex items-center gap-3 rounded-[14px] border border-[#dbe4f0] px-4 py-3"><Target class="h-6 w-6 text-[#0f67ff]" /><div><p class="text-xs text-[#64748b]">优化点位</p><b class="text-xl">{{ pendingChangeCount }}处</b></div></div>
+              <div class="flex items-center gap-3 rounded-[14px] border border-[#dbe4f0] px-4 py-3"><Target class="h-6 w-6 text-[#4F46E5]" /><div><p class="text-xs text-[#64748b]">优化点位</p><b class="text-xl">{{ pendingChangeCount }}处</b></div></div>
               <div class="flex items-center gap-3 rounded-[14px] border border-[#dbe4f0] px-4 py-3"><FileText class="h-6 w-6 text-[#f97316]" /><div><p class="text-xs text-[#64748b]">影响范围</p><b class="text-xl">{{ pendingAffectedEpisodeCount }}</b></div></div>
             </div>
 
@@ -4934,23 +4934,23 @@ defineExpose({ openAllSuggestions })
                   <p v-if="!pendingChangePreview.length" class="rounded-[10px] bg-white px-3 py-2.5 text-sm text-[#64748b]">后端暂未返回具体变更点。</p>
                 </div>
               </div>
-              <div class="rounded-[16px] border border-[#dbeafe] bg-[#f8fbff] p-4">
-                <h3 class="font-semibold text-[#0f67ff]">{{ pendingDraftIsManual ? '人工编辑草稿' : '优化版本' }} {{ pendingDraftVersion }}{{ pendingDraftIsManual ? '' : '（AI 生成）' }}</h3>
+              <div class="rounded-[16px] border border-[#E0E7FF] bg-[#f8fbff] p-4">
+                <h3 class="font-semibold text-[#4F46E5]">{{ pendingDraftIsManual ? '人工编辑草稿' : '优化版本' }} {{ pendingDraftVersion }}{{ pendingDraftIsManual ? '' : '（AI 生成）' }}</h3>
                 <div class="mt-3 space-y-2">
                   <p v-for="item in pendingChangePreview" :key="`new-${item.id}`" class="rounded-[10px] bg-white px-3 py-2.5 text-sm leading-6">{{ item.advice }}</p>
                   <p v-if="!pendingChangePreview.length" class="rounded-[10px] bg-white px-3 py-2.5 text-sm text-[#64748b]">优化草稿已生成，但后端未返回可展示的差异摘要。</p>
                 </div>
               </div>
             </div>
-            <button v-if="pendingHiddenChangeCount" class="mt-3 text-sm font-semibold text-[#0f67ff]" @click="detailChangesVisible = true">另有 {{ pendingHiddenChangeCount }} 处改动，查看完整对比 →</button>
+            <button v-if="pendingHiddenChangeCount" class="mt-3 text-sm font-semibold text-[#4F46E5]" @click="detailChangesVisible = true">另有 {{ pendingHiddenChangeCount }} 处改动，查看完整对比 →</button>
           </div>
 
           <footer class="flex flex-wrap items-center justify-between gap-3 border-t border-[#e2e8f0] bg-[#f8fafc] px-6 py-4">
             <button class="text-sm font-semibold text-[#64748b]" @click="globalResultVisible = false; characterResultVisible = false; episodeResultVisible = false">保留原版本</button>
             <div class="flex flex-wrap gap-2">
-              <button class="rounded-[10px] border border-[#cbd5e1] bg-white px-4 py-2 text-sm font-semibold text-[#0f67ff]" @click="detailChangesVisible = true">查看详细改动</button>
+              <button class="rounded-[10px] border border-[#cbd5e1] bg-white px-4 py-2 text-sm font-semibold text-[#4F46E5]" @click="detailChangesVisible = true">查看详细改动</button>
               <button class="rounded-[10px] border border-[#cbd5e1] bg-white px-4 py-2 text-sm font-semibold" @click="resultAdjustVisible = true">继续调整</button>
-              <button class="rounded-[10px] bg-[#0f67ff] px-5 py-2 text-sm font-semibold text-white" @click="applyConfirmVisible = true">预览完成，发布 {{ pendingDraftVersion }}</button>
+              <button class="rounded-[10px] bg-[#4F46E5] px-5 py-2 text-sm font-semibold text-white" @click="applyConfirmVisible = true">预览完成，发布 {{ pendingDraftVersion }}</button>
             </div>
           </footer>
         </section>
@@ -4972,7 +4972,7 @@ defineExpose({ openAllSuggestions })
             <p><b>发布前请确认：</b>当前仍有 {{ publishInvalidSuggestionCount }} 条未处理建议。发布后它们会立即失效并归档，不能再生成、定位或采纳；已采纳建议会显示为“已优化记录”。</p>
             <p class="mt-2">发布本身不扣点，也不会自动重做资产或分镜。请到资产或分镜页面查看差异、积分预估，并在确认后只合并受影响内容。</p>
           </div>
-          <div class="mt-6 flex gap-3"><button class="flex-1 rounded-[12px] border border-[#cbd5e1] px-5 py-3" @click="applyConfirmVisible = false">继续处理建议</button><button class="flex-1 rounded-[12px] bg-[#0f67ff] px-5 py-3 font-semibold text-white" @click="applyOptimizedVersion">确认发布新版本</button></div>
+          <div class="mt-6 flex gap-3"><button class="flex-1 rounded-[12px] border border-[#cbd5e1] px-5 py-3" @click="applyConfirmVisible = false">继续处理建议</button><button class="flex-1 rounded-[12px] bg-[#4F46E5] px-5 py-3 font-semibold text-white" @click="applyOptimizedVersion">确认发布新版本</button></div>
         </div>
       </div>
 
@@ -4984,7 +4984,7 @@ defineExpose({ openAllSuggestions })
           <p v-else-if="reReviewQuoteError" class="mt-3 text-sm text-[#b45309]">{{ reReviewQuoteError }}</p>
           <div class="mt-6 flex justify-end gap-3">
             <button class="rounded-[10px] border border-[#cbd5e1] px-4 py-2 text-sm font-semibold" @click="reReviewConfirmVisible = false">取消</button>
-            <button class="rounded-[10px] bg-[#0f67ff] px-5 py-2 text-sm font-semibold text-white" @click="startPaidReReview">{{ reReviewEstimatedCredits !== null ? `确认重新体检 · ${reReviewEstimatedCredits} 积分` : '计算积分并继续' }}</button>
+            <button class="rounded-[10px] bg-[#4F46E5] px-5 py-2 text-sm font-semibold text-white" @click="startPaidReReview">{{ reReviewEstimatedCredits !== null ? `确认重新体检 · ${reReviewEstimatedCredits} 积分` : '计算积分并继续' }}</button>
           </div>
         </div>
       </div>
@@ -4994,9 +4994,9 @@ defineExpose({ openAllSuggestions })
         <h2 class="text-3xl font-semibold">当前场优化方案 · {{ activeSceneAction }}</h2>
         <div class="mt-5 grid gap-5 lg:grid-cols-2">
           <div class="rounded-[20px] border p-5"><h3 class="font-semibold">{{ selectedSourceText ? '选中原文' : '当前场原文' }}</h3><p class="mt-4 whitespace-pre-line leading-8">{{ optimizationSourceExcerpt }}</p></div>
-          <div class="rounded-[20px] border border-[#dbeafe] bg-[#f8fbff] p-5">
-            <h3 class="font-semibold text-[#0f67ff]">AI 优化建议版</h3>
-            <div v-if="optimizationRequestState === 'submitting' && progressKind === 'scene'" class="mt-8 flex items-center justify-center gap-3 rounded-[16px] bg-white p-8 text-[#0f67ff]">
+          <div class="rounded-[20px] border border-[#E0E7FF] bg-[#f8fbff] p-5">
+            <h3 class="font-semibold text-[#4F46E5]">AI 优化建议版</h3>
+            <div v-if="optimizationRequestState === 'submitting' && progressKind === 'scene'" class="mt-8 flex items-center justify-center gap-3 rounded-[16px] bg-white p-8 text-[#4F46E5]">
               <RefreshCw class="h-5 w-5 animate-spin" />
               <span class="font-semibold">后端正在生成当前场优化方案...</span>
             </div>
@@ -5015,9 +5015,9 @@ defineExpose({ openAllSuggestions })
         />
         <div class="mt-6 flex justify-center gap-4">
           <button class="rounded-[14px] border px-8 py-3" @click="sceneOptimizeVisible = false">放弃本次建议</button>
-          <button class="rounded-[14px] border border-[#0f67ff] px-8 py-3 text-[#0f67ff]" @click="requestSceneOptimization(activeSceneAction, sceneAdjustmentInstruction)">继续调整</button>
+          <button class="rounded-[14px] border border-[#4F46E5] px-8 py-3 text-[#4F46E5]" @click="requestSceneOptimization(activeSceneAction, sceneAdjustmentInstruction)">继续调整</button>
           <button
-            class="rounded-[14px] bg-[#0f67ff] px-8 py-3 font-semibold text-white disabled:cursor-not-allowed disabled:bg-[#94a3b8]"
+            class="rounded-[14px] bg-[#4F46E5] px-8 py-3 font-semibold text-white disabled:cursor-not-allowed disabled:bg-[#94a3b8]"
             :disabled="!currentSceneSuggestionText"
             @click="acceptCurrentSceneSuggestion"
           >
@@ -5040,7 +5040,7 @@ defineExpose({ openAllSuggestions })
           </p>
           <div class="mt-6 flex gap-3">
             <button class="flex-1 rounded-[14px] border border-[#dbe3ef] px-5 py-3 font-semibold text-[#475569]" @click="analysisFailureDialogVisible = false">暂时关闭</button>
-            <button class="flex-1 rounded-[14px] bg-[#0f67ff] px-5 py-3 font-semibold text-white disabled:opacity-60" :disabled="isBusy" @click="retryFailedStructureAnalysis">重新解析</button>
+            <button class="flex-1 rounded-[14px] bg-[#4F46E5] px-5 py-3 font-semibold text-white disabled:opacity-60" :disabled="isBusy" @click="retryFailedStructureAnalysis">重新解析</button>
           </div>
         </div>
       </div>

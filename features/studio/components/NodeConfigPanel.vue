@@ -439,11 +439,11 @@ const nonScriptPlaceholder = computed(() => {
             <p class="mt-1 truncate text-sm">{{ storyboardStore.cameraPreset }}</p>
           </button>
           <button class="rounded-lg border border-borderSoft bg-panelSoft px-2 py-2 text-left" @click="applyVideoProvider('bytedance')" :class="storyboardStore.videoProvider === 'bytedance' ? 'border-neon text-neon' : ''">
-            <p class="text-textMuted">供应商</p>
+            <p class="text-textMuted">生成引擎</p>
             <p class="mt-1 truncate text-sm">字节</p>
           </button>
           <button class="rounded-lg border border-borderSoft bg-panelSoft px-2 py-2 text-left" @click="applyVideoProvider('alibaba')" :class="storyboardStore.videoProvider === 'alibaba' ? 'border-neon text-neon' : ''">
-            <p class="text-textMuted">供应商</p>
+            <p class="text-textMuted">生成引擎</p>
             <p class="mt-1 truncate text-sm">阿里</p>
           </button>
         </div>

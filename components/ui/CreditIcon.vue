@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { CREATIVE_POINT_URL, CREATIVE_POINT_FALLBACK } from '~/shared/constants/creativePoint'
 interface Props {
   /** 统一控制积分图标尺寸，避免各业务页面重复维护宽高。 */
   size?: 'xs' | 'sm' | 'md' | 'lg' | 'xl'
@@ -18,16 +19,16 @@ const sizeClassMap = {
 } as const
 
 const sizeClassName = computed(() => sizeClassMap[props.size])
+const imageSource = ref(CREATIVE_POINT_URL)
+// 只回退一次，避免本地资源也失败时触发无限重试。
+function useLocalFallback() {
+  if (imageSource.value !== CREATIVE_POINT_FALLBACK) imageSource.value = CREATIVE_POINT_FALLBACK
+}
 </script>
 
 <template>
-  <!--
-    图形源已经从原 PNG 转为 public/icons/credit-star.svg；使用同一套路径，
-    通过 currentColor 让白色主按钮、黑白主题和普通文本场景自动换色。
-  -->
+  <!-- 灵感点仅替换视觉标记；积分名称、余额和扣费逻辑不变。 -->
   <span class="credit-icon inline-flex shrink-0 items-center justify-center" :class="sizeClassName" aria-hidden="true">
-    <svg class="h-full w-full" viewBox="0 0 1254 1254" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <use href="/icons/credit-star.svg#credit-star-icon" fill="currentColor" />
-    </svg>
+    <img :src="imageSource" class="h-full w-full object-contain" width="128" height="128" alt="" decoding="async" @error="useLocalFallback" />
   </span>
 </template>

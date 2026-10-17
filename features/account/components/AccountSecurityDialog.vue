@@ -177,7 +177,7 @@ onBeforeUnmount(() => {
       </header>
 
       <div class="mt-5 rounded-xl border border-[#e4ebf5] bg-[#f8fbff] px-4 py-3 text-[13px] text-[#50627f]">
-        当前绑定手机号：<strong class="ml-1 text-[#172b4d]">{{ loading ? '加载中...' : (securitySummary?.maskedPhone || '暂未绑定') }}</strong>
+        当前绑定手机号：<span v-if="loading" class="inline-block h-4 w-28 animate-pulse rounded bg-slate-200" aria-label="正在读取手机号" /><strong v-else class="ml-1 text-[#172b4d]">{{ securitySummary?.maskedPhone || '暂未绑定' }}</strong>
       </div>
 
       <div class="mt-6 flex gap-6 border-b border-[#e6edf6]">

@@ -56,7 +56,8 @@ onMounted(() => { void refresh() })
         <button v-if="record.status === 'issued'" class="rounded-lg border border-blue-200 px-4 py-2 text-xs text-blue-600" @click="download(record)">下载发票</button>
         <NuxtLink v-if="record.status === 'rejected'" :to="`/dashboard-billing?view=orders&invoice_retry=${record.id}`" class="text-xs text-blue-600">修改后重新申请</NuxtLink>
       </div>
-      <p v-if="!visibleRecords.length" class="py-8 text-center text-sm text-slate-400">{{ busy ? '正在加载…' : '暂无对应发票记录' }}</p>
+      <DashboardSkeleton v-if="busy && !visibleRecords.length" :rows="3" />
+      <p v-else-if="!visibleRecords.length" class="py-8 text-center text-sm text-slate-400">暂无对应发票记录</p>
     </section>
     <InvoiceTitleDialog :open="dialogOpen" :title="editing" @close="dialogOpen = false" @saved="refresh" />
   </div>

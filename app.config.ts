@@ -1,8 +1,8 @@
 export default defineAppConfig({
   ui: {
     colors: {
-      // Livliv 主色统一为蓝色系，状态色使用 Nuxt UI 的语义色。
-      primary: 'blue',
+      // 主色统一为靛紫 #4F46E5，成功/警告/危险继续使用原有语义色。
+      primary: 'indigo',
       neutral: 'slate',
       success: 'emerald',
       warning: 'amber',

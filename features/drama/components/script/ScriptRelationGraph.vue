@@ -39,12 +39,12 @@ let chartInstance: import('echarts').ECharts | null = null
 let resizeObserver: ResizeObserver | null = null
 
 const toneStyleMap: Record<ScriptRelationNode['tone'], { border: string; bg: string; text: string; shadow?: string }> = {
-  hero: { border: '#7db4ff', bg: '#eff6ff', text: '#0f67ff', shadow: 'rgba(59,130,246,0.22)' },
+  hero: { border: '#7db4ff', bg: '#EEF2FF', text: '#4F46E5', shadow: 'rgba(59,130,246,0.22)' },
   danger: { border: '#fecaca', bg: '#fff1f2', text: '#dc2626' },
   success: { border: '#bbf7d0', bg: '#f0fdf4', text: '#047857' },
   purple: { border: '#ddd6fe', bg: '#f5f3ff', text: '#7c3aed' },
   orange: { border: '#fed7aa', bg: '#fff7ed', text: '#ea580c' },
-  sky: { border: '#bfdbfe', bg: '#eff6ff', text: '#2563eb' }
+  sky: { border: '#C7D2FE', bg: '#EEF2FF', text: '#4F46E5' }
 }
 
 type PixelNode = ScriptRelationNode & {
@@ -226,7 +226,7 @@ function buildNodeElement(node: PixelNode) {
         shape: { x: 0, y: 0, width: node.width, height: node.height, r: node.height / 2 },
         style: {
           fill: tone.bg,
-          stroke: isSelected ? '#0f67ff' : tone.border,
+          stroke: isSelected ? '#4F46E5' : tone.border,
           lineWidth: isSelected ? 3 : 1.6,
           shadowBlur: isSelected ? 18 : 5,
           shadowColor: isSelected ? 'rgba(15,103,255,0.22)' : tone.shadow || 'rgba(15,23,42,0.05)'
@@ -334,21 +334,21 @@ onBeforeUnmount(() => {
 <template>
   <div
     ref="rootEl"
-    class="relative h-full min-h-[420px] w-full overflow-hidden rounded-[18px] border border-[#e2e8f0] bg-[radial-gradient(circle,#dbeafe_1px,transparent_1px)] [background-size:22px_22px]"
+    class="relative h-full min-h-[420px] w-full overflow-hidden rounded-[18px] border border-[#e2e8f0] bg-[radial-gradient(circle,#E0E7FF_1px,transparent_1px)] [background-size:22px_22px]"
   >
     <div ref="chartEl" class="h-full min-h-[420px] w-full" />
 
     <div class="absolute right-3 top-3 flex items-center gap-1 rounded-[10px] border border-[#dbe7f7] bg-white/95 p-1 shadow-sm">
-      <button type="button" class="flex h-8 w-8 items-center justify-center rounded-[7px] text-[#475569] hover:bg-[#eef5ff] hover:text-[#0f67ff]" title="缩小" @click="updateZoom(zoom - 0.1)"><ZoomOut class="h-4 w-4" /></button>
-      <button type="button" class="flex h-8 w-8 items-center justify-center rounded-[7px] text-[#475569] hover:bg-[#eef5ff] hover:text-[#0f67ff]" title="恢复居中" @click="resetView"><Focus class="h-4 w-4" /></button>
-      <button type="button" class="flex h-8 w-8 items-center justify-center rounded-[7px] text-[#475569] hover:bg-[#eef5ff] hover:text-[#0f67ff]" title="放大" @click="updateZoom(zoom + 0.1)"><ZoomIn class="h-4 w-4" /></button>
-      <button type="button" class="flex h-8 w-8 items-center justify-center rounded-[7px] text-[#475569] hover:bg-[#eef5ff] hover:text-[#0f67ff]" title="全屏查看" @click="toggleFullscreen"><Maximize2 class="h-4 w-4" /></button>
+      <button type="button" class="flex h-8 w-8 items-center justify-center rounded-[7px] text-[#475569] hover:bg-[#eef5ff] hover:text-[#4F46E5]" title="缩小" @click="updateZoom(zoom - 0.1)"><ZoomOut class="h-4 w-4" /></button>
+      <button type="button" class="flex h-8 w-8 items-center justify-center rounded-[7px] text-[#475569] hover:bg-[#eef5ff] hover:text-[#4F46E5]" title="恢复居中" @click="resetView"><Focus class="h-4 w-4" /></button>
+      <button type="button" class="flex h-8 w-8 items-center justify-center rounded-[7px] text-[#475569] hover:bg-[#eef5ff] hover:text-[#4F46E5]" title="放大" @click="updateZoom(zoom + 0.1)"><ZoomIn class="h-4 w-4" /></button>
+      <button type="button" class="flex h-8 w-8 items-center justify-center rounded-[7px] text-[#475569] hover:bg-[#eef5ff] hover:text-[#4F46E5]" title="全屏查看" @click="toggleFullscreen"><Maximize2 class="h-4 w-4" /></button>
     </div>
 
     <div class="absolute bottom-3 left-3 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-[10px] border border-[#dbe7f7] bg-white/94 px-3 py-2 text-xs text-[#64748b] shadow-sm">
       <span class="font-semibold text-[#334155]">关系图例</span>
       <span class="flex items-center gap-1.5"><i class="h-0.5 w-4 bg-[#ef4444]" />敌对 / 压迫</span>
-      <span class="flex items-center gap-1.5"><i class="h-0.5 w-4 bg-[#2563eb]" />守护 / 合作</span>
+      <span class="flex items-center gap-1.5"><i class="h-0.5 w-4 bg-[#4F46E5]" />守护 / 合作</span>
       <span class="flex items-center gap-1.5"><i class="h-0.5 w-4 bg-[#7c3aed]" />价值观关联</span>
       <span class="flex items-center gap-1.5"><i class="h-0.5 w-4 bg-[#f59e0b]" />依附 / 利益</span>
     </div>

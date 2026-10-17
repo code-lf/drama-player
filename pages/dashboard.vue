@@ -12,11 +12,18 @@ import ExportCenterPanel from '~/features/dashboard/components/ExportCenterPanel
 import FeedbackDrawer from '~/features/support/components/FeedbackDrawer.vue'
 import HelpCenterPanel from '~/features/support/components/HelpCenterPanel.vue'
 import PlaceholderWorkspacePanel from '~/features/dashboard/components/PlaceholderWorkspacePanel.vue'
-import ProjectDirectoryPanel from '~/features/projects/components/ProjectDirectoryPanel.vue'
+import UnifiedProjectDirectory from '~/features/projects/components/UnifiedProjectDirectory.vue'
 import ProductImageWorkspacePanel from '~/features/product-image/components/ProductImageWorkspacePanel.vue'
 import ProductVideoWorkspacePanel from '~/features/product-video/components/ProductVideoWorkspacePanel.vue'
-import LibraryWorkspacePanel from '~/features/library/components/LibraryWorkspacePanel.vue'
+import LibraryWorkspacePanel from '~/features/library/components/AssetLibraryPanel.vue'
+import SkillCenterPanel from '~/features/creation/components/SkillCenterPanel.vue'
+import WatermarkPreferenceDialog from '~/features/creation/components/WatermarkPreferenceDialog.vue'
 import MusicWorkspacePanel from '~/features/music/components/MusicWorkspacePanel.vue'
+import CreationStudio from '~/features/creation/components/CreationStudio.vue'
+import SessionWorkspaceNav from '~/features/creation/components/SessionWorkspaceNav.vue'
+// Nuxt 页面本身也统一尾斜杠，避免仅查询参数导航时整页重建、丢失未发送草稿。
+definePageMeta({ key: route => route.path.replace(/\/$/, '') })
+import LoginDialog from '~/features/auth/components/LoginDialog.vue'
 import { useAccountStore } from '~/features/billing/store/useAccountStore'
 import { useThemeStore } from '~/features/ui/store/useThemeStore'
 import { useAuthStore } from '~/features/auth/store/useAuthStore'
@@ -32,7 +39,7 @@ import {
 import type { EpisodeCutTask } from '~/entities/drama/episodeCutTypes'
 
 type DashboardMenuKey = 'drama' | 'product' | 'product-video' | 'music' | 'billing' | 'none'
-type DashboardWorkspaceView = 'console' | 'projects' | 'exports' | 'billing' | 'announcements' | 'help' | 'library'
+type DashboardWorkspaceView = 'console' | 'projects' | 'exports' | 'billing' | 'announcements' | 'help' | 'library' | 'skills'
 type CreativeIntent = 'drama' | 'ad' | 'general'
 type ScriptInputMode = 'text' | 'file'
 type DramaSubmissionStage = 'idle' | 'creating' | 'uploading' | 'starting' | 'navigating'
@@ -72,14 +79,27 @@ const route = useRoute()
 const accountStore = useAccountStore()
 const themeStore = useThemeStore()
 const authStore = useAuthStore()
+const { loginOpen, requireLogin } = useWorkbenchAuth()
 // 工作台推荐卡片沿用相对路径，统一由素材服务追加当前 OSS 公共前缀。
 const { $siteAsset: siteAsset } = useNuxtApp()
 
 const activeMenu = ref<DashboardMenuKey>('drama')
 const activeWorkspaceView = ref<DashboardWorkspaceView>('console')
+// 会话深链从首屏进入沉浸布局，不依赖列表先加载，也不改变首页或资料库布局。
+const immersiveSession = computed(() => activeWorkspaceView.value === 'console' && typeof route.query.session === 'string' && !!route.query.session)
+// 会话默认隐藏导航；完整侧栏只响应明确点击，路由和账号变化都收起。
+const sessionNavigationOpen=ref(false),wideSessionNavigation=ref(false)
+// 1440px 以下覆盖式抽屉，避免挤压聊天和作品区；监听在卸载时释放。
+let sessionMedia:MediaQueryList|undefined
+function updateSessionMedia(){wideSessionNavigation.value=!!sessionMedia?.matches}
+onMounted(()=>{sessionMedia=window.matchMedia("(min-width:1440px)");updateSessionMedia();sessionMedia.addEventListener("change",updateSessionMedia)})
+onBeforeUnmount(()=>sessionMedia?.removeEventListener("change",updateSessionMedia))
+watch(()=>[route.fullPath,authStore.session.user?.id],()=>{sessionNavigationOpen.value=false})
 const legalDocuments = ref<LegalDocument[]>([])
 const featureNotice = computed(() => {
   if (activeWorkspaceView.value !== 'console') return null
+  // 统一首页尚未选择短剧时，只在实际报价接口需要时提示对应功能协议。
+  if (activeMenu.value === 'drama' && route.query.entry !== 'drama') return null
   const code = activeMenu.value === 'product' ? 'image_generation_terms'
     : activeMenu.value === 'product-video' ? 'video_generation_terms'
     : activeMenu.value === 'music' ? 'ai_content_rules'
@@ -108,7 +128,6 @@ const entryFailureMessage = ref('')
 const entryIdempotencyKey = ref('')
 const entryProjectId = ref('')
 const entryResumeStage = ref<'creating' | 'uploading' | 'starting'>('creating')
-const loadingText = ref('正在准备控制台...')
 const busyKey = ref('')
 // 创建、上传和启动解析属于同一次不可分割的用户操作；独立锁避免阶段切换瞬间按钮重新可点。
 const dramaSubmissionStage = ref<DramaSubmissionStage>('idle')
@@ -147,6 +166,7 @@ const isCreditPopoverOpen = ref(false)
 const isFeedbackDrawerOpen = ref(false)
 const isProfileDialogOpen = ref(false)
 const isAccountSecurityDialogOpen = ref(false)
+const isWatermarkDialogOpen = ref(false)
 const isCreativeIntentMenuOpen = ref(false)
 const isVisualStyleMenuOpen = ref(false)
 const activeProjectMenuId = ref('')
@@ -245,7 +265,7 @@ const imageModelOptions = computed<DashboardOption[]>(() => {
 })
 const aspectRatioOptions = computed<DashboardOption[]>(() => {
   // 比例是纯前端控制项，先按常见短视频/短剧画幅补齐，避免工具栏只有单项可选。
-  return fallbackAspectRatioCatalog.map((item) => ({
+  return fallbackAspectRatioCatalog.filter(item => ['16:9','9:16'].includes(item.value)).map((item) => ({
     label: item.value,
     value: item.value,
     preview: item.value as DashboardOption['preview']
@@ -261,7 +281,7 @@ const videoProviderOptions = computed<DashboardOption[]>(() => {
     {
       label: '阿里引擎',
       value: 'alibaba',
-      description: '保留供应商切换能力，便于后续做成本与速度对比'
+      description: '支持切换生成引擎，便于比较生成速度与效果'
     }
   ]
 })
@@ -469,12 +489,21 @@ function toggleUserMenu(): void {
   isUserMenuOpen.value = !isUserMenuOpen.value
   isCreditPopoverOpen.value = false
 }
+// 游客悬停只展示既有头像，不触发登录；菜单和触发器之间保留 150ms 容错。
+let userMenuCloseTimer:ReturnType<typeof setTimeout>|undefined
+const userPointerOpening=ref<boolean>(false)
+function hoverUserMenu(){clearTimeout(userMenuCloseTimer);if(authStore.session.loggedIn){isUserMenuOpen.value=true;isCreditPopoverOpen.value=false}}
+function leaveUserMenu(){clearTimeout(userMenuCloseTimer);userMenuCloseTimer=setTimeout(()=>isUserMenuOpen.value=false,150)}
+function blurUserMenu(event:FocusEvent){if(!(event.currentTarget as HTMLElement).contains(event.relatedTarget as Node|null))leaveUserMenu()}
+function focusUserMenu(){if(!userPointerOpening.value)hoverUserMenu()}
+onBeforeUnmount(()=>clearTimeout(userMenuCloseTimer))
 
 function closeUserMenu(): void {
   isUserMenuOpen.value = false
 }
 
 function toggleCreditPopover(): void {
+  if (!requireLogin()) return
   isCreditPopoverOpen.value = !isCreditPopoverOpen.value
   // 顶部同一层只保留一个浮层，避免用户同时看到账户菜单和积分菜单。
   isUserMenuOpen.value = false
@@ -641,6 +670,7 @@ function handleFeedbackSubmitted(): void {
 }
 
 async function loadProjectDirectory(): Promise<void> {
+  if (!authStore.session.loggedIn) return
   try {
     // “我的项目”现在走后端真实分页，页面只负责展示当前页结果。
     const pageResult = await dramaService.getProjects(currentProjectPage.value, projectPageSize)
@@ -766,9 +796,10 @@ async function confirmDeleteProjects(): Promise<void> {
 }
 
 async function bootstrapDashboard(): Promise<void> {
+  // 同页登录回调与首次挂载不能并行重放整套初始化读取。
+  if(busyKey.value==='boot')return
   busyKey.value = 'boot'
   errorMessage.value = ''
-  loadingText.value = '正在准备控制台...'
 
   try {
     const [config, capabilities] = await Promise.all([
@@ -806,11 +837,11 @@ async function bootstrapDashboard(): Promise<void> {
     if (activeWorkspaceView.value === 'exports') {
       await loadExportTasks()
     }
-    loadingText.value = '输入剧本后即可开始生成短剧项目。'
   } catch (error) {
     // eslint-disable-next-line no-console
     console.error('[livliv] 控制台初始化失败', error)
-    errorMessage.value = error instanceof Error ? error.message : '控制台初始化失败'
+    // 会话不依赖导演配置，局部读取失败不能遮挡原会话及其重试入口。
+    if(!(activeWorkspaceView.value==='console'&&route.query.session))errorMessage.value = error instanceof Error ? error.message : '控制台初始化失败'
   } finally {
     busyKey.value = ''
   }
@@ -1074,6 +1105,7 @@ function cancelRecentProjectPrefetch(projectId: string): void {
 }
 
 async function loadExportTasks(): Promise<void> {
+  if (!authStore.session.loggedIn) return
   // 防止网络较慢时定时刷新与手动刷新叠加，造成同一列表重复请求。
   if (exportTasksLoading.value) return
   exportTasksLoading.value = true
@@ -1089,6 +1121,10 @@ async function loadExportTasks(): Promise<void> {
 }
 
 function syncWorkspaceRouteState(path: string): void {
+  if (path === '/dashboard-skills') {
+    activeWorkspaceView.value = 'skills'
+    return
+  }
   if (path === '/dashboard-library') {
     activeMenu.value = 'none'
     activeWorkspaceView.value = 'library'
@@ -1188,7 +1224,7 @@ const legalEntryError = ref('')
 
 /** 根据控制台路由返回对应的功能协议编码，入口检查与侧栏点击共用同一映射。 */
 function featureConsentCodeForPath(path: string): string | null {
-  if (path === '/dashboard') return 'drama_creation_terms'
+  if (path === '/dashboard') return 'ai_content_rules'
   if (path === '/dashboard-product') return 'image_generation_terms'
   if (path === '/dashboard-product-video') return 'video_generation_terms'
   if (path === '/dashboard-music') return 'ai_content_rules'
@@ -1266,21 +1302,13 @@ watch(
 )
 
 function handleLogout() {
+  useState<boolean>('workbench-explicit-logout',()=>false).value=true
   closeUserMenu()
   closeRecentProjectMenu()
   accountStore.reset()
   authStore.logout()
-  router.push('/')
-}
-
-function toggleDashboardTheme(): void {
-  const nextMode = themeStore.mode === 'dark' ? 'light' : 'dark'
-  // 主题切换如果后续再次失效，这条日志可以直接确认点击事件和 store 状态是否正常。
-  console.info('[livliv] 切换控制台主题', {
-    from: themeStore.mode,
-    to: nextMode
-  })
-  themeStore.setMode(nextMode)
+  // 退出后保留工作台游客入口，不带出私人项目列表。
+  projectItems.value = []
 }
 
 function handleDashboardDocumentClick(): void {
@@ -1293,21 +1321,18 @@ function handleDashboardDocumentClick(): void {
 }
 
 onMounted(async () => {
-  // 控制台是主题最重的页面，进入时主动恢复一次本地主题，防止刷新后组件先使用默认浅色。
+  // 创作端各路由及传送到 body 的弹层统一深色；首屏由布局自身令牌覆盖旧浅色缓存。
   themeStore.hydrate()
+  themeStore.setMode('dark')
   // 进入工作台时先恢复登录态，后续所有接口会通过 httpAdapter 自动带上当前 user_id。
   authStore.hydrate()
   // 新浏览器没有旧浏览器的 localStorage 登录态；不可展示假昵称并静默跳过协议确认。
-  if (useRuntimeConfig().public.apiAdapter !== 'mock' && !authStore.session.token) {
-    await router.replace(`/login?redirect=${encodeURIComponent(route.fullPath)}`)
-    return
-  }
   document.addEventListener('click', handleDashboardDocumentClick)
-  await bootstrapDashboard()
+  if (authStore.session.token) await bootstrapDashboard()
   // onMounted 中再执行一次确定性的入口检查，覆盖登录后路由跳转、页面热更新等
   // 不一定重新触发 route watcher 的场景；已同意版本会由后端状态直接跳过。
   const entryFeatureCode = featureConsentCodeForPath(route.path)
-  if (entryFeatureCode) await checkFeatureEntryConsent(entryFeatureCode)
+  if (entryFeatureCode && authStore.session.token) await checkFeatureEntryConsent(entryFeatureCode)
   // 首次直接打开 /dashboard-exports 时，路由状态早于 watcher 建立；在鉴权恢复后补上轮询。
   if (activeWorkspaceView.value === 'exports' && !exportPollTimer) {
     exportPollTimer = setInterval(() => void loadExportTasks(), 5000)
@@ -1320,18 +1345,22 @@ onBeforeUnmount(() => {
   if (recentProjectPrefetchTimer) clearTimeout(recentProjectPrefetchTimer)
   document.removeEventListener('click', handleDashboardDocumentClick)
 })
+// 失效或换号立即清理私人侧栏及余额，不能将旧账号内容留给游客。
+watch(()=>authStore.session.user?.id,()=>{projectItems.value=[];accountStore.reset()})
 </script>
 
 <template>
   <main
-    class="dashboard-shell min-h-screen bg-[#f5f9ff] text-[#0f172a]"
-    :class="[themeStore.mode === 'dark' ? 'dashboard-shell--dark' : 'dashboard-shell--light', 'dashboard-shell--compact']"
+    class="dashboard-shell dashboard-shell--dark dashboard-shell--compact dashboard-shell--creation min-h-screen"
+    :class="{ 'is-session-immersive': immersiveSession, 'is-session-nav-open': immersiveSession && sessionNavigationOpen }"
+    data-theme="dark"
   >
+    <LoginDialog v-model="loginOpen" @authenticated="bootstrapDashboard" />
     <Transition name="dashboard-submission-fade">
       <div v-if="isDramaSubmissionLocked" class="fixed inset-0 z-[300] grid place-items-center bg-[#0f172a]/35 px-5 backdrop-blur-[3px]" aria-live="polite" aria-busy="true">
         <div class="w-full max-w-[480px] rounded-[22px] border border-white/80 bg-white p-7 shadow-[0_28px_80px_rgba(15,23,42,0.24)]">
           <div class="flex items-start gap-4">
-            <span class="grid h-12 w-12 shrink-0 place-items-center rounded-[14px] bg-[#edf5ff] text-[#005FFE]">
+            <span class="grid h-12 w-12 shrink-0 place-items-center rounded-[14px] bg-[#edf5ff] text-[#4F46E5]">
               <svg class="h-6 w-6 animate-spin" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-opacity=".22" stroke-width="3"/><path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg>
             </span>
             <div class="min-w-0">
@@ -1341,16 +1370,18 @@ onBeforeUnmount(() => {
           </div>
           <div class="mt-6 grid grid-cols-4 gap-2">
             <div v-for="(label, index) in ['创建项目', '上传剧本', '启动解析', '进入项目']" :key="label" class="min-w-0">
-              <div class="h-1.5 rounded-full" :class="index + 1 <= dramaSubmissionCopy.step ? 'bg-[#005FFE]' : 'bg-[#e2e8f0]'" />
-              <p class="mt-2 truncate text-center text-[11px] font-bold" :class="index + 1 <= dramaSubmissionCopy.step ? 'text-[#005FFE]' : 'text-[#94a3b8]'">{{ label }}</p>
+              <div class="h-1.5 rounded-full" :class="index + 1 <= dramaSubmissionCopy.step ? 'bg-[#4F46E5]' : 'bg-[#e2e8f0]'" />
+              <p class="mt-2 truncate text-center text-[11px] font-bold" :class="index + 1 <= dramaSubmissionCopy.step ? 'text-[#4F46E5]' : 'text-[#94a3b8]'">{{ label }}</p>
             </div>
           </div>
           <p class="mt-5 rounded-[12px] bg-[#f8fafc] px-4 py-3 text-center text-[12px] font-semibold text-[#64748b]">请勿重复点击，任务启动后会自动进入解析进度页。</p>
         </div>
       </div>
     </Transition>
-    <div class="flex min-h-screen">
+    <USlideover :open="immersiveSession && sessionNavigationOpen && !wideSessionNavigation" side="left" title="创作导航" :ui="{content:'session-navigation-drawer',body:'p-0 min-h-0'}" @update:open="sessionNavigationOpen=$event"><template #body><DashboardSidebar embedded active-menu="none" active-workspace-view="console" :billing-view="billingView" :current-credit-balance="currentCreditBalance" :logged-in="authStore.session.loggedIn" :nickname="authStore.session.user?.nickname??''" :avatar-url="authStore.session.user?.avatar??''" theme-mode="dark" @request-feedback="isFeedbackDrawerOpen=true" @feature-menu-click="handleFeatureMenuClick"/></template></USlideover>
+    <div class="dashboard-frame flex">
       <DashboardSidebar
+        v-if="!immersiveSession || (sessionNavigationOpen && wideSessionNavigation)"
         :active-menu="activeMenu"
         :active-workspace-view="activeWorkspaceView"
         :billing-view="billingView"
@@ -1358,25 +1389,29 @@ onBeforeUnmount(() => {
         :logged-in="authStore.session.loggedIn"
         :nickname="authStore.session.user?.nickname ?? ''"
         :avatar-url="authStore.session.user?.avatar ?? ''"
-        :theme-mode="themeStore.mode"
-        @logout="handleLogout"
-        @toggle-theme="themeStore.toggleMode()"
+        theme-mode="dark"
         @request-feedback="isFeedbackDrawerOpen = true"
         @feature-menu-click="handleFeatureMenuClick"
       />
 
-      <section class="min-w-0 flex-1">
-        <header class="dashboard-topbar relative z-40 flex h-[58px] items-center justify-end border-b border-[#e2e8f2] bg-white px-7">
+      <section class="dashboard-main min-w-0 flex-1">
+        <header class="dashboard-topbar relative z-40 flex h-[58px] items-center justify-end border-b border-[#e2e8f2] bg-white px-7" :class="{ 'has-creation-nav': activeWorkspaceView === 'console' && !immersiveSession }">
+          <SessionWorkspaceNav v-if="immersiveSession" :navigation-open="sessionNavigationOpen" @navigation="sessionNavigationOpen=!sessionNavigationOpen">
+            <template #history="{hold}"><DashboardSidebar @interaction="hold" sessions-only active-menu="none" active-workspace-view="console" :billing-view="billingView" :current-credit-balance="currentCreditBalance" :logged-in="authStore.session.loggedIn" :nickname="authStore.session.user?.nickname??''" :avatar-url="authStore.session.user?.avatar??''" theme-mode="dark"/></template>
+          </SessionWorkspaceNav>
+          <!-- 创作用途由工作台传送到顶部，保持原切换状态与费用确认逻辑。 -->
+          <div v-if="activeWorkspaceView === 'console'" id="creation-topbar-nav" class="creation-topbar-nav" />
           <div class="flex items-center gap-3">
             <div class="relative" @click.stop>
               <button
-                class="dashboard-credit-pill flex h-11 items-center gap-3 rounded-full border border-[#dbe7f7] bg-white px-5 text-[15px] font-black text-[#1f2937] shadow-[0_12px_32px_rgba(15,23,42,0.06)] transition hover:border-[#005FFE]/35 hover:text-[#005FFE]"
+                class="dashboard-credit-pill flex h-11 items-center gap-3 rounded-full border border-[#dbe7f7] bg-white px-5 text-[15px] font-black text-[#1f2937] shadow-[0_12px_32px_rgba(15,23,42,0.06)] transition hover:border-[#4F46E5]/35 hover:text-[#4F46E5]"
                 type="button"
                 aria-label="打开积分账户"
                 :aria-expanded="isCreditPopoverOpen"
                 @click="toggleCreditPopover"
               >
-                <CreditAmount :value="currentCreditBalance" size="sm" tone="inherit" />
+                <CreditAmount v-if="accountStore.profile" :value="currentCreditBalance" size="sm" tone="inherit" />
+                <span v-else aria-label="积分余额尚未读取">—</span>
                 <span>积分</span>
               </button>
 
@@ -1390,33 +1425,10 @@ onBeforeUnmount(() => {
               </div>
             </div>
 
-            <button
-              class="dashboard-theme-toggle flex h-7 items-center gap-1 rounded-full border border-[#d7e1ef] bg-white px-1.5 shadow-[0_10px_28px_rgba(15,23,42,0.06)] transition hover:border-[#005FFE]/40"
-              type="button"
-              :aria-label="themeStore.mode === 'dark' ? '切换浅色主题' : '切换深色主题'"
-              @click.stop="toggleDashboardTheme"
-            >
-              <span class="dashboard-theme-icon flex h-5 w-5 items-center justify-center rounded-full text-[#0f172a]">
-                <svg v-if="themeStore.mode === 'light'" viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M12 2.5v2.2M12 19.3v2.2M4.6 4.6l1.6 1.6M17.8 17.8l1.6 1.6M2.5 12h2.2M19.3 12h2.2M4.6 19.4l1.6-1.6M17.8 6.2l1.6-1.6" stroke-linecap="round" />
-                  <circle cx="12" cy="12" r="4.2" />
-                </svg>
-                <svg v-else viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M20 15.7A8.4 8.4 0 1 1 8.3 4a6.5 6.5 0 0 0 11.7 11.7Z" stroke-linecap="round" stroke-linejoin="round" />
-                </svg>
-              </span>
-              <span class="relative h-6 w-[42px] rounded-full bg-[#005FFE] p-1">
-                <span
-                  class="absolute left-1 top-1 h-4 w-4 rounded-full bg-white shadow-[0_6px_16px_rgba(15,23,42,0.18)] transition-transform duration-200"
-                  :class="themeStore.mode === 'dark' ? 'translate-x-[18px]' : 'translate-x-0'"
-                ></span>
-              </span>
-            </button>
+            <DashboardAnnouncementCenter v-if="authStore.session.loggedIn" />
 
-            <DashboardAnnouncementCenter />
-
-            <div class="relative" @click.stop>
-              <button class="dashboard-user-trigger flex items-center gap-2.5 rounded-full px-2 py-1 transition hover:bg-[#f5f8fd]" type="button" @click="toggleUserMenu">
+            <div class="relative" @click.stop @pointerenter="$event.pointerType!=='touch'&&hoverUserMenu()" @pointerleave="leaveUserMenu" @focusin="focusUserMenu" @focusout="blurUserMenu" @keydown.esc="isUserMenuOpen=false">
+              <button class="dashboard-user-trigger flex items-center gap-2.5 rounded-full px-2 py-1 transition hover:bg-[#f5f8fd]" type="button" :aria-expanded="isUserMenuOpen" @pointerdown="userPointerOpening=true" @click="userPointerOpening=false;requireLogin() && toggleUserMenu()">
                 <img :src="userAvatarUrl" alt="avatar" class="dashboard-user-avatar h-9 w-9 rounded-full object-cover ring-[3px] ring-[#edf4ff]" />
                 <span class="dashboard-user-name text-[14px] font-black text-[#111827]">{{ userNickname }}</span>
                 <svg viewBox="0 0 24 24" class="dashboard-user-chevron h-4 w-4 text-[#53627c]" fill="none" stroke="currentColor" stroke-width="2">
@@ -1426,7 +1438,7 @@ onBeforeUnmount(() => {
 
               <div
                 v-if="isUserMenuOpen"
-                class="dashboard-floating-menu absolute right-0 top-[48px] w-[220px] overflow-hidden rounded-[18px] border border-[#dbe4f0] bg-white shadow-[0_24px_70px_rgba(15,23,42,0.18)]"
+                class="dashboard-floating-menu dashboard-account-menu absolute right-0 top-[48px] w-[220px] overflow-hidden rounded-[18px] border border-[#dbe4f0] bg-white shadow-[0_24px_70px_rgba(15,23,42,0.18)]"
               >
                 <div class="flex items-center gap-3 px-5 py-5">
                   <img :src="userAvatarUrl" alt="avatar" class="h-12 w-12 rounded-full object-cover" />
@@ -1450,6 +1462,8 @@ onBeforeUnmount(() => {
                   </svg>
                   账户设置
                 </button>
+                <button class="flex h-[52px] w-full items-center gap-4 px-6 text-left text-[15px] font-bold" @click="isWatermarkDialogOpen=true;isUserMenuOpen=false"><UIcon name="i-lucide-shield-check"/>成片水印设置</button>
+                <button class="flex h-[52px] w-full items-center gap-4 px-6 text-left text-[15px] font-bold" @click="isFeedbackDrawerOpen=true;isUserMenuOpen=false"><UIcon name="i-lucide-message-square"/>意见反馈</button>
                 <div class="h-px bg-[#edf2f7]"></div>
                 <button class="flex h-[64px] w-full items-center gap-4 px-6 text-left text-[16px] font-black text-[#ff2d36] hover:bg-[#fff5f5]" type="button" @click="handleLogout">
                   <svg viewBox="0 0 24 24" class="h-6 w-6" fill="none" stroke="currentColor" stroke-width="2">
@@ -1463,9 +1477,7 @@ onBeforeUnmount(() => {
         </header>
 
         <div class="dashboard-main-content px-8 py-9">
-        <div v-if="isBooting" class="rounded-3xl border border-borderSoft bg-panel p-8 text-textMuted">
-          {{ loadingText }}
-        </div>
+        <DashboardSkeleton v-if="isBooting" :variant="activeWorkspaceView==='console' && route.query.session?'conversation':'workspace'" :rows="5" />
 
         <template v-else>
           <div v-if="errorMessage" class="mb-4 rounded-2xl border border-rose-400/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
@@ -1493,27 +1505,11 @@ onBeforeUnmount(() => {
             </details>
           </div>
 
-          <ProjectDirectoryPanel
-            v-if="activeWorkspaceView === 'projects'"
-            :current-project-page="currentProjectPage"
-            :is-all-current-page-selected="isAllCurrentPageSelected"
-            :is-batch-selecting-projects="isBatchSelectingProjects"
-            :is-creating-workspace-project="isCreatingWorkspaceProject"
-            :is-deleting-projects="isDeletingProjects"
-            :page-number-list="pageNumberList"
-            :project-overview-label="projectOverviewLabel"
-            :selected-project-count="selectedProjectCount"
-            :selected-project-ids="selectedProjectIds"
-            :total-project-pages="totalProjectPages"
-            :workspace-project-cards="workspaceProjectCards"
-            @create-project="createWorkspaceProject"
-            @go-to-page="goToProjectPage"
-            @open-project="openDramaProject"
-            @request-delete-batch="askDeleteBatchProjects"
-            @request-delete-project="askDeleteSingleProject"
-            @toggle-batch-mode="toggleBatchSelectionMode"
-            @toggle-project-selection="toggleProjectSelection"
-            @toggle-select-all="toggleSelectAllProjects"
+          <!-- 统一尾斜杠，首页与会话只切换查询参数时保留编辑器和内存草稿。 -->
+          <CreationStudio v-if="activeWorkspaceView === 'console'" :key="route.path.replace(/\/$/, '')" />
+          <section v-else-if="!authStore.session.loggedIn && !['library','skills','help'].includes(activeWorkspaceView)" class="p-10 text-center text-sm text-white"><p>登录后查看你的项目与账户。</p><button class="mt-4 rounded-lg bg-[#4F46E5] px-5 py-2" @click="requireLogin">登录</button></section>
+          <UnifiedProjectDirectory
+            v-else-if="activeWorkspaceView === 'projects'"
           />
 
           <ExportCenterPanel
@@ -1526,6 +1522,7 @@ onBeforeUnmount(() => {
           />
 
           <LibraryWorkspacePanel v-else-if="activeWorkspaceView === 'library'" />
+          <SkillCenterPanel v-else-if="activeWorkspaceView === 'skills'" />
           <ProductImageWorkspacePanel
             v-else-if="activeMenu === 'product'"
             :current-credit-balance="currentCreditBalance"
@@ -1560,14 +1557,14 @@ onBeforeUnmount(() => {
             <section class="mx-auto max-w-[1235px]">
               <div class="pt-1 text-center">
                 <h1 class="text-[42px] font-black leading-tight tracking-[-0.06em] text-[#071126]">
-                  {{ heroCopy.prefix }} <span class="text-[#005FFE]">{{ heroCopy.keyword }}</span>
+                  {{ heroCopy.prefix }} <span class="text-[#4F46E5]">{{ heroCopy.keyword }}</span>
                 </h1>
                 <p class="mx-auto mt-3 max-w-[820px] text-[15px] font-semibold leading-7 text-[#61718c]">{{ heroCopy.description }}</p>
               </div>
 
               <div
                 class="dashboard-input-card mx-auto mt-6 overflow-visible rounded-[20px] border border-[#dfe7f2] bg-white p-7 shadow-[0_22px_70px_rgba(15,23,42,0.07)] transition"
-                :class="isDraggingFile ? 'scale-[1.01] border-[#005FFE] shadow-[0_24px_80px_rgba(0,95,254,0.14)]' : ''"
+                :class="isDraggingFile ? 'scale-[1.01] border-[#4F46E5] shadow-[0_24px_80px_rgba(79,70,229,0.14)]' : ''"
                 style="max-width: 1000px;"
                 @dragenter.prevent="isDraggingFile = true"
                 @dragover.prevent="isDraggingFile = true"
@@ -1577,7 +1574,7 @@ onBeforeUnmount(() => {
                 <div class="mx-auto grid max-w-[520px] grid-cols-2 overflow-hidden rounded-[9px] border border-[#dce7f5] bg-[#f7faff] p-0.5">
                   <button
                     class="flex h-[38px] items-center justify-center gap-2 rounded-[7px] text-[15px] font-black transition"
-                    :class="scriptInputMode === 'text' ? 'bg-white text-[#005FFE] shadow-[0_8px_20px_rgba(15,23,42,0.08)]' : 'text-[#60718d]'"
+                    :class="scriptInputMode === 'text' ? 'bg-white text-[#4F46E5] shadow-[0_8px_20px_rgba(15,23,42,0.08)]' : 'text-[#60718d]'"
                     type="button"
                     @click="switchScriptInputMode('text')"
                   >
@@ -1589,7 +1586,7 @@ onBeforeUnmount(() => {
                   </button>
                   <button
                     class="flex h-[38px] items-center justify-center gap-2 rounded-[7px] text-[15px] font-black transition"
-                    :class="scriptInputMode === 'file' ? 'bg-white text-[#005FFE] shadow-[0_8px_20px_rgba(15,23,42,0.08)]' : 'text-[#60718d]'"
+                    :class="scriptInputMode === 'file' ? 'bg-white text-[#4F46E5] shadow-[0_8px_20px_rgba(15,23,42,0.08)]' : 'text-[#60718d]'"
                     type="button"
                     @click="switchScriptInputMode('file')"
                   >
@@ -1612,10 +1609,10 @@ onBeforeUnmount(() => {
                 <div v-if="scriptInputMode === 'file'" class="mt-5">
                   <div
                     class="flex min-h-[214px] flex-col items-center justify-center rounded-[16px] border border-dashed border-[#acd0ff] bg-gradient-to-b from-[#fbfdff] to-[#f7fbff] px-6 text-center"
-                    :class="isDraggingFile ? 'border-[#005FFE] bg-[#f2f7ff]' : ''"
+                    :class="isDraggingFile ? 'border-[#4F46E5] bg-[#f2f7ff]' : ''"
                   >
                     <template v-if="selectedScriptFile">
-                      <div class="flex h-[58px] w-[58px] items-center justify-center rounded-[20px] bg-[#edf5ff] text-[#005FFE]">
+                      <div class="flex h-[58px] w-[58px] items-center justify-center rounded-[20px] bg-[#edf5ff] text-[#4F46E5]">
                         <svg viewBox="0 0 24 24" class="h-8 w-8" fill="none" stroke="currentColor" stroke-width="2">
                           <path d="M7 3.5h6l4 4V20a1.5 1.5 0 0 1-1.5 1.5h-8A1.5 1.5 0 0 1 6 20V5A1.5 1.5 0 0 1 7.5 3.5Z" stroke-linejoin="round" />
                           <path d="M13 3.5V8h4M9 13h6M9 17h4" stroke-linecap="round" />
@@ -1624,12 +1621,12 @@ onBeforeUnmount(() => {
                       <p class="mt-4 max-w-[560px] truncate text-[17px] font-black text-[#142033]">{{ selectedScriptFile.name }}</p>
                       <p class="mt-2 text-[13px] font-semibold text-[#7b8aa3]">{{ selectedScriptFileSizeLabel }} · 文件已就绪，创建后会进入同一套解析链路</p>
                       <div class="mt-4 flex items-center gap-3">
-                        <button class="h-10 rounded-[11px] border border-[#b8d1f4] px-5 text-[14px] font-black text-[#005FFE]" type="button" @click="openScriptFilePicker">重新选择</button>
+                        <button class="h-10 rounded-[11px] border border-[#b8d1f4] px-5 text-[14px] font-black text-[#4F46E5]" type="button" @click="openScriptFilePicker">重新选择</button>
                         <button class="h-10 rounded-[11px] border border-[#e1e8f2] px-5 text-[14px] font-black text-[#64748b]" type="button" @click="clearSelectedScriptFile">移除文件</button>
                       </div>
                     </template>
                     <template v-else>
-                      <div class="flex h-[58px] w-[58px] items-center justify-center rounded-full bg-[#edf5ff] text-[#005FFE]">
+                      <div class="flex h-[58px] w-[58px] items-center justify-center rounded-full bg-[#edf5ff] text-[#4F46E5]">
                         <svg viewBox="0 0 24 24" class="h-9 w-9" fill="none" stroke="currentColor" stroke-width="2">
                           <path d="M12 16V5M7 10l5-5 5 5" stroke-linecap="round" stroke-linejoin="round" />
                           <path d="M20 16.5a4 4 0 0 1-4 4H8a4 4 0 0 1-.8-7.9A5.2 5.2 0 0 1 17.4 10" stroke-linecap="round" stroke-linejoin="round" />
@@ -1637,7 +1634,7 @@ onBeforeUnmount(() => {
                       </div>
                       <p class="mt-4 text-[17px] font-black text-[#142033]">拖拽文件到此处，或点击上传</p>
                       <p class="mt-2 text-[13px] font-semibold text-[#7b8aa3]">支持 TXT / DOCX / PDF，单个文件不超过 20MB</p>
-                      <button class="mt-5 h-10 rounded-[11px] border border-[#9fc2ff] px-8 text-[14px] font-black text-[#005FFE]" type="button" @click="openScriptFilePicker">选择文件</button>
+                      <button class="mt-5 h-10 rounded-[11px] border border-[#9fc2ff] px-8 text-[14px] font-black text-[#4F46E5]" type="button" @click="openScriptFilePicker">选择文件</button>
                     </template>
                   </div>
                 </div>
@@ -1661,13 +1658,13 @@ onBeforeUnmount(() => {
                 <div class="dashboard-input-toolbar mt-5 grid grid-cols-1 gap-3 md:grid-cols-[1fr_1.45fr_1fr_1fr]">
                   <div class="relative z-[90]" @click.stop>
                     <button
-                      class="dashboard-select-trigger flex h-[60px] w-full items-center justify-between rounded-[12px] border bg-white px-4 text-left transition hover:border-[#005FFE]/45"
-                      :class="isCreativeIntentMenuOpen ? 'border-[#005FFE] shadow-[0_0_0_1px_rgba(0,95,254,0.1)]' : 'border-[#dfe7f2]'"
+                      class="dashboard-select-trigger flex h-[60px] w-full items-center justify-between rounded-[12px] border bg-white px-4 text-left transition hover:border-[#4F46E5]/45"
+                      :class="isCreativeIntentMenuOpen ? 'border-[#4F46E5] shadow-[0_0_0_1px_rgba(79,70,229,0.1)]' : 'border-[#dfe7f2]'"
                       type="button"
                       @click="toggleCreativeIntentMenu"
                     >
                       <span class="flex min-w-0 items-center gap-3">
-                        <span class="grid h-7 w-7 shrink-0 place-items-center rounded-[8px] bg-[#eef5ff] text-[#005FFE]"><svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="7" height="7" rx="1.5" /><rect x="13" y="4" width="7" height="7" rx="1.5" /><rect x="4" y="13" width="7" height="7" rx="1.5" /><rect x="13" y="13" width="7" height="7" rx="1.5" /></svg></span>
+                        <span class="grid h-7 w-7 shrink-0 place-items-center rounded-[8px] bg-[#eef5ff] text-[#4F46E5]"><svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="7" height="7" rx="1.5" /><rect x="13" y="4" width="7" height="7" rx="1.5" /><rect x="4" y="13" width="7" height="7" rx="1.5" /><rect x="13" y="13" width="7" height="7" rx="1.5" /></svg></span>
                         <span class="min-w-0"><span class="block text-[12px] font-bold text-[#7b8aa3]">内容类型</span><span class="block truncate text-[14px] font-black text-[#111827]">{{ activeCreativeIntent.label }}</span></span>
                       </span>
                       <svg viewBox="0 0 24 24" class="h-4 w-4 shrink-0 text-[#60718d]" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6" stroke-linecap="round" stroke-linejoin="round" /></svg>
@@ -1683,7 +1680,7 @@ onBeforeUnmount(() => {
                           v-for="item in creativeIntentOptions"
                           :key="item.value"
                           class="overflow-hidden rounded-[13px] border text-left transition hover:-translate-y-0.5 hover:shadow-[0_10px_24px_rgba(15,23,42,0.1)]"
-                          :class="item.value === selectedCreativeIntent ? 'border-[#005FFE] bg-[#f4f8ff] shadow-[0_0_0_1px_rgba(0,95,254,0.12)]' : 'border-[#e6edf6] bg-white'"
+                          :class="item.value === selectedCreativeIntent ? 'border-[#4F46E5] bg-[#f4f8ff] shadow-[0_0_0_1px_rgba(79,70,229,0.12)]' : 'border-[#e6edf6] bg-white'"
                           type="button"
                           @click="selectCreativeIntent(item.value)"
                         >
@@ -1691,7 +1688,7 @@ onBeforeUnmount(() => {
                           <div class="px-3 py-2.5">
                             <div class="flex items-center justify-between gap-2">
                               <span class="text-[13px] font-black text-[#18243a]">{{ item.label }}</span>
-                              <span v-if="item.value === selectedCreativeIntent" class="flex h-5 w-5 items-center justify-center rounded-full bg-[#005FFE] text-white">
+                              <span v-if="item.value === selectedCreativeIntent" class="flex h-5 w-5 items-center justify-center rounded-full bg-[#4F46E5] text-white">
                                 <svg viewBox="0 0 24 24" class="h-3 w-3" fill="none" stroke="currentColor" stroke-width="3"><path d="m5 12 4 4L19 7" stroke-linecap="round" stroke-linejoin="round" /></svg>
                               </span>
                             </div>
@@ -1704,8 +1701,8 @@ onBeforeUnmount(() => {
 
                   <div class="relative z-[90]" @click.stop>
                     <button
-                      class="dashboard-select-trigger flex h-[60px] w-full items-center justify-between rounded-[12px] border bg-white px-4 text-left transition hover:border-[#005FFE]/45"
-                      :class="isVisualStyleMenuOpen ? 'border-[#005FFE] shadow-[0_0_0_1px_rgba(0,95,254,0.1)]' : 'border-[#dfe7f2]'"
+                      class="dashboard-select-trigger flex h-[60px] w-full items-center justify-between rounded-[12px] border bg-white px-4 text-left transition hover:border-[#4F46E5]/45"
+                      :class="isVisualStyleMenuOpen ? 'border-[#4F46E5] shadow-[0_0_0_1px_rgba(79,70,229,0.1)]' : 'border-[#dfe7f2]'"
                       type="button"
                       @click="toggleVisualStyleMenu"
                     >
@@ -1724,7 +1721,7 @@ onBeforeUnmount(() => {
                           v-for="item in visualStyleOptions"
                           :key="item.value"
                           class="overflow-hidden rounded-[13px] border text-left transition hover:-translate-y-0.5 hover:shadow-[0_10px_24px_rgba(15,23,42,0.1)]"
-                          :class="item.value === selectedVisualStyle ? 'border-[#005FFE] bg-[#f4f8ff] shadow-[0_0_0_1px_rgba(0,95,254,0.12)]' : 'border-[#e6edf6] bg-white'"
+                          :class="item.value === selectedVisualStyle ? 'border-[#4F46E5] bg-[#f4f8ff] shadow-[0_0_0_1px_rgba(79,70,229,0.12)]' : 'border-[#e6edf6] bg-white'"
                           type="button"
                           @click="selectVisualStyle(item.value)"
                         >
@@ -1732,7 +1729,7 @@ onBeforeUnmount(() => {
                           <div class="px-3 py-2.5">
                             <div class="flex items-center justify-between gap-2">
                               <span class="truncate text-[12px] font-black text-[#18243a]">{{ item.label }}</span>
-                              <span v-if="item.value === selectedVisualStyle" class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#005FFE] text-white">
+                              <span v-if="item.value === selectedVisualStyle" class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#4F46E5] text-white">
                                 <svg viewBox="0 0 24 24" class="h-3 w-3" fill="none" stroke="currentColor" stroke-width="3"><path d="m5 12 4 4L19 7" stroke-linecap="round" stroke-linejoin="round" /></svg>
                               </span>
                             </div>
@@ -1751,7 +1748,7 @@ onBeforeUnmount(() => {
 
               <div class="mt-6 flex flex-col items-center">
                 <button
-                  class="group flex h-[50px] min-w-[410px] items-center justify-center gap-3 rounded-[12px] bg-[#005FFE] px-9 text-[16px] font-black text-white shadow-[0_18px_42px_rgba(0,95,254,0.26)] transition hover:bg-[#0054E0] disabled:cursor-not-allowed disabled:bg-[#005FFE]/65 disabled:shadow-none"
+                  class="group flex h-[50px] min-w-[410px] items-center justify-center gap-3 rounded-[12px] bg-[#4F46E5] px-9 text-[16px] font-black text-white shadow-[0_18px_42px_rgba(79,70,229,0.26)] transition hover:bg-[#0054E0] disabled:cursor-not-allowed disabled:bg-[#4F46E5]/65 disabled:shadow-none"
                   :disabled="entryPrimaryActionDisabled"
                   @click="handleEntryPrimaryAction"
                 >
@@ -1779,7 +1776,7 @@ onBeforeUnmount(() => {
               <section class="mx-auto mt-8 max-w-[1180px]">
                 <div class="mb-3 flex items-center justify-between">
                   <h2 class="text-[18px] font-black text-[#111827]">最近项目</h2>
-                  <NuxtLink to="/dashboard-projects" class="flex items-center gap-2 text-[14px] font-bold text-[#64748b] hover:text-[#005FFE]">
+                  <NuxtLink to="/dashboard-projects" class="flex items-center gap-2 text-[14px] font-bold text-[#64748b] hover:text-[#4F46E5]">
                     查看全部
                     <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2.5">
                       <path d="m9 18 6-6-6-6" stroke-linecap="round" stroke-linejoin="round" />
@@ -1803,7 +1800,7 @@ onBeforeUnmount(() => {
                       <div v-if="!project.coverImageUrl" class="grid h-full w-full place-items-center bg-white/10 text-white">
                         <svg viewBox="0 0 24 24" class="h-9 w-9 text-white" fill="currentColor">
                         <path d="M7 3.5h7l4 4V20a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 6 20V5A1.5 1.5 0 0 1 7.5 3.5Z" opacity=".92" />
-                        <path d="M14 3.5V8h4" fill="#bfdbfe" />
+                        <path d="M14 3.5V8h4" fill="#C7D2FE" />
                         </svg>
                       </div>
                     </div>
@@ -1818,7 +1815,7 @@ onBeforeUnmount(() => {
                           </div>
                         </div>
                         <button
-                          class="mt-0 rounded-full p-1 text-[#627798] opacity-90 transition hover:bg-[#eef5ff] hover:text-[#005FFE] group-hover:text-[#005FFE]"
+                          class="mt-0 rounded-full p-1 text-[#627798] opacity-90 transition hover:bg-[#eef5ff] hover:text-[#4F46E5] group-hover:text-[#4F46E5]"
                           type="button"
                           aria-label="项目操作"
                           :aria-expanded="activeProjectMenuId === project.id"
@@ -1833,7 +1830,7 @@ onBeforeUnmount(() => {
                       </div>
                       <div class="mt-4 flex items-center gap-3">
                         <div class="h-1.5 flex-1 overflow-hidden rounded-full bg-[#edf2f7]">
-                          <div class="h-full rounded-full bg-[#005FFE]" :style="{ width: `${recentProjectProgress(project)}%` }"></div>
+                          <div class="h-full rounded-full bg-[#4F46E5]" :style="{ width: `${recentProjectProgress(project)}%` }"></div>
                         </div>
                         <span class="text-[12px] font-bold text-[#64748b]">{{ recentProjectProgressLabel(project) }}</span>
                       </div>
@@ -1846,7 +1843,7 @@ onBeforeUnmount(() => {
                       @click.stop
                     >
                       <button
-                        class="flex h-9 w-full items-center gap-2 rounded-[10px] px-3 text-left text-[13px] font-bold text-[#334155] transition hover:bg-[#f3f7ff] hover:text-[#005FFE]"
+                        class="flex h-9 w-full items-center gap-2 rounded-[10px] px-3 text-left text-[13px] font-bold text-[#334155] transition hover:bg-[#f3f7ff] hover:text-[#4F46E5]"
                         type="button"
                         @click="openRecentProject(project)"
                       >
@@ -1886,6 +1883,7 @@ onBeforeUnmount(() => {
     <FeedbackDrawer :open="isFeedbackDrawerOpen" @close="isFeedbackDrawerOpen = false" @submitted="handleFeedbackSubmitted" />
     <AccountProfileDialog :open="isProfileDialogOpen" @close="isProfileDialogOpen = false" @updated="accountStore.refreshProfile()" />
     <AccountSecurityDialog :open="isAccountSecurityDialogOpen" @close="isAccountSecurityDialogOpen = false" />
+    <WatermarkPreferenceDialog :open="isWatermarkDialogOpen" @close="isWatermarkDialogOpen=false" />
 
     <div v-if="isEntryCostConfirmOpen" class="fixed inset-0 z-[140] flex items-center justify-center bg-[#0f172a]/48 px-4 backdrop-blur-sm" @click.self="isEntryCostConfirmOpen = false">
       <div class="w-full max-w-[520px] rounded-[24px] border border-borderSoft bg-white p-7 shadow-[0_30px_80px_rgba(15,23,42,0.24)]">
@@ -1894,11 +1892,11 @@ onBeforeUnmount(() => {
         <div class="mt-5 grid grid-cols-3 gap-3 rounded-[16px] bg-[#f5f8fd] p-4 text-center">
           <div><span class="block text-[12px] text-[#7b8aa3]">预计费用</span><strong class="mt-1 block text-[18px] text-[#111827]">{{ entryCreditPreview?.requiredCredits || 0 }}</strong></div>
           <div><span class="block text-[12px] text-[#7b8aa3]">当前余额</span><strong class="mt-1 block text-[18px] text-[#111827]">{{ entryCreditPreview?.currentBalance ?? currentCreditBalance }}</strong></div>
-          <div><span class="block text-[12px] text-[#7b8aa3]">扣后余额</span><strong class="mt-1 block text-[18px] text-[#005FFE]">{{ entryCreditPreview?.balanceAfter || 0 }}</strong></div>
+          <div><span class="block text-[12px] text-[#7b8aa3]">扣后余额</span><strong class="mt-1 block text-[18px] text-[#4F46E5]">{{ entryCreditPreview?.balanceAfter || 0 }}</strong></div>
         </div>
         <div class="mt-6 flex justify-end gap-3">
           <button class="rounded-[10px] border border-[#dfe7f2] px-5 py-2.5 text-[14px] font-bold text-[#64748b]" type="button" @click="isEntryCostConfirmOpen = false">取消</button>
-          <button class="rounded-[10px] bg-[#005FFE] px-6 py-2.5 text-[14px] font-black text-white" type="button" @click="confirmEntryCostAndStart">确认并开始解析</button>
+          <button class="rounded-[10px] bg-[#4F46E5] px-6 py-2.5 text-[14px] font-black text-white" type="button" @click="confirmEntryCostAndStart">确认并开始解析</button>
         </div>
       </div>
     </div>
@@ -1910,7 +1908,7 @@ onBeforeUnmount(() => {
         <p class="mt-2 text-[13px] text-[#16a34a]">已经完成的步骤和项目草稿均已保留，重试不会重复创建项目。</p>
         <div class="mt-6 flex flex-wrap justify-end gap-3">
           <button v-if="entryProjectId" class="rounded-[10px] border border-[#dfe7f2] px-5 py-2.5 text-[14px] font-bold text-[#64748b]" type="button" @click="openEntryProjectDraft">进入项目草稿</button>
-          <button class="rounded-[10px] bg-[#005FFE] px-6 py-2.5 text-[14px] font-black text-white" type="button" @click="continueEntryCreation">重试当前步骤</button>
+          <button class="rounded-[10px] bg-[#4F46E5] px-6 py-2.5 text-[14px] font-black text-white" type="button" @click="continueEntryCreation">重试当前步骤</button>
         </div>
       </div>
     </div>
@@ -1954,11 +1952,22 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+/* 账户菜单统一排版，消除历史工具类的字号/粗细差异及 SVG 与图标字体的尺寸差异。 */
+.dashboard-account-menu>button{font-family:var(--liv-font-menu)!important;font-size:14px!important;font-weight:500!important;line-height:20px!important;height:44px!important;padding:0 18px!important;gap:12px!important}
+.dashboard-account-menu>button svg,.dashboard-account-menu>button :deep(.iconify){width:18px!important;height:18px!important;flex:0 0 18px!important}
 .dashboard-shell {
+  /* 整个工作台固定在当前视口，首页只滚动右侧内容，侧栏不会随文档滚走露底。 */
+  height: 100dvh;
+  min-height: 0 !important;
+  overflow: hidden;
   background: #f5f9ff;
   color: #0f172a;
   transition: background var(--motion-normal), color var(--motion-normal);
 }
+.dashboard-frame{height:100%;min-height:0;overflow:hidden}
+.dashboard-main{display:flex;flex-direction:column;min-height:0;overflow:hidden}
+.dashboard-main>.dashboard-topbar{flex:none}
+.dashboard-main-content{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain}
 
 /* 紧凑密度针对 100% 浏览器缩放收紧固定尺寸，避免使用 zoom 导致弹层和可访问性失真。 */
 .dashboard-shell--compact :deep(.dashboard-topbar) {
@@ -1982,7 +1991,7 @@ onBeforeUnmount(() => {
 .dashboard-shell--dark,
 :global([data-theme='dark']) .dashboard-shell {
   background:
-    radial-gradient(circle at 52% 8%, rgba(0, 95, 254, 0.18), transparent 34%),
+    radial-gradient(circle at 52% 8%, rgba(79,70,229, 0.18), transparent 34%),
     linear-gradient(180deg, #08111f 0%, #060912 100%) !important;
   color: var(--color-text-main) !important;
 }
@@ -2055,13 +2064,13 @@ onBeforeUnmount(() => {
 
 .dashboard-shell--dark .dashboard-creation-option:hover,
 :global([data-theme='dark']) .dashboard-creation-option:hover {
-  background: rgba(0, 95, 254, 0.14) !important;
-  color: #dbeafe !important;
+  background: rgba(79,70,229, 0.14) !important;
+  color: #E0E7FF !important;
 }
 
 .dashboard-shell--dark .dashboard-creation-option--active,
 :global([data-theme='dark']) .dashboard-creation-option--active {
-  background: rgba(0, 95, 254, 0.22) !important;
+  background: rgba(79,70,229, 0.22) !important;
   color: #ffffff !important;
 }
 
@@ -2116,7 +2125,7 @@ onBeforeUnmount(() => {
 .dashboard-shell--dark .bg-\[\#edf5ff\],
 :global([data-theme='dark']) .dashboard-feature-card > div:first-child,
 :global([data-theme='dark']) .dashboard-shell .bg-\[\#edf5ff\] {
-  background: rgba(0, 95, 254, 0.16) !important;
+  background: rgba(79,70,229, 0.16) !important;
   color: #7db1ff !important;
 }
 

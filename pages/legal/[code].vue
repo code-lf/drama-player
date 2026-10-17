@@ -34,7 +34,7 @@ useHead({ title: '平台协议 - Livliv' })
         <NuxtLink to="/" class="inline-flex items-center gap-1 text-sm font-semibold text-blue-600 hover:text-blue-700">← 返回首页</NuxtLink>
       </header>
       <section class="px-6 py-8 sm:px-10 sm:py-10">
-      <p v-if="loading" class="mt-8">正在读取协议...</p>
+      <DashboardSkeleton v-if="loading" :rows="4" />
       <template v-else-if="document?.versions[0]">
         <h1 class="text-3xl font-black tracking-tight text-slate-950">{{ document.versions[0].title }}</h1>
         <p class="mt-2 text-sm text-slate-500">版本 {{ document.versions[0].version }} · 发布时间 {{ document.versions[0].publishedAt ? new Date(document.versions[0].publishedAt).toLocaleDateString('zh-CN') : '待生效' }}</p>

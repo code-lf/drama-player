@@ -1,8 +1,12 @@
 import type { ProductVideoCreatePayload } from '~/entities/product-video/types'
 import { callApi } from '~/shared/api/client'
+import {request} from '~/shared/api/adapters/httpAdapter'
+import type {ImageSafetyRepair} from '~/entities/product-image/types'
 
 /** 商品视频接口封装：页面只和语义化服务交互，不感知底层 REST 路径。 */
 export const productVideoService = {
+  /** 只生成审核建议，不提交视频任务；重复读取复用服务端持久化结果。 */
+  safetyRepair(taskId:string){return request<ImageSafetyRepair>(`/product-video/tasks/${taskId}/safety-repair`,{method:'POST'})},
   getHome() {
     return callApi('productVideo/home', (adapter) => adapter.getProductVideoHome())
   },

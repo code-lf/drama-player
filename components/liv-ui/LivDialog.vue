@@ -8,6 +8,12 @@ const props = withDefaults(defineProps<{
   width?: 'sm' | 'md' | 'lg' | 'xl' | 'full'
   closeLabel?: string
   flush?: boolean
+  /** 创作弹层独立深色，不修改账号页面和全局主题偏好。 */
+  dark?: boolean
+  /** 设置弹窗共用排版令牌；旧业务弹窗保持原布局。 */
+  settings?: boolean
+  /** 分区设置布局：左对齐标题和说明，底部并排操作，不影响普通设置弹窗。 */
+  sectioned?: boolean
 }>(), {
   description: '',
   width: 'md',
@@ -32,26 +38,26 @@ const contentClass = computed(() => ({
     :open="open"
     :title="title"
     :description="description"
-    :close="{ 'aria-label': closeLabel }"
+    :close="true"
     :ui="{
-      content: `${contentClass} rounded-lg ring-1 ring-default shadow-2xl`,
-      header: 'min-h-0 border-b border-default px-5 py-4 sm:px-6',
-      title: 'text-lg font-bold tracking-normal text-highlighted',
+      overlay: settings ? 'bg-black/70 backdrop-blur-sm' : undefined,
+      content: `${contentClass} liv-dialog-size-${width} ${dark ? 'creation-dark-dialog' : ''} ${settings ? 'liv-settings-dialog' : 'rounded-lg'} ${sectioned ? 'liv-settings-sectioned' : ''} ring-1 ring-default shadow-2xl`,
+      header: settings ? 'liv-settings-header min-h-0' : 'min-h-0 border-b border-default px-5 py-4 sm:px-6',
+      title: settings ? 'liv-settings-title' : 'text-lg font-bold tracking-normal text-highlighted',
       description: 'mt-1 text-sm leading-5 text-muted',
-      body: flush ? 'min-h-0 overflow-hidden p-0' : 'min-h-0 overflow-auto px-5 py-4 sm:px-6',
-      footer: 'justify-end gap-2 border-t border-default px-5 py-3 sm:px-6'
+      body: settings ? 'liv-settings-body min-h-0 overflow-auto' : flush ? 'min-h-0 overflow-hidden p-0' : 'min-h-0 overflow-auto px-5 py-4 sm:px-6',
+      footer: settings ? 'liv-settings-footer' : 'justify-end gap-2 border-t border-default px-5 py-3 sm:px-6'
     }"
     @update:open="emit('update:open', $event)"
   >
-    <template v-if="$slots.icon" #header="{ close }">
-      <div class="liv-dialog-header-copy">
-        <div class="liv-dialog-icon"><slot name="icon" /></div>
-        <div class="min-w-0 flex-1">
-          <h2 class="m-0 text-lg font-bold text-highlighted">{{ title }}</h2>
-          <p v-if="description" class="mt-1 text-sm leading-5 text-muted">{{ description }}</p>
-        </div>
-        <UButton icon="i-lucide-x" color="neutral" variant="ghost" square :aria-label="closeLabel" @click="close" />
-      </div>
+    <!-- 原生 aria-label 放在实际按钮上，避免当作 Nuxt UI 配置字段导致类型错误。 -->
+    <template #close><UButton icon="i-lucide-x" color="neutral" variant="ghost" square :class="{'liv-settings-close':settings}" :aria-label="closeLabel" /></template>
+    <!-- 图文标题放入组件库标题槽，保留 DialogTitle 的可访问名称与默认关闭行为。 -->
+    <template v-if="$slots.icon" #title>
+      <span class="liv-dialog-header-copy">
+        <span class="liv-dialog-icon"><slot name="icon" /></span>
+        <span class="min-w-0 flex-1">{{ title }}</span>
+      </span>
     </template>
     <template #body><slot /></template>
     <template v-if="$slots.footer" #footer><slot name="footer" /></template>

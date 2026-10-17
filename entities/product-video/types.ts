@@ -29,13 +29,15 @@ export interface ProductVideoResult {
 export interface ProductVideoTask {
   id: string
   template: ProductVideoTemplate | null
-  creationType: 'product' | 'model' | 'image_to_video' | 'reference_video' | 'reference_script' | 'digital_human'
+  creationType: 'product' | 'model' | 'image_to_video' | 'reference_video' | 'reference_script' | 'digital_human' | 'free' | 'ad' | 'story'
   prompt: string
   sourceImages: string[]
   status: 'queued' | 'running' | 'succeeded' | 'failed'
   progress: number
   currentStep: string
   errorMessage: string
+  errorCode?: string
+  safetyRepair?: import('~/entities/product-image/types').ImageSafetyRepair | null
   durationSec: number
   aspectRatio: string
   resolution: string
@@ -54,6 +56,7 @@ export interface ProductVideoHome {
 }
 
 export interface ProductVideoCreatePayload {
+  creationContext?: string
   libraryRefs?: import('~/entities/library/types').LibraryReference[]
   inputOrder?: string[]
   inputSnapshotId?: string

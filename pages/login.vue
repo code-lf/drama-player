@@ -11,6 +11,12 @@ import { supportService } from '~/shared/api/services/supportService'
 import { useAuthStore } from '~/features/auth/store/useAuthStore'
 import { useAccountStore } from '~/features/billing/store/useAccountStore'
 import { defaultWebsiteInfo, type LegalDocument, type WebsiteInfo } from '~/entities/support/types'
+import { request } from '~/shared/api/adapters/httpAdapter'
+
+// 弹窗与独立地址使用同一表单、校验和协议记录，避免维护两套认证实现。
+const props = defineProps<{ embedded?: boolean }>()
+const emit = defineEmits<{ authenticated: [] }>()
+const authCapabilities = ref({password:true,sms:false,registration:false})
 
 const router = useRouter()
 const route = useRoute()
@@ -219,7 +225,8 @@ async function submitAuth(): Promise<void> {
       console.warn('[livliv] 登录成功但账户资料刷新失败', profileError)
     }
 
-    await router.push(redirectPath.value)
+    if (props.embedded) emit('authenticated')
+    else await router.push(redirectPath.value)
   } catch (error) {
     errorMessage.value = getRequestErrorMessage(error, authMode.value === 'register'
       ? '注册失败，请检查账号、密码和验证码后重试。'
@@ -231,6 +238,7 @@ async function submitAuth(): Promise<void> {
 
 onMounted(async () => {
   authStore.hydrate()
+  try { authCapabilities.value = await request('/auth/capabilities') } catch { /* 配置异常时仅保留密码入口。 */ }
 
   try {
     // 登录页是公开页面，网站信息读取失败不能阻断正常登录。
@@ -262,7 +270,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <main class="login-page" :style="{ '--login-background-image': `url(${siteAsset('/login/login-bg.png')})` }">
+  <main class="login-page" :class="{'login-embedded':embedded}" :style="{ '--login-background-image': `url(${siteAsset('/login/login-bg.png')})` }">
     <section class="login-hero">
       <div class="hero-bg" />
       <div class="hero-vignette" />
@@ -331,6 +339,7 @@ onBeforeUnmount(() => {
             登录
           </button>
           <button
+            v-if="authCapabilities.registration"
             class="panel-tab"
             :class="{ active: authMode === 'register' }"
             type="button"
@@ -343,7 +352,7 @@ onBeforeUnmount(() => {
         <form class="login-form" @submit.prevent="submitAuth">
           <div v-if="authMode === 'login'" class="login-method-tabs">
             <button type="button" :class="{ active: loginMethod === 'password' }" @click="switchLoginMethod('password')">密码登录</button>
-            <button type="button" :class="{ active: loginMethod === 'sms' }" @click="switchLoginMethod('sms')">验证码登录</button>
+            <button v-if="authCapabilities.sms" type="button" :class="{ active: loginMethod === 'sms' }" @click="switchLoginMethod('sms')">验证码登录</button>
           </div>
           <label class="input-shell">
             <UserRound class="field-icon" />
@@ -385,29 +394,25 @@ onBeforeUnmount(() => {
           </div>
 
           <div class="form-options">
-            <label class="remember">
-              <input v-model="rememberMe" type="checkbox" />
-              <span>记住我</span>
-            </label>
+            <UCheckbox v-model="rememberMe" class="remember login-checkbox" size="sm" label="记住我"/>
           </div>
 
-          <label v-if="requiredLegalDocuments.length" class="legal-consent">
-            <input v-model="legalAccepted" type="checkbox" />
-            <span>我已阅读并同意</span>
+          <UCheckbox v-if="requiredLegalDocuments.length" v-model="legalAccepted" class="legal-consent login-checkbox" size="sm">
+            <template #label><span>我已阅读并同意
             <button
               v-for="document in requiredLegalDocuments"
               :key="document.code"
               type="button"
               @click.prevent="activeLegalDocument = document"
-            >《{{ document.versions[0]?.title }}》</button>
-          </label>
+            >《{{ document.versions[0]?.title }}》</button></span></template>
+          </UCheckbox>
 
           <button class="submit-button" type="submit" :disabled="!canSubmit">
             {{ loggingIn ? (authMode === 'register' ? '注册中...' : '登录中...') : (authMode === 'register' ? '注册并登录' : '登录') }}
           </button>
         </form>
 
-        <div class="panel-footer">
+        <div v-if="authCapabilities.registration" class="panel-footer">
           <span>{{ authMode === 'login' ? '还没有账号？' : '已有账号？' }}</span>
           <button type="button" @click="switchAuthMode(authMode === 'login' ? 'register' : 'login')">
             {{ authMode === 'login' ? '立即注册' : '返回登录' }}
@@ -416,7 +421,7 @@ onBeforeUnmount(() => {
       </aside>
 
       <Teleport to="body">
-        <div v-if="activeLegalDocument" class="legal-dialog-mask" @click.self="activeLegalDocument = null">
+        <div v-if="activeLegalDocument" class="legal-dialog-mask" :class="{'embedded-legal':embedded}" @click.self="activeLegalDocument = null">
           <section class="legal-dialog" role="dialog" aria-modal="true" :aria-label="activeLegalDocument.versions[0]?.title">
             <header>
               <strong>{{ activeLegalDocument.versions[0]?.title }}</strong>
@@ -835,11 +840,12 @@ onBeforeUnmount(() => {
   gap: 9px;
 }
 
-.remember input {
-  height: 18px;
-  width: 18px;
-  accent-color: #0b6bff;
-}
+/* 登录与协议共用 14px 勾选框，清除全局 button 的尺寸，文字标签仍保持可点击。 */
+.login-checkbox :deep([data-slot='base']){width:var(--liv-login-checkbox-size);height:var(--liv-login-checkbox-size);min-width:var(--liv-login-checkbox-size);min-height:var(--liv-login-checkbox-size);padding:0;flex:none;border-radius:3px}
+.login-checkbox :deep([data-slot='base'][data-state='checked']){background:var(--liv-ui-primary);border-color:var(--liv-ui-primary)}
+.login-checkbox :deep([data-slot='container']){display:flex;align-items:center;min-height:20px}
+.login-checkbox :deep([data-slot='icon']){width:12px;height:12px}
+.login-checkbox :deep([data-slot='label']){font-size:inherit;color:inherit;line-height:20px}
 
 .form-options button,
 .panel-footer button {
@@ -979,8 +985,8 @@ onBeforeUnmount(() => {
 
 .legal-consent {
   display: flex;
-  align-items: flex-start;
-  flex-wrap: wrap;
+  align-items: center;
+  flex-wrap: nowrap;
   gap: 4px;
   margin-top: 12px;
   color: #596982;
@@ -988,12 +994,7 @@ onBeforeUnmount(() => {
   line-height: 1.6;
 }
 
-.legal-consent input {
-  margin: 5px 4px 0 0;
-  accent-color: #1769ff;
-}
-
-.legal-consent button {
+.legal-consent button:not([role='checkbox']) {
   padding: 0;
   color: #1769ff;
   font: inherit;
@@ -1009,6 +1010,11 @@ onBeforeUnmount(() => {
   padding: 24px;
   background: rgba(3, 15, 38, .58);
 }
+
+/* 协议传送到 body 后不再属于登录弹窗 DOM，层级必须在自身作用域显式提高。 */
+.legal-dialog-mask.embedded-legal{z-index:650;background:#000b}
+.embedded-legal .legal-dialog{background:#202024;border-color:#3a3a40;color:#eee}
+.embedded-legal .legal-dialog p,.embedded-legal .legal-dialog article{color:#ccc}
 
 .legal-dialog {
   display: flex;

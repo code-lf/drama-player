@@ -45,6 +45,10 @@ export default defineNuxtConfig({
       // 浏览器标签页统一复用首页导航栏的 Livliv 品牌 Logo。
       // 查询参数用于刷新浏览器已经缓存的旧 favicon，避免修改后仍显示 Nuxt 默认图标。
       link: [
+        // 预加载本地字体，首页与工作台统一使用，无需访问第三方字体服务。
+        { rel: 'preload', as: 'font', type: 'font/woff2', href: '/fonts/GoogleSansFlex-Variable.woff2', crossorigin: 'anonymous' },
+        // 中文界面同样预加载真实中文字体，避免首屏长期显示系统字体。
+        { rel: 'preload', as: 'font', type: 'font/woff2', href: '/fonts/NotoSansSC-Variable.woff2', crossorigin: 'anonymous' },
         { rel: 'icon', type: 'image/jpeg', href: '/branding/livliv-logo.jpeg?v=20260815' },
         { rel: 'shortcut icon', type: 'image/jpeg', href: '/branding/livliv-logo.jpeg?v=20260815' },
         { rel: 'apple-touch-icon', href: '/branding/livliv-logo.jpeg?v=20260815' }
@@ -78,7 +82,7 @@ export default defineNuxtConfig({
   buildDir: nuxtBuildDir,
 
   // 全局样式：设计令牌、基础样式、Vue Flow 样式
-  css: ['~/assets/css/tokens.css', '~/assets/css/main.css', '@vue-flow/core/dist/style.css', '@vue-flow/core/dist/theme-default.css'],
+  css: ['~/assets/css/tokens.css', '~/assets/css/main.css', '~/assets/css/creation.css', '@vue-flow/core/dist/style.css', '@vue-flow/core/dist/theme-default.css'],
 
   // Nuxt UI 统一提供按钮、图标、下拉、徽章、弹窗、抽屉等基础交互；
   // 项目业务卡片仍保留 Livliv 自己的页面结构和视觉规范。
@@ -104,6 +108,8 @@ export default defineNuxtConfig({
   // 工作台依赖浏览器登录态，且内部 Tooltip/浮层需要 UApp 客户端上下文；关闭 SSR 可避免
   // 用户直接刷新商品图等页面时出现 Provider 尚未建立导致的 500。
   routeRules: {
+    // 匿名音乐分享不缓存页面和作品快照，关闭链接后刷新必须重新核验授权。
+    '/listen/**': { headers: { 'cache-control': 'no-store', 'x-robots-tag': 'noindex, nofollow', 'referrer-policy': 'no-referrer' } },
     '/studio/**': { ssr: false },
     '/dashboard': { ssr: false },
     '/dashboard-announcements': { ssr: false },
@@ -113,6 +119,7 @@ export default defineNuxtConfig({
     '/dashboard-help': { ssr: false },
     // 资料管理复用工作台登录态和站内浮层，同样只在浏览器端初始化。
     '/dashboard-library': { ssr: false },
+    '/dashboard-skills': { ssr: false },
     '/dashboard-product': { ssr: false },
     '/dashboard-product-video': { ssr: false },
     '/dashboard-projects': { ssr: false }

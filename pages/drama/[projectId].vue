@@ -333,7 +333,7 @@ const scriptProgressStages: Array<{ key: AnalysisStageKey; label: string }> = [
 ]
 const tagToneCatalog = [
   'border-[#ddd6fe] bg-[#f5f3ff] text-[#7c3aed]',
-  'border-[#bfdbfe] bg-[#eff6ff] text-[#2563eb]',
+  'border-[#C7D2FE] bg-[#EEF2FF] text-[#4F46E5]',
   'border-[#bbf7d0] bg-[#f0fdf4] text-[#16a34a]',
   'border-[#fde68a] bg-[#fffbeb] text-[#d97706]',
   'border-[#fecdd3] bg-[#fff1f2] text-[#e11d48]',
@@ -641,7 +641,7 @@ const resolutionOptions = computed<PageOption[]>(() => {
 const aspectRatioOptions = computed<PageOption[]>(() => fallbackAspectRatioCatalog)
 const videoProviderOptions = computed<PageOption[]>(() => [
   { label: '阿里引擎', value: 'alibaba', description: '当前默认参考生视频链路' },
-  { label: '字节引擎', value: 'huoshan', description: '视频备选供应商' }
+  { label: '字节引擎', value: 'huoshan', description: '视频备选引擎' }
 ])
 const roleCountSummary = computed(() => {
   const roles = projectDetail.value?.analysis.roles || []
@@ -3531,7 +3531,7 @@ function storyboardVideoStatusToneClass(status: string): string {
   if (status === 'success') return 'border-white/45 bg-[rgba(187,247,208,0.18)] text-[#166534] backdrop-blur-xl'
   if (status === 'failed') return 'border-white/35 bg-[rgba(239,68,68,0.16)] text-[#b91c1c] backdrop-blur-xl'
   if (status === 'running') return 'border-white/45 bg-[rgba(59,130,246,0.16)] text-[#1d4ed8] backdrop-blur-xl'
-  if (status === 'queued') return 'border-white/45 bg-[rgba(96,165,250,0.14)] text-[#2563eb] backdrop-blur-xl'
+  if (status === 'queued') return 'border-white/45 bg-[rgba(96,165,250,0.14)] text-[#4F46E5] backdrop-blur-xl'
   return 'border-borderSoft bg-panelSoft text-textMain backdrop-blur-xl'
 }
 
@@ -4671,7 +4671,7 @@ onBeforeUnmount(() => {
                 <span
                   v-for="item in storyboardTaskCard(storyboardAdvicePreviewRow).clipContract.mustKeep"
                   :key="`advice-must-${item}`"
-                  class="rounded-full border border-[#bfdbfe] bg-[#eff6ff] px-3 py-1 text-xs font-semibold text-[#2563eb]"
+                  class="rounded-full border border-[#C7D2FE] bg-[#EEF2FF] px-3 py-1 text-xs font-semibold text-[#4F46E5]"
                 >
                   {{ item }}
                 </span>
@@ -4717,7 +4717,7 @@ onBeforeUnmount(() => {
               <p
                 v-for="item in buildStoryboardAdvice(storyboardAdvicePreviewRow).userDecisionItems"
                 :key="`advice-decision-${item}`"
-                class="rounded-2xl border border-[#dbeafe] bg-[#eff6ff] px-3 py-2 text-sm leading-6 text-[#1d4ed8]"
+                class="rounded-2xl border border-[#E0E7FF] bg-[#EEF2FF] px-3 py-2 text-sm leading-6 text-[#1d4ed8]"
               >
                 {{ item }}
               </p>
@@ -4843,14 +4843,14 @@ onBeforeUnmount(() => {
 
           <div
             v-if="videoGenerationConfirm.userDecisionItems.length"
-            class="rounded-[22px] border border-[#bfdbfe] bg-[#eff6ff] px-4 py-4"
+            class="rounded-[22px] border border-[#C7D2FE] bg-[#EEF2FF] px-4 py-4"
           >
             <p class="text-sm font-semibold text-[#1d4ed8]">需要你确认的内容</p>
             <div class="mt-3 space-y-2">
               <p
                 v-for="item in videoGenerationConfirm.userDecisionItems"
                 :key="item"
-                class="rounded-2xl border border-[#dbeafe] bg-white/70 px-3 py-2 text-sm leading-6 text-[#1e40af]"
+                class="rounded-2xl border border-[#E0E7FF] bg-white/70 px-3 py-2 text-sm leading-6 text-[#1e40af]"
               >
                 {{ item }}
               </p>
@@ -4903,7 +4903,7 @@ onBeforeUnmount(() => {
         正在执行免费确定性扫描，不调用模型、不扣点…
       </div>
       <div v-else class="space-y-5">
-        <div class="rounded-xl border border-[#bfdbfe] bg-[#eff6ff] px-4 py-3 text-sm leading-6 text-[#1e40af]">
+        <div class="rounded-xl border border-[#C7D2FE] bg-[#EEF2FF] px-4 py-3 text-sm leading-6 text-[#1e40af]">
           这里只分析新旧剧本的文本差异。旧资产、图片、手工修改和分镜仍基于
           {{ productionStatus?.active_production_version?.source_script_version || '原版本' }} 完整保留；只有命中的项目会进入更新范围，未命中内容继续复用。
         </div>
@@ -4919,7 +4919,7 @@ onBeforeUnmount(() => {
               :key="version.id"
               type="button"
               class="rounded-xl border p-3 text-left transition"
-              :class="productionVersionContent?.version.id === version.id ? 'border-[#60a5fa] bg-[#eff6ff]' : 'border-borderSoft hover:border-[#93c5fd]'"
+              :class="productionVersionContent?.version.id === version.id ? 'border-[#818CF8] bg-[#EEF2FF]' : 'border-borderSoft hover:border-[#A5B4FC]'"
               @click="viewProductionVersionContent(version.id)"
             >
               <span class="flex items-center justify-between gap-3">
@@ -4927,7 +4927,8 @@ onBeforeUnmount(() => {
                 <span class="text-xs" :class="version.status === 'active' ? 'text-[#15803d]' : 'text-textMuted'">{{ version.status === 'active' ? '当前生产' : '历史保留' }}</span>
               </span>
               <span class="mt-1 block text-xs text-textMuted">来源剧本 {{ productionVersionLabel(version.source_script_version) }} · {{ version.resolution.toUpperCase() }} · {{ version.aspect_ratio }}</span>
-              <span class="mt-2 block text-xs font-medium text-[#2563eb]">{{ productionVersionContentBusy === version.id ? '正在读取…' : '查看对应资产与分镜' }}</span>
+              <span v-if="productionVersionContentBusy === version.id" class="mt-2 block h-3 w-36 animate-pulse rounded bg-panelSoft" aria-label="正在读取制作版本" />
+              <span v-else class="mt-2 block text-xs font-medium text-[#4F46E5]">查看对应资产与分镜</span>
             </button>
           </div>
 
@@ -5029,19 +5030,19 @@ onBeforeUnmount(() => {
               v-for="item in productionSyncActions"
               :key="item.action"
               type="button"
-              class="rounded-xl border border-borderSoft p-4 text-left transition hover:border-[#93c5fd] hover:bg-[#f8fbff]"
+              class="rounded-xl border border-borderSoft p-4 text-left transition hover:border-[#A5B4FC] hover:bg-[#f8fbff]"
               @click="quoteProductionSync(item.action)"
             >
               <span class="font-semibold">{{ item.label }}</span>
               <span class="mt-1 block text-xs leading-5 text-textMuted">{{ item.description }}</span>
-              <span class="mt-2 block text-xs font-medium text-[#2563eb]">
+              <span class="mt-2 block text-xs font-medium text-[#4F46E5]">
                 {{ productionQuoteBusy === item.action ? '正在估价…' : '查看数量、依赖和点数' }}
               </span>
             </button>
           </div>
         </section>
 
-        <section v-if="productionSyncQuote" class="rounded-xl border border-[#bfdbfe] bg-[#f8fbff] p-4">
+        <section v-if="productionSyncQuote" class="rounded-xl border border-[#C7D2FE] bg-[#f8fbff] p-4">
           <div class="flex flex-wrap items-start justify-between gap-3">
             <div>
               <h4 class="font-semibold">估价结果</h4>

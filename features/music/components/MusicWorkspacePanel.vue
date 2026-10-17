@@ -3,6 +3,8 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { musicService, type MusicOperation, type MusicQuote, type MusicTask } from '~/shared/api/services/musicService'
 import { libraryService } from '~/shared/api/services/libraryService'
 import type { LibraryItem } from '~/entities/library/types'
+const props = defineProps<{ sourceTaskId?: string; initialOperation?:string; sourceAudioIndex?:number; compact?:boolean }>()
+const emit = defineEmits<{ created: [task: MusicTask] }>()
 
 const operations = ref<MusicOperation[]>([])
 const tasks = ref<MusicTask[]>([])
@@ -61,7 +63,7 @@ const firstAdvancedIndex = computed(() => visibleFields.value.findIndex(([key]) 
 
 /** 切换歌词模式会丢弃另一模式的草稿字段，避免隐藏字段仍被提交计费。 */
 function setLyricsMode(custom: boolean): void {
-  const next = { ...values.value, custom }
+  const next: Record<string, string | boolean | number> = { ...values.value, custom }
   if (custom) {
     delete next.gpt_description
     delete next.auto_lyrics
@@ -74,7 +76,7 @@ function setLyricsMode(custom: boolean): void {
 
 function setInstrumental(enabled: boolean): void {
   if (enabled && values.value.custom) setLyricsMode(false)
-  const next = { ...values.value, instrumental: enabled }
+  const next: Record<string, string | boolean | number> = { ...values.value, instrumental: enabled }
   if (enabled) for (const key of ['persona_id', 'vocal_gender', 'auto_lyrics']) delete next[key]
   values.value = next
 }
@@ -109,7 +111,7 @@ function assetId(task: MusicTask, kind: 'persona_id' | 'custom_model_id' | 'voic
 
 function useVoiceAsset(task: MusicTask, kind: 'persona_id' | 'custom_model_id'): void {
   const id = assetId(task, kind)
-  if (!id) { error.value = '供应商结果尚未返回此音色资产编号。'; return }
+  if (!id) { error.value = '此音色暂不可用，请稍后重试。'; return }
   selectedGroup.value = '创作'
   const target = operations.value.find(item => item.operation === 'generation')
   if (target) chooseOperation(target)
@@ -138,6 +140,9 @@ function chooseOperation(item: MusicOperation): void {
   advancedOpen.value = false
   rightsConfirmed.value = false
   error.value = ''
+  // 从画布进入时固定当前歌曲与序号；切换操作也不能误用上一作品参数。
+  const source=tasks.value.find(value=>value.id===props.sourceTaskId)
+  if(source&&item.fields.task_id){values.value.task_id=source.provider_task_id;if(item.fields.audio_index)values.value.audio_index=props.sourceAudioIndex||0}
 }
 
 function chooseGroup(group: string): void {
@@ -245,6 +250,7 @@ async function submit(): Promise<void> {
     const task = await musicService.create(current.value.operation, normalizedInputs(), rightsConfirmed.value, requestId.value, quote.value)
     tasks.value = [task, ...tasks.value.filter(item => item.id !== task.id)]
     focusedTaskId.value = task.id
+    emit('created', task)
     quote.value = null
     requestId.value = ''
   } catch (cause) { error.value = message(cause) }
@@ -254,7 +260,8 @@ async function submit(): Promise<void> {
 function useTaskAsSource(task: MusicTask): void {
   // 从作品卡片进入最常见的翻唱/改造入口，避免在“生成歌曲”页设置了无效来源。
   selectedGroup.value = '改造'
-  const target = operations.value.find(item => item.operation === 'coverSong')
+  const target = operations.value.find(item => item.enabled && item.operation === (props.initialOperation || 'coverSong'))
+  if(target)selectedGroup.value=target.group
   if (target) chooseOperation(target)
   values.value = { ...values.value, task_id: task.provider_task_id }
   focusedTaskId.value = task.id
@@ -262,7 +269,7 @@ function useTaskAsSource(task: MusicTask): void {
 
 function useGeneratedLyrics(task: MusicTask): void {
   const lyrics = lyricText(task)
-  if (!lyrics) { error.value = '供应商结果没有返回可用歌词。'; return }
+  if (!lyrics) { error.value = '暂未取得可用歌词，请稍后重试。'; return }
   selectedGroup.value = '创作'
   const target = operations.value.find(item => item.operation === 'generation')
   if (target) chooseOperation(target)
@@ -300,6 +307,8 @@ onMounted(async () => {
   try { operations.value = await musicService.catalog() }
   catch (cause) { error.value = message(cause) }
   await refreshTasks()
+  const source = tasks.value.find(item => item.id === props.sourceTaskId)
+  if (source) useTaskAsSource(source)
   await refreshAudioLibrary()
   // 仅查询本账号已有任务，不触发任何供应商收费调用。
   // 主歌曲完成后仍需等待内含歌词时间轴，持续刷新曲目状态供用户看到生成进度。
@@ -310,8 +319,8 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
 </script>
 
 <template>
-  <div class="mx-auto max-w-[1560px] pb-16 text-[#14223b]">
-    <div class="mb-7 flex flex-wrap items-end justify-between gap-5">
+  <div class="mx-auto max-w-[1560px] pb-16 text-[#14223b]" :class="{'music-workspace-compact':compact}">
+    <div v-if="!compact" class="mb-7 flex flex-wrap items-end justify-between gap-5">
       <div>
         <p class="mb-2 text-xs font-bold tracking-[.2em] text-[#3a77fa]">LIVLIV · MUSIC STUDIO</p>
         <h1 class="text-[32px] font-black tracking-tight">AI 音乐生成</h1>
@@ -330,7 +339,7 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
         @click="chooseGroup(group)">{{ group }}</button>
     </div>
 
-    <div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(380px,.88fr)]">
+    <div class="grid gap-6" :class="compact?'grid-cols-1':'xl:grid-cols-[minmax(0,1fr)_minmax(380px,.88fr)]'">
       <section class="rounded-[22px] border border-[#dce6f4] bg-white p-6 shadow-[0_20px_55px_rgba(31,70,134,.06)]">
         <div class="mb-5 flex items-center justify-between gap-4">
           <div><p class="text-lg font-black">{{ selectedGroup }}工作台</p><p class="mt-1 text-xs text-[#7384a0]">选择操作，填写内容，再确认本次点数</p></div>
@@ -359,13 +368,13 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
             <label class="mb-1.5 block text-sm font-bold text-[#273b5b]" :for="`music-${key}`">{{ field.label }}<span v-if="field.required" class="ml-1 text-rose-500">*</span></label>
             <label v-if="field.kind === 'boolean'" class="flex items-center gap-2 text-sm text-[#5a6b84]"><input :id="`music-${key}`" v-model="values[key]" type="checkbox" class="h-4 w-4 accent-[#075dff]"> 开启</label>
             <div v-else-if="field.kind === 'reference' || field.kind === 'references'" class="rounded-xl border border-[#d9e4f4] bg-[#f8faff] p-3">
-              <select v-if="field.kind === 'reference'" :id="`music-${key}`" class="w-full rounded-lg border border-[#d9e4f4] bg-white px-3 py-2 text-sm" :disabled="!libraryReady" @change="selectAudioReference(key, ($event.target as HTMLSelectElement).value)">
+              <LivSelect v-if="field.kind === 'reference'" :id="`music-${key}`" class="w-full rounded-lg border border-[#d9e4f4] bg-white px-3 py-2 text-sm" :disabled="!libraryReady" @change="selectAudioReference(key, ($event.target as HTMLSelectElement).value)">
                 <option value="">{{ libraryReady ? '从个人资料选择固定音频版本' : '资料库尚未开放，可填写公网音频 URL' }}</option>
                 <option v-for="item in audioLibrary" :key="item.id" :value="`${item.id}:${latestVersion(item)?.id}`">{{ item.name }} · v{{ latestVersion(item)?.version_no }}</option>
-              </select>
-              <select v-else :id="`music-${key}`" multiple size="5" class="w-full rounded-lg border border-[#d9e4f4] bg-white px-3 py-2 text-sm" :disabled="!libraryReady" @change="selectAudioReferences(key, $event)">
+              </LivSelect>
+              <LivSelect v-else :id="`music-${key}`" multiple size="5" class="w-full rounded-lg border border-[#d9e4f4] bg-white px-3 py-2 text-sm" :disabled="!libraryReady" @change="selectAudioReferences(key, $event)">
                 <option v-for="item in audioLibrary" :key="item.id" :value="`${item.id}:${latestVersion(item)?.id}`">{{ item.name }} · v{{ latestVersion(item)?.version_no }}</option>
-              </select>
+              </LivSelect>
               <div class="mt-2 flex items-center justify-between gap-2 text-xs text-[#71819b]"><span>{{ field.kind === 'references' ? '可按 Ctrl 多选，或逐个上传音频' : '引用固定版本，不自动跟随素材更新' }}</span><label v-if="libraryReady" class="cursor-pointer font-bold text-[#075dff]">{{ uploadingAudio ? '上传中…' : '上传音频到个人资料' }}<input type="file" accept="audio/mpeg,audio/mp3,audio/wav,audio/mp4,audio/ogg" class="hidden" :disabled="uploadingAudio" @change="uploadAudio($event, key)"></label></div>
               <p v-if="values[key]" class="mt-2 break-all text-[11px] text-[#5c78a4]">已选 {{ field.kind === 'references' ? JSON.parse(String(values[key] || '[]')).length + ' 条音频' : '1 条音频' }}</p>
             </div>
@@ -375,14 +384,14 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
               <p v-if="!songTasks.length" class="text-xs text-[#8391a5]">还没有可用歌曲，请先生成一首。</p>
               <span class="text-xs text-[#6a7d9b]">已选 {{ selectedSongIds().length }} / 2 首</span>
             </div>
-            <select v-else-if="field.kind === 'select' || key === 'task_id' || key === 'persona_id' || key === 'custom_model_id'" :id="`music-${key}`" v-model="values[key]" class="w-full rounded-xl border border-[#d9e4f4] bg-white px-3 py-2.5 text-sm outline-none focus:border-[#4586ff]" @change="key === 'persona_id' || key === 'custom_model_id' ? handleVoiceSelection(key) : undefined">
+            <LivSelect v-else-if="field.kind === 'select' || key === 'task_id' || key === 'persona_id' || key === 'custom_model_id'" :id="`music-${key}`" v-model="values[key]" class="w-full rounded-xl border border-[#d9e4f4] bg-white px-3 py-2.5 text-sm outline-none focus:border-[#4586ff]" @change="key === 'persona_id' || key === 'custom_model_id' ? handleVoiceSelection(key) : undefined">
               <option value="">{{ key === 'task_id' ? '选择我的一首作品' : key === 'persona_id' ? '使用默认歌手（可选）' : key === 'custom_model_id' ? '不使用训练模型（可选）' : `请选择${field.label}` }}</option>
               <template v-if="key === 'task_id'"><option v-for="task in sourceTaskOptions" :key="task.id" :value="task.provider_task_id">{{ task.operation === 'uploadTask' ? '已登记音频' : songLabel(task) }} · {{ new Date(task.created_at).toLocaleDateString() }}</option></template>
               <template v-else-if="key === 'persona_id'"><option v-for="task in personaTasks" :key="task.id" :value="assetId(task, 'persona_id')">{{ assetLabel(task) }}</option></template>
               <template v-else-if="key === 'custom_model_id'"><option v-for="task in modelTasks" :key="task.id" :value="assetId(task, 'custom_model_id')">{{ assetLabel(task) }}</option></template>
               <template v-else><option v-for="choice in field.options || []" :key="choice" :value="choice">{{ choice === 'm' ? '男声' : choice === 'f' ? '女声' : choice }}</option></template>
-            </select>
-            <select v-else-if="key === 'audio_index'" :id="`music-${key}`" v-model="values[key]" class="w-full rounded-xl border border-[#d9e4f4] bg-white px-3 py-2.5 text-sm"><option value="">默认第一首</option><option :value="0">第一首</option><option :value="1">第二首</option></select>
+            </LivSelect>
+            <LivSelect v-else-if="key === 'audio_index'" :id="`music-${key}`" v-model="values[key]" class="w-full rounded-xl border border-[#d9e4f4] bg-white px-3 py-2.5 text-sm"><option value="">默认第一首</option><option :value="0">第一首</option><option :value="1">第二首</option></LivSelect>
             <textarea v-else-if="['textarea', 'urls', 'lines', 'integers'].includes(field.kind)" :id="`music-${key}`" v-model="values[key]" :rows="key === 'prompt' ? 6 : 3" :placeholder="key === 'gpt_description' ? '例如：一首温暖的中文流行歌，女声演唱，适合雨夜回家时听' : key === 'prompt' && current.operation === 'generation' ? '粘贴歌词，可用 [Verse]、[Chorus] 标注段落' : field.kind === 'urls' || field.kind === 'lines' ? '每行输入一条' : `请输入${field.label}`" class="w-full resize-y rounded-xl border border-[#d9e4f4] bg-white px-3 py-2.5 text-sm leading-6 outline-none focus:border-[#4586ff]" />
             <input v-else :id="`music-${key}`" v-model="values[key]" :type="field.kind === 'number' || field.kind === 'integer' ? 'number' : 'text'" :step="field.kind === 'integer' ? 1 : 'any'" class="w-full rounded-xl border border-[#d9e4f4] bg-white px-3 py-2.5 text-sm outline-none focus:border-[#4586ff]" :placeholder="`请输入${field.label}`">
             <p v-if="key === 'persona_id' && !personaTasks.length" class="mt-1 text-xs text-[#8391a5]">还没有人声角色，可在“声音资产”中从已有歌曲创建。</p>
@@ -398,18 +407,18 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
         </div>
       </section>
 
-      <section class="rounded-[22px] border border-[#dce6f4] bg-white p-6 shadow-[0_20px_55px_rgba(31,70,134,.06)]">
+      <section v-if="!compact" class="rounded-[22px] border border-[#dce6f4] bg-white p-6 shadow-[0_20px_55px_rgba(31,70,134,.06)]">
         <div class="mb-4 flex items-center justify-between"><div><p class="text-lg font-black">我的音乐作品</p><p class="mt-1 text-xs text-[#7384a0]">任务真实进度与可试听结果</p></div><button type="button" class="text-xs font-bold text-[#075dff]" @click="refreshTasks">刷新</button></div>
         <div v-if="!tasks.length" class="grid min-h-[360px] place-content-center rounded-2xl bg-[#f5f8fe] text-center"><div class="mb-3 text-4xl">♫</div><p class="font-bold">还没有音乐作品</p><p class="mt-1 text-xs text-[#8290a8]">从左侧选择创作操作开始</p></div>
         <template v-else>
-          <div class="mb-4 flex max-h-[180px] gap-2 overflow-x-auto pb-2"><button v-for="task in tasks" :key="task.id" type="button" class="min-w-[150px] rounded-xl border p-3 text-left text-xs" :class="activeTask?.id === task.id ? 'border-[#3f7cff] bg-[#eff5ff]' : 'border-[#e1e8f3]'" @click="focusedTaskId = task.id"><b class="block truncate">{{ task.label }}</b><span class="mt-1 block text-[#70819a]">{{ task.status === 'completed' ? '已完成' : task.status === 'failed' ? '失败已退款' : task.status === 'needs_review' ? '待人工核对' : `${task.progress}% · ${task.status}` }}</span></button></div>
+          <div class="mb-4 flex max-h-[180px] gap-2 overflow-x-auto pb-2"><button v-for="task in tasks" :key="task.id" type="button" class="min-w-[150px] rounded-xl border p-3 text-left text-xs" :class="activeTask?.id === task.id ? 'border-[#3f7cff] bg-[#eff5ff]' : 'border-[#e1e8f3]'" @click="focusedTaskId = task.id"><b class="block truncate">{{ task.label }}</b><span class="mt-1 block text-[#70819a]">{{ task.status === 'completed' ? '已完成' : task.status === 'failed' ? task.refunded ? '失败已退款' : '生成失败' : task.status === 'needs_review' ? '待人工核对' : `${task.progress}% · ${task.status}` }}</span></button></div>
           <div v-if="activeTask" class="rounded-2xl border border-[#e1e9f5] p-5">
             <div class="flex items-center justify-between gap-2"><b>{{ activeTask.label }}</b><span class="text-xs text-[#64748b]">{{ activeTask.retail_credits }} 点</span></div>
             <p class="mt-1 text-xs text-[#8593a8]">{{ new Date(activeTask.created_at).toLocaleString() }} · {{ activeTask.status === 'completed' ? '作品已完成' : activeTask.status === 'failed' ? '生成失败' : activeTask.status === 'needs_review' ? '等待平台核对' : '任务处理中' }}</p>
             <div class="mt-4 h-2 overflow-hidden rounded-full bg-[#e8eef9]"><div class="h-full rounded-full bg-[#1b6bff] transition-all" :style="{ width: `${activeTask.progress}%` }" /></div>
             <p v-if="activeTask.error_message" class="mt-3 rounded-lg bg-rose-50 p-3 text-xs text-rose-700">{{ activeTask.error_message }}</p>
             <!-- 失败状态在后端与退款流水同一事务提交，原因和退点分开显示，避免让用户猜测账单状态。 -->
-            <p v-if="activeTask.status === 'failed'" class="mt-3 rounded-lg bg-emerald-50 p-3 text-xs font-bold text-emerald-700">{{ activeTask.retail_credits }} 点积分已返回账户</p>
+            <p v-if="activeTask.status === 'failed' && activeTask.refunded" class="mt-3 rounded-lg bg-emerald-50 p-3 text-xs font-bold text-emerald-700">{{ activeTask.retail_credits }} 点积分已返回账户</p>
             <template v-if="activeTask.status === 'completed'">
               <div v-for="(song, index) in (Array.isArray(activeTask.result.music) ? activeTask.result.music : [])" :key="index" class="mt-4 rounded-xl bg-[#f5f8fe] p-4">
                 <p class="mb-2 text-sm font-bold">{{ song.title || `候选曲目 ${index + 1}` }}</p>
@@ -437,7 +446,7 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
     </div>
 
     <div v-if="quote" class="fixed inset-0 z-[350] grid place-items-center bg-[#12213d]/50 px-4" role="dialog" aria-modal="true" aria-label="确认音乐费用">
-      <div class="w-full max-w-[450px] rounded-[22px] bg-white p-6 shadow-2xl"><h2 class="text-xl font-black">确认音乐创作</h2><p class="mt-2 text-sm leading-6 text-[#5c6d87]">{{ quote.label }}本次预计扣除 <b class="text-[#075dff]">{{ quote.retail_credits }} 点</b>。提交后将创建任务；若供应商明确失败，会按任务账单退回点数。</p><p class="mt-3 text-xs text-[#8b99ad]">Max 模式按基础价格的 2 倍计算；实际扣点以本次确认的报价为准。</p><div class="mt-6 flex justify-end gap-2"><button type="button" class="rounded-xl border px-4 py-2 text-sm" @click="quote = null">返回修改</button><button type="button" :disabled="busy" class="rounded-xl bg-[#075dff] px-5 py-2 text-sm font-bold text-white disabled:opacity-50" @click="submit">{{ busy ? '提交中…' : '确认并生成' }}</button></div></div>
+      <div class="w-full max-w-[450px] rounded-[22px] bg-white p-6 shadow-2xl"><h2 class="text-xl font-black">确认音乐创作</h2><p class="mt-2 text-sm leading-6 text-[#5c6d87]">{{ quote.label }}本次预计扣除 <b class="text-[#075dff]">{{ quote.retail_credits }} 点</b>。提交后将创建任务；若任务生成失败，会按任务账单退回点数。</p><p class="mt-3 text-xs text-[#8b99ad]">Max 模式按基础价格的 2 倍计算；实际扣点以本次确认的报价为准。</p><div class="mt-6 flex justify-end gap-2"><button type="button" class="rounded-xl border px-4 py-2 text-sm" @click="quote = null">返回修改</button><button type="button" :disabled="busy" class="rounded-xl bg-[#075dff] px-5 py-2 text-sm font-bold text-white disabled:opacity-50" @click="submit">{{ busy ? '提交中…' : '确认并生成' }}</button></div></div>
     </div>
   </div>
 </template>

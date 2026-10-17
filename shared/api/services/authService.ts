@@ -1,4 +1,5 @@
 import { callApi } from '~/shared/api/client'
+import type { AuthSession } from '~/entities/auth/types'
 
 export const authService = {
   async fetchWechatTicket() {
@@ -11,18 +12,18 @@ export const authService = {
   },
 
   async accountLogin(account: string, password: string, acceptedDocumentCodes: string[] = []) {
-    return callApi('auth/accountLogin', (adapter: any) => adapter.accountLogin(account, password, acceptedDocumentCodes))
+    return callApi<AuthSession>('auth/accountLogin', (adapter: any) => adapter.accountLogin(account, password, acceptedDocumentCodes))
   },
 
   async accountRegister(payload: { account: string; password: string; code: string; nickname?: string; acceptedDocumentCodes?: string[] }) {
-    return callApi('auth/accountRegister', (adapter: any) => adapter.accountRegister(payload))
+    return callApi<AuthSession>('auth/accountRegister', (adapter: any) => adapter.accountRegister(payload))
   },
 
   async sendSmsCode(phone: string, purpose: 'login' | 'register' = 'register') {
-    return callApi('auth/sendSmsCode', (adapter: any) => adapter.sendSmsCode(phone, purpose))
+    return callApi<{message:string;retryAfterSeconds:number}>('auth/sendSmsCode', (adapter: any) => adapter.sendSmsCode(phone, purpose))
   },
 
   async phoneLogin(phone: string, code: string, acceptedDocumentCodes: string[] = []) {
-    return callApi('auth/phoneLogin', (adapter: any) => adapter.phoneLogin(phone, code, acceptedDocumentCodes))
+    return callApi<AuthSession>('auth/phoneLogin', (adapter: any) => adapter.phoneLogin(phone, code, acceptedDocumentCodes))
   }
 }

@@ -1,4 +1,4 @@
-import type { FeedbackSubmitPayload } from '~/entities/support/types'
+import type { FeedbackSubmitPayload, LegalDocument } from '~/entities/support/types'
 import { callApi } from '~/shared/api/client'
 
 /** 用户支持中心接口统一封装，页面层不感知 HTTP 与 Mock 的差异。 */
@@ -16,7 +16,7 @@ export const supportService = {
   },
 
   async getLegalDocuments() {
-    return callApi('support/legalDocuments', (adapter: any) => adapter.getLegalDocuments())
+    return callApi<LegalDocument[]>('support/legalDocuments', (adapter: any) => adapter.getLegalDocuments())
   },
 
   async getLegalAcceptanceStatus() {

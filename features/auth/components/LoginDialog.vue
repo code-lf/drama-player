@@ -1,102 +1,13 @@
 <script setup lang="ts">
-import { authService } from '~/shared/api/services/authService'
-import { useAccountStore } from '~/features/billing/store/useAccountStore'
-import { useAuthStore } from '~/features/auth/store/useAuthStore'
-
-interface Props {
-  modelValue: boolean
-}
-
-const props = defineProps<Props>()
-
-const emit = defineEmits<{
-  'update:modelValue': [value: boolean]
-}>()
-
-const authStore = useAuthStore()
-const accountStore = useAccountStore()
-const account = ref('')
-const password = ref('')
-const loggingIn = ref(false)
-const errorMessage = ref('')
-
-const opened = computed({
-  get: () => props.modelValue,
-  set: (value: boolean) => emit('update:modelValue', value)
-})
-
-function closeDialog(): void {
-  opened.value = false
-}
-
-async function submitLogin(): Promise<void> {
-  if (!account.value.trim() || !password.value.trim() || loggingIn.value) return
-
-  loggingIn.value = true
-  errorMessage.value = ''
-
-  try {
-    // 弹窗登录和独立登录页共用账号密码接口，避免验证码入口重新混入用户端。
-    const session = await authService.accountLogin(account.value.trim(), password.value.trim())
-    authStore.applySession(session)
-    await accountStore.refreshProfile()
-    closeDialog()
-  } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '登录失败，请检查账号和密码'
-  } finally {
-    loggingIn.value = false
-  }
-}
+import LoginPage from '~/pages/login.vue'
+defineProps<{modelValue:boolean}>()
+const emit=defineEmits<{'update:modelValue':[value:boolean];authenticated:[]}>()
+const { loginDestination } = useWorkbenchAuth()
+const close=()=>{loginDestination.value='';emit('update:modelValue',false)}
+/** 关闭不修改草稿；成功只恢复登录态，任何收费行为仍需用户重新点击。 */
+function authenticated(){const destination=loginDestination.value;close();emit('authenticated');if(destination)void navigateTo(destination)}
 </script>
-
-<template>
-  <Transition name="fade">
-    <div v-if="opened" class="fixed inset-0 z-50 flex items-center justify-center bg-black/65 px-4" @click.self="closeDialog">
-      <section class="panel-glass relative w-full max-w-[420px] overflow-hidden rounded-[24px] border border-neon/25 p-8">
-        <div class="mb-7 text-center">
-          <h3 class="text-2xl font-bold tracking-wider text-slate-900 dark:text-white">Livliv AI</h3>
-          <p class="mt-2 text-sm text-slate-500 dark:text-textMuted">登录以同步项目、保存画布及使用完整链路</p>
-        </div>
-
-        <form class="space-y-5" @submit.prevent="submitLogin">
-          <input
-            v-model="account"
-            type="text"
-            autocomplete="username"
-            placeholder="账号"
-            class="w-full rounded-xl border border-slate-300 bg-white/60 px-4 py-3 text-sm text-slate-900 outline-none transition-all placeholder:text-slate-400 focus:border-neon focus:ring-1 focus:ring-neon/50 dark:border-borderSoft dark:bg-black/40 dark:text-white dark:placeholder-textMuted"
-          />
-          <input
-            v-model="password"
-            type="password"
-            autocomplete="current-password"
-            placeholder="密码"
-            class="w-full rounded-xl border border-slate-300 bg-white/60 px-4 py-3 text-sm text-slate-900 outline-none transition-all placeholder:text-slate-400 focus:border-neon focus:ring-1 focus:ring-neon/50 dark:border-borderSoft dark:bg-black/40 dark:text-white dark:placeholder-textMuted"
-          />
-          <p v-if="errorMessage" class="rounded-xl bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-600">
-            {{ errorMessage }}
-          </p>
-          <button
-            class="w-full rounded-xl bg-neon px-4 py-3 text-sm font-bold text-white transition-all hover:bg-neon/90 disabled:cursor-not-allowed disabled:opacity-70 dark:text-slate-900"
-            type="submit"
-            :disabled="loggingIn || !account || !password"
-          >
-            {{ loggingIn ? '登录中...' : '登录' }}
-          </button>
-        </form>
-      </section>
-    </div>
-  </Transition>
-</template>
-
+<template><Teleport to="body"><div v-if="modelValue" class="workbench-login-mask" @click.self="close" @keydown.esc="close"><section role="dialog" aria-modal="true" aria-label="登录 Livliv"><button class="login-close" aria-label="关闭登录" @click="close">×</button><header><h2>登录 Livliv</h2><p>同步项目、管理素材，继续你的创作。</p></header><LoginPage embedded @authenticated="authenticated"/></section></div></Teleport></template>
 <style scoped>
-.fade-enter-active,
-.fade-leave-active {
-  transition: opacity var(--motion-fast) ease;
-}
-
-.fade-enter-from,
-.fade-leave-to {
-  opacity: 0;
-}
+.workbench-login-mask{position:fixed;inset:0;background:#0009;backdrop-filter:blur(5px);z-index:600;display:grid;place-items:center;padding:20px}.workbench-login-mask>section{position:relative;background:#19191c;border:1px solid #36363b;border-radius:22px;width:min(470px,100%);max-height:90vh;overflow:auto;color:#eee;padding:28px}.login-close{position:absolute;right:16px;top:12px;color:#aaa;font-size:24px;background:none;border:0}.workbench-login-mask header h2{font-size:22px;font-weight:650}.workbench-login-mask header p{font-size:13px;color:#aaa;margin:8px 0 20px}.workbench-login-mask :deep(.login-embedded){min-height:0!important;background:none!important;padding:0!important;--login-form-text-size:14px;--login-form-title-size:18px}.workbench-login-mask :deep(.login-hero){display:block!important;min-height:0!important;padding:0!important;background:none!important}.workbench-login-mask :deep(.hero-content),.workbench-login-mask :deep(.hero-bg),.workbench-login-mask :deep(.hero-vignette),.workbench-login-mask :deep(.qr-corner){display:none!important}.workbench-login-mask :deep(.login-panel){position:static!important;transform:none!important;width:100%!important;max-width:none!important;margin:0!important;padding:0!important;background:none!important;border:0!important;box-shadow:none!important}.workbench-login-mask :deep(.input-shell){background:#27272b;border-color:#3a3a40;color:#eee;height:46px}.workbench-login-mask :deep(input){color:#eee}.workbench-login-mask :deep(.submit-button){background:var(--liv-accent,#4F46E5);color:#fff;height:44px}.workbench-login-mask :deep(.panel-tab),.workbench-login-mask :deep(.login-method-tabs button){color:#bbb}.workbench-login-mask :deep(.panel-tab.active){color:#fff}.workbench-login-mask :deep(.legal-dialog-mask){z-index:650}.workbench-login-mask :deep(.legal-consent){color:#bbb}
 </style>

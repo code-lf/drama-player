@@ -44,7 +44,7 @@ const menuItems = computed(() => props.items.map(item => ({
       sideOffset: 6,
       collisionPadding: 12
     }"
-    :ui="{ content: 'rounded-md p-1.5 shadow-xl', item: 'rounded-md text-sm' }"
+    :ui="{ content: 'rounded-2xl p-1.5 shadow-xl bg-[#25262b] ring-[#414249]', item: 'rounded-lg text-sm' }"
   >
     <UButton
       type="button"

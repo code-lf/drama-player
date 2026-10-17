@@ -4,7 +4,7 @@ import type { LibraryItem, LibraryReference, LibraryVersion } from '~/entities/l
 import { libraryService } from '~/shared/api/services/libraryService'
 import { request } from '~/shared/api/adapters/httpAdapter'
 
-const props = defineProps<{ open: boolean; kind: 'image' | 'video' | 'drama'; model?: string; remaining: number; mediaType?: string; analysisOnly?: boolean; documentRemaining?: number; initialCategory?: string }>()
+const props = defineProps<{ open: boolean; kind: 'image' | 'video' | 'drama'; model?: string; remaining: number; mediaType?: string; analysisOnly?: boolean; documentRemaining?: number; initialCategory?: string; dark?: boolean }>()
 const emit = defineEmits<{ 'update:open': [value: boolean]; select: [values: Array<{ item: LibraryItem; version: LibraryVersion; reference: LibraryReference }>] }>()
 const scope = ref('personal'), category = ref(''), query = ref(''), page = ref(1)
 const mediaFilter = ref('')
@@ -97,22 +97,27 @@ watch([scope, category, mediaFilter], () => { page.value = 1; if (props.open) vo
 </script>
 
 <template>
-  <LivDialog :open="open" title="从资料库选择" description="固定使用所选版本；更新资料不会改变已生成作品。" width="xl" @update:open="emit('update:open', $event)">
+  <LivDialog :open="open" :dark="dark" title="从资料库选择" description="固定使用所选版本；更新资料不会改变已生成作品。" width="xl" @update:open="emit('update:open', $event)">
+    <!-- 常用用途直接提供图标入口，完整类别筛选仍保留，避免隐藏现有资料类型。 -->
+    <div v-if="dark && !documentDraft" class="creation-library-categories">
+      <button :class="{ active: !category }" @click="category = ''"><UIcon name="i-lucide-layout-grid" />全部</button>
+      <button v-for="item in categories.filter(item => ['角色', '场景', '道具', '商品'].includes(item.name))" :key="item.code" :class="{ active: category === item.code }" @click="category = item.code"><UIcon :name="item.name === '角色' ? 'i-lucide-user-round' : item.name === '场景' ? 'i-lucide-mountain' : 'i-lucide-box'" />{{ item.name }}</button>
+    </div>
     <div v-if="!documentDraft" class="flex flex-wrap gap-2 mb-4">
       <button v-for="tab in [{ code: 'personal', name: '个人资料' }, { code: 'public', name: '平台素材' }]" :key="tab.code" class="border rounded px-3 py-2" :class="scope === tab.code ? 'text-blue-600 bg-blue-50' : ''" @click="scope = tab.code">{{ tab.name }}</button>
-      <select v-model="category" class="border rounded p-2"><option value="">全部用途</option><option v-for="entry in categories" :key="entry.code" :value="entry.code">{{ entry.name }}</option></select>
-      <select v-if="!mediaType" v-model="mediaFilter" aria-label="文件类型" class="border rounded p-2"><option value="">全部类型</option><option value="image">图片</option><option value="video">视频</option><option value="audio">音频</option><option value="document">文档</option></select>
+      <LivSelect v-model="category" class="border rounded p-2"><option value="">全部用途</option><option v-for="entry in categories" :key="entry.code" :value="entry.code">{{ entry.name }}</option></LivSelect>
+      <LivSelect v-if="!mediaType" v-model="mediaFilter" aria-label="文件类型" class="border rounded p-2"><option value="">全部类型</option><option value="image">图片</option><option value="video">视频</option><option value="audio">音频</option><option value="document">文档</option></LivSelect>
       <input v-model="query" class="border rounded p-2" placeholder="搜索名称或文档" @keyup.enter="load"><button @click="load">搜索</button>
     </div>
     <p v-if="error" role="alert" class="text-red-600">{{ error }}</p>
-    <p v-if="loading">读取中…</p>
+    <DashboardSkeleton v-if="loading" variant="cards" :rows="3" />
     <p v-else-if="!documentDraft && !entries.length" class="rounded-lg bg-slate-50 p-8 text-center text-sm text-slate-500">{{ scope === 'personal' ? '当前筛选下没有个人资料，可先上传或更换筛选条件。' : '当前筛选下没有可用的平台素材。' }}</p>
     <div v-else-if="!documentDraft" class="grid grid-cols-3 gap-3 max-h-[55vh] overflow-auto">
       <article v-for="item in entries" :key="item.id" class="border rounded-lg p-3">
         <img v-if="item.media_type === 'image'" class="w-full h-28 object-contain" :src="libraryService.previewUrl(version(item).preview_url)" :alt="item.name">
         <video v-else-if="item.media_type === 'video'" class="w-full h-28" controls preload="metadata" :src="libraryService.previewUrl(version(item).preview_url)" />
         <p class="text-sm my-2">{{ item.name }}</p>
-        <select v-model="versions[item.id]" class="border rounded w-full"><option v-for="value in item.versions" :key="value.id" :value="value.id">版本 {{ value.version_no }}</option></select>
+        <LivSelect v-model="versions[item.id]" class="border rounded w-full"><option v-for="value in item.versions" :key="value.id" :value="value.id">版本 {{ value.version_no }}</option></LivSelect>
         <p v-if="reason(item)" class="text-xs text-amber-700 mt-2">{{ reason(item) }}</p>
         <button class="text-blue-600 mt-2" :disabled="!!reason(item)" @click="toggle(item)">{{ selected.some(value => value.version.id === version(item).id) ? '取消选择' : item.media_type === 'document' ? '选原文片段' : '选择此版本' }}</button>
       </article>

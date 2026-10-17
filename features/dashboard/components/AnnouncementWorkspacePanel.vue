@@ -102,9 +102,7 @@ onMounted(loadAnnouncements)
     </div>
 
     <div class="announcement-workspace-card rounded-[22px] border border-[#dfe7f2] bg-white p-4 shadow-[0_18px_56px_rgba(15,23,42,0.06)]">
-      <div v-if="loading" class="announcement-workspace-empty rounded-[18px] bg-[#f6f8fc] px-6 py-16 text-center text-[15px] font-bold text-[#64748b]">
-        正在加载公告...
-      </div>
+      <DashboardSkeleton v-if="loading" :rows="3" />
 
       <div v-else-if="announcements.length === 0" class="announcement-workspace-empty rounded-[18px] border border-dashed border-[#cdd9e8] bg-[#f8fbff] px-6 py-16 text-center">
         <p class="announcement-workspace-empty-title text-[18px] font-black text-[#111827]">暂无公告</p>

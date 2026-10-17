@@ -1,18 +1,9 @@
 <script setup lang="ts">
-const { $siteAsset: siteAsset } = useNuxtApp()
-import { computed, ref } from 'vue'
-import {
-  Check,
-  ChevronLeft,
-  ChevronRight,
-  Grid2X2,
-  List,
-  Plus,
-  Search,
-  Trash2
-} from '@lucide/vue'
+import {computed,ref} from 'vue'
+import {UButton,UInput,USelect,UCheckbox,UProgress,UBadge,UTooltip,UIcon,NuxtLink} from '#components'
 import type { DramaProjectCard } from '~/entities/drama/types'
 import UiFluidImage from '~/components/ui/FluidImage.vue'
+import type {CreationProjectCard,CreationProjectKind} from '../types'
 
 interface Props {
   currentProjectPage: number
@@ -25,7 +16,8 @@ interface Props {
   selectedProjectCount: number
   selectedProjectIds: string[]
   totalProjectPages: number
-  workspaceProjectCards: DramaProjectCard[]
+  workspaceProjectCards: CreationProjectCard[]
+  kindFilter: CreationProjectKind
 }
 
 const props = defineProps<Props>()
@@ -39,12 +31,17 @@ const emit = defineEmits<{
   (event: 'toggle-batch-mode'): void
   (event: 'toggle-project-selection', projectId: string): void
   (event: 'toggle-select-all'): void
+  (event: 'update-kind', value:CreationProjectKind): void
 }>()
 
 type ProjectViewMode = 'grid' | 'list'
 type ProjectStatusFilter = 'all' | 'active' | 'completed' | 'archived'
 type ProjectSortMode = 'updated-desc' | 'created-desc' | 'title-asc'
 
+const statusItems=[{label:'全部状态',value:'all'},{label:'创作中',value:'active'},{label:'已完成',value:'completed'},{label:'已归档',value:'archived'}]
+const sortItems=[{label:'最近更新时间',value:'updated-desc'},{label:'最近创建时间',value:'created-desc'},{label:'项目名称',value:'title-asc'}]
+// 分类由服务端在分页前执行，避免当前页恰好没有此类型造成假空列表。
+const kindItems=[{label:'全部',value:'all' as const},{label:'自由创作',value:'creation' as const},{label:'短剧',value:'drama' as const}]
 const searchKeyword = ref('')
 const statusFilter = ref<ProjectStatusFilter>('all')
 const sortMode = ref<ProjectSortMode>('updated-desc')
@@ -100,6 +97,7 @@ function projectStatusGroup(project: DramaProjectCard): ProjectStatusFilter {
 }
 
 function projectStatusLabel(project: DramaProjectCard): string {
+  if(project.status==='conversation')return '自由创作'
   if (project.status === 'archived') return '已归档'
   if (project.workflowSummary?.state === 'completed') return '已完成'
   if (project.workflowSummary?.state === 'failed') return '需要处理'
@@ -111,11 +109,13 @@ function projectStatusLabel(project: DramaProjectCard): string {
   return '草稿'
 }
 
-function projectStatusClass(project: DramaProjectCard): string {
-  const group = projectStatusGroup(project)
-  if (group === 'completed') return 'project-status--completed'
-  if (group === 'archived') return 'project-status--archived'
-  return 'project-status--active'
+/** 仅调整视觉语义，不修改状态分组、原进度数值或完成判断。 */
+function projectStatusTone(project:DramaProjectCard){
+  if(project.status==='conversation')return 'neutral' as const
+  if(project.status==='archived')return 'neutral' as const
+  if(['failed','needs_action'].includes(project.workflowSummary?.state||''))return 'warning' as const
+  if(projectStatusGroup(project)==='completed')return 'success' as const
+  return 'primary' as const
 }
 
 function projectProgressLabel(project: DramaProjectCard): string {
@@ -148,8 +148,9 @@ function formatProjectDate(value?: string): string {
   }).format(parsed)
 }
 
-function openProject(project: DramaProjectCard): void {
+function openProject(project: CreationProjectCard): void {
   if (props.isBatchSelectingProjects) {
+    if(project.kind==='creation')return
     emit('toggle-project-selection', project.id)
     return
   }
@@ -158,718 +159,146 @@ function openProject(project: DramaProjectCard): void {
 </script>
 
 <template>
-  <section class="project-directory">
+  <section class="project-directory" aria-label="我的项目">
     <header class="project-directory__header">
-      <div>
-        <h2 class="text-[28px] font-black text-textMain">项目列表</h2>
-        <p class="mt-1 text-[14px] text-textMuted">{{ projectOverviewLabel }}</p>
-      </div>
-      <button
-        class="project-create-button"
-        type="button"
-        :disabled="isCreatingWorkspaceProject"
-        @click="emit('create-project')"
-      >
-        <Plus class="h-4 w-4" />
-        {{ isCreatingWorkspaceProject ? '创建中...' : '新建项目' }}
-      </button>
+      <div><h1>我的项目</h1><p>{{projectOverviewLabel}}</p></div>
+      <UButton class="project-create-button" icon="i-lucide-plus" color="primary" :loading="isCreatingWorkspaceProject" :disabled="isCreatingWorkspaceProject" @click="emit('create-project')">{{isCreatingWorkspaceProject?'创建中…':'新建项目'}}</UButton>
     </header>
-
+    <nav class="project-kind-tabs" aria-label="项目分类"><UButton v-for="item in kindItems" :key="item.value" :color="kindFilter===item.value?'primary':'neutral'" :variant="kindFilter===item.value?'soft':'ghost'" :aria-pressed="kindFilter===item.value" @click="emit('update-kind',item.value)">{{item.label}}</UButton></nav>
+    <!-- 本页仅消费父级当前页结果；不以 UI 筛选冒充全量检索或另发查询。 -->
     <div class="project-toolbar">
-      <label class="project-search">
-        <Search class="h-[18px] w-[18px]" />
-        <input v-model="searchKeyword" type="search" placeholder="搜索项目名称" />
-      </label>
-
-      <select v-model="statusFilter" class="project-select" aria-label="项目状态筛选">
-        <option value="all">全部状态</option>
-        <option value="active">创作中</option>
-        <option value="completed">已完成</option>
-        <option value="archived">已归档</option>
-      </select>
-
-      <select v-model="sortMode" class="project-select project-select--sort" aria-label="项目排序">
-        <option value="updated-desc">排序：最近更新时间</option>
-        <option value="created-desc">排序：最近创建时间</option>
-        <option value="title-asc">排序：项目名称</option>
-      </select>
-
-      <div v-if="workspaceProjectCards.length > 0" class="project-toolbar__actions">
-        <button class="project-secondary-button" type="button" @click="emit('toggle-batch-mode')">
-          {{ isBatchSelectingProjects ? '取消批量' : '批量操作' }}
-        </button>
-        <button
-          v-if="isBatchSelectingProjects"
-          class="project-secondary-button"
-          type="button"
-          @click="emit('toggle-select-all')"
-        >
-          {{ isAllCurrentPageSelected ? '取消全选' : '全选' }}
-        </button>
-        <button
-          v-if="isBatchSelectingProjects"
-          class="project-delete-button"
-          type="button"
-          :disabled="selectedProjectCount === 0 || isDeletingProjects"
-          @click="emit('request-delete-batch')"
-        >
-          <Trash2 class="h-4 w-4" />
-          删除<span v-if="selectedProjectCount"> {{ selectedProjectCount }}</span>
-        </button>
-        <div class="project-view-toggle" aria-label="项目视图切换">
-          <button
-            type="button"
-            title="网格视图"
-            :class="{ active: viewMode === 'grid' }"
-            @click="viewMode = 'grid'"
-          >
-            <Grid2X2 class="h-[18px] w-[18px]" />
-          </button>
-          <button
-            type="button"
-            title="列表视图"
-            :class="{ active: viewMode === 'list' }"
-            @click="viewMode = 'list'"
-          >
-            <List class="h-[19px] w-[19px]" />
-          </button>
+      <UInput v-model="searchKeyword" class="project-search" type="search" icon="i-lucide-search" placeholder="搜索本页项目" aria-label="搜索本页项目"/>
+      <USelect v-model="statusFilter" class="project-select project-select--status" :items="statusItems" aria-label="本页项目状态筛选"/>
+      <USelect v-model="sortMode" class="project-select project-select--sort" :items="sortItems" aria-label="本页项目排序"/>
+      <div v-if="workspaceProjectCards.length" class="project-toolbar__actions">
+        <UButton v-if="kindFilter!=='creation'" class="project-secondary-button" color="neutral" variant="outline" :aria-pressed="isBatchSelectingProjects" @click="emit('toggle-batch-mode')">{{isBatchSelectingProjects?'取消批量':'批量管理短剧'}}</UButton>
+        <template v-if="isBatchSelectingProjects">
+          <UButton class="project-secondary-button" color="neutral" variant="outline" @click="emit('toggle-select-all')">{{isAllCurrentPageSelected?'取消全选':'全选'}}</UButton>
+          <UButton class="project-delete-button" icon="i-lucide-trash-2" color="error" variant="soft" :disabled="!selectedProjectCount||isDeletingProjects" :loading="isDeletingProjects" @click="emit('request-delete-batch')">删除{{selectedProjectCount?' '+selectedProjectCount:''}}</UButton>
+        </template>
+        <div class="project-view-toggle" role="group" aria-label="项目视图切换">
+          <UTooltip text="网格视图"><UButton icon="i-lucide-grid-2x2" square aria-label="网格视图" :aria-pressed="viewMode==='grid'" :color="viewMode==='grid'?'primary':'neutral'" :variant="viewMode==='grid'?'soft':'ghost'" @click="viewMode='grid'"/></UTooltip>
+          <UTooltip text="列表视图"><UButton icon="i-lucide-list" square aria-label="列表视图" :aria-pressed="viewMode==='list'" :color="viewMode==='list'?'primary':'neutral'" :variant="viewMode==='list'?'soft':'ghost'" @click="viewMode='list'"/></UTooltip>
         </div>
       </div>
     </div>
+    <p class="project-filter-note">筛选和排序仅作用于当前页<span v-if="workspaceProjectCards.length"> · 本页显示 {{visibleProjects.length}} 项</span></p>
+    <p v-if="isBatchSelectingProjects" class="project-filter-note">本次仅管理短剧制作，对话记录和独立作品不会随短剧删除。</p>
 
-    <div v-if="workspaceProjectCards.length === 0" class="project-empty-state">
-      <img :src="siteAsset('/dashboard/project-empty.png')" alt="暂无项目" loading="lazy" decoding="async" />
-      <h3>还没有项目</h3>
-      <p>你还没有创建任何项目，点击右上角“新建项目”开始你的创作之旅吧</p>
+    <div v-if="!workspaceProjectCards.length" class="project-empty-state">
+      <UIcon name="i-lucide-folder-open"/><h2>还没有项目</h2><p>点击“新建项目”，开始你的创作。</p>
+    </div>
+    <div v-else-if="!visibleProjects.length" class="project-filter-empty">
+      <UIcon name="i-lucide-search"/><h2>本页没有匹配项目</h2><p>调整关键词或筛选条件，也可以切换其他页查看。</p>
+      <UButton color="neutral" variant="outline" @click="searchKeyword='';statusFilter='all'">清除筛选</UButton>
     </div>
 
-    <div v-else-if="visibleProjects.length === 0" class="project-filter-empty">
-      <Search class="h-8 w-8" />
-      <h3>没有找到匹配项目</h3>
-      <p>换一个关键词或筛选条件试试</p>
-    </div>
-
-    <div v-else-if="viewMode === 'grid'" class="project-card-grid">
-      <article
-        v-for="project in visibleProjects"
-        :key="project.id"
-        class="project-card"
-        role="button"
-        tabindex="0"
-        @click="openProject(project)"
-        @keydown.enter.prevent="openProject(project)"
-        @keydown.space.prevent="openProject(project)"
-      >
-        <button
-          v-if="isBatchSelectingProjects"
-          class="project-select-check"
-          :class="{ active: isProjectSelected(project.id) }"
-          type="button"
-          title="选择项目"
-          @click.stop="emit('toggle-project-selection', project.id)"
-        >
-          <Check class="h-4 w-4" />
-        </button>
-        <button
-          v-else
-          class="project-card-delete"
-          type="button"
-          title="删除项目"
-          @click.stop="emit('request-delete-project', project)"
-        >
-          <Trash2 class="h-4 w-4" />
-        </button>
-
+    <div v-else-if="viewMode==='grid'" class="project-card-grid">
+      <article v-for="project in visibleProjects" :key="project.id" class="project-card" role="button" tabindex="0" :aria-label="`打开项目：${project.title}`" @click="openProject(project)" @keydown.enter.self.prevent="openProject(project)" @keydown.space.self.prevent="openProject(project)">
         <div class="project-card__cover">
-          <UiFluidImage
-            v-if="project.coverImageUrl"
-            :src="project.coverImageUrl"
-            :alt="project.title"
-            wrapper-class="h-full w-full"
-            img-class="object-cover transition-transform duration-500 group-hover:scale-105"
-            fallback-text=""
-            loading-label=""
-          />
-          <div v-else class="project-cover-fallback">
-            <span>{{ project.title.slice(0, 1) || '剧' }}</span>
-          </div>
-          <span class="project-status" :class="projectStatusClass(project)">
-            {{ projectStatusLabel(project) }}
-          </span>
+          <UiFluidImage v-if="project.coverImageUrl" :src="project.coverImageUrl" :alt="project.title" wrapper-class="project-cover-image" img-class="object-cover" fallback-text="封面暂不可用" loading-label=""/>
+          <div v-else class="project-cover-fallback" aria-label="暂无项目封面"><UIcon :name="project.kind==='drama'?'i-lucide-clapperboard':'i-lucide-messages-square'"/><span>{{project.title.slice(0,1)||'创'}}</span></div>
+          <UBadge class="project-status" :color="projectStatusTone(project)" variant="solid">{{projectStatusLabel(project)}}</UBadge>
+          <div v-if="isBatchSelectingProjects&&project.kind==='drama'" class="project-selection" @click.stop @keydown.stop><UCheckbox :model-value="isProjectSelected(project.id)" :aria-label="`选择项目：${project.title}`" @update:model-value="emit('toggle-project-selection',project.id)"/></div>
+          <UTooltip v-else-if="!isBatchSelectingProjects&&project.kind==='drama'" text="删除短剧制作"><UButton class="project-card-delete" icon="i-lucide-trash-2" color="neutral" variant="soft" square :aria-label="`删除项目：${project.title}`" :disabled="isDeletingProjects" @click.stop="emit('request-delete-project',project)" @keydown.stop/></UTooltip>
         </div>
-
         <div class="project-card__body">
-          <h3>{{ project.title }}</h3>
-          <p>更新于 {{ formatProjectDate(project.updatedAt || project.createdAt) }}</p>
-          <div class="project-progress-meta">
-            <span>{{ projectProgressLabel(project) }}</span>
-            <strong>{{ projectProgress(project) }}%</strong>
-          </div>
-          <div class="project-progress-track">
-            <span :style="{ width: `${projectProgress(project)}%` }" />
-          </div>
+          <h2 :title="project.title">{{project.title}}</h2><p>更新于 {{formatProjectDate(project.updatedAt||project.createdAt)}}</p>
+          <template v-if="project.kind==='drama'"><div class="project-progress-meta"><span :title="projectProgressLabel(project)">{{projectProgressLabel(project)}}</span><strong>{{projectProgress(project)}}%</strong></div><UProgress :model-value="projectProgress(project)" :color="projectStatusTone(project)" :aria-label="`${project.title} 项目进度`" size="xs"/></template>
+          <!-- 整卡已进入最近对话／独立短剧；只给不同目的地保留快捷入口，不再重复一行继续文案。 -->
+          <nav v-if="!isBatchSelectingProjects&&(project.sessions.length>1||(project.kind==='drama'&&project.sessions.length))" class="project-card-links" aria-label="项目快捷操作" @click.stop @keydown.stop><NuxtLink v-if="project.kind==='drama'" :to="`/drama/${encodeURIComponent(project.projectId)}?from=dashboard-projects`">进入短剧制作</NuxtLink><NuxtLink v-for="(item,index) in project.sessions.slice(1)" :key="item.id" :to="`/dashboard?session=${encodeURIComponent(item.id)}`" :title="item.title">对话 {{index+2}}</NuxtLink></nav>
         </div>
       </article>
     </div>
 
     <div v-else class="project-list-view">
-      <article
-        v-for="project in visibleProjects"
-        :key="project.id"
-        class="project-list-row"
-        role="button"
-        tabindex="0"
-        @click="openProject(project)"
-        @keydown.enter.prevent="openProject(project)"
-      >
+      <article v-for="project in visibleProjects" :key="project.id" class="project-list-row" role="button" tabindex="0" :aria-label="`打开项目：${project.title}`" @click="openProject(project)" @keydown.enter.self.prevent="openProject(project)" @keydown.space.self.prevent="openProject(project)">
         <div class="project-list-row__cover">
-          <UiFluidImage
-            v-if="project.coverImageUrl"
-            :src="project.coverImageUrl"
-            :alt="project.title"
-            wrapper-class="h-full w-full"
-            img-class="object-cover"
-            fallback-text=""
-            loading-label=""
-          />
-          <div v-else class="project-cover-fallback"><span>{{ project.title.slice(0, 1) || '剧' }}</span></div>
+          <UiFluidImage v-if="project.coverImageUrl" :src="project.coverImageUrl" :alt="project.title" wrapper-class="project-cover-image" img-class="object-cover" fallback-text="封面暂不可用" loading-label=""/>
+          <div v-else class="project-cover-fallback"><UIcon :name="project.kind==='drama'?'i-lucide-clapperboard':'i-lucide-messages-square'"/></div>
+          <div v-if="isBatchSelectingProjects&&project.kind==='drama'" class="project-selection" @click.stop @keydown.stop><UCheckbox :model-value="isProjectSelected(project.id)" :aria-label="`选择项目：${project.title}`" @update:model-value="emit('toggle-project-selection',project.id)"/></div>
         </div>
-        <div class="project-list-row__main">
-          <h3>{{ project.title }}</h3>
-          <p>{{ project.genre || project.style || '短剧项目' }}</p>
-        </div>
-        <span class="project-status project-list-row__status" :class="projectStatusClass(project)">
-          {{ projectStatusLabel(project) }}
-        </span>
-        <div class="project-list-row__progress">
-          <span>{{ projectProgressLabel(project) }}</span>
-          <div class="project-progress-track"><span :style="{ width: `${projectProgress(project)}%` }" /></div>
-        </div>
-        <time>{{ formatProjectDate(project.updatedAt || project.createdAt) }}</time>
-        <button type="button" title="删除项目" @click.stop="emit('request-delete-project', project)">
-          <Trash2 class="h-[18px] w-[18px]" />
-        </button>
+        <div class="project-list-row__main"><h2 :title="project.title">{{project.title}}</h2><p v-if="project.kind==='drama'">{{project.genre||project.style||'短剧项目'}}</p><nav v-if="!isBatchSelectingProjects&&(project.sessions.length>1||(project.kind==='drama'&&project.sessions.length))" class="project-card-links" aria-label="项目快捷操作" @click.stop @keydown.stop><NuxtLink v-if="project.kind==='drama'" :to="`/drama/${encodeURIComponent(project.projectId)}?from=dashboard-projects`">进入短剧制作</NuxtLink><NuxtLink v-for="(item,index) in project.sessions.slice(1)" :key="item.id" :to="`/dashboard?session=${encodeURIComponent(item.id)}`" :title="item.title">对话 {{index+2}}</NuxtLink></nav></div>
+        <UBadge class="project-list-row__status" :color="projectStatusTone(project)" variant="soft">{{projectStatusLabel(project)}}</UBadge>
+        <div class="project-list-row__progress"><template v-if="project.kind==='drama'"><div class="project-progress-meta"><span :title="projectProgressLabel(project)">{{projectProgressLabel(project)}}</span><strong>{{projectProgress(project)}}%</strong></div><UProgress :model-value="projectProgress(project)" :color="projectStatusTone(project)" :aria-label="`${project.title} 项目进度`" size="xs"/></template></div>
+        <time>{{formatProjectDate(project.updatedAt||project.createdAt)}}</time>
+        <UTooltip v-if="!isBatchSelectingProjects&&project.kind==='drama'" text="删除短剧制作"><UButton class="project-list-delete" icon="i-lucide-trash-2" color="neutral" variant="ghost" square :aria-label="`删除项目：${project.title}`" :disabled="isDeletingProjects" @click.stop="emit('request-delete-project',project)" @keydown.stop/></UTooltip>
       </article>
     </div>
 
-    <footer v-if="totalProjectPages > 1" class="project-pagination">
-      <p>第 {{ currentProjectPage }} / {{ totalProjectPages }} 页</p>
-      <div>
-        <button
-          type="button"
-          title="上一页"
-          :disabled="currentProjectPage === 1"
-          @click="emit('go-to-page', currentProjectPage - 1)"
-        >
-          <ChevronLeft class="h-5 w-5" />
-        </button>
-        <button
-          v-for="pageNo in pageNumberList"
-          :key="`project-page-${pageNo}`"
-          type="button"
-          :class="{ active: pageNo === currentProjectPage }"
-          @click="emit('go-to-page', pageNo)"
-        >
-          {{ pageNo }}
-        </button>
-        <button
-          type="button"
-          title="下一页"
-          :disabled="currentProjectPage === totalProjectPages"
-          @click="emit('go-to-page', currentProjectPage + 1)"
-        >
-          <ChevronRight class="h-5 w-5" />
-        </button>
-      </div>
+    <footer v-if="totalProjectPages>1" class="project-pagination">
+      <p>第 {{currentProjectPage}} / {{totalProjectPages}} 页</p>
+      <nav aria-label="项目分页">
+        <UTooltip text="上一页"><UButton icon="i-lucide-chevron-left" square color="neutral" variant="ghost" aria-label="上一页" :disabled="currentProjectPage===1" @click="emit('go-to-page',currentProjectPage-1)"/></UTooltip>
+        <UButton v-for="pageNo in pageNumberList" :key="pageNo" :color="pageNo===currentProjectPage?'primary':'neutral'" :variant="pageNo===currentProjectPage?'solid':'ghost'" :aria-label="`第 ${pageNo} 页`" :aria-current="pageNo===currentProjectPage?'page':undefined" @click="emit('go-to-page',pageNo)">{{pageNo}}</UButton>
+        <UTooltip text="下一页"><UButton icon="i-lucide-chevron-right" square color="neutral" variant="ghost" aria-label="下一页" :disabled="currentProjectPage===totalProjectPages" @click="emit('go-to-page',currentProjectPage+1)"/></UTooltip>
+      </nav>
     </footer>
   </section>
 </template>
 
 <style scoped>
-.project-directory {
-  width: 100%;
-}
-
-.project-directory__header,
-.project-toolbar,
-.project-toolbar__actions,
-.project-progress-meta,
-.project-pagination,
-.project-pagination > div {
-  display: flex;
-  align-items: center;
-}
-
-.project-directory__header {
-  justify-content: space-between;
-  gap: 24px;
-}
-
-.project-create-button {
-  display: inline-flex;
-  height: 42px;
-  align-items: center;
-  gap: 8px;
-  border-radius: 8px;
-  background: #0868f7;
-  padding: 0 20px;
-  color: #fff;
-  font-size: 14px;
-  font-weight: 800;
-  box-shadow: 0 10px 24px rgba(8, 104, 247, 0.2);
-}
-
-.project-create-button:disabled,
-.project-delete-button:disabled {
-  cursor: not-allowed;
-  opacity: 0.55;
-}
-
-.project-toolbar {
-  gap: 12px;
-  margin-top: 28px;
-}
-
-.project-search {
-  display: flex;
-  width: 216px;
-  height: 42px;
-  align-items: center;
-  gap: 10px;
-  border: 1px solid #dbe5f2;
-  border-radius: 8px;
-  background: var(--panel, #fff);
-  padding: 0 14px;
-  color: #8493aa;
-}
-
-.project-search input {
-  min-width: 0;
-  flex: 1;
-  border: 0;
-  outline: none;
-  background: transparent;
-  color: inherit;
-  font-size: 13px;
-}
-
-.project-select {
-  height: 42px;
-  min-width: 130px;
-  border: 1px solid #dbe5f2;
-  border-radius: 8px;
-  outline: none;
-  background: var(--panel, #fff);
-  padding: 0 34px 0 14px;
-  color: #273650;
-  font-size: 13px;
-  font-weight: 700;
-}
-
-.project-select--sort {
-  min-width: 170px;
-}
-
-.project-toolbar__actions {
-  gap: 8px;
-  margin-left: auto;
-}
-
-.project-secondary-button,
-.project-delete-button {
-  display: inline-flex;
-  height: 38px;
-  align-items: center;
-  gap: 6px;
-  border: 1px solid #dbe5f2;
-  border-radius: 8px;
-  background: var(--panel, #fff);
-  padding: 0 13px;
-  color: #53627a;
-  font-size: 13px;
-  font-weight: 700;
-}
-
-.project-delete-button {
-  border-color: rgba(239, 68, 68, 0.25);
-  color: #dc2626;
-}
-
-.project-view-toggle {
-  display: grid;
-  grid-template-columns: repeat(2, 38px);
-  overflow: hidden;
-  border: 1px solid #dbe5f2;
-  border-radius: 8px;
-  background: var(--panel, #fff);
-}
-
-.project-view-toggle button {
-  display: grid;
-  height: 38px;
-  place-items: center;
-  color: #74839a;
-}
-
-.project-view-toggle button.active {
-  background: #edf5ff;
-  color: #0868f7;
-}
-
-.project-empty-state,
-.project-filter-empty {
-  display: flex;
-  min-height: 268px;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  margin-top: 24px;
-  border: 1px solid #e1e8f2;
-  border-radius: 8px;
-  background: var(--panel, #fff);
-  text-align: center;
-  box-shadow: 0 14px 40px rgba(41, 72, 117, 0.05);
-}
-
-.project-empty-state img {
-  width: min(330px, 72vw);
-  height: 132px;
-  object-fit: contain;
-  object-position: center;
-  /* 原素材底部带有较多透明空白，裁切后才能和设计稿保持紧凑。 */
-  clip-path: inset(2% 3% 8%);
-}
-
-.project-empty-state h3,
-.project-filter-empty h3 {
-  margin-top: 2px;
-  color: #0f172a;
-  font-size: 18px;
-  font-weight: 900;
-}
-
-.project-empty-state p,
-.project-filter-empty p {
-  margin-top: 8px;
-  color: #71809a;
-  font-size: 14px;
-}
-
-.project-filter-empty {
-  color: #9aa8bc;
-}
-
-.project-card-grid {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 18px;
-  margin-top: 24px;
-}
-
-.project-card {
-  position: relative;
-  min-width: 0;
-  overflow: hidden;
-  border: 1px solid #dfe7f2;
-  border-radius: 8px;
-  background: var(--panel, #fff);
-  box-shadow: 0 12px 28px rgba(38, 69, 110, 0.06);
-  cursor: pointer;
-  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
-}
-
-.project-card:hover {
-  border-color: rgba(8, 104, 247, 0.35);
-  box-shadow: 0 18px 36px rgba(30, 85, 158, 0.12);
-  transform: translateY(-2px);
-}
-
-.project-card__cover {
-  position: relative;
-  height: 128px;
-  overflow: hidden;
-  background: #edf4ff;
-}
-
-.project-cover-fallback {
-  display: grid;
-  height: 100%;
-  width: 100%;
-  place-items: center;
-  background: linear-gradient(135deg, #dcecff, #edf4ff 52%, #dce8fb);
-}
-
-.project-cover-fallback span {
-  color: rgba(8, 104, 247, 0.48);
-  font-size: 44px;
-  font-weight: 900;
-}
-
-.project-status {
-  display: inline-flex;
-  height: 24px;
-  align-items: center;
-  border-radius: 6px;
-  padding: 0 9px;
-  font-size: 11px;
-  font-weight: 800;
-}
-
-.project-card__cover > .project-status {
-  position: absolute;
-  right: 10px;
-  top: 10px;
-}
-
-.project-status--active {
-  background: #0868f7;
-  color: #fff;
-}
-
-.project-status--completed {
-  background: #10b981;
-  color: #fff;
-}
-
-.project-status--archived {
-  background: rgba(71, 85, 105, 0.82);
-  color: #fff;
-}
-
-.project-card__body {
-  padding: 14px 14px 15px;
-}
-
-.project-card__body h3 {
-  overflow: hidden;
-  color: #0f172a;
-  font-size: 15px;
-  font-weight: 900;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.project-card__body > p {
-  margin-top: 6px;
-  color: #8492a7;
-  font-size: 11px;
-}
-
-.project-progress-meta {
-  justify-content: space-between;
-  gap: 8px;
-  margin-top: 14px;
-  color: #65748b;
-  font-size: 11px;
-}
-
-.project-progress-meta strong {
-  color: #0868f7;
-  font-weight: 900;
-}
-
-.project-progress-track {
-  height: 5px;
-  overflow: hidden;
-  margin-top: 7px;
-  border-radius: 999px;
-  background: #e7eef7;
-}
-
-.project-progress-track > span {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  background: #0868f7;
-  transition: width 0.25s ease;
-}
-
-.project-card-delete,
-.project-select-check {
-  position: absolute;
-  z-index: 4;
-  display: grid;
-  height: 30px;
-  width: 30px;
-  place-items: center;
-  border-radius: 7px;
-  background: rgba(255, 255, 255, 0.92);
-  color: #64748b;
-  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.12);
-}
-
-.project-card-delete {
-  right: 10px;
-  bottom: 10px;
-  opacity: 0;
-}
-
-.project-card:hover .project-card-delete {
-  opacity: 1;
-}
-
-.project-select-check {
-  left: 10px;
-  top: 10px;
-  color: transparent;
-}
-
-.project-select-check.active {
-  background: #0868f7;
-  color: #fff;
-}
-
-.project-list-view {
-  display: grid;
-  gap: 10px;
-  margin-top: 24px;
-}
-
-.project-list-row {
-  display: grid;
-  min-height: 82px;
-  grid-template-columns: 112px minmax(180px, 1fr) 86px 220px 150px 36px;
-  gap: 16px;
-  align-items: center;
-  border: 1px solid #dfe7f2;
-  border-radius: 8px;
-  background: var(--panel, #fff);
-  padding: 10px;
-  cursor: pointer;
-}
-
-.project-list-row__cover {
-  height: 62px;
-  overflow: hidden;
-  border-radius: 6px;
-  background: #edf4ff;
-}
-
-.project-list-row__main h3 {
-  color: #0f172a;
-  font-size: 14px;
-  font-weight: 900;
-}
-
-.project-list-row__main p,
-.project-list-row time,
-.project-list-row__progress > span {
-  margin-top: 5px;
-  color: #7b899e;
-  font-size: 11px;
-}
-
-.project-list-row__status {
-  justify-self: start;
-}
-
-.project-list-row > button {
-  display: grid;
-  height: 34px;
-  width: 34px;
-  place-items: center;
-  color: #7b899e;
-}
-
-.project-pagination {
-  justify-content: space-between;
-  margin-top: 28px;
-  border-top: 1px solid #dfe7f2;
-  padding-top: 20px;
-  color: #71809a;
-  font-size: 13px;
-}
-
-.project-pagination > div {
-  gap: 6px;
-}
-
-.project-pagination button {
-  display: grid;
-  height: 34px;
-  min-width: 34px;
-  place-items: center;
-  border-radius: 7px;
-  color: #65748b;
-  font-weight: 800;
-}
-
-.project-pagination button.active {
-  background: #0868f7;
-  color: #fff;
-}
-
-.project-pagination button:disabled {
-  cursor: not-allowed;
-  opacity: 0.4;
-}
-
-@media (max-width: 1520px) {
-  .project-card-grid {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-  }
-}
-
-@media (max-width: 1240px) {
-  .project-toolbar {
-    flex-wrap: wrap;
-  }
-
-  .project-toolbar__actions {
-    width: 100%;
-    margin-left: 0;
-  }
-
-  .project-card-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
-  .project-list-row {
-    grid-template-columns: 96px minmax(180px, 1fr) 86px 180px 36px;
-  }
-
-  .project-list-row time {
-    display: none;
-  }
-}
-
-@media (max-width: 860px) {
-  .project-directory__header {
-    align-items: flex-start;
-  }
-
-  .project-search,
-  .project-select,
-  .project-select--sort {
-    width: 100%;
-  }
-
-  .project-card-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .project-list-row {
-    grid-template-columns: 86px minmax(0, 1fr) 36px;
-  }
-
-  .project-list-row__status,
-  .project-list-row__progress {
-    display: none;
-  }
-}
-
-@media (max-width: 560px) {
-  .project-directory__header {
-    flex-direction: column;
-  }
-
-  .project-create-button {
-    width: 100%;
-    justify-content: center;
-  }
-
-  .project-card-grid {
-    grid-template-columns: 1fr;
-  }
-}
+/* 页面只消费现有语义色与项目规格令牌，不再维护旧蓝色和 11px 正文。 */
+.project-directory{container:project-directory / inline-size;width:100%;min-width:0;color:var(--color-text-main);font-size:var(--liv-font-body)}
+.project-kind-tabs{display:flex;gap:8px;flex-wrap:wrap;margin-top:16px}.project-kind-tabs button{height:40px;font-size:var(--liv-font-body)}
+.project-card-links{display:flex;gap:8px;flex-wrap:wrap;margin-top:4px;font-size:var(--liv-font-caption)}.project-card-links a{color:var(--liv-ui-primary-foreground);padding:4px 0}.project-card-links a:hover{text-decoration:underline}
+.project-directory__header{display:flex;align-items:center;justify-content:space-between;gap:24px}
+.project-directory__header h1{margin:0;font-size:var(--liv-font-page);line-height:1.5;font-weight:600}
+.project-directory__header p{margin:4px 0 0;font-size:var(--liv-font-body);line-height:1.7;color:var(--color-text-muted)}
+.project-create-button,.project-secondary-button,.project-delete-button{height:var(--liv-control-lg);flex:none;font-size:var(--liv-font-body);font-weight:500;white-space:nowrap;justify-content:center}
+.project-toolbar{display:flex;align-items:center;flex-wrap:wrap;gap:12px;margin-top:16px;min-width:0}
+.project-search{flex:0 1 var(--liv-project-search-width);width:var(--liv-project-search-width);min-width:180px;max-width:100%}
+.project-search :deep(input){height:var(--liv-control-lg);font-size:var(--liv-font-body)}
+/* 定宽作用于实际 USelect 触发器，不改通用下拉组件和别的页面。 */
+.project-toolbar .project-select{height:var(--liv-control-lg);min-height:var(--liv-control-lg);flex:0 0 auto;max-width:100%;font-size:var(--liv-font-body);font-weight:400}
+.project-toolbar .project-select--status{width:var(--liv-project-status-width)}
+.project-toolbar .project-select--sort{width:var(--liv-project-sort-width)}
+.project-toolbar__actions{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-left:auto;min-width:0}
+.project-view-toggle{display:flex;align-items:center;gap:4px;flex:none;padding:0;border:1px solid var(--color-border-soft);border-radius:var(--liv-radius-lg)}
+.project-view-toggle button{width:38px;height:38px;min-height:38px;padding:0}
+.project-filter-note{font-size:var(--liv-font-caption);line-height:1.7;color:var(--color-text-muted);margin:8px 0 0}
+/* 容器断点跟随实际内容宽度，侧栏展开不会挤坏按视口推算的列数。 */
+.project-card-grid{display:grid;grid-template-columns:minmax(0,1fr);gap:var(--liv-project-grid-gap);margin-top:12px}
+.project-card{position:relative;min-width:0;overflow:hidden;display:flex;flex-direction:column;border:1px solid var(--color-border-soft);border-radius:var(--radius-lg);background:var(--color-panel);cursor:pointer}
+.project-card:hover,.project-card:focus-visible{border-color:var(--liv-ui-primary-foreground)}
+.project-card__cover{position:relative;flex:none;width:100%;aspect-ratio:16/9;max-height:var(--liv-project-cover-max-height);overflow:hidden;background:var(--color-surface-raised)}
+.project-card__cover :deep(.project-cover-image),.project-list-row__cover :deep(.project-cover-image){position:absolute;inset:0;width:100%;height:100%}
+.project-cover-fallback{display:grid;place-content:center;justify-items:center;gap:8px;width:100%;height:100%;background:var(--color-surface-raised);color:var(--liv-ui-primary-foreground)}
+.project-cover-fallback>.iconify{width:32px;height:32px}.project-cover-fallback>span{font-size:var(--liv-font-page)}
+.project-card__cover>.project-status{position:absolute;top:12px;right:12px;font-size:var(--liv-font-caption);font-weight:500;max-width:calc(100% - 24px)}
+.project-card__body{padding:var(--liv-project-card-padding);flex:1;min-width:0}
+.project-card__body h2,.project-list-row__main h2{font-size:var(--liv-font-section);font-weight:600;line-height:1.5;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;margin:0}
+.project-card__body>p,.project-list-row__main>p,.project-list-row time{font-size:var(--liv-font-caption);line-height:1.7;color:var(--color-text-muted);margin:4px 0 0}
+.project-progress-meta{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:var(--liv-font-caption);line-height:1.7;margin:8px 0 4px;color:var(--color-text-muted)}
+.project-progress-meta>span{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.project-progress-meta strong{flex:none;font-size:inherit;font-weight:500;color:var(--liv-ui-primary-foreground)}
+.project-selection{position:absolute;top:12px;left:12px;padding:4px;border-radius:var(--liv-radius-sm);background:var(--color-surface-raised);z-index:1}
+.project-selection :deep([role=checkbox]){width:16px;height:16px;min-height:16px;padding:0}
+.project-card .project-card-delete{position:absolute;right:12px;bottom:12px;width:32px;height:32px;padding:0;opacity:0;background:var(--color-surface-raised)}
+.project-card:hover .project-card-delete,.project-card:focus-within .project-card-delete{opacity:1}
+.project-list-view{display:grid;gap:12px;margin-top:16px}
+.project-list-row{display:grid;grid-template-columns:80px minmax(0,1fr) auto 36px;align-items:center;gap:16px;min-width:0;padding:12px;border:1px solid var(--color-border-soft);border-radius:var(--radius-lg);background:var(--color-panel);cursor:pointer}
+.project-list-row__cover{position:relative;height:56px;overflow:hidden;border-radius:var(--liv-radius-lg)}
+.project-list-row__main{min-width:0}
+.project-list-row__status{font-size:var(--liv-font-caption);justify-self:start;white-space:nowrap}
+.project-list-row__progress{grid-column:2/-1;min-width:0}
+.project-list-row__progress .project-progress-meta{margin:0 0 8px}
+.project-list-row time{grid-column:2/-1}
+.project-list-delete{width:36px;height:36px;padding:0;grid-column:4;grid-row:1}
+.project-pagination{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:16px;margin-top:24px;padding-top:16px;border-top:1px solid var(--color-border-soft);font-size:var(--liv-font-caption);color:var(--color-text-muted)}
+.project-pagination p{margin:0}.project-pagination nav{display:flex;flex-wrap:wrap;gap:4px}.project-pagination button{min-width:36px;height:36px;justify-content:center}
+.project-empty-state,.project-filter-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;min-height:268px;padding:24px 16px;text-align:center;margin-top:16px;border:1px solid var(--color-border-soft);border-radius:var(--radius-lg);background:var(--color-panel)}
+.project-empty-state>.iconify,.project-filter-empty>.iconify{width:48px;height:48px;color:var(--liv-ui-primary-foreground)}
+.project-empty-state h2,.project-filter-empty h2{font-size:var(--liv-font-panel);font-weight:600;margin:0}.project-empty-state p,.project-filter-empty p{font-size:var(--liv-font-body);line-height:1.7;margin:0;color:var(--color-text-muted)}
+.project-directory [tabindex]:focus-visible,.project-directory a:focus-visible{outline:2px solid var(--liv-ui-primary-foreground);outline-offset:3px}
+@container project-directory (min-width:544px){.project-card-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@container project-directory (min-width:832px){.project-card-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@container project-directory (min-width:1120px){.project-card-grid{grid-template-columns:repeat(4,minmax(0,1fr))}}
+@container project-directory (min-width:1440px){.project-card-grid{grid-template-columns:repeat(5,minmax(0,1fr))}}
+@container project-directory (min-width:1840px){.project-card-grid{grid-template-columns:repeat(6,minmax(0,1fr))}}
+@container project-directory (min-width:1000px){.project-list-row{grid-template-columns:96px minmax(140px,1fr) auto minmax(140px,200px) 140px 36px}.project-list-row__progress,.project-list-row time{grid-column:auto}.project-list-delete{grid-column:6}.project-list-row__cover{height:64px}}
+@container project-directory (max-width:900px){.project-toolbar__actions{flex:0 0 100%;margin-left:0}}
+@container project-directory (max-width:544px){.project-directory__header{align-items:flex-start;flex-direction:column;gap:16px}.project-create-button{width:100%}.project-search{width:100%;flex:0 0 100%;min-width:0}.project-toolbar .project-select--status{width:calc((100% - 12px)*.42)}.project-toolbar .project-select--sort{width:calc((100% - 12px)*.58)}.project-list-row{gap:12px;grid-template-columns:64px minmax(0,1fr) 36px}.project-list-row__status{grid-column:2;grid-row:2}.project-list-row__progress{grid-column:2/-1}.project-list-row time{grid-column:2/-1}.project-list-delete{grid-column:3}.project-list-row__cover{grid-row:1/3}.project-card .project-card-delete{opacity:1}}
+@media(hover:none){.project-card .project-card-delete{opacity:1}}
+@media(prefers-reduced-motion:reduce){.project-directory *{scroll-behavior:auto!important}}
 </style>

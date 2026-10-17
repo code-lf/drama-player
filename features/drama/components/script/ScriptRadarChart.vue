@@ -111,11 +111,11 @@ async function renderChart() {
                 color: 'rgba(15,103,255,0.18)'
               },
               lineStyle: {
-                color: '#0f67ff',
+                color: '#4F46E5',
                 width: 3
               },
               itemStyle: {
-                color: '#0f67ff'
+                color: '#4F46E5'
               },
               symbol: 'circle',
               symbolSize: 4

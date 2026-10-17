@@ -968,8 +968,8 @@ function continueFromHistory(item: ProductImageResult): void {
       <section class="studio-result-card">
         <div class="result-header"><div><h2>{{ activeMode === 'edit' ? '修改结果' : '生成结果' }}</h2><div class="result-tabs"><button class="result-tabs__active" type="button">本次生成</button><button type="button" @click="openHistory(true)">收藏</button></div></div><button class="history-button" type="button" @click="openHistory(false)"><History :size="16" />历史记录</button></div>
         <div v-if="['understanding', 'planning', 'generating', 'saving'].includes(generationStage)" class="generation-progress">
-          <div class="generation-progress__summary"><span class="generation-progress__spinner" /><div><b>{{ supplierStep || generationStageText }}</b><small>供应商进度 {{ supplierProgress }}% · 已等待 {{ generationElapsedSeconds }} 秒；离开页面后任务仍会继续</small></div></div>
-          <div class="generation-progress__bar" role="progressbar" :aria-valuenow="supplierProgress" aria-valuemin="0" aria-valuemax="100" aria-label="图片供应商实际生成进度"><span :style="{ width: `${supplierProgress}%` }" /></div>
+          <div class="generation-progress__summary"><span class="generation-progress__spinner" /><div><b>{{ supplierStep || generationStageText }}</b><small>生成进度 {{ supplierProgress }}% · 已等待 {{ generationElapsedSeconds }} 秒；离开页面后任务仍会继续</small></div></div>
+          <div class="generation-progress__bar" role="progressbar" :aria-valuenow="supplierProgress" aria-valuemin="0" aria-valuemax="100" aria-label="图片生成进度"><span :style="{ width: `${supplierProgress}%` }" /></div>
           <div class="generation-progress__steps">
             <div :class="{ 'is-active': generationStep === 1, 'is-done': generationStep > 1 }"><span>1</span><b>{{ activeMode === 'product' && creationMethod === 'marketing' ? '理解卖点并规划套图' : '准备生成参数' }}</b></div>
             <div :class="{ 'is-active': generationStep === 2, 'is-done': generationStep > 2 }"><span>2</span><b>生成图片</b></div>
@@ -999,7 +999,7 @@ function continueFromHistory(item: ProductImageResult): void {
       </div>
     </LivDialog>
     <LivDialog v-model:open="historyOpen" :title="historyFavoritesOnly ? '我的收藏' : '生成历史'" :description="historyFavoritesOnly ? '集中查看收藏的图片，可继续修改或下载。' : '按生成批次保存结果与创作设置，刷新页面后仍可恢复。'" width="xl">
-      <div v-if="historyLoading" class="history-state"><RotateCcw class="history-spin" :size="22" />正在读取历史记录…</div>
+      <DashboardSkeleton v-if="historyLoading" variant="cards" :rows="3" />
       <div v-else-if="historyError" class="history-state history-state--error">{{ historyError }}<button type="button" @click="openHistory(historyFavoritesOnly)">重新加载</button></div>
       <div v-else-if="!historyBatches.length" class="history-state"><History :size="28" /><b>{{ historyFavoritesOnly ? '还没有收藏图片' : '还没有生成记录' }}</b><span>{{ historyFavoritesOnly ? '生成图片后点击“收藏”，会集中显示在这里。' : '完成第一次图片生成后，记录会自动保存在这里。' }}</span></div>
       <div v-else class="history-list">
@@ -1037,7 +1037,7 @@ function continueFromHistory(item: ProductImageResult): void {
 .prompt-optimize-dialog label { display: grid; gap: 7px; color: #34445e; font-size: 13px; font-weight: 800; }
 .prompt-optimize-dialog__original { max-height: 110px; overflow: auto; padding: 11px 12px; border-radius: 8px; background: #f5f7fb; color: #66758f; line-height: 1.7; white-space: pre-wrap; font-weight: 500; }
 .prompt-optimize-dialog textarea { width: 100%; min-height: 170px; resize: vertical; padding: 11px 12px; border: 1px solid #cbd9ee; border-radius: 8px; color: #24344e; line-height: 1.7; outline: none; font: inherit; font-weight: 500; }
-.prompt-optimize-dialog textarea:focus { border-color: #0d63ff; box-shadow: 0 0 0 3px #dbeafe; }
+.prompt-optimize-dialog textarea:focus { border-color: #0d63ff; box-shadow: 0 0 0 3px #E0E7FF; }
 .prompt-optimize-dialog__error { margin: 0; color: #dc2626; font-size: 12px; }
 .prompt-optimize-dialog__actions { display: flex; justify-content: flex-end; gap: 9px; }
 .prompt-optimize-dialog__actions button { padding: 8px 14px; border: 1px solid #dce7f5; border-radius: 8px; background: #fff; color: #37516f; cursor: pointer; font-weight: 800; }

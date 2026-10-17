@@ -57,3 +57,6 @@ coverage
 /artifacts/releases/
 dist
 *.local
+# 本地验收截图与生成候选不属于正式应用资源；正式封面保留在 public。
+/.codex-video-review/
+/output/

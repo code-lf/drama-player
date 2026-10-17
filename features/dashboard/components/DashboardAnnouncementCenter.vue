@@ -164,9 +164,7 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="relative z-[1] mt-4 space-y-1">
-          <div v-if="loading" class="announcement-empty-state rounded-[14px] bg-[#f6f8fc] px-4 py-6 text-center text-[13px] font-semibold text-[#64748b]">
-            正在加载公告...
-          </div>
+          <DashboardSkeleton v-if="loading" :rows="2" />
           <div v-else-if="visibleAnnouncements.length === 0" class="announcement-empty-state rounded-[14px] bg-[#f6f8fc] px-4 py-6 text-center text-[13px] font-semibold text-[#64748b]">
             暂无公告
           </div>

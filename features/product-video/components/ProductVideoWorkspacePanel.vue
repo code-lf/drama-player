@@ -18,9 +18,11 @@ type CreationType = ProductVideoTask['creationType']
 interface Props {
   currentCreditBalance: number | string
   defaultVideoModel: string
+  initialSource?:{taskId:string;resultId:string}
 }
 
 const props = defineProps<Props>()
+const emit = defineEmits<{ created: [task: ProductVideoTask] }>()
 const accountStore = useAccountStore()
 const { $siteAsset: siteAsset } = useNuxtApp()
 const view = ref<WorkspaceView>('home')
@@ -355,6 +357,7 @@ async function startDigitalHuman(): Promise<void> {
     }
     if (!await confirmAction(`口播约 ${quote.estimatedSeconds} 秒，预计消耗 ${quote.requiredCredits} 点。确认生成吗？`)) return
     const task = await productVideoService.createDigitalHumanTask({ script: digitalScript.value.trim(), resolution: digitalResolution.value })
+    emit('created', task)
     activeTask.value = task
     if (accountStore.profile) accountStore.profile.creditBalance = task.balanceAfter
     view.value = 'progress'
@@ -468,6 +471,7 @@ function handleUpload(event: Event): void {
 }
 
 async function startCreation(): Promise<void> {
+  if(libraryAnalysisDraft.value){message.value='请先点击所选视频分析，或明确更换参考来源。';return}
   if (loading.value || referenceAnalyzing.value || imageUploadsInFlight.value) { message.value = '请等待当前上传或请求完成。'; return }
   if (pendingLibraryUploads.value.length) { message.value = '请先处理未入库文件：重试保存或明确选择仅用于本次创作。'; return }
   message.value = ''
@@ -524,6 +528,7 @@ async function startCreation(): Promise<void> {
       ...frozenRequest, inputSnapshotId: quote.inputSnapshotId, requestId: creationRequestId.value,
       creationType: frozenCreationType,
     })
+    emit('created', task)
     activeTask.value = task
     // 任务扣点成功后先同步当前页面余额；后台账本仍以接口返回为准，刷新后会重新拉取。
     if (accountStore.profile) accountStore.profile.creditBalance = task.balanceAfter
@@ -585,6 +590,11 @@ function resetCreation(): void {
 
 onMounted(async () => {
   await Promise.all([loadHome(), loadGenerationProfile()])
+  // 从会话作品进入时只固定素材，不自动提炼脚本、调用模型或提交收费任务。
+  if(props.initialSource){
+    try{const item=await libraryService.saveResult('product_video',props.initialSource.taskId,props.initialSource.resultId,'other'),version=item.versions[0];if(!version)return;openMode('reference_video');referenceSource.value='upload';libraryAnalysisDraft.value={item_id:item.id,version_id:version.id,purpose:'reference_video'}}
+    catch(cause){message.value=`当前作品暂不能引用：${(cause as Error).message}`}
+  }
 })
 onBeforeUnmount(stopPolling)
 </script>
@@ -652,9 +662,9 @@ onBeforeUnmount(stopPolling)
           <div class="pv-field"><div class="pv-field-head"><b>上传你的商品素材</b><span>最多 {{ referenceImageLimit }} 张</span></div><div class="pv-upload-list"><div v-for="(image, index) in sourceImages" :key="image" class="pv-upload-thumb"><img :src="image" alt="已上传素材" /><button type="button" @click="sourceImages.splice(index, 1)">×</button></div><label v-if="sourceImages.length < referenceImageLimit" class="pv-upload-trigger"><span class="i-lucide-plus"></span><small>上传商品图</small><input type="file" accept="image/png,image/jpeg,image/webp" multiple @change="handleUpload" /></label></div></div>
           <div v-if="studioMode === 'trending'" class="pv-field"><div class="pv-field-head"><b>灵感模板</b><button type="button" @click="view = 'templates'; loadTemplates()">更换模板 <span class="i-lucide-chevron-right"></span></button></div><div class="pv-mini-template-grid"><button v-for="template in effectiveTemplates.slice(0, 5)" :key="template.id" type="button" :class="{ active: activeTemplateId === template.id }" @click="selectTemplate(template)"><img :src="siteAsset(template.coverUrl)" :alt="template.name" /><small>{{ template.name }}</small></button></div></div>
           <div class="pv-field"><div class="pv-field-head"><b>{{ studioMode === 'reference' ? '4. 视频画面描述（可编辑）' : '创意描述' }}</b><span>{{ prompt.length }}/1500</span></div><textarea v-model="prompt" maxlength="1500" :placeholder="studioMode === 'reference' ? 'AI 改写后自动填入，也可自己描述商品画面、动作与节奏' : '描述商品、人物、画面风格与想突出的卖点'"></textarea></div>
-          <div v-if="userCanSelectModel && modelOptions.length > 1" class="pv-field"><div class="pv-field-head"><b>视频模型</b></div><div class="pv-setting-grid"><label>本次使用<select :value="activeVideoModel" @change="selectVideoModel(($event.target as HTMLSelectElement).value)"><option v-for="item in modelOptions" :key="item.code" :value="item.code">{{ item.name }}</option></select></label></div><p class="pv-field-hint">切换模型后，时长、清晰度和比例将按当前模型能力重新匹配，生成前仍会显示实际报价。</p></div>
-          <p v-if="studioMode === 'reference' && creationType === 'reference_video'" class="pv-field-hint">{{ referenceAnalysisOnly ? '当前模型仅使用提炼后的脚本与商品图生成新视频；原参考片不传给供应商，不收取视频输入费用。' : '当前模型可接收原参考视频；报价包含输入视频时长。' }}</p>
-          <div class="pv-field"><div class="pv-field-head"><b>视频设置</b></div><div class="pv-setting-grid"><label>比例<select v-model="aspectRatio"><option v-for="ratio in aspectRatioOptions" :key="ratio" :value="ratio">{{ ratio }}</option></select></label><label>时长<select v-model.number="durationSec"><option v-for="second in durationOptions" :key="second" :value="second">{{ second }} 秒</option></select></label><label>生成数量<select v-model.number="resultCount"><option :value="1">1 个</option><option :value="2">2 个</option><option :value="4">4 个</option></select></label><label>清晰度<select v-model="resolution"><option v-for="item in resolutionOptions" :key="item" :value="item">{{ item.toUpperCase() }}</option></select></label></div></div>
+          <div v-if="userCanSelectModel && modelOptions.length > 1" class="pv-field"><div class="pv-field-head"><b>视频模型</b></div><div class="pv-setting-grid"><label>本次使用<LivSelect :value="activeVideoModel" @change="selectVideoModel(($event.target as HTMLSelectElement).value)"><option v-for="item in modelOptions" :key="item.code" :value="item.code">{{ item.name }}</option></LivSelect></label></div><p class="pv-field-hint">切换模型后，时长、清晰度和比例将按当前模型能力重新匹配，生成前仍会显示实际报价。</p></div>
+          <p v-if="studioMode === 'reference' && creationType === 'reference_video'" class="pv-field-hint">{{ referenceAnalysisOnly ? '当前模型仅使用提炼后的脚本与商品图生成新视频；不直接使用原参考片，不收取视频输入费用。' : '当前模型可接收原参考视频；报价包含输入视频时长。' }}</p>
+          <div class="pv-field"><div class="pv-field-head"><b>视频设置</b></div><div class="pv-setting-grid"><label>比例<LivSelect v-model="aspectRatio"><option v-for="ratio in aspectRatioOptions" :key="ratio" :value="ratio">{{ ratio }}</option></LivSelect></label><label>时长<LivSelect v-model.number="durationSec"><option v-for="second in durationOptions" :key="second" :value="second">{{ second }} 秒</option></LivSelect></label><label>生成数量<LivSelect v-model.number="resultCount"><option :value="1">1 个</option><option :value="2">2 个</option><option :value="4">4 个</option></LivSelect></label><label>清晰度<LivSelect v-model="resolution"><option v-for="item in resolutionOptions" :key="item" :value="item">{{ item.toUpperCase() }}</option></LivSelect></label></div></div>
           <footer class="pv-form-footer"><div><span>当前点数</span><CreditAmount :value="props.currentCreditBalance" size="sm" tone="accent" /></div><div><span>生成费用</span><b>提交前获取实时报价</b></div><button type="button" :disabled="loading || referenceAnalyzing" @click="startCreation"><span class="i-lucide-sparkles"></span>{{ loading ? '正在获取报价…' : '一键生成视频' }}</button></footer>
         </div>
         <aside class="pv-preview-card"><h2>效果参考</h2><div class="pv-preview-media"><img v-if="activeTemplate" :src="siteAsset(activeTemplate.coverUrl)" :alt="activeTemplate.name" /></div><h3>{{ activeTemplate?.name }}</h3><p>{{ activeTemplate?.description }}。图片仅示意视觉方向，成片以实际生成结果为准。</p><dl><div><dt>适合</dt><dd>{{ activeTemplate?.styleTags.join(' / ') }}</dd></div><div><dt>时长</dt><dd>{{ durationSec }} 秒</dd></div><div><dt>比例</dt><dd>{{ aspectRatio }}</dd></div></dl></aside>
@@ -663,7 +673,7 @@ onBeforeUnmount(stopPolling)
 
     <template v-else-if="view === 'digital'">
       <header class="pv-heading pv-heading--compact"><div><p class="pv-eyebrow">DIGITAL PRESENTER</p><h1>数字人口播</h1><p>写好播报文稿，使用平台预设的数字人形象与音色生成完整口播视频。</p></div><button type="button" class="pv-template-link" @click="view = 'home'"><span class="i-lucide-arrow-left"></span>返回 AI 视频</button></header>
-      <div class="pv-create-layout"><section class="pv-form-card"><div class="pv-field"><div class="pv-field-head"><b>播报文稿</b><span>{{ digitalScript.length }}/540 字</span></div><textarea v-model="digitalScript" class="pv-digital-script" maxlength="540" placeholder="例如：今天为大家介绍这款产品的亮点……"></textarea><p class="pv-field-hint">适合商品讲解、资讯播报和知识分享；预计时长由文稿字数计算。</p></div><div class="pv-field"><div class="pv-field-head"><b>输出清晰度</b></div><div class="pv-setting-grid"><label>分辨率<select v-model="digitalResolution"><option value="720p">720P</option><option value="1080p">1080P</option></select></label></div></div><div v-if="digitalAvailability && !digitalAvailability.available" class="pv-unavailable">{{ digitalAvailability.message }}</div><footer class="pv-form-footer"><div><span>当前点数</span><CreditAmount :value="props.currentCreditBalance" size="sm" tone="accent" /></div><div><span>生成费用</span><b>按预估播报时长报价</b></div><button type="button" :disabled="loading || !digitalAvailability?.available" @click="startDigitalHuman"><span class="i-lucide-mic-vocal"></span>{{ loading ? '正在获取报价…' : '生成口播视频' }}</button></footer></section><aside class="pv-preview-card"><h2>播报设置</h2><div class="pv-digital-visual"><span class="i-lucide-user-round"></span></div><h3>平台预设数字人</h3><p>形象、声音和背景由阿里云播报模板配置，后续支持更多形象选择。</p><dl><div><dt>最长时长</dt><dd>约 3 分钟</dd></div><div><dt>供应商</dt><dd>阿里云灵眸</dd></div></dl></aside></div>
+      <div class="pv-create-layout"><section class="pv-form-card"><div class="pv-field"><div class="pv-field-head"><b>播报文稿</b><span>{{ digitalScript.length }}/540 字</span></div><textarea v-model="digitalScript" class="pv-digital-script" maxlength="540" placeholder="例如：今天为大家介绍这款产品的亮点……"></textarea><p class="pv-field-hint">适合商品讲解、资讯播报和知识分享；预计时长由文稿字数计算。</p></div><div class="pv-field"><div class="pv-field-head"><b>输出清晰度</b></div><div class="pv-setting-grid"><label>分辨率<LivSelect v-model="digitalResolution"><option value="720p">720P</option><option value="1080p">1080P</option></LivSelect></label></div></div><div v-if="digitalAvailability && !digitalAvailability.available" class="pv-unavailable">{{ digitalAvailability.message }}</div><footer class="pv-form-footer"><div><span>当前点数</span><CreditAmount :value="props.currentCreditBalance" size="sm" tone="accent" /></div><div><span>生成费用</span><b>按预估播报时长报价</b></div><button type="button" :disabled="loading || !digitalAvailability?.available" @click="startDigitalHuman"><span class="i-lucide-mic-vocal"></span>{{ loading ? '正在获取报价…' : '生成口播视频' }}</button></footer></section><aside class="pv-preview-card"><h2>播报设置</h2><div class="pv-digital-visual"><span class="i-lucide-user-round"></span></div><h3>平台预设数字人</h3><p>形象、声音和背景由阿里云播报模板配置，后续支持更多形象选择。</p><dl><div><dt>最长时长</dt><dd>约 3 分钟</dd></div><div><dt>生成模型</dt><dd>阿里云灵眸</dd></div></dl></aside></div>
     </template>
 
     <template v-else-if="view === 'progress'">

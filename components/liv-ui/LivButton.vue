@@ -8,6 +8,8 @@ const props = withDefaults(defineProps<{
   disabled?: boolean
   block?: boolean
   type?: 'button' | 'submit' | 'reset'
+  /** 设置弹窗固定按钮规格，不由业务页再次拼接。 */
+  settings?: boolean
 }>(), {
   variant: 'secondary',
   size: 'md',
@@ -35,7 +37,7 @@ const buttonAppearance = computed(() => {
     :loading="loading"
     :disabled="disabled"
     :block="block"
-    class="liv-button"
+    class="liv-button" :class="{'liv-settings-button':settings,'liv-settings-button-primary':settings&&variant==='primary'}"
     :ui="{ base: 'min-w-0 justify-center rounded-md font-semibold tracking-normal' }"
   >
     <template v-if="$slots.icon" #leading><slot name="icon" /></template>

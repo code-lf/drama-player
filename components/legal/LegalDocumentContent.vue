@@ -100,7 +100,7 @@ const displayBlocks = computed(() => (
 <style scoped>
 .legal-document-content { color: #334155; font-size: 14px; line-height: 1.9; }
 .legal-document-content h1 { margin: 0 0 20px; color: #0f172a; font-size: 24px; font-weight: 800; line-height: 1.35; }
-.legal-document-content h2 { margin: 26px 0 10px; padding-left: 10px; border-left: 3px solid #3b82f6; color: #0f172a; font-size: 17px; font-weight: 800; line-height: 1.5; }
+.legal-document-content h2 { margin: 26px 0 10px; padding-left: 10px; border-left: 3px solid #4F46E5; color: #0f172a; font-size: 17px; font-weight: 800; line-height: 1.5; }
 .legal-document-content h3 { margin: 20px 0 8px; color: #1e293b; font-size: 15px; font-weight: 800; line-height: 1.5; }
 .legal-document-content p { margin: 0 0 12px; }
 .legal-document-content ol,

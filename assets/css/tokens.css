@@ -1,4 +1,79 @@
 :root {
+  /* 工作台页面底色统一纯黑；卡片、输入框及菜单保留可辨识的表面层级。 */
+  --liv-page-background: #000000;
+  --liv-session-hover: #202020;
+  /* 骨架占位与数字步进器使用统一中性表面，避免暴露浏览器原生控件。 */
+  --liv-skeleton-surface: #242424;
+  --liv-number-surface: #262626;
+  /* 登录记住我与协议勾选框使用更紧凑的视觉尺寸，标签继续承担点击区域。 */
+  --liv-login-checkbox-size: 14px;
+  /* 首次引导参照带封面的选择面板：左侧纵卡、右侧双行，独立于轻量设置宽度。 */
+  --liv-onboarding-width: 896px;
+  --liv-onboarding-padding: 40px;
+  --liv-onboarding-free-width: 120px;
+  --liv-onboarding-card-height: 100px;
+  --liv-onboarding-surface: #0e0e0e;
+  --liv-onboarding-card-surface: #151515;
+  --liv-onboarding-card-hover: #222222;
+  --liv-onboarding-border: #2a2a2a;
+  /* 工作台固定深色表面及助手正文，不随主题反转为浅色或蓝色小字。 */
+  --liv-workspace-surface: #111111;
+  /* 会话画布铺满可用宽度；聊天默认宽度、分隔条与恢复骨架共享布局规格。 */
+  --liv-workspace-chat-width: 390px;
+  /* 纯对话正文保持可读宽度，已有作品仍铺满画布。 */
+  --liv-workspace-conversation-width: 760px;
+  --liv-workspace-divider-width: 8px;
+  /* 技能菜单固定四行：64px 行高＋三处 4px 间距，筛选不改变外框与弹出方向。 */
+  --liv-skill-menu-width: 480px;
+  --liv-skill-menu-row-height: 64px;
+  --liv-skill-menu-list-height: 268px;
+  --liv-skill-menu-height: 422px;
+  /* 首页案例预览收紧高度；媒体保持裁切比例，不拉伸原图。 */
+  --liv-case-cover-max-height: 144px;
+  /* 项目目录局部尺寸：筛选不继承全宽下拉规则，媒体封面保持紧凑。 */
+  --liv-project-search-width: 280px;
+  --liv-project-status-width: 144px;
+  --liv-project-sort-width: 200px;
+  /* 项目目录紧凑卡片：降低封面与底部留白，字号不跟随缩小；骨架复用同一规格。 */
+  --liv-project-cover-max-height: 144px;
+  --liv-project-grid-gap: 12px;
+  --liv-project-card-padding: 12px;
+  /* 顶栏 56px 加上下各 12px 外边距，剩余高度全部交给会话工作区。 */
+  --liv-workspace-height: calc(100dvh - 80px);
+  /* 顶栏左右一级入口同高；头像与内部图标另计，不随文字或余额撑高。 */
+  --liv-topbar-control-height: 40px;
+  --liv-topbar-icon-size: 18px;
+  /* 音乐为固定深色媒体舞台，封面氛围与玻璃面板不随明暗主题反转。 */
+  --liv-music-stage: #080b16;
+  --liv-music-panel: rgba(13, 19, 38, .72);
+  --liv-music-text: #f1f3ff;
+  --liv-music-muted: #a4adc9;
+  --liv-music-border: rgba(146, 154, 255, .25);
+  --liv-music-glow: rgba(79, 70, 229, .48);
+  --liv-music-highlight: #a5b4fc;
+  --liv-music-radius: 24px;
+  --liv-music-play-size: 80px;
+  /* 底部作品缩略图放大，统一尺寸同时用于窄屏横向滚动，不挤占编辑工具。 */
+  --liv-result-thumb-width: 80px;
+  --liv-result-thumb-height: 64px;
+  /* 首页滚动停靠栏尺寸及磨砂表面，不影响完整编辑器。 */
+  --liv-home-dock-height: 75px;
+  --liv-home-dock-surface: #262626;
+  /* 磨砂主要来自背后内容的模糊，只加薄白膜，避免在黑底上变成实心浅灰块。 */
+  --liv-home-dock-glass: rgba(255, 255, 255, .18);
+  --liv-home-dock-glass-border: rgba(255, 255, 255, .08);
+  --liv-home-dock-glass-text: rgba(255, 255, 255, .6);
+  --liv-home-dock-arrow: rgba(255, 255, 255, .1);
+  --liv-chat-assistant-text: #ffffff;
+  /* 创作会话统一规格：消息、表单与输入框共享，不跟随窗口高度拉伸字号。 */
+  --liv-chat-font: 14px;
+  --liv-chat-line: 1.7;
+  --liv-chat-gap: 24px;
+  --liv-chat-inset: 16px;
+  --liv-chat-editor-min: 96px;
+  --liv-chat-editor-max: 220px;
+  /* 播放器为固定深色媒体表面，当前歌词不随明暗主题的反色文本变暗。 */
+  --liv-music-current-text: #ffffff;
   /* 主背景：深色电影感基调 */
   --color-bg: #07090f;
   /* 面板背景：卡片/弹窗/工具栏统一色 */
@@ -20,9 +95,9 @@
   /* 反色文本：用于高亮按钮、深色品牌块 */
   --color-text-inverse: #07111d;
   /* 霓虹主色：交互高亮 */
-  --color-neon: #45d7ff;
+  --color-neon: #4F46E5;
   /* 霓虹柔和色：边框和阴影过渡 */
-  --color-neon-soft: rgba(69, 215, 255, 0.35);
+  --color-neon-soft: rgba(79,70,229, 0.35);
   /* 柔和边框色 */
   --color-border-soft: rgba(137, 170, 235, 0.2);
   /* 状态色：统一成功/警告/危险场景 */
@@ -36,7 +111,7 @@
 
   /* 阴影令牌：面板层级与霓虹高亮 */
   --shadow-panel: 0 16px 60px rgba(0, 0, 0, 0.35);
-  --shadow-neon: 0 0 0 1px rgba(69, 215, 255, 0.45), 0 12px 40px rgba(69, 215, 255, 0.18);
+  --shadow-neon: 0 0 0 1px rgba(79,70,229, 0.45), 0 12px 40px rgba(79,70,229, 0.18);
 
   /* 动效时长：交互统一节奏 */
   --motion-fast: 0.2s;
@@ -50,16 +125,16 @@
   --color-surface-base: rgba(255, 255, 255, 0.96);
   --color-surface-raised: rgba(255, 255, 255, 0.98);
   --color-surface-overlay: rgba(255, 255, 255, 0.72);
-  --color-surface-hover: rgba(0, 95, 254, 0.08);
+  --color-surface-hover: rgba(79,70,229, 0.08);
   --color-text-main: #101522;
   --color-text-muted: #5b6783;
   --color-text-inverse: #ffffff;
-  --color-neon: #005FFE;
-  --color-neon-soft: rgba(0, 95, 254, 0.22);
+  --color-neon: #4F46E5;
+  --color-neon-soft: rgba(79,70,229, 0.22);
   --color-border-soft: rgba(19, 41, 84, 0.14);
   --color-state-success: #059669;
   --color-state-warning: #d97706;
   --color-state-danger: #dc2626;
   --shadow-panel: 0 16px 60px rgba(13, 31, 66, 0.12);
-  --shadow-neon: 0 0 0 1px rgba(0, 95, 254, 0.25), 0 10px 28px rgba(0, 95, 254, 0.12);
+  --shadow-neon: 0 0 0 1px rgba(79,70,229, 0.25), 0 10px 28px rgba(79,70,229, 0.12);
 }

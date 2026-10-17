@@ -553,7 +553,7 @@ function closeSuccessPage(): void {
         <span class="text-[11px] font-semibold text-[#98a5b6]">积分实时到账，可用于所有 AI 创作任务</span>
       </div>
 
-      <div v-if="isBillingLoading && billingPackages.length === 0" class="mt-4 rounded-[18px] border border-[#e1eaf5] bg-white px-6 py-12 text-center text-[13px] font-semibold text-[#8492a8]">正在同步最新套餐与账户数据...</div>
+      <DashboardSkeleton v-if="isBillingLoading && billingPackages.length === 0" variant="cards" :rows="4" />
       <div v-else-if="billingPackages.length === 0" class="mt-4 rounded-[18px] border border-dashed border-[#cbd9ec] bg-white px-6 py-12 text-center text-[13px] font-semibold text-[#8492a8]">当前还没有上架套餐，请先到后台管理端配置充值套餐。</div>
       <div v-else class="mt-4 grid gap-4 md:grid-cols-3">
         <article
@@ -639,9 +639,7 @@ function closeSuccessPage(): void {
           <div class="mt-2 flex items-center justify-between rounded-[10px] bg-[#f4f7fc] px-4 py-3"><div class="flex items-center gap-2"><CreditAmount :value="purchaseDialogPackage.creditsAmount" size="md" tone="inherit" /><span class="text-[11px] font-bold text-[#77869c]">点实际到账</span></div><span class="text-[15px] font-black">¥ {{ formatMoney(purchaseDialogPackage.priceAmount) }}</span></div>
           <p class="mt-5 text-[11px] font-black text-[#7d8ba0]">应付金额</p><p class="mt-1 text-[22px] font-black">¥ {{ formatMoney(purchaseDialogPackage.priceAmount) }}</p>
           <p class="mt-5 text-[11px] font-black text-[#7d8ba0]">支付方式</p>
-          <div v-if="isLoadingPaymentMethods" class="mt-2 rounded-[9px] bg-[#f5f8fc] px-3 py-3 text-[11px] font-semibold text-[#8998ac]">
-            正在读取可用支付方式…
-          </div>
+          <DashboardSkeleton v-if="isLoadingPaymentMethods" :rows="2" />
           <div v-else-if="availablePaymentMethods.length" class="mt-2 space-y-2">
             <button v-for="method in availablePaymentMethods" :key="method.value" class="flex h-10 w-full items-center justify-between rounded-[9px] border px-3 text-left text-[12px] font-bold transition" :class="selectedPaymentMethod === method.value ? 'border-[#0d63ff] bg-[#f5f9ff] text-[#26344b]' : 'border-[#e2eaf5] text-[#66758c] hover:border-[#b8d0ff]'" type="button" @click="selectedPaymentMethod = method.value"><span>{{ method.label }}</span><span class="h-4 w-4 rounded-full border-2" :class="selectedPaymentMethod === method.value ? 'border-[#0d63ff] bg-[#0d63ff] shadow-[inset_0_0_0_3px_white]' : 'border-[#c4d0df]'" /></button>
           </div>
@@ -658,7 +656,7 @@ function closeSuccessPage(): void {
         <div class="w-full max-w-[390px] rounded-[18px] bg-white px-7 py-6 text-center shadow-[0_30px_90px_rgba(15,23,42,0.25)]">
           <div class="flex items-center justify-between"><div class="text-left"><h3 class="text-[19px] font-black">{{ isAlipayCashier ? '请完成支付宝支付' : '请扫码支付' }}</h3><p class="mt-1 text-[11px] font-semibold text-[#7c8ba0]">订单 {{ pendingPaymentOrder.orderNo }}</p></div><button class="text-[#7d8ba0]" type="button" aria-label="关闭支付窗口" @click="closePaymentQr">×</button></div>
           <div v-if="isAlipayCashier" class="mx-auto mt-5 flex h-[180px] w-full flex-col items-center justify-center rounded-[12px] border border-[#dce9ff] bg-[#f6f9ff] px-6">
-            <div class="flex h-14 w-14 items-center justify-center rounded-2xl bg-[#1677ff] text-2xl font-black text-white">支</div>
+            <div class="flex h-14 w-14 items-center justify-center rounded-2xl bg-[#4F46E5] text-2xl font-black text-white">支</div>
             <p class="mt-4 text-[14px] font-black text-[#26344b]">支付宝官方收银台已在新窗口打开</p>
             <p class="mt-2 text-[11px] font-semibold leading-5 text-[#8998ac]">请在官方页面扫码或登录付款；本站不会仿制支付宝二维码。</p>
           </div>
@@ -676,7 +674,7 @@ function closeSuccessPage(): void {
           <p class="mt-2 text-[11px] font-semibold text-[#8998ac]">付款后系统会自动验签到账，请勿手动上传支付截图。</p>
           <p v-if="paymentQrNotice" class="mt-3 rounded-[9px] bg-[#fff6e8] px-3 py-2 text-[11px] font-semibold leading-5 text-[#b26b00]">{{ paymentQrNotice }}</p>
           <button v-if="isPaymentQrExpired" class="mt-4 h-10 w-full rounded-[9px] bg-[#075fff] text-[12px] font-black text-white disabled:cursor-not-allowed disabled:bg-[#9abbf5]" type="button" :disabled="isRetryingPayment" @click="retryExpiredPayment">{{ isRetryingPayment ? '正在重新发起…' : '重新发起支付' }}</button>
-          <button v-else-if="isAlipayCashier" class="mt-4 h-10 w-full rounded-[9px] bg-[#1677ff] text-[12px] font-black text-white" type="button" @click="openAlipayCashier(pendingPaymentOrder.checkoutUrl)">打开支付宝收银台</button>
+          <button v-else-if="isAlipayCashier" class="mt-4 h-10 w-full rounded-[9px] bg-[#4F46E5] text-[12px] font-black text-white" type="button" @click="openAlipayCashier(pendingPaymentOrder.checkoutUrl)">打开支付宝收银台</button>
           <button v-else class="mt-4 h-10 w-full rounded-[9px] border border-[#d8e5f8] text-[12px] font-black text-[#075fff]" type="button" @click="refreshPendingPayment(pendingPaymentOrder.orderNo)">我已支付，刷新状态</button>
           <button v-if="isAlipayCashier && !isPaymentQrExpired" class="mt-2 h-9 w-full rounded-[9px] border border-[#d8e5f8] text-[11px] font-black text-[#075fff]" type="button" @click="refreshPendingPayment(pendingPaymentOrder.orderNo)">我已支付，刷新状态</button>
         </div>

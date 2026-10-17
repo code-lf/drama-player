@@ -8,7 +8,11 @@ export interface LibraryVersion {
 export interface LibraryItem {
   id: string; name: string; scope: 'personal' | 'public'; media_type: string
   category: string; status: string; versions: LibraryVersion[]; created_at: string
+  is_favorite?: boolean; voice_capability?: 'preview_only' | 'reference_audio'
+  incompatibilities?: Record<string, string>
 }
+export interface LibraryCollectionMember { item_id?: string; version_id: string; name?: string; category?: string; media_type?: string; preview_url?: string; available: boolean; reason: string }
+export interface LibraryCollection { id: string; name: string; status: string; version_id: string; version_no: number; is_favorite: boolean; versions: Array<{id:string;version_no:number;name:string}>; members: LibraryCollectionMember[] }
 export interface LibraryConfiguration {
   categories: Array<{ code: string; name: string }>; max_upload_bytes: number; user_quota_bytes: number
 }

@@ -3885,9 +3885,9 @@ function startMicroEditPolling(editId: string): void {
               <template v-if="generationMode === 'full'">
                 <div><strong>想先验证效果？</strong><p>可先试做 1 个独立镜头；使用与整集相同的模型、画质和资产，成功后直接保留到成片。依赖前镜尾帧的镜头不单独试做。</p></div>
                 <label for="sample-shot-select">试做镜头</label>
-                <select id="sample-shot-select" v-model="sampleCandidateRowId" :disabled="actionBusy === 'estimate-sample'">
+                <LivSelect id="sample-shot-select" v-model="sampleCandidateRowId" :disabled="actionBusy === 'estimate-sample'">
                   <option v-for="row in sampleEligibleRows" :key="row.id" :value="row.id">镜头 {{ rowNumber(row) }} · {{ titleFor(row) }}</option>
-                </select>
+                </LivSelect>
                 <LivButton variant="secondary" :loading="actionBusy === 'estimate-sample'" :disabled="!sampleCandidateRowId" @click="prepareSampleGeneration">查看该镜头报价</LivButton>
               </template>
               <template v-else>
@@ -3981,7 +3981,7 @@ function startMicroEditPolling(editId: string): void {
         @update:open="value => !value && closeAssetManager()"
       >
         <template #icon><Package :size="20" /></template>
-          <div v-if="assetManagerLoading" class="asset-manager-loading"><LoaderCircle :size="26" class="spin" /><span>正在读取项目资产…</span></div>
+          <DashboardSkeleton v-if="assetManagerLoading" variant="cards" :rows="4" />
           <div v-else class="asset-manager-body">
             <aside class="asset-manager-nav">
               <UButton
@@ -4211,7 +4211,7 @@ function startMicroEditPolling(editId: string): void {
         <template #icon><Clock3 :size="20" /></template>
         <div class="plan-history-layout">
           <aside class="plan-history-list">
-            <div v-if="planHistoryLoading && !planHistoryVersions.length" class="plan-history-empty"><LoaderCircle :size="18" class="spin" />正在读取方案历史…</div>
+            <DashboardSkeleton v-if="planHistoryLoading && !planHistoryVersions.length" :rows="3" />
             <div v-else-if="!planHistoryVersions.length" class="plan-history-empty"><Clock3 :size="20" />还没有归档的方案版本</div>
             <button
               v-for="item in planHistoryVersions"
@@ -4462,7 +4462,7 @@ function startMicroEditPolling(editId: string): void {
 .status-chip--running, .status-chip--queued, .status-chip--pending { background: #edf4ff; color: var(--sb-blue); }
 .status-chip--failed, .risk-chip { background: #fff0f0; color: #d13b3b; }
 .status-chip--preview { background: #f3f0ff; color: #6941c6; }
-.status-chip--qa-running { background: #eef4ff; color: #2563eb; }
+.status-chip--qa-running { background: #eef4ff; color: #4F46E5; }
 .status-chip--qa-passed { background: #eaf9ef; color: #16844b; }
 .status-chip--qa-warning { background: #fff7e8; color: #b45309; }
 .status-chip--qa-manual { background: #fff0f0; color: #c2413b; }
@@ -4549,7 +4549,7 @@ function startMicroEditPolling(editId: string): void {
 .take-card__media img, .take-card__empty { width: 100%; height: 100%; object-fit: cover; border-radius: 4px; background: #eef2f6; }
 .take-card__empty { display: grid; place-items: center; color: #8492a6; }
 .take-card__loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 3px; background: rgba(17, 40, 76, .24); }
-.take-card__loading i { width: 5px; height: 5px; border-radius: 50%; background: #eff6ff; box-shadow: 0 0 5px rgba(255, 255, 255, .65); animation: take-loading-dot 1.1s ease-in-out infinite; }
+.take-card__loading i { width: 5px; height: 5px; border-radius: 50%; background: #EEF2FF; box-shadow: 0 0 5px rgba(255, 255, 255, .65); animation: take-loading-dot 1.1s ease-in-out infinite; }
 .take-card__loading i:nth-child(2) { animation-delay: .16s; }
 .take-card__loading i:nth-child(3) { animation-delay: .32s; }
 @keyframes take-loading-dot { 0%, 60%, 100% { opacity: .4; transform: translateY(1px); } 30% { opacity: 1; transform: translateY(-2px); } }
@@ -4636,7 +4636,7 @@ function startMicroEditPolling(editId: string): void {
 .continuity-check b { grid-column: 2 / 4; font-size: 12px; }
 .continuity-check small { grid-column: 2 / 4; overflow: hidden; color: #667085; font-size: 11px; line-height: 16px; text-overflow: ellipsis; white-space: nowrap; }
 .continuity-check--warning { border-color: #f5d2a6; background: #fff9ef; color: #b25f00; }
-.continuity-check--pending { border-color: #bfd6fb; background: #f6f9ff; color: #2563eb; }
+.continuity-check--pending { border-color: #bfd6fb; background: #f6f9ff; color: #4F46E5; }
 .continuity-check--neutral { border-color: #e4e7ec; background: #f8fafc; color: #667085; }
 .risk-list { margin: 10px 0 0; padding-left: 19px; color: #a15c07; font-size: 12px; }
 .risk-summary { margin-top: 10px; padding: 10px 12px; border: 1px solid #f4d7a8; border-radius: 10px; background: #fffaf2; color: #7f5415; }

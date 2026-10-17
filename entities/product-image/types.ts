@@ -55,6 +55,7 @@ export interface ProductImageResult {
 }
 
 export interface ProductImageGeneratePayload {
+  creationContext?: string
   libraryRefs?: import('~/entities/library/types').LibraryReference[]
   inputOrder?: string[]
   inputSnapshotId?: string
@@ -113,6 +114,13 @@ export interface ProductImageTaskStatus {
 }
 
 /** 一次可恢复的商品图生成批次；供应商内部请求与异常不暴露给用户端。 */
+export interface ImageSafetyRepair {
+  status: 'processing' | 'ready' | 'needs_input' | 'unavailable'
+  prompt: string
+  changes: string[]
+  message: string
+}
+
 export interface ProductImageHistoryBatch {
   id: string
   workspaceMode: 'product' | 'poster' | 'edit' | 'free'
@@ -126,6 +134,10 @@ export interface ProductImageHistoryBatch {
   status: string
   progress?: number
   currentStep?: string
+  /** 历史恢复沿用服务端已脱敏的错误，不用阶段标题替代原因。 */
+  errorMessage?: string
+  errorCode?: string
+  safetyRepair?: ImageSafetyRepair | null
   aspectRatio: string
   resolution: string
   style: string

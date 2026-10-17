@@ -31,7 +31,7 @@ async function save(): Promise<void> {
       <section role="dialog" aria-modal="true" aria-labelledby="invoice-title-heading" class="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-6 shadow-xl">
         <div class="flex items-center justify-between"><h3 id="invoice-title-heading" class="text-lg font-black">{{ title ? '编辑开票抬头' : '新增开票抬头' }}</h3><button :disabled="busy" aria-label="关闭" @click="emit('close')">✕</button></div>
         <form class="mt-5 grid gap-4" @submit.prevent="save">
-          <label class="text-sm">抬头类型<select v-model="form.title_type" class="mt-1 w-full rounded-lg border p-2"><option value="personal">个人</option><option value="company">企业</option></select></label>
+          <label class="text-sm">抬头类型<LivSelect v-model="form.title_type" class="mt-1 w-full rounded-lg border p-2"><option value="personal">个人</option><option value="company">企业</option></LivSelect></label>
           <label class="text-sm">抬头名称<input v-model="form.title_name" required minlength="2" maxlength="160" class="mt-1 w-full rounded-lg border p-2"></label>
           <label v-if="form.title_type === 'company'" class="text-sm">纳税人识别号<input v-model="form.tax_id" required maxlength="20" class="mt-1 w-full rounded-lg border p-2"></label>
           <label class="text-sm">接收邮箱<input v-model="form.email" type="email" required maxlength="254" class="mt-1 w-full rounded-lg border p-2"></label>

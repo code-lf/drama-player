@@ -1,4 +1,5 @@
 import type { AccountProfile, AccountSecuritySummary, CreditLedgerPage, CreditPackage, PaymentOrder, PaymentOrderPage } from '~/entities/account/types'
+import {waitForVisibleRead,createReadSingleFlight} from '../readScheduling'
 import type { CanvasGraph } from '~/entities/canvas/types'
 import type {
   DramaCreditPreview,
@@ -18,6 +19,7 @@ import type {
   ProductImageGeneratePayload,
   ProductImageGenerateResult,
   ProductImageHistoryBatch,
+  ImageSafetyRepair,
   ProductImageResult,
   ProductImageTemplate,
   ProductSellingPoint
@@ -620,6 +622,10 @@ interface BackendProductImageHistoryBatchResponse {
   status: string
   progress?: number
   current_step?: string
+  /** 与任务状态接口共用已脱敏的错误字段。 */
+  error_message?: string
+  error_code?: string
+  safety_repair?: ImageSafetyRepair | null
   aspect_ratio: string
   resolution: string
   style: string
@@ -1211,7 +1217,7 @@ function mapProject(raw: BackendProjectItem): Project {
   }
 }
 
-function mapDramaProjectCard(raw: BackendDramaProjectCardResponse): DramaProjectCard {
+export function mapDramaProjectCard(raw: BackendDramaProjectCardResponse): DramaProjectCard {
   return {
     id: raw.id,
     projectId: raw.project_id,
@@ -1497,6 +1503,9 @@ function mapProductImageHistoryBatch(raw: BackendProductImageHistoryBatchRespons
     status: raw.status || '',
     progress: raw.progress ?? 100,
     currentStep: raw.current_step || '已完成',
+    errorMessage: raw.error_message || '',
+    errorCode: raw.error_code || '',
+    safetyRepair: raw.safety_repair,
     aspectRatio: raw.aspect_ratio || '1:1',
     resolution: raw.resolution || '1024',
     style: raw.style || '',
@@ -1533,10 +1542,11 @@ function mapProductImageTemplate(raw: BackendProductImageTemplateResponse): Prod
   }
 }
 
-function buildProductImagePayload(payload: ProductImageGeneratePayload) {
+export function buildProductImagePayload(payload: ProductImageGeneratePayload) {
   // 商品图请求统一在这里转成后端 snake_case，页面组件只维护 camelCase。
   return {
     batch_id: payload.batchId || '',
+    creation_context: payload.creationContext || '',
     library_refs: payload.libraryRefs || [], input_order: payload.inputOrder || [],
     input_snapshot_id: payload.inputSnapshotId || '',
     prompt: payload.prompt,
@@ -1599,7 +1609,7 @@ function mapProductVideoTemplate(raw: any): ProductVideoTemplate {
 }
 
 /** 商品视频任务包含结果版本与进度，统一映射后才能在刷新时可靠恢复任务面板。 */
-function mapProductVideoTask(raw: any): ProductVideoTask {
+export function mapProductVideoTask(raw: any): ProductVideoTask {
   return {
     id: String(raw?.id || ''),
     template: raw?.template ? mapProductVideoTemplate(raw.template) : null,
@@ -1610,6 +1620,8 @@ function mapProductVideoTask(raw: any): ProductVideoTask {
     progress: Number(raw?.progress || 0),
     currentStep: String(raw?.current_step || ''),
     errorMessage: String(raw?.error_message || ''),
+    errorCode: String(raw?.error_code || ''),
+    safetyRepair: raw?.safety_repair || null,
     durationSec: Number(raw?.duration_sec || 10),
     aspectRatio: String(raw?.aspect_ratio || '9:16'),
     resolution: String(raw?.resolution || '720p'),
@@ -1630,10 +1642,10 @@ function mapProductVideoTask(raw: any): ProductVideoTask {
   }
 }
 
-function buildProductVideoPayload(payload: ProductVideoCreatePayload) {
+export function buildProductVideoPayload(payload: ProductVideoCreatePayload) {
   return {
     library_refs: payload.libraryRefs || [], input_order: payload.inputOrder || [],
-    input_snapshot_id: payload.inputSnapshotId || '', request_id: payload.requestId || '',
+    input_snapshot_id: payload.inputSnapshotId || '', request_id: payload.requestId || '', creation_context: payload.creationContext || '',
     template_id: payload.templateId,
     creation_type: payload.creationType,
     prompt: payload.prompt,
@@ -2602,7 +2614,20 @@ function buildEpisodeCutPayload(payload: EpisodeCutSavePayload) {
 }
 
 // 新增独立业务模块共用同一鉴权、协议拦截和异常处理，不复制登录令牌逻辑。
-export async function request<T>(path: string, options?: Parameters<typeof $fetch<T>>[1], consentPromptsRemaining = 3): Promise<T> {
+const singleFlightRead=createReadSingleFlight()
+/** 只读调度不重试写入；隐藏标签页恢复可见后继续原读取。 */
+export async function request<T>(path: string, options?: Parameters<typeof $fetch<T>>[1], consentPromptsRemaining = 3, uploadProgress?: (percent: number | null) => void): Promise<T> {
+  if(import.meta.client&&(!options?.method||String(options.method).toUpperCase()==='GET')){
+    await waitForVisibleRead(options?.signal||undefined)
+    if(!options?.signal&&!options?.headers&&!options?.body&&!options?.responseType){
+      const token=useAuthStore().session.token||''
+      const key=JSON.stringify([path,options?.query,options?.params,token])
+      return singleFlightRead(key,()=>performRequest<T>(path,options,consentPromptsRemaining,uploadProgress))
+    }
+  }
+  return performRequest<T>(path,options,consentPromptsRemaining,uploadProgress)
+}
+async function performRequest<T>(path: string, options?: Parameters<typeof $fetch<T>>[1], consentPromptsRemaining = 3, uploadProgress?: (percent: number | null) => void): Promise<T> {
   const config = useRuntimeConfig()
   const baseUrl = config.public.apiBase as string
   let accessToken = ''
@@ -2625,8 +2650,15 @@ export async function request<T>(path: string, options?: Parameters<typeof $fetc
   // 网络请求必须只执行一次。此前请求也位于上面的 try/catch 中，业务错误会被误判为
   // Pinia 初始化失败并再次发送无鉴权请求，最终把明确的后端错误覆盖成“网络异常”。
   try {
+    // 需要真实上传进度时换用 XHR 传输，错误继续进入下方统一的协议与鉴权处理。
+    if (import.meta.client && uploadProgress && options?.body instanceof FormData && options.method === 'POST') {
+      const { uploadFormData } = await import('./uploadTransport')
+      return await uploadFormData<T>(`${baseUrl}${path}`, options.body, headers, uploadProgress)
+    }
     return await $fetch<T>(`${baseUrl}${path}`, {
       ...options,
+      // 业务层负责状态恢复与退避；禁止 ofetch 对 429/5xx 隐式重试扩大请求量。
+      retry: 0,
       headers
     })
   } catch (error) {
@@ -2657,7 +2689,7 @@ export async function request<T>(path: string, options?: Parameters<typeof $fetc
           ? ['ai_content_rules']
           : ['ai_content_rules', relatedCode]
         if (await requestFeatureConsent(consentCodes)) {
-          return request<T>(path, options, consentPromptsRemaining - 1)
+          return request<T>(path, options, consentPromptsRemaining - 1, uploadProgress)
         }
       }
     }
@@ -2667,6 +2699,14 @@ export async function request<T>(path: string, options?: Parameters<typeof $fetc
       const authStore = useAuthStore()
       authStore.logout()
       window.dispatchEvent(new CustomEvent('livliv:auth-expired'))
+    }
+    // 工作台错误仅展示可读说明，不把包含内部路径的 FetchError.message 直接抛给界面。
+    if(path.startsWith('/creation/') || path.startsWith('/music/')){
+      const detail=typeof legalPayload==='string'?legalPayload:(legalPayload&&typeof legalPayload==='object'?String((legalPayload as {message?:string}).message||''):'')
+      const safe=detail&&!/https?:|\\[GET\\]|\\[POST\\]/i.test(detail)?detail:status===429?'请求较频繁，请稍后重试；不会自动重新提交生成。':status===403?'当前操作没有权限，请检查账号或素材授权。':status===404?'内容暂不可用，请刷新后重试。':'服务暂时不可用，请稍后重试。'
+      const friendly=new Error(safe) as Error & {statusCode:number;data:unknown}
+      friendly.statusCode=status;friendly.data=(error as {data?:unknown}).data
+      throw friendly
     }
     throw error
   }

@@ -31,6 +31,7 @@ import {
 } from '@lucide/vue'
 
 const { prompt: promptAction } = useActionDialog()
+const props=defineProps<{personalOnly?:boolean}>()
 
 const enabled = ref(false)
 const loading = ref(true)
@@ -121,6 +122,7 @@ function addVersion(item: LibraryItem, event: Event) {
 
 /** 切换个人/平台资料时清除上一库的筛选，避免沿用“视频”等条件造成素材库为空的错觉。 */
 function changeScope(nextScope: 'personal' | 'public') {
+  if(props.personalOnly&&nextScope==='public')return
   if (scope.value === nextScope) return
   category.value = ''
   mediaType.value = ''
@@ -405,6 +407,7 @@ onMounted(initialize)
               </span>
             </button>
             <button
+              v-if="!personalOnly"
               class="flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-xs font-bold transition-all"
               :class="scope === 'public' ? 'bg-white text-blue-600 shadow-xs' : 'text-slate-600 hover:text-slate-900'"
               @click="changeScope('public')"
@@ -846,7 +849,8 @@ onMounted(initialize)
             </header>
 
             <div class="my-4 flex-1 overflow-y-auto rounded-xl bg-slate-50 p-4 border border-slate-200/80">
-              <pre class="whitespace-pre-wrap break-words font-sans text-xs leading-6 text-slate-700">{{ documentLoading ? '正在读取文档内容…' : documentContent }}</pre>
+              <DashboardSkeleton v-if="documentLoading" :rows="4" />
+              <pre v-else class="whitespace-pre-wrap break-words font-sans text-xs leading-6 text-slate-700">{{ documentContent }}</pre>
             </div>
 
             <footer class="flex items-center justify-between border-t border-slate-100 pt-3 text-xs">

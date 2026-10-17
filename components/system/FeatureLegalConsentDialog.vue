@@ -15,7 +15,7 @@ const confirmationTexts = computed(() => documents.value
   .filter(Boolean))
 const dialogTitle = computed(() => documents.value.length === 1
   ? documents.value[0]?.versions[0]?.title || '功能使用须知'
-  : 'AI 功能使用与发布须知')
+  : '创作者协议')
 
 // 每次后端要求重新确认时都读取已发布的当前版本，不能复用本地缓存代签旧条款。
 watch(() => activeFeatureDocumentCodes.value.join('|'), async () => {
@@ -73,7 +73,7 @@ function cancel(): void {
           <p v-if="documents.length" class="mt-1 text-xs text-slate-500">已合并 {{ documents.length }} 项当前有效告知 · 阅读后只需确认一次</p>
         </header>
         <div class="min-h-0 flex-1 overflow-y-auto px-6 py-5 text-sm leading-7 text-slate-700">
-          <p v-if="loading">正在读取协议...</p>
+          <DashboardSkeleton v-if="loading" :rows="4" />
           <div v-else-if="documents.length" class="space-y-6">
             <section v-for="(item, index) in documents" :key="item.code" :class="index ? 'border-t border-slate-200 pt-6' : ''">
               <div class="mb-3 flex items-start justify-between gap-4">

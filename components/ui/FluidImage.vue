@@ -63,12 +63,7 @@ function handleError(): void {
     >
       <div class="fluid-image-ink absolute inset-0" />
       <div class="fluid-image-sheen absolute inset-0" />
-      <div
-        v-if="loadingLabel && !hasError"
-        class="absolute left-3 top-3 rounded-full border border-borderSoft bg-surfaceOverlay px-3 py-1 text-xs font-semibold text-textMain backdrop-blur-sm"
-      >
-        {{ loadingLabel }}
-      </div>
+      <!-- 读取图片时仅保留骨架；失败说明仍在下方展示，避免与正常读取混淆。 -->
       <div
         v-if="showFallbackText"
         class="absolute inset-x-6 bottom-6 rounded-2xl border border-borderSoft bg-surfaceRaised px-4 py-3 text-sm font-medium text-textMain"
