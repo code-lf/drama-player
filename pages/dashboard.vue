@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import type { DramaCreditPreview, DramaProjectCard, DramaProjectDetail, DramaRuntimeConfig, PublicVideoCapabilities } from '~/entities/drama/types'
 import AnnouncementWorkspacePanel from '~/features/dashboard/components/AnnouncementWorkspacePanel.vue'
-import BillingWorkspacePanel from '~/features/billing/components/BillingWorkspacePanel.vue'
 import CreditAmount from '~/components/ui/CreditAmount.vue'
 import CreditAccountPopover from '~/features/billing/components/CreditAccountPopover.vue'
+import LivButton from '~/components/liv-ui/LivButton.vue'
+import {accountBillingLinks} from '~/features/billing/accountNavigation'
+import {hoverMenuBoundary} from '~/features/dashboard/hoverMenuBoundary'
 import AccountProfileDialog from '~/features/account/components/AccountProfileDialog.vue'
 import AccountSecurityDialog from '~/features/account/components/AccountSecurityDialog.vue'
 import DashboardAnnouncementCenter from '~/features/dashboard/components/DashboardAnnouncementCenter.vue'
@@ -30,7 +32,6 @@ import { useAuthStore } from '~/features/auth/store/useAuthStore'
 import { dramaService } from '~/shared/api/services/dramaService'
 import { supportService } from '~/shared/api/services/supportService'
 import { requestFeatureConsent } from '~/shared/legal/featureConsent'
-import type { LegalDocument } from '~/entities/support/types'
 import {
   fallbackDramaVisualStyleOptions,
   findVisualStyleOption,
@@ -95,22 +96,6 @@ function updateSessionMedia(){wideSessionNavigation.value=!!sessionMedia?.matche
 onMounted(()=>{sessionMedia=window.matchMedia("(min-width:1440px)");updateSessionMedia();sessionMedia.addEventListener("change",updateSessionMedia)})
 onBeforeUnmount(()=>sessionMedia?.removeEventListener("change",updateSessionMedia))
 watch(()=>[route.fullPath,authStore.session.user?.id],()=>{sessionNavigationOpen.value=false})
-const legalDocuments = ref<LegalDocument[]>([])
-const featureNotice = computed(() => {
-  if (activeWorkspaceView.value !== 'console') return null
-  // 统一首页尚未选择短剧时，只在实际报价接口需要时提示对应功能协议。
-  if (activeMenu.value === 'drama' && route.query.entry !== 'drama') return null
-  const code = activeMenu.value === 'product' ? 'image_generation_terms'
-    : activeMenu.value === 'product-video' ? 'video_generation_terms'
-    : activeMenu.value === 'music' ? 'ai_content_rules'
-    : activeMenu.value === 'drama' ? 'drama_creation_terms'
-    : ''
-  const document = legalDocuments.value.find(item => item.code === code)
-  const version = document?.versions[0]
-  if (!document || !version) return null
-  // 风险提示标题和摘要直接使用后台已发布版本，运营改版后用户端无需发版。
-  return { title: version.title, code: document.code, detail: version.summary }
-})
 const runtimeConfig = ref<DramaRuntimeConfig | null>(null)
 const publicVideoCapabilities = ref<PublicVideoCapabilities | null>(null)
 const currentDramaProject = ref<DramaProjectDetail | null>(null)
@@ -164,6 +149,8 @@ const isUserMenuOpen = ref(false)
 // 顶部积分入口使用独立 Popover，不再点击后直接跳充值页；这样用户可以先查看余额和最近流水。
 const isCreditPopoverOpen = ref(false)
 const isFeedbackDrawerOpen = ref(false)
+// 常见问题只读当前积分参考表，打开不影响工作区草稿或授权生成。
+const {open:isFaqOpen} = useCreationFaq()
 const isProfileDialogOpen = ref(false)
 const isAccountSecurityDialogOpen = ref(false)
 const isWatermarkDialogOpen = ref(false)
@@ -492,8 +479,13 @@ function toggleUserMenu(): void {
 // 游客悬停只展示既有头像，不触发登录；菜单和触发器之间保留 150ms 容错。
 let userMenuCloseTimer:ReturnType<typeof setTimeout>|undefined
 const userPointerOpening=ref<boolean>(false)
-function hoverUserMenu(){clearTimeout(userMenuCloseTimer);if(authStore.session.loggedIn){isUserMenuOpen.value=true;isCreditPopoverOpen.value=false}}
-function leaveUserMenu(){clearTimeout(userMenuCloseTimer);userMenuCloseTimer=setTimeout(()=>isUserMenuOpen.value=false,150)}
+function hoverUserMenu(){clearTimeout(userMenuCloseTimer);if(authStore.session.loggedIn){userPointerOpening.value=true;isUserMenuOpen.value=true;isCreditPopoverOpen.value=false}}
+/** 菜单不传送到外部，触发器和菜单共用悬停边界；键盘操作不受鼠标离开影响。 */
+function leaveUserMenu(){clearTimeout(userMenuCloseTimer);if(userPointerOpening.value)userMenuCloseTimer=setTimeout(()=>{if(!document.querySelector('.dashboard-user-trigger:hover,.dashboard-credit-pill:hover,.liv-account-dropdown:hover'))isUserMenuOpen.value=false},150)}
+/** 右上角同样以真实菜单节点为边界，跨浮层时取消旧关闭计时，不重开已关闭的菜单。 */
+const trackUserMenuBoundary=hoverMenuBoundary('.dashboard-user-trigger,.dashboard-credit-pill,.liv-account-dropdown',()=>clearTimeout(userMenuCloseTimer),()=>{if(isUserMenuOpen.value)leaveUserMenu()})
+onMounted(()=>{document.addEventListener('pointerover',trackUserMenuBoundary,true);document.addEventListener('pointerout',trackUserMenuBoundary,true)})
+onBeforeUnmount(()=>{document.removeEventListener('pointerover',trackUserMenuBoundary,true);document.removeEventListener('pointerout',trackUserMenuBoundary,true)})
 function blurUserMenu(event:FocusEvent){if(!(event.currentTarget as HTMLElement).contains(event.relatedTarget as Node|null))leaveUserMenu()}
 function focusUserMenu(){if(!userPointerOpening.value)hoverUserMenu()}
 onBeforeUnmount(()=>clearTimeout(userMenuCloseTimer))
@@ -501,6 +493,36 @@ onBeforeUnmount(()=>clearTimeout(userMenuCloseTimer))
 function closeUserMenu(): void {
   isUserMenuOpen.value = false
 }
+
+/** 组件库负责菜单开合，登录校验和积分浮层互斥仍由原页面管理。 */
+function setUserMenuOpen(value:boolean){
+  if(value&&!authStore.session.loggedIn){requireLogin();return}
+  isUserMenuOpen.value=value
+  if(value)isCreditPopoverOpen.value=false
+}
+
+/** 账户菜单仅复用已有页面与弹窗；当前账单视图显式标记，避免相同路径全部选中。 */
+const billingDialog = useBillingDialog()
+// 兼容已保存的账单深链：初始化完成后打开对应弹窗，切换Tab不再写路由或重挂侧栏。
+watch(()=>[route.path,route.query.view,isBooting.value,authStore.session.loggedIn] as const,([path,target,booting,loggedIn])=>{
+  if(!import.meta.client||booting||!loggedIn||path.replace(/\/$/,'')!=='/dashboard-billing')return
+  billingDialog.show(target==='orders'||target==='invoices'||target==='ledger'?target:'recharge')
+},{immediate:true})
+/** 账单留在当前工作区打开，关闭菜单后不改变会话或播放器。 */
+function showBilling(view: 'recharge'|'orders'|'invoices'|'ledger') {
+  if(!requireLogin())return
+  closeUserMenu();closeCreditPopover();billingDialog.show(view)
+}
+const accountMenuItems=computed(()=>[
+  [{label:'个人资料',icon:'i-lucide-user-round',onSelect:()=>{isProfileDialogOpen.value=true;closeUserMenu()}},
+   {label:'我的项目',icon:'i-lucide-folder',to:'/dashboard-projects',active:route.path==='/dashboard-projects'}],
+  accountBillingLinks('',billingDialog.rechargeOpen.value?'recharge':billingDialog.open.value?billingDialog.view.value:null,true).map(({to,...item})=>({...item,onSelect:()=>showBilling(item.view as 'recharge'|'orders'|'invoices'|'ledger')})),
+  [{label:'账户设置',icon:'i-lucide-settings',onSelect:()=>{isAccountSecurityDialogOpen.value=true;closeUserMenu()}},
+   {label:'成片水印设置',icon:'i-lucide-shield-check',onSelect:()=>{isWatermarkDialogOpen.value=true;closeUserMenu()}},
+   {label:'意见反馈',icon:'i-lucide-message-square',onSelect:()=>{isFeedbackDrawerOpen.value=true;closeUserMenu()}},
+   {label:'常见问题',icon:'i-lucide-circle-help',onSelect:()=>{isFaqOpen.value=true;closeUserMenu()}}],
+  [{label:'退出登录',icon:'i-lucide-log-out',color:'error' as const,onSelect:handleLogout}]
+])
 
 function toggleCreditPopover(): void {
   if (!requireLogin()) return
@@ -513,15 +535,22 @@ function closeCreditPopover(): void {
   isCreditPopoverOpen.value = false
 }
 
+/** 积分浮层统一使用组件库外点与键盘关闭；游客仍走既有登录入口。 */
+function setCreditPopoverOpen(value:boolean){
+  if(value&&!requireLogin())return
+  isCreditPopoverOpen.value=value
+  if(value)isUserMenuOpen.value=false
+}
+
 function openCreditBilling(): void {
   closeCreditPopover()
-  router.push('/dashboard-billing')
+  showBilling('recharge')
 }
 
 function openCreditLedger(): void {
   closeCreditPopover()
   // 通过查询参数告诉充值中心直接打开流水抽屉，用户不需要先找“充值中心”再点一次。
-  router.push('/dashboard-billing?view=ledger')
+  showBilling('ledger')
 }
 
 function closeRecentProjectMenu(): void {
@@ -821,8 +850,6 @@ async function bootstrapDashboard(): Promise<void> {
       accountStore.refreshProfile(),
       // 顶部积分 Popover 需要最近几条流水，因此控制台启动时先加载轻量账户流水。
       accountStore.refreshLedgers(1, 6),
-      // 安全协议入口只展示后台当前已发布版本，不在前端维护重复法律文案。
-      supportService.getLegalDocuments().then(items => { legalDocuments.value = items })
     ])
     // 项目、账户、流水互不依赖：某个局部接口暂不可用时，商品创作等独立工具仍可进入，
     // 不再用全页红色错误条遮挡工作区；具体动作仍会在所属组件里反馈失败原因。
@@ -877,7 +904,7 @@ async function ingestAndAnalyze(): Promise<void> {
     return
   }
   if (!entryCreditPreview.value.sufficient) {
-    await router.push('/dashboard-billing')
+    showBilling('recharge')
     return
   }
 
@@ -984,7 +1011,7 @@ async function handleEntryPrimaryAction(): Promise<void> {
     return
   }
   if (!entryCreditPreview.value.sufficient) {
-    await router.push('/dashboard-billing')
+    showBilling('recharge')
     return
   }
   await ingestAndAnalyze()
@@ -1121,6 +1148,7 @@ async function loadExportTasks(): Promise<void> {
 }
 
 function syncWorkspaceRouteState(path: string): void {
+  path=path.replace(/\/$/,'')
   if (path === '/dashboard-skills') {
     activeWorkspaceView.value = 'skills'
     return
@@ -1163,7 +1191,8 @@ function syncWorkspaceRouteState(path: string): void {
 
   if (path === '/dashboard-billing') {
     activeMenu.value = 'none'
-    activeWorkspaceView.value = 'billing'
+    // 旧账单深链只提供工作台背景，业务内容统一由弹窗承载。
+    activeWorkspaceView.value = 'console'
     return
   }
 
@@ -1220,7 +1249,6 @@ watch(
 )
 
 let legalEntryCheckSequence = 0
-const legalEntryError = ref('')
 
 /** 根据控制台路由返回对应的功能协议编码，入口检查与侧栏点击共用同一映射。 */
 function featureConsentCodeForPath(path: string): string | null {
@@ -1235,7 +1263,6 @@ async function checkFeatureEntryConsent(featureCode: string): Promise<void> {
     // 页面进入时只提示未确认的当前版本；生成提交时仍由后端再次硬性校验。
     if (!import.meta.client || !authStore.session.token) return
     const sequence = ++legalEntryCheckSequence
-    legalEntryError.value = ''
     try {
       const accepted = await supportService.getLegalAcceptanceStatus()
       if (sequence !== legalEntryCheckSequence) return
@@ -1245,8 +1272,9 @@ async function checkFeatureEntryConsent(featureCode: string): Promise<void> {
         const confirmed = await requestFeatureConsent(missingCodes)
         if (!confirmed || sequence !== legalEntryCheckSequence) return
       }
-    } catch (error) {
-      legalEntryError.value = error instanceof Error ? error.message : '协议状态暂时无法读取，请稍后重试。'
+    } catch {
+      // 常驻协议提示已移除；读取失败不伪造同意，实际提交仍重新校验已发布版本。
+      console.warn('[livliv] 功能协议状态暂时无法读取，提交时重新校验。')
     }
 }
 
@@ -1311,7 +1339,9 @@ function handleLogout() {
   projectItems.value = []
 }
 
-function handleDashboardDocumentClick(): void {
+function handleDashboardDocumentClick(event:MouseEvent): void {
+  // 传送菜单内部与按钮的点击不是外点；选择动作仍由组件库执行并关闭菜单。
+  if(event.target instanceof Element&&event.target.closest('.liv-account-dropdown,.dashboard-user-trigger,.liv-credit-popover-shell,.dashboard-credit-pill'))return
   // 点击页面其它区域时统一收起浮层，让顶部用户菜单和项目操作菜单表现一致。
   closeUserMenu()
   closeCreditPopover()
@@ -1400,84 +1430,64 @@ watch(()=>authStore.session.user?.id,()=>{projectItems.value=[];accountStore.res
             <template #history="{hold}"><DashboardSidebar @interaction="hold" sessions-only active-menu="none" active-workspace-view="console" :billing-view="billingView" :current-credit-balance="currentCreditBalance" :logged-in="authStore.session.loggedIn" :nickname="authStore.session.user?.nickname??''" :avatar-url="authStore.session.user?.avatar??''" theme-mode="dark"/></template>
           </SessionWorkspaceNav>
           <!-- 创作用途由工作台传送到顶部，保持原切换状态与费用确认逻辑。 -->
-          <div v-if="activeWorkspaceView === 'console'" id="creation-topbar-nav" class="creation-topbar-nav" />
+          <div v-if="activeWorkspaceView === 'console'" id="creation-topbar-nav" class="creation-topbar-nav"><USkeleton v-if="isBooting && !immersiveSession" class="home-nav-skeleton" aria-label="正在载入创作用途" /></div>
           <div class="flex items-center gap-3">
-            <div class="relative" @click.stop>
+            <!-- 游客只展示登录入口；账户余额、通知与个人菜单仅在登录后挂载。 -->
+            <LivButton v-if="!authStore.session.loggedIn" settings variant="primary" @click="requireLogin()">免费注册/登录</LivButton>
+            <template v-else>
+            <DashboardAnnouncementCenter />
+            <!-- 积分与头像共用胶囊外框，内部保留各自账户动作，避免嵌套按钮。 -->
+            <div class="dashboard-account-pill" aria-label="积分与个人账户">
+            <UPopover :open="isCreditPopoverOpen" :content="{align:'end',sideOffset:8,collisionPadding:16}" :ui="{content:'liv-credit-popover-shell'}" @update:open="setCreditPopoverOpen">
               <button
                 class="dashboard-credit-pill flex h-11 items-center gap-3 rounded-full border border-[#dbe7f7] bg-white px-5 text-[15px] font-black text-[#1f2937] shadow-[0_12px_32px_rgba(15,23,42,0.06)] transition hover:border-[#4F46E5]/35 hover:text-[#4F46E5]"
                 type="button"
                 aria-label="打开积分账户"
+                @pointerenter="$event.pointerType!=='touch'&&hoverUserMenu()"
+                @pointerleave="leaveUserMenu"
                 :aria-expanded="isCreditPopoverOpen"
-                @click="toggleCreditPopover"
+                @click.stop
               >
                 <CreditAmount v-if="accountStore.profile" :value="currentCreditBalance" size="sm" tone="inherit" />
                 <span v-else aria-label="积分余额尚未读取">—</span>
-                <span>积分</span>
               </button>
 
-              <div v-if="isCreditPopoverOpen" class="absolute right-0 top-[52px] z-[80]">
+              <template #content>
+                <!-- 保留旧页面全局外点监听；内部点击不能被它误判为外部点击。 -->
+                <div @click.stop>
                 <CreditAccountPopover
                   :billing-ledgers="billingLedgers"
+                  :balance-loaded="!!accountStore.profile"
                   :current-credit-balance="Number(currentCreditBalance)"
                   @open-billing="openCreditBilling"
                   @open-ledger="openCreditLedger"
                 />
-              </div>
-            </div>
-
-            <DashboardAnnouncementCenter v-if="authStore.session.loggedIn" />
-
-            <div class="relative" @click.stop @pointerenter="$event.pointerType!=='touch'&&hoverUserMenu()" @pointerleave="leaveUserMenu" @focusin="focusUserMenu" @focusout="blurUserMenu" @keydown.esc="isUserMenuOpen=false">
-              <button class="dashboard-user-trigger flex items-center gap-2.5 rounded-full px-2 py-1 transition hover:bg-[#f5f8fd]" type="button" :aria-expanded="isUserMenuOpen" @pointerdown="userPointerOpening=true" @click="userPointerOpening=false;requireLogin() && toggleUserMenu()">
-                <img :src="userAvatarUrl" alt="avatar" class="dashboard-user-avatar h-9 w-9 rounded-full object-cover ring-[3px] ring-[#edf4ff]" />
-                <span class="dashboard-user-name text-[14px] font-black text-[#111827]">{{ userNickname }}</span>
-                <svg viewBox="0 0 24 24" class="dashboard-user-chevron h-4 w-4 text-[#53627c]" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="m6 9 6 6 6-6" stroke-linecap="round" stroke-linejoin="round" />
-                </svg>
-              </button>
-
-              <div
-                v-if="isUserMenuOpen"
-                class="dashboard-floating-menu dashboard-account-menu absolute right-0 top-[48px] w-[220px] overflow-hidden rounded-[18px] border border-[#dbe4f0] bg-white shadow-[0_24px_70px_rgba(15,23,42,0.18)]"
-              >
-                <div class="flex items-center gap-3 px-5 py-5">
-                  <img :src="userAvatarUrl" alt="avatar" class="h-12 w-12 rounded-full object-cover" />
-                  <div class="min-w-0">
-                    <p class="truncate text-[16px] font-black text-[#111827]">{{ userNickname }}</p>
-                    <p class="mt-1 text-[13px] font-semibold text-[#7a879d]">创作账号</p>
-                  </div>
                 </div>
-                <div class="h-px bg-[#edf2f7]"></div>
-                <button class="flex h-[52px] w-full items-center gap-4 px-6 text-left text-[15px] font-bold text-[#53627c] hover:bg-[#f7faff]" type="button" @click="isProfileDialogOpen = true; isUserMenuOpen = false">
-                  <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M20 21a8 8 0 0 0-16 0" stroke-linecap="round" />
-                    <circle cx="12" cy="7" r="4" />
-                  </svg>
-                  个人资料
+              </template>
+            </UPopover>
+
+
+            <div class="relative" @click.stop>
+              <UDropdownMenu :open="isUserMenuOpen" :portal="false" :modal="false" :items="accountMenuItems" :content="{align:'end',sideOffset:0,onOpenAutoFocus:(event:Event)=>{if(userPointerOpening)event.preventDefault()}}" :ui="{content:'liv-account-dropdown',item:'liv-account-menu-item',itemLeadingIcon:'liv-account-menu-icon'}" @update:open="setUserMenuOpen">
+                <button class="dashboard-user-trigger" type="button" aria-label="个人中心菜单" @pointerenter="$event.pointerType!=='touch'&&hoverUserMenu()" @pointerleave="leaveUserMenu" @pointerdown="userPointerOpening=true" @keydown="userPointerOpening=false">
+                  <img :src="userAvatarUrl" alt="" class="dashboard-user-avatar rounded-full object-cover"/>
                 </button>
-                <button class="flex h-[52px] w-full items-center gap-4 px-6 text-left text-[15px] font-bold text-[#53627c] hover:bg-[#f7faff]" type="button" @click="isAccountSecurityDialogOpen = true; isUserMenuOpen = false">
-                  <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M12 15.5A3.5 3.5 0 1 0 12 8a3.5 3.5 0 0 0 0 7.5Z" />
-                    <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21a2 2 0 0 1-4 0v-.09A1.7 1.7 0 0 0 8.6 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3a2 2 0 0 1 0-4h.09A1.7 1.7 0 0 0 4.6 8.6a1.7 1.7 0 0 0-.34-1.88l-.06-.06A2 2 0 1 1 7.03 3.8l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3a2 2 0 0 1 4 0v.09A1.7 1.7 0 0 0 15.4 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9c.2.4.6.8 1 .6h.6a2 2 0 0 1 0 4h-.09A1.7 1.7 0 0 0 19.4 15Z" stroke-linecap="round" stroke-linejoin="round" />
-                  </svg>
-                  账户设置
-                </button>
-                <button class="flex h-[52px] w-full items-center gap-4 px-6 text-left text-[15px] font-bold" @click="isWatermarkDialogOpen=true;isUserMenuOpen=false"><UIcon name="i-lucide-shield-check"/>成片水印设置</button>
-                <button class="flex h-[52px] w-full items-center gap-4 px-6 text-left text-[15px] font-bold" @click="isFeedbackDrawerOpen=true;isUserMenuOpen=false"><UIcon name="i-lucide-message-square"/>意见反馈</button>
-                <div class="h-px bg-[#edf2f7]"></div>
-                <button class="flex h-[64px] w-full items-center gap-4 px-6 text-left text-[16px] font-black text-[#ff2d36] hover:bg-[#fff5f5]" type="button" @click="handleLogout">
-                  <svg viewBox="0 0 24 24" class="h-6 w-6" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9" stroke-linecap="round" stroke-linejoin="round" />
-                  </svg>
-                  退出登录
-                </button>
-              </div>
+                <template #content-top>
+                  <section class="liv-account-summary" @pointerenter="clearTimeout(userMenuCloseTimer)">
+                    <div class="liv-account-identity"><UAvatar :src="userAvatarUrl" :alt="userNickname" size="lg"/><div><strong>{{userNickname}}</strong><span>创作账号</span></div></div>
+                    <!-- 余额卡保持中性底色，只有右侧购买按钮使用主题色，避免整卡变成主操作。 -->
+                    <div class="liv-account-balance"><CreditAmount v-if="accountStore.profile" :value="currentCreditBalance" tone="inherit"/><span v-else>余额未读取</span><UButton class="liv-account-purchase" color="primary" variant="solid" @click="showBilling('recharge')">购买积分</UButton></div>
+                  </section>
+                </template>
+              </UDropdownMenu>
             </div>
+            </div>
+            </template>
           </div>
         </header>
 
         <div class="dashboard-main-content px-8 py-9">
-        <DashboardSkeleton v-if="isBooting" :variant="activeWorkspaceView==='console' && route.query.session?'conversation':'workspace'" :rows="5" />
+        <DashboardSkeleton v-if="isBooting" :variant="activeWorkspaceView==='console' ? (route.query.session?'conversation':'home') : 'workspace'" :rows="5" />
 
         <template v-else>
           <div v-if="errorMessage" class="mb-4 rounded-2xl border border-rose-400/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
@@ -1486,27 +1496,8 @@ watch(()=>authStore.session.user?.id,()=>{projectItems.value=[];accountStore.res
           <div v-if="infoMessage" class="mb-4 rounded-2xl border border-neon/30 bg-neon/10 px-4 py-3 text-sm text-neon">
             {{ infoMessage }}
           </div>
-          <!-- 首次进入由协议弹窗完成确认；此处只保留可再次查阅的小入口，不占用创作区。 -->
-          <div v-if="featureNotice" class="relative z-30 mx-auto mb-2 flex max-w-[1400px] justify-end">
-            <details class="group relative text-xs text-slate-500">
-              <summary class="flex cursor-pointer list-none items-center gap-1.5 rounded-md px-2 py-1.5 hover:bg-amber-50 hover:text-amber-800">
-                <span>安全协议</span>
-                <span class="grid h-4 w-4 place-items-center rounded-full border border-amber-400 text-[10px] font-bold text-amber-600" aria-hidden="true">!</span>
-              </summary>
-              <div class="absolute right-0 top-full z-40 mt-1 w-[min(350px,calc(100vw-48px))] rounded-xl border border-amber-200 bg-white p-4 text-sm leading-6 text-slate-700 shadow-xl" role="note">
-                <strong class="text-slate-900">{{ featureNotice.title }}</strong>
-                <p class="mt-1">{{ featureNotice.detail }}</p>
-                <div class="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs font-semibold text-blue-600">
-                  <NuxtLink :to="`/legal/${featureNotice.code}`" target="_blank" class="underline">查看功能告知</NuxtLink>
-                  <NuxtLink to="/legal/ai_content_rules" target="_blank" class="underline">AI 内容规则</NuxtLink>
-                </div>
-                <p v-if="legalEntryError" class="mt-2 text-xs text-rose-700">协议状态读取失败：{{ legalEntryError }}</p>
-              </div>
-            </details>
-          </div>
-
           <!-- 统一尾斜杠，首页与会话只切换查询参数时保留编辑器和内存草稿。 -->
-          <CreationStudio v-if="activeWorkspaceView === 'console'" :key="route.path.replace(/\/$/, '')" />
+          <CreationStudio v-if="activeWorkspaceView === 'console' || activeWorkspaceView === 'skills'" :skills-page="activeWorkspaceView === 'skills'" :key="route.path.replace(/\/$/, '')" />
           <section v-else-if="!authStore.session.loggedIn && !['library','skills','help'].includes(activeWorkspaceView)" class="p-10 text-center text-sm text-white"><p>登录后查看你的项目与账户。</p><button class="mt-4 rounded-lg bg-[#4F46E5] px-5 py-2" @click="requireLogin">登录</button></section>
           <UnifiedProjectDirectory
             v-else-if="activeWorkspaceView === 'projects'"
@@ -1522,7 +1513,7 @@ watch(()=>authStore.session.user?.id,()=>{projectItems.value=[];accountStore.res
           />
 
           <LibraryWorkspacePanel v-else-if="activeWorkspaceView === 'library'" />
-          <SkillCenterPanel v-else-if="activeWorkspaceView === 'skills'" />
+          <!-- 技能目录由同一 CreationStudio 承载，避免挂载第二套输入／发送上下文。 -->
           <ProductImageWorkspacePanel
             v-else-if="activeMenu === 'product'"
             :current-credit-balance="currentCreditBalance"
@@ -1537,15 +1528,6 @@ watch(()=>authStore.session.user?.id,()=>{projectItems.value=[];accountStore.res
           />
 
           <MusicWorkspacePanel v-else-if="activeMenu === 'music'" />
-
-          <BillingWorkspacePanel
-            v-else-if="activeWorkspaceView === 'billing'"
-            :billing-ledgers="billingLedgers"
-            :billing-packages="billingPackages"
-            :current-credit-balance="currentCreditBalance"
-            :is-billing-loading="isBillingLoading"
-            @redeemed="refreshAfterRedeem"
-          />
 
           <AnnouncementWorkspacePanel
             v-else-if="activeWorkspaceView === 'announcements'"

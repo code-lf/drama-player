@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import LivDialog from '~/components/liv-ui/LivDialog.vue'
+import LivButton from '~/components/liv-ui/LivButton.vue'
 import { reactive, ref, watch } from 'vue'
 import { invoiceService, type InvoiceTitle } from '~/shared/api/services/invoiceService'
 import { getApiErrorMessage } from '~/shared/api/client'
@@ -26,21 +28,16 @@ async function save(): Promise<void> {
 }
 </script>
 <template>
-  <Teleport to="body">
-    <div v-if="open" class="fixed inset-0 z-[150] flex items-center justify-center bg-slate-950/40 p-4" @click.self="!busy && emit('close')">
-      <section role="dialog" aria-modal="true" aria-labelledby="invoice-title-heading" class="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-6 shadow-xl">
-        <div class="flex items-center justify-between"><h3 id="invoice-title-heading" class="text-lg font-black">{{ title ? '编辑开票抬头' : '新增开票抬头' }}</h3><button :disabled="busy" aria-label="关闭" @click="emit('close')">✕</button></div>
-        <form class="mt-5 grid gap-4" @submit.prevent="save">
-          <label class="text-sm">抬头类型<LivSelect v-model="form.title_type" class="mt-1 w-full rounded-lg border p-2"><option value="personal">个人</option><option value="company">企业</option></LivSelect></label>
-          <label class="text-sm">抬头名称<input v-model="form.title_name" required minlength="2" maxlength="160" class="mt-1 w-full rounded-lg border p-2"></label>
-          <label v-if="form.title_type === 'company'" class="text-sm">纳税人识别号<input v-model="form.tax_id" required maxlength="20" class="mt-1 w-full rounded-lg border p-2"></label>
-          <label class="text-sm">接收邮箱<input v-model="form.email" type="email" required maxlength="254" class="mt-1 w-full rounded-lg border p-2"></label>
-          <label class="text-sm">联系电话（选填）<input v-model="form.phone" maxlength="32" class="mt-1 w-full rounded-lg border p-2"></label>
-          <label class="flex items-center gap-2 text-sm"><input v-model="form.is_default" type="checkbox">设为默认抬头</label>
-          <p v-if="error" role="alert" class="text-sm text-red-600">{{ error }}</p>
-          <div class="flex justify-end gap-3"><button type="button" :disabled="busy" class="rounded-lg border px-4 py-2" @click="emit('close')">取消</button><button :disabled="busy" class="rounded-lg bg-blue-600 px-4 py-2 text-white disabled:opacity-50">{{ busy ? '保存中…' : '保存抬头' }}</button></div>
-        </form>
-      </section>
-    </div>
-  </Teleport>
+  <LivDialog :open="open" :title="title?'编辑开票抬头':'新增开票抬头'" settings dark @update:open="!$event&&!busy&&emit('close')">
+    <form id="invoice-title-form" class="liv-settings-copy grid gap-4" @submit.prevent="save">
+      <label>抬头类型<USelect v-model="form.title_type" :items="[{value:'personal',label:'个人'},{value:'company',label:'企业'}]" class="w-full"/></label>
+      <label>抬头名称<UInput v-model="form.title_name" required :minlength="2" :maxlength="160" class="w-full"/></label>
+      <label v-if="form.title_type==='company'">纳税人识别号<UInput v-model="form.tax_id" required :maxlength="20" class="w-full"/></label>
+      <label>接收邮箱<UInput v-model="form.email" type="email" required :maxlength="254" class="w-full"/></label>
+      <label>联系电话（选填）<UInput v-model="form.phone" :maxlength="32" class="w-full"/></label>
+      <UCheckbox v-model="form.is_default" label="设为默认抬头"/>
+      <p v-if="error" role="alert">{{error}}</p>
+    </form>
+    <template #footer><LivButton settings variant="secondary" :disabled="busy" @click="emit('close')">取消</LivButton><LivButton settings variant="primary" form="invoice-title-form" type="submit" :disabled="busy" :loading="busy">保存抬头</LivButton></template>
+  </LivDialog>
 </template>

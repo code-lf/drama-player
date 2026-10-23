@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import type { CreditLedgerItem } from '~/entities/account/types'
 import CreditAmount from '~/components/ui/CreditAmount.vue'
+import {computed} from 'vue'
 
 interface Props {
   /** 顶部胶囊里展示的当前可用积分。 */
   currentCreditBalance: number
+  /** 余额读取失败不能把缺省零显示为真实余额。 */
+  balanceLoaded?: boolean
   /** 最近流水由父级统一从账户 store 提供，避免重复请求。 */
   billingLedgers: CreditLedgerItem[]
 }
@@ -61,75 +64,13 @@ const totalEarned = computed(() => props.billingLedgers
 </script>
 
 <template>
-  <div class="w-[330px] rounded-[18px] border border-[#e2eaf5] bg-white p-4 shadow-[0_24px_70px_rgba(15,23,42,0.16)]">
-    <div class="flex items-start justify-between gap-4">
-      <div>
-        <CreditAmount :value="currentCreditBalance" size="lg" tone="inherit" class="text-[#18243a]" />
-        <p class="mt-1 pl-11 text-[12px] font-semibold text-[#8492a8]">当前可用积分</p>
-      </div>
-    </div>
-
-    <div class="mt-4 grid grid-cols-3 gap-2 rounded-[12px] bg-[#f7faff] px-3 py-3 text-center">
-      <div>
-        <p class="text-[11px] font-semibold text-[#8b98aa]">冻结积分</p>
-        <p class="mt-1 text-[13px] font-black text-[#27344b]">0</p>
-      </div>
-      <div class="border-x border-[#e7eef8]">
-        <p class="text-[11px] font-semibold text-[#8b98aa]">本月已消耗</p>
-        <p class="mt-1 text-[13px] font-black text-[#27344b]">{{ formatNumber(monthlyConsumed) }}</p>
-      </div>
-      <div>
-        <p class="text-[11px] font-semibold text-[#8b98aa]">累计获得</p>
-        <p class="mt-1 text-[13px] font-black text-[#27344b]">{{ formatNumber(totalEarned) }}</p>
-      </div>
-    </div>
-
-    <div class="mt-3 space-y-2">
-      <button
-        class="h-10 w-full rounded-[9px] bg-[#075fff] text-[13px] font-black text-white shadow-[0_10px_20px_rgba(0,95,254,0.18)] transition hover:bg-[#0054e6]"
-        type="button"
-        @click="emit('open-billing')"
-      >
-        立即充值
-      </button>
-      <button
-        class="h-10 w-full rounded-[9px] border border-[#dce6f3] bg-white text-[13px] font-black text-[#3e4c63] transition hover:border-[#8fb5ff] hover:text-[#075fff]"
-        type="button"
-        @click="emit('open-ledger')"
-      >
-        查看全部流水
-      </button>
-    </div>
-
-    <div class="mt-5 flex items-center justify-between">
-      <p class="text-[12px] font-black text-[#26344b]">最近记录</p>
-      <button class="text-[11px] font-bold text-[#8b98aa] hover:text-[#075fff]" type="button" @click="emit('open-ledger')">更多 →</button>
-    </div>
-
-    <div v-if="recentLedgers.length > 0" class="mt-2 divide-y divide-[#eef3f8]">
-      <div v-for="ledger in recentLedgers" :key="ledger.id" class="flex items-center gap-3 py-2.5">
-        <span
-          class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full"
-          :class="ledger.amount < 0 ? 'bg-[#fff1f1] text-[#ff4c55]' : ledger.transactionType === 'system_grant' ? 'bg-[#edfff4] text-[#18ae69]' : 'bg-[#edf5ff] text-[#0d63ff]'"
-        >
-          <svg v-if="getLedgerIcon(ledger) === 'minus'" viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M6 12h12" stroke-linecap="round" /></svg>
-          <svg v-else-if="getLedgerIcon(ledger) === 'gift'" viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 10h16v10H4zM3 7h18v3H3zM12 7v13M12 7H8.5a2 2 0 1 1 0-4c2 0 3.5 4 3.5 4Zm0 0h3.5a2 2 0 1 0 0-4c-2 0-3.5 4-3.5 4Z" stroke-linecap="round" stroke-linejoin="round" /></svg>
-          <svg v-else viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 6v12M6 12h12" stroke-linecap="round" /></svg>
-        </span>
-        <div class="min-w-0 flex-1">
-          <p class="truncate text-[12px] font-bold text-[#43516a]">{{ getLedgerLabel(ledger) }}</p>
-          <p class="mt-0.5 text-[10px] font-semibold text-[#9aa7b8]">{{ formatTime(ledger.createdAt) }}</p>
-        </div>
-        <span class="shrink-0 text-[12px] font-black" :class="ledger.amount < 0 ? 'text-[#ff4c55]' : 'text-[#12a965]'">
-          {{ ledger.amount > 0 ? '+' : '' }}{{ formatNumber(ledger.amount) }}
-        </span>
-      </div>
-    </div>
-    <div v-else class="mt-3 rounded-[10px] bg-[#f7faff] px-3 py-4 text-center text-[11px] font-semibold text-[#91a0b4]">暂无积分记录</div>
-
-    <div class="mt-3 flex items-center gap-2 rounded-[10px] bg-[#f7faff] px-3 py-2.5 text-[10px] font-semibold leading-5 text-[#8b98aa]">
-      <svg viewBox="0 0 24 24" class="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9" /><path d="M12 10v5M12 7.5v.1" stroke-linecap="round" /></svg>
-      积分用于角色、场景、分镜和视频等 AI 创作任务。
-    </div>
-  </div>
+  <section class="liv-credit-account" aria-label="积分账户概览">
+    <header><span>当前可用积分</span><CreditAmount v-if="balanceLoaded!==false" :value="currentCreditBalance" size="lg" tone="inherit"/><strong v-else>余额尚未读取</strong></header>
+    <div class="liv-credit-stats"><div><span>近期消耗</span><strong>{{formatNumber(monthlyConsumed)}}</strong></div><div><span>近期入账</span><strong>{{formatNumber(totalEarned)}}</strong></div></div>
+    <div class="liv-credit-actions"><UButton color="primary" variant="solid" block @click="emit('open-billing')">充值积分</UButton><UButton color="neutral" variant="outline" block @click="emit('open-ledger')">查看全部流水</UButton></div>
+    <div class="liv-credit-record-title"><h3>最近记录</h3><UButton color="neutral" variant="ghost" trailing-icon="i-lucide-arrow-right" @click="emit('open-ledger')">更多</UButton></div>
+    <ul v-if="recentLedgers.length" class="liv-credit-records"><li v-for="ledger in recentLedgers" :key="ledger.id"><span class="liv-credit-record-icon" :class="ledger.amount<0?'is-debit':'is-credit'"><UIcon :name="ledger.amount<0?'i-lucide-minus':'i-lucide-plus'"/></span><div><p :title="getLedgerLabel(ledger)">{{getLedgerLabel(ledger)}}</p><time>{{formatTime(ledger.createdAt)}}</time></div><strong :class="ledger.amount<0?'is-debit':'is-credit'">{{ledger.amount>0?'+':''}}{{formatNumber(ledger.amount)}}</strong></li></ul>
+    <p v-else class="liv-credit-empty">暂无积分记录</p>
+    <p class="liv-credit-note">近期统计基于已加载流水，完整记录请查看全部流水。积分按创作前的实际报价使用。</p>
+  </section>
 </template>

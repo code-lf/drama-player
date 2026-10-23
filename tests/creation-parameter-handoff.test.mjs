@@ -20,10 +20,10 @@ test('普通助手回复不再继承导演卡片，问题才有表面和独立�
   assert.ok(!studio.includes('creation-assistant-card>div:not(.liv-user-message)'))
   assert.ok(studio.includes('class="liv-question-card"'))
   assert.ok(studio.includes('placeholder="自由补充…"'))
-  assert.ok(studio.includes('i-lucide-loader-circle" class="animate-spin"'))
+  assert.ok(studio.includes('<CreationThinkingIndicator :run="planning"/>'))
 })
 
-test('工具浮层使用同一 Nuxt UI 关闭行为，规格展示快速标准精细',()=>{
+test('工具浮层使用同一 Nuxt UI 关闭行为，规格统一展示质量等级',()=>{
   const composer=read('features/creation/components/CreationComposer.vue')
   assert.ok(composer.includes('<UPopover'))
   assert.ok(composer.includes(':reference="popoverAnchor"'))
@@ -31,7 +31,11 @@ test('工具浮层使用同一 Nuxt UI 关闭行为，规格展示快速标准�
   assert.ok(!composer.includes('内置技能'))
   assert.ok(!composer.includes('普通聊天'))
   assert.ok(!composer.includes('Enter 发送，Shift+Enter 换行'))
-  assert.ok(composer.includes("low:'快速',medium:'标准',high:'精细'"))
+  assert.ok(composer.includes("low:'低',medium:'中',high:'高'"))
+  const studio=read('features/creation/components/CreationStudio.vue')
+  const product=read('features/product-image/components/ProductImageWorkspacePanel.vue')
+  assert.ok(studio.includes("low:'低',medium:'中',high:'高'"))
+  assert.ok(product.includes("{ label: '低', value: 'low' }"))
   assert.ok(composer.includes('.is-compact .creation-param .creation-tool-label{display:none!important}'))
   assert.ok(composer.includes('.creation-composer.is-compact .creation-toolbar .creation-param{width:32px!important'))
   assert.ok(composer.includes(':text="`创作参数：${parameterLabel}`"'))

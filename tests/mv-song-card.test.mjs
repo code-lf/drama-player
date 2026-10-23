@@ -21,5 +21,5 @@ test('本人歌曲传入固定版本与封面，替换成外部上传时清理�
  assert.ok(studio.includes('mv_song_version:version.id'))
  assert.ok(studio.includes('sourceTask:mvSource.value,rightsConfirmed:false'))
  assert.ok(studio.includes('cover_url:String(song?.image_large_url||song?.image_url'))
- assert.ok(studio.includes("sourceTask:'',extra:{...parameters.value.extra,mv_song_version:''}"))
+ assert.ok(studio.includes("sourceTask:'',extra:{...parameters.value.extra,mv_song_version:'',mv_lyrics:''"))
 })

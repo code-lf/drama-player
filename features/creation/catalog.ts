@@ -3,12 +3,15 @@ import type { CreationEntryType, CreationParameterState, CreationTemplate } from
 /** 只维护产品入口和创作预设，模型、价格及素材限制由服务器能力目录提供。 */
 export const creationEntries: Array<{ id: CreationEntryType; label: string; title: string; description: string; icon: string }> = [
   { id: 'free', label: '自由创作', title: '让想法开始生长', description: '说出你的想法，图片与视频可以在这里接着创作。', icon: 'i-lucide-sparkles' },
-  { id: 'drama', label: '短剧', title: '从剧本开始，完成你的短剧', description: '上传剧本文件，进入剧本、角色、场景、分镜与成片流程。', icon: 'i-lucide-clapperboard' },
-  { id: 'commerce', label: '电商·广告', title: '让你的商品成为主角', description: '商品图、海报、展示视频与广告短片，一处开始。', icon: 'i-lucide-shopping-bag' },
+  { id: 'drama', label: '短剧', title: '从剧本开始，完成你的短剧', description: '上传或粘贴剧本，也可从想法开始；确认脚本与解析费用后进入资产、分镜与成片流程。', icon: 'i-lucide-clapperboard' },
+  { id: 'commerce', label: '电商', title: '让你的商品成为主角', description: '主图、详情、商品展示与种草带货，一处开始。', icon: 'i-lucide-shopping-bag' },
+  { id: 'marketing', label: '广告', title: '让品牌创意被看见', description: '品牌广告、信息流、达人营销与节日促销，一处开始。', icon: 'i-lucide-megaphone' },
   { id: 'music', label: '音乐·MV', title: '为灵感写一首歌', description: '创作歌曲与纯音乐，从歌词剧本、分镜制作 MV，也可制作歌词视频。', icon: 'i-lucide-audio-lines' },
   { id: 'image', label: '图片创作', title: '把心中的画面带到眼前', description: '描述画面、上传原图，生成或修改，再继续转为视频。', icon: 'i-lucide-image' },
 ]
-export const defaultSkills: Record<CreationEntryType, string> = { free: '', drama: 'director', commerce: '', music: '', image: '' }
+/** 图片入口仅从导航隐藏，保留旧深链、草稿作用域及完整能力定义。 */
+export const visibleCreationEntries = creationEntries.filter(item => item.id !== 'image')
+export const defaultSkills: Record<CreationEntryType, string> = { free: '', drama: 'director', commerce: '', marketing: '', music: '', image: '' }
 /** 轻量视觉预设只传描述，不冒充后台短剧风格编号。 */
 export const localVisualStyles = [
   // 原创 3D 喜剧封面只作风格预览，选择后传递文字指导，不自动引用为用户素材。
@@ -41,6 +44,8 @@ const preset = (id: string, name: string, category: string, skill: string, promp
   prompt: prompt.replace(/香水|商品|一位女孩|一位人物|咖啡馆|温暖|自然光|钢琴|吉他/g, value => `{{${/香水|商品/.test(value) ? '商品' : /一位/.test(value) ? '人物' : /光/.test(value) ? '灯光' : /钢琴|吉他/.test(value) ? '乐器' : '描述'}:${value}}}`), cover })
 // 推荐模板使用站内既有封面；选择模板只填参数，绝不会开始收费任务。
 export const systemTemplates: Record<CreationEntryType, CreationTemplate[]> = {
+  // 广告入口沿用服务端发布模板；没有配置时不复制电商模板冒充广告目录。
+  marketing: [],
   free: [
     preset('free-photo', '电影感画面', '图片', 'image', skillExamples.image!, '/landing/case-city.png'),
     preset('free-motion', '图片动起来', '视频', 'showcase', skillExamples.showcase!, '/landing/tool-product.png'),

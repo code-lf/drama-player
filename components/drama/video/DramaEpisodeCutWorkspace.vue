@@ -22,6 +22,8 @@ import {
 import type { EpisodeCaptionCue, EpisodeCutDraft, EpisodeCutSavePayload, EpisodeCutTask } from '~/entities/drama/episodeCutTypes'
 import type { StoryboardRow } from '~/entities/storyboard/types'
 import { dramaService } from '~/shared/api/services/dramaService'
+import { libraryService } from '~/shared/api/services/libraryService'
+import {lyricColumns} from '~/features/creation/mvLyricLayout'
 
 const props = defineProps<{
   projectId: string
@@ -45,6 +47,40 @@ const workspaceMode = ref<'quick' | 'advanced'>('quick')
 const exportHistory = ref<EpisodeCutTask[]>([])
 const exportHistoryLoading = ref(false)
 const playerRef = ref<HTMLVideoElement | null>(null)
+const songRef=ref<HTMLAudioElement|null>(null),songTimeMs=ref(0)
+const isMv=computed(()=>!!draft.value?.mv)
+const songUrl=computed(()=>draft.value?.mv?.preview_url?libraryService.previewUrl(draft.value.mv.preview_url):'')
+const confirmingLyrics=ref(false)
+/** 原歌曲为预览主时钟，镜头只追随当前切点，绝不播放镜头声音或额外 BGM。 */
+async function syncMvVideo(){
+  const audio=songRef.value,mv=draft.value?.mv;if(!audio||!mv)return
+  const time=audio.currentTime*1000-mv.start_ms;songTimeMs.value=time
+  if(time>=mv.end_ms-mv.start_ms){audio.pause();playerRef.value?.pause();isSequencePlaying.value=false;return}
+  let offset=0
+  for(const clip of orderedClips.value){
+    const duration=clip.trimOutMs-clip.trimInMs
+    if(time>=offset&&time<offset+duration){
+      if(selectedRowId.value!==clip.storyboardRowId){isSwitchingClip.value=true;selectedRowId.value=clip.storyboardRowId;await nextTick();isSwitchingClip.value=false}
+      const video=playerRef.value
+      if(video){const target=(clip.trimInMs+time-offset)/1000;if(Math.abs(video.currentTime-target)>.25)video.currentTime=target;if(!audio.paused&&video.paused)void video.play().catch(()=>{audio.pause()})}
+      return
+    }
+    offset+=duration
+  }
+}
+/** 确认提交当前完整歌词与样式；请求期间继续编辑时不回写旧确认。 */
+async function confirmLyrics(){
+  const payload=createPayload();if(!payload||confirmingLyrics.value)return
+  if(saveTimer)clearTimeout(saveTimer)
+  const signature=JSON.stringify(payload);confirmingLyrics.value=true
+  try{const saved=await dramaService.saveEpisodeCut(props.projectId,props.episodeNo,{...payload,confirmMvLyrics:true});if(draft.value&&JSON.stringify(createPayload())===signature){draft.value.mv=saved.mv;draft.value.exportSettings=saved.exportSettings}actionMessage.value='当前歌词已确认；修改歌词或样式后需重新试听确认。'}catch(error){actionMessage.value=(error as Error).message}finally{confirmingLyrics.value=false}
+}
+const mvCaptionStyle=computed(()=>{
+  const style=subtitleStyle.value,size=Number(style.fontSize||30),ratio=String(props.aspectRatio||'16:9').split(':').map(Number),aspect=(ratio[0]||16)/(ratio[1]||9)
+  const vertical=style.layout==='side-vertical',position=style.position||'bottom'
+  return {left:'8%',right:vertical?'auto':'8%',top:position==='top'?'8%':position==='middle'?'50%':'auto',bottom:position==='bottom'?'8%':'auto',transform:position==='middle'?'translateY(-50%)':'none',fontSize:`${Math.max(24,Math.min(72,size))/720/aspect*100}cqw`,fontFamily:String(style.fontFamily||'sans-serif'),fontWeight:'400',lineHeight:'1.2',whiteSpace:'pre',textAlign:vertical?'left':'center',color:String(style.color||'#ffffff'),display:vertical?'flex':'block',gap:vertical?'.5em':'0'}
+})
+const mvCaptionParts=computed(()=>{const [a,b]=String(props.aspectRatio||'16:9').split(':').map(Number);return lyricColumns(activeCaption.value?.text||'',subtitleStyle.value.layout==='side-vertical',Number(subtitleStyle.value.fontSize||30),(a||16)/(b||9))})
 const playbackSeconds = ref(0)
 const isSequencePlaying = ref(false)
 const isSwitchingClip = ref(false)
@@ -55,6 +91,7 @@ let saveTimer: ReturnType<typeof setTimeout> | null = null
 let pollGeneration = 0
 let availabilityProbeGeneration = 0
 let isHydrating = true
+let lastSavedPayload=''
 
 const rowMap = computed(() => new Map(props.rows.map(row => [row.id, row])))
 const orderedClips = computed(() => [...(draft.value?.clips || [])].sort((a, b) => a.sortIndex - b.sortIndex))
@@ -90,7 +127,7 @@ const selectedClipTimelineStartMs = computed(() => {
   return 0
 })
 const activeCaption = computed(() => {
-  const globalTimeMs = selectedClipTimelineStartMs.value + Math.max(
+  const globalTimeMs = isMv.value?songTimeMs.value:selectedClipTimelineStartMs.value + Math.max(
     0,
     playbackSeconds.value * 1000 - Number(selectedClip.value?.trimInMs || 0)
   )
@@ -144,14 +181,18 @@ const qualityIssues = computed(() => {
     })
   }
   const mutedCount = orderedClips.value.filter(clip => clip.nativeAudioMuted).length
-  if (mutedCount) {
+  if (mutedCount && !isMv.value) {
     issues.push({
       tone: 'warning',
       title: `${mutedCount} 个镜头已静音`,
       detail: '原生对白、环境音和音效会一起静音，请确认这是预期效果。'
     })
   }
-  if (draft.value?.captions.length) {
+  if(isMv.value){
+    const mv=draft.value!.mv!
+    if(Math.abs(totalDurationMs.value-(mv.end_ms-mv.start_ms))>40)issues.push({tone:'danger',title:'镜头总时长与歌曲不符',detail:'请调整切点或补充镜头，不会循环、变速或缩短歌曲。'})
+    if(mv.lyrics_status!=='instrumental')issues.push({tone:mv.confirmed_revision===mv.current_revision?'success':'warning',title:mv.confirmed_revision===mv.current_revision?'当前歌词已确认':'请试听确认当前歌词',detail:'间奏允许没有字幕，歌词独立于镜头。修改正文或样式后需重新确认。'})
+  } else if (draft.value?.captions.length) {
     issues.push({
       tone: captionCoverage.value >= 80 ? 'success' : 'warning',
       title: `字幕覆盖率 ${captionCoverage.value}%`,
@@ -229,6 +270,8 @@ async function loadExportHistory(resumeRunningTask = false): Promise<void> {
 
 function scheduleSave(): void {
   if (isHydrating || !draft.value) return
+  // 服务器确认状态和临时播放地址不是草稿编辑，不能触发无限自动保存。
+  if(JSON.stringify(createPayload())===lastSavedPayload)return
   savingState.value = 'idle'
   if (saveTimer) clearTimeout(saveTimer)
   saveTimer = setTimeout(() => void saveDraft(), 650)
@@ -240,11 +283,13 @@ async function saveDraft(): Promise<boolean> {
   savingState.value = 'saving'
   try {
     const saved = await dramaService.saveEpisodeCut(props.projectId, props.episodeNo, payload)
+    lastSavedPayload=JSON.stringify(payload)
     // 保存响应只同步服务端状态，保留用户可能在请求过程中继续输入的本地字段。
     if (draft.value) {
       draft.value.id = saved.id
       draft.value.status = saved.status
       draft.value.versionNo = saved.versionNo
+      if(draft.value.mv&&saved.mv){draft.value.mv.current_revision=saved.mv.current_revision;draft.value.mv.confirmed_revision=saved.mv.confirmed_revision}
     }
     savingState.value = 'saved'
     return true
@@ -319,6 +364,7 @@ function selectAdjacent(offset: number): void {
 }
 
 async function playWholeEpisode(): Promise<void> {
+  if(isMv.value&&songRef.value){if(!songRef.value.paused){songRef.value.pause();playerRef.value?.pause();isSequencePlaying.value=false}else{songRef.value.currentTime=(draft.value!.mv!.start_ms)/1000;await songRef.value.play();isSequencePlaying.value=true}return}
   if (isSequencePlaying.value) {
     isSequencePlaying.value = false
     playerRef.value?.pause()
@@ -341,6 +387,7 @@ async function playWholeEpisode(): Promise<void> {
 }
 
 async function handleVideoEnded(): Promise<void> {
+  if(isMv.value)return
   if (!isSequencePlaying.value || isSwitchingClip.value) return
   isSwitchingClip.value = true
   const index = orderedClips.value.findIndex(clip => clip.storyboardRowId === selectedClip.value?.storyboardRowId)
@@ -365,6 +412,7 @@ async function handleVideoEnded(): Promise<void> {
 }
 
 function handleLoadedMetadata(): void {
+  if(isMv.value){void syncMvVideo();return}
   if (!playerRef.value || !selectedClip.value) return
   failedPlaybackRows.value.delete(selectedClip.value.storyboardRowId)
   // Set 的内部变化不会总能触发依赖更新，替换引用以刷新右侧质检结果。
@@ -382,6 +430,7 @@ function handleVideoError(): void {
 }
 
 function handleTimeUpdate(): void {
+  if(isMv.value)return
   playbackSeconds.value = playerRef.value?.currentTime || 0
   if (
     isSequencePlaying.value
@@ -577,6 +626,7 @@ watch(() => [props.projectId, props.episodeNo], () => {
 
 onMounted(() => void loadDraft())
 onBeforeUnmount(() => {
+  songRef.value?.pause()
   pollGeneration += 1
   if (saveTimer) clearTimeout(saveTimer)
 })
@@ -635,14 +685,15 @@ onBeforeUnmount(() => {
 
             <div
               class="preview-video group relative mx-auto flex w-full max-w-[680px] items-center justify-center overflow-hidden rounded-[20px] bg-[#070b14] min-[1180px]:max-w-none"
-              :style="{ aspectRatio: previewAspectRatio }"
+              :style="{ aspectRatio: previewAspectRatio,containerType:'inline-size' }"
             >
               <video
                 v-if="selectedVideoUrl"
                 ref="playerRef"
                 :key="`${selectedRowId}-${selectedClip?.takeId}`"
                 :src="selectedVideoUrl"
-                controls
+                :controls="!isMv"
+                :muted="isMv || selectedClip?.nativeAudioMuted"
                 class="absolute inset-0 h-full w-full object-contain"
                 @ended="handleVideoEnded"
                 @error="handleVideoError"
@@ -661,12 +712,18 @@ onBeforeUnmount(() => {
                 v-if="activeCaption"
                 class="pointer-events-none absolute left-[8%] right-[8%] z-10 text-center font-semibold leading-tight drop-shadow-[0_2px_3px_rgba(0,0,0,0.95)]"
                 :class="activeCaptionPositionClass"
-                :style="{ color: String(subtitleStyle.color || '#ffffff'), fontSize: `${Number(subtitleStyle.fontSize || 30)}px` }"
+                :style="isMv?mvCaptionStyle:{ color: String(subtitleStyle.color || '#ffffff'), fontSize: `${Number(subtitleStyle.fontSize || 30)}px` }"
               >
-                {{ activeCaption.text }}
+                <template v-if="isMv"><span v-for="(part,index) in mvCaptionParts" :key="index" :style="{display:'block',width:subtitleStyle.layout==='side-vertical'?'1em':undefined}">{{subtitleStyle.layout==='side-vertical'?Array.from(part).join('\n'):part}}</span></template><template v-else>{{ activeCaption.text }}</template>
               </div>
             </div>
 
+            <section v-if="draft.mv" class="mt-4 space-y-2">
+              <p>歌曲主轨 · {{draft.mv.audio_name}} · {{formatTime(draft.mv.end_ms-draft.mv.start_ms)}}</p>
+              <audio ref="songRef" :src="songUrl" controls preload="metadata" class="w-full" @loadedmetadata="songRef&&(songRef.currentTime=draft.mv.start_ms/1000)" @timeupdate="syncMvVideo" @play="syncMvVideo" @seeking="syncMvVideo" @pause="playerRef?.pause()"/>
+              <p class="text-sm">镜头原声及额外配乐关闭；歌词可跨镜头，请试听确认。</p>
+              <UButton v-if="draft.mv.lyrics_status!=='instrumental'" :loading="confirmingLyrics" @click="confirmLyrics">试听并确认当前歌词</UButton>
+            </section>
             <div class="mt-4 flex items-center justify-between gap-3">
               <button type="button" class="preview-arrow" :disabled="selectedClip === orderedClips[0]" @click="selectAdjacent(-1)">
                 <ChevronLeft class="h-4 w-4" /> 上一镜
@@ -692,7 +749,7 @@ onBeforeUnmount(() => {
               <label v-if="workspaceMode === 'advanced'" class="compact-setting col-span-2">
                 <span>导出方式</span>
                 <LivSelect v-model="exportMode" class="compact-select">
-                  <option value="fast">快速导出（推荐，不烧字幕）</option>
+                  <option v-if="!isMv" value="fast">快速导出（推荐，不烧字幕）</option>
                   <option value="standard">标准成片（字幕/水印/BGM）</option>
                 </LivSelect>
               </label>
@@ -704,7 +761,7 @@ onBeforeUnmount(() => {
                 </LivSelect>
               </label>
               <div v-if="workspaceMode === 'advanced'" class="compact-setting"><span>格式</span><strong>H.264/AAC</strong></div>
-              <label class="compact-setting">
+              <label v-if="!isMv" class="compact-setting">
                 <span>BGM</span>
                 <input type="checkbox" :checked="exportSettings.includeBgm !== false" class="h-4 w-4" @change="updateExportSetting('includeBgm', ($event.target as HTMLInputElement).checked)">
               </label>
@@ -792,7 +849,8 @@ onBeforeUnmount(() => {
                   </div>
                 </div>
 
-                <div class="track-row">
+                <div v-if="draft.mv" class="track-row"><div class="track-label"><Music2 class="h-4 w-4"/><span>歌曲主轨</span></div><div class="track-content"><div class="bgm-block"><Music2 class="h-4 w-4"/><span>{{draft.mv.audio_name}} · {{formatTime(draft.mv.end_ms-draft.mv.start_ms)}}</span></div></div></div>
+                <div v-if="!isMv" class="track-row">
                   <div class="track-label"><Music2 class="h-4 w-4 text-[#059669]" /><span>BGM</span></div>
                   <div class="track-content">
                     <button type="button" class="bgm-block" @click="bgmInputRef?.click()">
@@ -804,7 +862,7 @@ onBeforeUnmount(() => {
                 </div>
 
                 <div class="track-row border-b-0">
-                  <div class="track-label"><Captions class="h-4 w-4 text-[#d97706]" /><span>字幕</span></div>
+                  <div class="track-label"><Captions class="h-4 w-4 text-[#d97706]" /><span>{{isMv?'歌词':'字幕'}}</span></div>
                   <div class="track-content flex gap-2 overflow-hidden">
                     <button
                       v-for="cue in draft.captions"
@@ -816,7 +874,7 @@ onBeforeUnmount(() => {
                       {{ cue.text || '空字幕' }}
                     </button>
                     <div v-if="!draft.captions.length" class="flex h-12 flex-1 items-center justify-center rounded-lg border border-dashed border-[#f3c779] bg-[#fffaf0] text-xs font-medium text-[#a16207]">
-                      暂无字幕，点击右侧“语音识别”
+                      {{isMv?'此片段无歌词':'暂无字幕，点击右侧“语音识别”'}}
                     </div>
                   </div>
                 </div>
@@ -852,11 +910,11 @@ onBeforeUnmount(() => {
               </label>
               <label class="control-field md:col-span-2">
                 <span><Volume2 class="h-3.5 w-3.5" /> 原生音量 {{ selectedClip.nativeAudioGain }}%</span>
-                <input v-model.number="selectedClip.nativeAudioGain" type="range" min="0" max="200" step="5" :disabled="selectedClip.nativeAudioMuted">
+                <input v-model.number="selectedClip.nativeAudioGain" type="range" min="0" max="200" step="5" :disabled="isMv || selectedClip.nativeAudioMuted">
               </label>
             </div>
             <label class="mt-4 inline-flex cursor-pointer items-center gap-2 text-sm font-semibold text-[#334155]">
-              <input v-model="selectedClip.nativeAudioMuted" type="checkbox" class="h-4 w-4 rounded border-[#cbd5e1] text-[#4F46E5]">
+              <input v-model="selectedClip.nativeAudioMuted" :disabled="isMv" type="checkbox" class="h-4 w-4 rounded border-[#cbd5e1] text-[#4F46E5]">
               整体静音本镜头（对白、环境音、音效会一起静音）
             </label>
             </section>
@@ -864,15 +922,15 @@ onBeforeUnmount(() => {
             <section v-if="draft.captions.length" class="rounded-[24px] border border-[#e3e9f2] bg-white p-5 shadow-[0_12px_40px_rgba(15,23,42,0.05)]">
             <div class="flex items-center justify-between">
               <div>
-                <h3 class="text-base font-bold text-[#0f172a]">字幕校正</h3>
+                <h3 class="text-base font-bold text-[#0f172a]">{{isMv?'歌词校正':'字幕校正'}}</h3>
                 <p class="mt-1 text-xs text-[#64748b]">按整集时间轴编辑，替换 take 后请重新检查对应区间。</p>
               </div>
               <button type="button" class="small-action" @click="addCaption">添加一句</button>
             </div>
             <div class="mt-4 max-h-[320px] space-y-2 overflow-y-auto pr-1">
               <div v-for="(cue, index) in draft.captions" :key="`cue-editor-${cue.sortIndex}`" class="grid gap-2 rounded-xl bg-[#f8fafc] p-3 md:grid-cols-[90px_90px_minmax(0,1fr)_44px]">
-                <input v-model.number="cue.startMs" type="number" min="0" step="100" class="caption-input" aria-label="字幕开始时间">
-                <input v-model.number="cue.endMs" type="number" :min="cue.startMs + 100" step="100" class="caption-input" aria-label="字幕结束时间">
+                <UInputNumber v-model="cue.startMs" :min="0" :max="draft.mv?draft.mv.end_ms-draft.mv.start_ms:totalDurationMs" :step="10" aria-label="字幕开始时间毫秒"/>
+                <UInputNumber v-model="cue.endMs" :min="cue.startMs+10" :max="draft.mv?draft.mv.end_ms-draft.mv.start_ms:totalDurationMs" :step="10" aria-label="字幕结束时间毫秒"/>
                 <input v-model="cue.text" type="text" maxlength="500" class="caption-input" aria-label="字幕文字">
                 <button type="button" class="rounded-lg text-xs font-semibold text-[#ef4444] hover:bg-[#fee2e2]" @click="deleteCaption(index)">删除</button>
               </div>
@@ -914,7 +972,7 @@ onBeforeUnmount(() => {
             </div>
           </section>
 
-          <section v-if="workspaceMode === 'advanced'" class="rounded-[24px] border border-[#e3e9f2] bg-white p-5 shadow-[0_12px_40px_rgba(15,23,42,0.05)]">
+          <section v-if="workspaceMode === 'advanced' && !isMv" class="rounded-[24px] border border-[#e3e9f2] bg-white p-5 shadow-[0_12px_40px_rgba(15,23,42,0.05)]">
             <h3 class="text-[17px] font-bold text-[#0f172a]">BGM 设置</h3>
             <input ref="bgmInputRef" type="file" accept="audio/*" class="hidden" @change="uploadBgm">
             <button type="button" class="mt-4 flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-[#A5B4FC] bg-[#EEF2FF] px-4 py-3 text-sm font-semibold text-[#4F46E5]" @click="bgmInputRef?.click()">
@@ -941,11 +999,13 @@ onBeforeUnmount(() => {
           </section>
 
           <section class="rounded-[24px] border border-[#e3e9f2] bg-white p-5 shadow-[0_12px_40px_rgba(15,23,42,0.05)]">
-            <h3 class="text-[17px] font-bold text-[#0f172a]">字幕设置</h3>
+            <h3 class="text-[17px] font-bold text-[#0f172a]">{{isMv?'歌词设置':'字幕设置'}}</h3>
+            <label v-if="isMv" class="setting-row"><span>歌词布局</span><USelect :model-value="String(subtitleStyle.layout||'bottom-horizontal')" :items="[{label:'底部横排',value:'bottom-horizontal'},{label:'侧边竖排',value:'side-vertical'}]" @update:model-value="updateSubtitleStyle('layout',$event)"/></label>
+            <label v-if="isMv" class="setting-row"><span>字体</span><USelect :model-value="String(subtitleStyle.fontFamily||'sans-serif')" :items="[{label:'黑体',value:'sans-serif'},{label:'衬线',value:'serif'},{label:'等宽',value:'monospace'}]" @update:model-value="updateSubtitleStyle('fontFamily',$event)"/></label>
             <p class="mt-1 text-xs text-[#94a3b8]">统一应用到整集字幕预览与导出</p>
             <label class="setting-row mt-4">
               <span>字幕字号</span>
-              <input type="number" min="24" max="72" :value="Number(subtitleStyle.fontSize || 30)" class="w-20 rounded-lg border border-[#dce4ef] px-2 py-1.5 text-right" @change="updateSubtitleStyle('fontSize', Number(($event.target as HTMLInputElement).value))">
+              <UInputNumber :model-value="Number(subtitleStyle.fontSize || 30)" :min="24" :max="72" :step="1" aria-label="字幕字号" @update:model-value="updateSubtitleStyle('fontSize', $event)"/>
             </label>
             <label class="setting-row">
               <span>文字位置</span>
@@ -1012,7 +1072,7 @@ onBeforeUnmount(() => {
           </p>
         </div>
         <div class="flex items-center gap-3">
-          <button v-if="workspaceMode === 'advanced'" type="button" class="footer-secondary" :disabled="currentTask?.status === 'running'" @click="generateCaptions">
+          <button v-if="workspaceMode === 'advanced' && !isMv" type="button" class="footer-secondary" :disabled="currentTask?.status === 'running'" @click="generateCaptions">
             <Captions class="h-4 w-4" /> 语音识别字幕
           </button>
           <button

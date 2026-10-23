@@ -5,6 +5,15 @@ import assert from 'node:assert/strict'
 const read = path => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8')
 const composer = read('features/creation/components/CreationComposer.vue')
 
+test('大输入框不重复底栏加号，紧凑输入框仍有素材入口，技能闪电实心且工具文字统一', () => {
+  assert.ok(composer.includes('v-if="compact && !isMv && entry!==\'drama\'"'))
+  assert.ok(composer.includes('v-if="!compact && !isMv && entry!==\'drama\'" class="creation-add"'))
+  assert.ok(composer.includes('name="i-lucide-zap" mode="svg" class="creation-solid-zap"'))
+  const css=read('assets/css/creation.css')
+  assert.match(css,/creation-toolbar \.creation-tool,[^}]*font-size:14px!important;font-weight:500!important/)
+  assert.ok(css.includes('.creation-solid-zap,.creation-solid-zap path{fill:currentColor}'))
+})
+
 test('会话收起顶部用途，音乐重复页签在首页和会话均移除', () => {
   assert.match(read('features/creation/components/CreationStudio.vue'), /<nav v-if="!active && !sessionLoading && !sessionError" class="creation-entry-tabs"/)
   assert.doesNotMatch(composer, /class="creation-subtabs"/)
@@ -12,7 +21,9 @@ test('会话收起顶部用途，音乐重复页签在首页和会话均移除',
 
 test('会话上传移到底栏，图标有提示和可访问名称且费用未丢失', () => {
   assert.match(composer, /UTooltip[^>]*text="添加素材/)
-  for (const label of ['选择模型', '选择风格', '选择创作模板', '调整创作参数','清除风格']) assert.ok(composer.includes(`aria-label="${label}"`))
+  for (const label of ['选择模型', '选择风格', '选择创作模板','清除风格']) assert.ok(composer.includes(`aria-label="${label}"`))
+  // MV 复用参数按钮，但无障碍名称明确为比例，其余入口仍是创作参数。
+  assert.ok(composer.includes(`:aria-label="isMv?'调整 MV 比例':'调整创作参数'"`))
   assert.ok(composer.includes('从资料库选择'))
   assert.ok(!composer.includes('aria-label="引用资产"'))
   assert.match(composer, /class="creation-cost" role="status" :aria-label="creditLabel"/)

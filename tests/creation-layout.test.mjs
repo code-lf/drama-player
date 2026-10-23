@@ -6,6 +6,16 @@ import ts from 'typescript'
 const read = path => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8')
 const studio = read('features/creation/components/CreationStudio.vue')
 const sidebar = read('features/dashboard/components/DashboardSidebar.vue')
+
+test('首页启动使用专属骨架，侧栏恢复工作台且会话首页不变',()=>{
+  const page=read('pages/dashboard.vue'),skeleton=read('components/DashboardSkeleton.vue')
+  assert.match(page,/route.query.session\?'conversation':'home'/)
+  assert.match(skeleton,/v-if="variant==='home'"/)
+  assert.match(skeleton,/class="creation-home"/)
+  assert.match(skeleton,/home-skeleton-composer\{height:clamp\(190px,30cqi,240px\)/)
+  assert.match(sidebar,/<span>Liv 工作台<\/span>/)
+  assert.match(read('features/creation/components/SessionWorkspaceNav.vue'),/label:'首页'/)
+})
 test('案例按用途切换，桌面五列且横向16:9', () => {
   assert.match(studio, /creationCaseService.list\(entry.value\)/)
   assert.doesNotMatch(studio, /dramaCases|creationCases\[|listEpisodeExports/)
@@ -13,16 +23,16 @@ test('案例按用途切换，桌面五列且横向16:9', () => {
   assert.match(read('assets/css/creation.css'), /creation-case-cover\{[^}]*aspect-ratio:16\/9/)
   assert.doesNotMatch(studio, /<section[^>]*class="creation-recent"/)
 })
-test('成片播放器只在点击案例后挂载，预加载关闭', () => {
+test('成片播放器只在点击案例后挂载，仅预读元数据', () => {
   assert.match(studio, /@click="openCase\(item\)"/)
-  assert.match(studio, /v-if="selectedCase"[\s\S]*<video v-if="selectedCase.media_type==='video'"[^>]*preload="none"/)
-  assert.match(studio, /<audio[^>]*preload="none"/)
-  assert.match(studio, /制作同款/)
+  assert.match(studio, /v-if="selectedCase"[\s\S]*<video v-if="selectedCase.media_type==='video'"[^>]*preload="metadata"/)
+  assert.match(studio, /<audio[^>]*preload="metadata"/)
+  assert.match(studio, /复刻同款/)
 })
 test('侧栏每页十条，更多原地加载，会话切换可恢复', () => {
   assert.match(sidebar, /recentSessionLimit = ref\(SESSION_PAGE_SIZE\)/)
   assert.match(sidebar, /recentProjects\.value\.slice\(0, recentSessionLimit.value\)/)
-  assert.match(sidebar, /v-if="hasMoreSessions \|\| sessionsError"/)
+  assert.match(sidebar, /v-if="hasMoreSessions && listFilled"/)
   assert.match(sidebar, /@click="loadMoreSessions">更多/)
   assert.doesNotMatch(sidebar, /to="\/dashboard-projects" class="creation-sidebar-more"/)
   assert.match(sidebar, /creation-sidebar-divider/)
@@ -54,4 +64,14 @@ test('重新预估沿用已保存未绑定任务消息的幂等编号', () => {
   const start = workspace.indexOf('async function estimate')
   const estimate = workspace.slice(start, workspace.indexOf('watch([prompt, parameters', start))
   assert.match(estimate, /!pending.task_id && canonical\(pending.content\) === canonical\(value\) \? pending.request_id/)
+})
+// 首页布局按容器而非整页宽度收缩，避免侧栏展开后工具按钮挤成多行。
+test('首页最大800px，窄容器图标化与快捷入口换行',()=>{
+  const css=read('assets/css/creation.css')
+  assert.match(read('assets/css/tokens.css'),/--liv-home-composer-width:\s*800px/)
+  assert.match(css,/container-name:home-composer/)
+  assert.match(css,/@container home-composer \(max-width:640px\)/)
+  assert.match(css,/@container home-composer \(max-width:360px\)/)
+  assert.match(css,/creation-home \.creation-quick-templates\{flex-wrap:wrap;justify-content:center;overflow:visible/)
+  assert.match(css,/min-height:clamp\(190px,30cqi,240px\)/)
 })

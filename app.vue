@@ -3,6 +3,9 @@
 import FeatureLegalConsentDialog from '~/components/system/FeatureLegalConsentDialog.vue'
 import ActionConfirmDialog from '~/components/system/ActionConfirmDialog.vue'
 import SystemMaintenanceGate from '~/components/system/SystemMaintenanceGate.vue'
+import BillingAccountDialog from '~/features/billing/components/BillingAccountDialog.vue'
+import CreationFaqDialog from '~/features/support/components/CreationFaqDialog.vue'
+const {open:faqOpen}=useCreationFaq()
 // 维护遮罩出现时禁用背景页面键盘与鼠标交互，不能只遮住画面。
 const maintenanceBlocked = useState<boolean>('maintenance:full-blocked', () => false)
 </script>
@@ -16,6 +19,10 @@ const maintenanceBlocked = useState<boolean>('maintenance:full-blocked', () => f
     </NuxtLayout>
     <FeatureLegalConsentDialog />
     <ActionConfirmDialog />
+    <!-- 全站仅一个账户宿主，首页与创作共用独立充值弹窗。 -->
+    <BillingAccountDialog />
+    <!-- FAQ位于账单宿主之后，充值中打开时关闭FAQ可继续原套餐与支付流程。 -->
+    <CreationFaqDialog v-model:open="faqOpen" />
     </div>
     <SystemMaintenanceGate />
   </UApp>

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useActionDialog } from '~/composables/useActionDialog'
+import { imageRatioOptions } from '~/features/creation/imageRatioOptions'
 const { confirm: confirmAction } = useActionDialog()
 import type { Component } from 'vue'
 import { ChevronDown, ChevronUp, CircleHelp, Download, History, Image as ImageIcon, ImageUp, Lightbulb, PanelsTopLeft, Plus, RotateCcw, Sparkles, SquarePen, Star, Trash2, WandSparkles } from '@lucide/vue'
@@ -189,13 +190,20 @@ const activeStyleOptions = computed<BaseSelectOption[]>(() => ({
 }[activeMode.value]))
 // 可选比例完全由功能模型能力下发；接口不可用时不提供可能与模型不符的本地枚举。
 const aspectRatioOptions = ref<BaseSelectOption[]>([])
+// 保留服务端规格用于清晰度联动，不在旧入口再维护一份4K比例枚举。
+const imageInputSchema=ref<Record<string,any>>({})
+watch(resolution,()=>{
+  const ratios=imageRatioOptions(imageInputSchema.value,resolution.value)
+  aspectRatioOptions.value=ratios.map(value=>({label:value,value,preview:value}))
+  if(!ratios.includes(aspectRatio.value))aspectRatio.value=ratios[0] || ''
+})
 const resolutionOptions = ref<BaseSelectOption[]>([
   { label: '1K', value: '1K' },
   { label: '2K', value: '2K' },
   { label: '4K', value: '4K' }
 ])
 const qualityOptions = ref<BaseSelectOption[]>([
-  { label: '普通', value: 'low' }, { label: '中等质量', value: 'medium' }, { label: '高质量', value: 'high' }
+  { label: '低', value: 'low' }, { label: '中', value: 'medium' }, { label: '高', value: 'high' }
 ])
 const backgroundOptions: BaseSelectOption[] = [
   { label: '自动', value: 'auto' }, { label: '透明', value: 'transparent' }, { label: '不透明', value: 'opaque' }
@@ -221,6 +229,7 @@ async function loadGenerationProfile(): Promise<void> {
   try {
     const profile = await generationProfileService.get('product_image')
     const schema = profile.input_schema || {}
+    imageInputSchema.value=schema
     const defaults = profile.default_params || {}
     referenceImageLimit.value = Math.max(0, Number(schema.max_reference_count ?? 0))
     const ratiosRaw = schema.aspect_ratio || schema.aspect_ratios
@@ -235,8 +244,8 @@ async function loadGenerationProfile(): Promise<void> {
     aspectRatioLoadFailed.value = false
     if (resolutions.length) resolutionOptions.value = resolutions.map(value => ({ label: value.toUpperCase(), value: value.toUpperCase() }))
     if (qualities.length) qualityOptions.value = qualities.map(value => ({
-      // 供应商协议仍使用 low；平台文案统一称“普通”，避免让用户误解为低劣输出。
-      label: ({ low: '普通', medium: '中等质量', high: '高质量' } as Record<string, string>)[value] || value,
+      // 展示统一为低／中等／高质量；接口仍保留原始质量枚举，不影响既有报价。
+      label: ({ low: '低', medium: '中', high: '高' } as Record<string, string>)[value] || value,
       value
     }))
     const preferredRatio = String(defaults.aspect_ratio || aspectRatio.value)

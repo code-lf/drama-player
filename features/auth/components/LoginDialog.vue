@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import LoginPage from '~/pages/login.vue'
+// liv-ui 目录按前缀自动命名，显式导入避免运行时把弹窗渲染成普通标签。
+import LivDialog from '~/components/liv-ui/LivDialog.vue'
 defineProps<{modelValue:boolean}>()
 const emit=defineEmits<{'update:modelValue':[value:boolean];authenticated:[]}>()
 const { loginDestination } = useWorkbenchAuth()
@@ -7,7 +9,14 @@ const close=()=>{loginDestination.value='';emit('update:modelValue',false)}
 /** 关闭不修改草稿；成功只恢复登录态，任何收费行为仍需用户重新点击。 */
 function authenticated(){const destination=loginDestination.value;close();emit('authenticated');if(destination)void navigateTo(destination)}
 </script>
-<template><Teleport to="body"><div v-if="modelValue" class="workbench-login-mask" @click.self="close" @keydown.esc="close"><section role="dialog" aria-modal="true" aria-label="登录 Livliv"><button class="login-close" aria-label="关闭登录" @click="close">×</button><header><h2>登录 Livliv</h2><p>同步项目、管理素材，继续你的创作。</p></header><LoginPage embedded @authenticated="authenticated"/></section></div></Teleport></template>
+<template>
+  <LivDialog :open="modelValue" title="注册/登录享福利哦" close-label="关闭登录" settings dark width="sm" @update:open="value=>{if(!value)close()}">
+    <LoginPage v-if="modelValue" embedded @authenticated="authenticated" />
+  </LivDialog>
+</template>
 <style scoped>
-.workbench-login-mask{position:fixed;inset:0;background:#0009;backdrop-filter:blur(5px);z-index:600;display:grid;place-items:center;padding:20px}.workbench-login-mask>section{position:relative;background:#19191c;border:1px solid #36363b;border-radius:22px;width:min(470px,100%);max-height:90vh;overflow:auto;color:#eee;padding:28px}.login-close{position:absolute;right:16px;top:12px;color:#aaa;font-size:24px;background:none;border:0}.workbench-login-mask header h2{font-size:22px;font-weight:650}.workbench-login-mask header p{font-size:13px;color:#aaa;margin:8px 0 20px}.workbench-login-mask :deep(.login-embedded){min-height:0!important;background:none!important;padding:0!important;--login-form-text-size:14px;--login-form-title-size:18px}.workbench-login-mask :deep(.login-hero){display:block!important;min-height:0!important;padding:0!important;background:none!important}.workbench-login-mask :deep(.hero-content),.workbench-login-mask :deep(.hero-bg),.workbench-login-mask :deep(.hero-vignette),.workbench-login-mask :deep(.qr-corner){display:none!important}.workbench-login-mask :deep(.login-panel){position:static!important;transform:none!important;width:100%!important;max-width:none!important;margin:0!important;padding:0!important;background:none!important;border:0!important;box-shadow:none!important}.workbench-login-mask :deep(.input-shell){background:#27272b;border-color:#3a3a40;color:#eee;height:46px}.workbench-login-mask :deep(input){color:#eee}.workbench-login-mask :deep(.submit-button){background:var(--liv-accent,#4F46E5);color:#fff;height:44px}.workbench-login-mask :deep(.panel-tab),.workbench-login-mask :deep(.login-method-tabs button){color:#bbb}.workbench-login-mask :deep(.panel-tab.active){color:#fff}.workbench-login-mask :deep(.legal-dialog-mask){z-index:650}.workbench-login-mask :deep(.legal-consent){color:#bbb}
+/* 传送层用真实登录内容定位，仅扩大登录标题，不改变其他设置弹窗。 */
+:global(.liv-settings-dialog:has(.login-embedded)){max-width:var(--liv-login-dialog-width)!important}
+:global(.liv-settings-dialog:has(.login-embedded) .liv-settings-title){font-size:var(--liv-recharge-title-size)!important;font-weight:700!important;line-height:32px!important;text-align:center}
+:global(.liv-settings-dialog:has(.login-embedded) .liv-settings-body){padding-bottom:24px!important}
 </style>

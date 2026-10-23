@@ -17,6 +17,7 @@ const props=defineProps<{versions:CanvasVersion[];results?:SessionResult[];selec
 export interface AnnotationDraft {file:Blob;source:WorkspaceSource;operations:Record<string,unknown>[];requestId:string;preview:string}
 const emit=defineEmits<{select:[key:string];result:[key:string];save:[value:{file:Blob;source:WorkspaceSource;operations:Record<string,unknown>[];requestId:string}];annotation:[value:AnnotationDraft|null];ai:[action:string,source:WorkspaceSource];music:[code:string];video:[];refresh:[];favorite:[]}>()
 const version=computed(()=>props.versions.find(v=>v.key===props.selected)||props.versions[0])
+// 创作台属于新任务入口，不暗示任意视频均支持同款复刻或口播转换；打开不会执行生成。
 const tool=ref(''),zoom=ref(100),compare=ref(false),split=ref(50),error=ref(''),working=ref(false)
 const operations=ref<ImageEdit[]>([]),cursor=ref(0),preview=ref(''),original=ref(''),width=ref(0),height=ref(0)
 const text=ref(''),color=ref('#ff595e'),brush=ref(6),cropBox=ref<CropBox|null>(null),annotating=ref(false),drawing=ref(false)
@@ -244,7 +245,11 @@ async function ai(action:string){if(!version.value||!await confirmLeave())return
         <button aria-label="撤销" title="撤销" :disabled="!dirty||working" @click="cursor--;redraw()"><UIcon name="i-lucide-undo-2"/></button><button aria-label="重做" title="重做" :disabled="!canRedo||working" @click="cursor++;redraw()"><UIcon name="i-lucide-redo-2"/></button><button v-if="dirty||version.parentUrl" :class="{active:compare}" @click="toggleCompare()"><UIcon name="i-lucide-columns-2"/>对比</button><i/>
         <button @click="ai('background')">背景</button><button @click="ai('style')">风格</button><UPopover v-model:open="ratioOpen" :content="{side:'top',align:'center',sideOffset:12}" :ui="{content:'z-[550] rounded-2xl'}"><button aria-label="尺寸" :class="{active:ratioOpen}" :disabled="working"><UIcon name="i-lucide-scaling"/>尺寸</button><template #content><div class="canvas-ratio-options" aria-label="图片尺寸"><UButton v-for="option in ratioOptions" :key="option.value" variant="ghost" color="neutral" @click="applyRatio(option.ratio);ratioOpen=false"><span class="ratio-shape" :style="{aspectRatio:String(option.ratio)}"/><span>{{option.label}}</span><small>{{option.value}}</small></UButton></div></template></UPopover><button @click="ai('image_to_video')"><UIcon name="i-lucide-film"/>转视频</button><button :disabled="!dirty||saveBusy||working" class="canvas-primary" @click="save">{{saveBusy?'保存中…':'保存版本'}}</button>
       </div>
-      <div v-else-if="version.kind==='video'" class="canvas-toolbar"><button :disabled="working||saveBusy||version.source.kind!=='video'" @click="capture"><UIcon name="i-lucide-camera"/>{{working?'正在截帧…':'保存截帧'}}</button><button v-if="version.source.kind==='video'" @click="ai('video_reference')"><UIcon name="i-lucide-message-circle-plus"/>引用续作</button><button @click="emit('video')"><UIcon name="i-lucide-clapperboard"/>视频同款与口播</button></div>
+      <div v-else-if="version.kind==='video'" class="canvas-toolbar" role="toolbar" aria-label="视频作品工具">
+        <UTooltip text="将当前播放位置保存为图片，不生成新视频"><UButton variant="ghost" color="neutral" :disabled="working||saveBusy||version.source.kind!=='video'" icon="i-lucide-camera" @click="capture">{{working?'正在截帧…':'保存截帧'}}</UButton></UTooltip>
+        <UTooltip v-if="version.source.kind==='video'" text="把当前视频作为参考，在对话中继续创作；生成前核对报价"><UButton variant="ghost" color="neutral" :disabled="working||saveBusy" icon="i-lucide-message-circle-plus" @click="ai('video_reference')">引用续作</UButton></UTooltip>
+        <i aria-hidden="true"/>
+      </div>
       <!-- 音乐业务命令已放在播放器曲名下，底部仅保留真实费用边界说明。 -->
       <p>{{working?'正在读取原始媒体…':dirty?'本地预览 · 尚未保存，不扣积分':'本地编辑免费；AI 工具需在对话中核对报价后提交'}}</p>
     </footer>

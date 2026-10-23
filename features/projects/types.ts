@@ -2,6 +2,8 @@ import type {DramaProjectCard} from '~/entities/drama/types'
 
 /** 目录标识带类型前缀，不能拿会话 ID 调用短剧删除接口。底层业务表不合并。 */
 export interface CreationProjectCard extends DramaProjectCard {
+  isFavorite?:boolean
+  deletedAt?:string|null
   kind: 'creation' | 'drama'
   sessions: Array<{id:string;title:string}>
 }

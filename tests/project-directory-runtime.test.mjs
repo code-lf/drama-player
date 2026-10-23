@@ -177,11 +177,13 @@ async function mountUnified({list=async()=>({items:[card('drama:one',{projectId:
   new Function('require','module','exports',code)(name=>{
     if(name==='vue')return vue
     if(name==='#components')return mocks
-    if(name==='#imports')return {useRouter:()=>({push:value=>destinations.push(value)}),useState:(_key,init)=>vue.ref(init())}
+    if(name==='#imports')return {useRouter:()=>({push:value=>destinations.push(value)}),useRoute:()=>({query:{}}),useState:(_key,init)=>vue.ref(init())}
     if(name==='~/composables/useWorkbenchAuth')return {useWorkbenchAuth:()=>({auth})}
     if(name.endsWith('/LivDialog.vue'))return {default:dialogStub}
     if(name.endsWith('/LivButton.vue'))return {default:passthrough}
     if(name==='./ProjectDirectoryPanel.vue')return {default:panelStub}
+    if(name==='./ProjectTrashPanel.vue')return {default:passthrough}
+    if(name==='~/composables/useProjectRecycleBin')return {useProjectRecycleBin:()=>({remove:async item=>{deletes.push([item.projectId]);return remove([item.projectId])}})}
     if(name==='~/shared/api/services/creationProjectService')return {creationProjectService:{list:async(...args)=>{calls.push(args);return list(...args)}}}
     if(name==='~/shared/api/services/dramaService')return {dramaService:{deleteProject:async id=>{deletes.push([id]);return remove([id])},batchDeleteProjects:async ids=>{deletes.push(ids);return remove(ids)}}}
     if(name==='../types')return {projectDestination:item=>item.sessions.length?`/dashboard?session=${item.sessions[0].id}`:`/drama/${item.projectId}?from=dashboard-projects`}
@@ -259,7 +261,7 @@ test('真实目录适配器保留类型前缀与短剧业务编号，真实路�
     return {request:async(path,options)=>{queries.push([path,options.query]);return {items:[{id:'creation:c',kind:'creation',title:'仅对话',cover_url:'',sessions:[{id:'c',title:'仅对话'}],drama:null},{id:'drama:p',kind:'drama',title:'短剧',cover_url:'/result.webp',sessions:[],drama:{project_id:'p'}}],total:2}},mapDramaProjectCard:raw=>({projectId:raw.project_id,workflowSummary:{progressPercent:25}})}
   },module,module.exports)
   const result=await module.exports.creationProjectService.list(20,40,'all')
-  assert.deepEqual(queries,[['/creation/projects',{limit:20,offset:40,kind:'all'}]])
+  assert.deepEqual(queries,[['/creation/projects',{limit:20,offset:40,kind:'all',trash:false}]])
   assert.equal(result.items[0].status,'conversation')
   assert.equal(result.items[0].workflowSummary,undefined)
   assert.equal(result.items[1].id,'drama:p')

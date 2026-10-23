@@ -1,0 +1,995 @@
+[
+  {
+    "code": "ad",
+    "name": "广告短片",
+    "source_id": null,
+    "example_spec": {
+      "target": "video",
+      "bindings": {}
+    },
+    "plan_type": "direct",
+    "content_status": "已规范化",
+    "execution_status": "待完整参数预检",
+    "browser_status": "未验收",
+    "paid_e2e": "未执行"
+  },
+  {
+    "code": "animate",
+    "name": "图片转视频",
+    "source_id": null,
+    "example_spec": {
+      "target": "video",
+      "bindings": {}
+    },
+    "plan_type": "direct",
+    "content_status": "已规范化",
+    "execution_status": "待完整参数预检",
+    "browser_status": "未验收",
+    "paid_e2e": "未执行"
+  },
+  {
+    "code": "custom-ad-director",
+    "name": "广告创意短剧",
+    "source_id": null,
+    "example_spec": {
+      "target": "video",
+      "bindings": {}
+    },
+    "plan_type": "direct",
+    "content_status": "已规范化",
+    "execution_status": "待完整参数预检",
+    "browser_status": "未验收",
+    "paid_e2e": "未执行"
+  },
+  {
+    "code": "custom-ai-presenter",
+    "name": "AI口播",
+    "source_id": null,
+    "example_spec": {
+      "target": "video",
+      "bindings": {},
+      "duration_sec": 15
+    },
+    "plan_type": "direct",
+    "content_status": "已规范化",
+    "execution_status": "待完整参数预检",
+    "browser_status": "未验收",
+    "paid_e2e": "未执行"
+  },
+  {
+    "code": "custom-commerce-ad-storyboard",
+    "name": "营销分镜短片",
+    "source_id": "higgsfield_marketing_0q6z1y",
+    "example_spec": {
+      "target": "video",
+      "bindings": {},
+      "total_count": 3,
+      "aspect_ratio": "9:16",
+      "duration_sec": 15
+    },
+    "plan_type": "ad_variants",
+    "content_status": "已规范化",
+    "execution_status": "待计划闭环",
+    "browser_status": "未验收",
+    "paid_e2e": "未执行"
+  },
+  {
+    "code": "custom-commerce-arcade",
+    "name": "复古街机广告",
+    "source_id": "product_video_customizer_pcq89j",
+    "example_spec": {
+      "target": "video",
+      "bindings": {},
+      "aspect_ratio": "9:16",
+      "duration_sec": 15
+    },
+    "plan_type": "direct",
+    "content_status": "已规范化",
+    "execution_status": "待完整参数预检",
+    "browser_status": "未验收",
+    "paid_e2e": "未执行"
+  },
+  {
+    "code": "custom-commerce-artifact",
+    "name": "文物灵感创意广告",
+    "source_id": "manual_skill_0xd76t",
+    "example_spec": {
+      "target": "video",
+      "bindings": {},
+      "aspect_ratio": "9:16",
+      "duration_sec": 15
+    },
+    "plan_type": "direct",
+    "content_status": "已规范化",
+    "execution_status": "待完整参数预检",
+    "browser_status": "未验收",
+    "paid_e2e": "未执行"
+  },
+  {
+    "code": "custom-commerce-beauty-ad",
+    "name": "美妆个护展示",
+    "source_id": "cosmetics_skill",
+    "example_spec": {
+      "target": "video",
+      "bindings": {}
+    },
+    "plan_type": "direct",
+    "content_status": "已规范化",
+    "execution_status": "待完整参数预检",
+    "browser_status": "未验收",
+    "paid_e2e": "未执行"
+  },
+  {
+    "code": "custom-commerce-beauty-photo",
+    "name": "美妆商业摄影",
+    "source_id": "manual_skill_0frzii",
+    "example_spec": {
+      "target": "image",
+      "bindings": {}
+    },
+    "plan_type": "direct",
+    "content_status": "已规范化",
+    "execution_status": "待完整参数预检",
+    "browser_status": "未验收",
+    "paid_e2e": "未执行"
+  },
+  {
+    "code": "custom-commerce-behind-scenes",
+    "name": "片场揭秘广告",
+    "source_id": "manual_skill_0tv7gr",
+    "example_spec": {
+      "target": "video",
+      "bindings": {},
+      "aspect_ratio": "9:16",
+      "duration_sec": 20
+    },
+    "plan_type": "direct",
+    "content_status": "已规范化",
+    "execution_status": "待完整参数预检",
+    "browser_status": "未验收",
+    "paid_e2e": "未执行"
+  },
+  {
+    "code": "custom-commerce-blogger-camera",
+    "name": "博主对镜种草",
+    "source_id": "creator_product_talk_video_bnif4b",
+    "example_spec": {
+      "target": "video",
+      "bindings": {},
+      "duration_sec": 15
+    },
+    "plan_type": "direct",
+    "content_status": "已规范化",
+    "execution_status": "待完整参数预检",
+    "browser_status": "未验收",
+    "paid_e2e": "未执行"
+  },
+  {
+    "code": "custom-commerce-blogger-life",
+    "name": "生活博主推荐",
+    "source_id": "multi_scene_product_video_6xnjqt",
+    "example_spec": {
+      "target": "video",
+      "bindings": {},
+      "aspect_ratio": "9:16",
+      "duration_sec": 15
+    },
+    "plan_type": "direct",
+    "content_status": "已规范化",
+    "execution_status": "待完整参数预检",
+    "browser_status": "未验收",
+    "paid_e2e": "未执行"
+  },
+  {
+    "code": "custom-commerce-bullet-time",
+    "name": "商品环绕定格",
+    "source_id": "commercial_product_bullet_time_video_8yenis",
+    "example_spec": {
+      "target": "video",
+      "bindings": {}
+    },
+    "plan_type": "direct",
+    "content_status": "已规范化",
+    "execution_status": "待完整参数预检",
+    "browser_status": "未验收",
+    "paid_e2e": "未执行"
+  },
+  {
+    "code": "custom-commerce-car-brand",
+    "name": "汽车形象短片",
+    "source_id": "car_promo_showcase",
+    "example_spec": {
+      "target": "video",
+      "bindings": {}
+    },
+    "plan_type": "direct",
+    "content_status": "已规范化",
+    "execution_status": "待完整参数预检",
+    "browser_status": "未验收",
+    "paid_e2e": "未执行"
+  },
+  {
+    "code": "custom-commerce-clothing-presenter",
+    "name": "服装讲解带货",
+    "source_id": "fashion-spoken-commerce",
+    "example_spec": {
+      "target": "video",
+      "bindings": {}
+    },
+    "plan_type": "direct",
+    "content_status": "已规范化",
+    "execution_status": "待完整参数预检",
+    "browser_status": "未验收",
+    "paid_e2e": "未执行"
+  },
+  {
+    "code": "custom-commerce-cooking",
+    "name": "美食制作短片",
+    "source_id": "ecommerce_food_ad_creator_0jv147",
+    "example_spec": {
+      "target": "video",
+      "bindings": {},
+      "aspect_ratio": "9:16",
+      "duration_sec": 15
+    },
+    "plan_type": "direct",
+    "content_status": "已规范化",
+    "execution_status": "待完整参数预检",
+    "browser_status": "未验收",
+    "paid_e2e": "未执行"
+  },
+  {
+    "code": "custom-commerce-costume-story",
+    "name": "古装剧情带货",
+    "source_id": "palace_parody_commercials",
+    "example_spec": {
+      "target": "video",
+      "bindings": {
+        "total_count": "目标生成视频数量"
+      },
+      "total_count": 1
+    },
+    "plan_type": "direct",
+    "content_status": "已规范化",
+    "execution_status": "待完整参数预检",
+    "browser_status": "未验收",
+    "paid_e2e": "未执行"
+  },
+  {
+    "code": "custom-commerce-daily-care",
+    "name": "日化母婴展示",
+    "source_id": "personal_care",
+    "example_spec": {
+      "target": "video",
+      "bindings": {}
+    },
+    "plan_type": "direct",
+    "content_status": "已规范化",
+    "execution_status": "待完整参数预检",
+    "browser_status": "未验收",
+    "paid_e2e": "未执行"
+  },
+  {
+    "code": "custom-commerce-daily-outfit",
+    "name": "每日穿搭展示",
+    "source_id": "manual_skill_0sx6fp",
+    "example_spec": {
+      "target": "video",
+      "bindings": {},
+      "duration_sec": 15
+    },
+    "plan_type": "direct",
+    "content_status": "已规范化",
+    "execution_status": "待完整参数预检",
+    "browser_status": "未验收",
+    "paid_e2e": "未执行"
+  },
+  {
+    "code": "custom-commerce-digital-ad",
+    "name": "3C数码广告",
+    "source_id": "3C_skill",
+    "example_spec": {
+      "target": "video",
+      "bindings": {}
+    },
+    "plan_type": "direct",
+    "content_status": "已规范化",
+    "execution_status": "待完整参数预检",
+    "browser_status": "未验收",
+    "paid_e2e": "未执行"
+  },
+  {
+    "code": "custom-commerce-exploded",
+    "name": "数码拆解悬浮展示",
+    "source_id": "precision_digital_3d_ad_hvkch0",
+    "example_spec": {
+      "target": "video",
+      "bindings": {}
+    },
+    "plan_type": "direct",
+    "content_status": "已规范化",
+    "execution_status": "待完整参数预检",
+    "browser_status": "未验收",
+    "paid_e2e": "未执行"
+  },
+  {
+    "code": "custom-commerce-fashion-women",
+    "name": "女装穿搭短片",
+    "source_id": "character_clothing_swap_and_video_showcase_mbznwk",
+    "example_spec": {
+      "target": "video",
+      "bindings": {}
+    },
+    "plan_type": "direct",
+    "content_status": "已规范化",
+    "execution_status": "待完整参数预检",
+    "browser_status": "未验收",
+    "paid_e2e": "未执行"
+  },
+  {
+    "code": "custom-commerce-floating-tech",
+    "name": "科技悬浮创意广告",
+    "source_id": "oiioii_product_stunt_video_0m9j1o",
+    "example_spec": {
+      "target": "video",
+      "bindings": {}
+    },
+    "plan_type": "direct",
+    "content_status": "已规范化",
+    "execution_status": "待完整参数预检",
+    "browser_status": "未验收",
+    "paid_e2e": "未执行"
+  },
+  {
+    "code": "custom-commerce-food-ad",
+    "name": "食品饮料广告",
+    "source_id": "food_skill",
+    "example_spec": {
+      "target": "video",
+      "bindings": {}
+    },
+    "plan_type": "direct",
+    "content_status": "已规范化",
+    "execution_status": "待完整参数预检",
+    "browser_status": "未验收",
+    "paid_e2e": "未执行"
+  },
+  {
+    "code": "custom-commerce-food-host",
+    "name": "食品讲解展示",
+    "source_id": "food-spoken-commerce",
+    "example_spec": {
+      "target": "video",
+      "bindings": {},
+      "total_count": 5
+    },
+    "plan_type": "ad_variants",
+    "content_status": "已规范化",
+    "execution_status": "待计划闭环",
+    "browser_status": "未验收",
+    "paid_e2e": "未执行"
+  },
+  {
+    "code": "custom-commerce-general-ad",
+    "name": "通用商品广告",
+    "source_id": "ecommerce_ads_skill",
+    "example_spec": {
+      "target": "video",
+      "bindings": {}
+    },
+    "plan_type": "direct",
+    "content_status": "已规范化",
+    "execution_status": "待完整参数预检",
+    "browser_status": "未验收",
+    "paid_e2e": "未执行"
+  },
+  {
+    "code": "custom-commerce-gift-reveal",
+    "name": "赠品组合展示",
+    "source_id": "gift-expansion-spoken-commerce",
+    "example_spec": {
+      "target": "video",
+      "bindings": {},
+      "total_count": 5
+    },
+    "plan_type": "ad_variants",
+    "content_status": "已规范化",
+    "execution_status": "待计划闭环",
+    "browser_status": "未验收",
+    "paid_e2e": "未执行"
+  },
+  {
+    "code": "custom-commerce-homewear",
+    "name": "家居贴身服饰展示",
+    "source_id": "flower_aigc_skill_skill_00kfgj",
+    "example_spec": {
+      "target": "video",
+      "bindings": {},
+      "total_count": 3,
+      "duration_sec": 15
+    },
+    "plan_type": "ad_variants",
+    "content_status": "已规范化",
+    "execution_status": "待计划闭环",
+    "browser_status": "未验收",
+    "paid_e2e": "未执行"
+  },
+  {
+    "code": "custom-commerce-host-demo",
+    "name": "主播讲解短片",
+    "source_id": "ai_live_broadcast_ecommerce_video_maker",
+    "example_spec": {
+      "target": "video",
+      "bindings": {},
+      "aspect_ratio": "9:16",
+      "duration_sec": 15
+    },
+    "plan_type": "direct",
+    "content_status": "已规范化",
+    "execution_status": "待完整参数预检",
+    "browser_status": "未验收",
+    "paid_e2e": "未执行"
+  },
+  {
+    "code": "custom-commerce-interview",
+    "name": "情景采访带货",
+    "source_id": "street-interview-spoken-commerce",
+    "example_spec": {
+      "target": "video",
+      "bindings": {},
+      "total_count": 5
+    },
+    "plan_type": "ad_variants",
+    "content_status": "已规范化",
+    "execution_status": "待计划闭环",
+    "browser_status": "未验收",
+    "paid_e2e": "未执行"
+  },
+  {
+    "code": "custom-commerce-jewelry",
+    "name": "首饰讲解展示",
+    "source_id": "jewelry-spoken-commerce",
+    "example_spec": {
+      "target": "video",
+      "bindings": {},
+      "total_count": 5
+    },
+    "plan_type": "ad_variants",
+    "content_status": "已规范化",
+    "execution_status": "待计划闭环",
+    "browser_status": "未验收",
+    "paid_e2e": "未执行"
+  },
+  {
+    "code": "custom-commerce-lifestyle",
+    "name": "生活方式种草图",
+    "source_id": "social-product-story",
+    "example_spec": {
+      "target": "image",
+      "bindings": {}
+    },
+    "plan_type": "direct",
+    "content_status": "已规范化",
+    "execution_status": "待完整参数预检",
+    "browser_status": "未验收",
+    "paid_e2e": "未执行"
+  },
+  {
+    "code": "custom-commerce-makeup-demo",
+    "name": "妆容使用讲解",
+    "source_id": "makeup-spoken-commerce",
+    "example_spec": {
+      "target": "video",
+      "bindings": {},
+      "total_count": 5
+    },
+    "plan_type": "ad_variants",
+    "content_status": "已规范化",
+    "execution_status": "待计划闭环",
+    "browser_status": "未验收",
+    "paid_e2e": "未执行"
+  },
+  {
+    "code": "custom-commerce-multi-points",
+    "name": "多卖点主图策划",
+    "source_id": "ecommerce_multi_point_main_pic_pwfchx",
+    "example_spec": {
+      "target": "image",
+      "bindings": {}
+    },
+    "plan_type": "product_set",
+    "content_status": "已规范化",
+    "execution_status": "待计划闭环",
+    "browser_status": "未验收",
+    "paid_e2e": "未执行"
+  },
+  {
+    "code": "custom-commerce-multi-style",
+    "name": "一件多穿展示",
+    "source_id": "fashion_one_item_many_looks_p8knx6",
+    "example_spec": {
+      "target": "video",
+      "bindings": {},
+      "duration_sec": 15
+    },
+    "plan_type": "direct",
+    "content_status": "已规范化",
+    "execution_status": "待完整参数预检",
+    "browser_status": "未验收",
+    "paid_e2e": "未执行"
+  },
+  {
+    "code": "custom-commerce-multi-unbox",
+    "name": "多镜头开箱展示",
+    "source_id": "high_end_unboxing_showcase",
+    "example_spec": {
+      "target": "video",
+      "bindings": {},
+      "duration_sec": 15
+    },
+    "plan_type": "direct",
+    "content_status": "已规范化",
+    "execution_status": "待完整参数预检",
+    "browser_status": "未验收",
+    "paid_e2e": "未执行"
+  },
+  {
+    "code": "custom-commerce-outfit-cuts",
+    "name": "节奏换装展示",
+    "source_id": "beat_sync_outfit_showcase",
+    "example_spec": {
+      "target": "video",
+      "bindings": {}
+    },
+    "plan_type": "direct",
+    "content_status": "已规范化",
+    "execution_status": "待完整参数预检",
+    "browser_status": "未验收",
+    "paid_e2e": "未执行"
+  },
+  {
+    "code": "custom-commerce-pet-host",
+    "name": "宠物用品讲解",
+    "source_id": "pet-spoken-commerce",
+    "example_spec": {
+      "target": "video",
+      "bindings": {},
+      "total_count": 5
+    },
+    "plan_type": "ad_variants",
+    "content_status": "已规范化",
+    "execution_status": "待计划闭环",
+    "browser_status": "未验收",
+    "paid_e2e": "未执行"
+  },
+  {
+    "code": "custom-commerce-platform-images",
+    "name": "电商平台风格主图",
+    "source_id": "one-image-eight-marketplaces",
+    "example_spec": {
+      "target": "image",
+      "bindings": {
+        "total_count": "目标生成图片数量"
+      },
+      "total_count": 8
+    },
+    "plan_type": "product_set",
+    "content_status": "已规范化",
+    "execution_status": "待计划闭环",
+    "browser_status": "未验收",
+    "paid_e2e": "未执行"
+  },
+  {
+    "code": "custom-commerce-presenter-ad",
+    "name": "人物带货广告",
+    "source_id": "live_commerce_skill",
+    "example_spec": {
+      "target": "video",
+      "bindings": {}
+    },
+    "plan_type": "direct",
+    "content_status": "已规范化",
+    "execution_status": "待完整参数预检",
+    "browser_status": "未验收",
+    "paid_e2e": "未执行"
+  },
+  {
+    "code": "custom-commerce-product-details",
+    "name": "商品详情图",
+    "source_id": "ecommerce_detail_image_prompts_0mtuvv",
+    "example_spec": {
+      "target": "image",
+      "bindings": {}
+    },
+    "plan_type": "detail_page",
+    "content_status": "已规范化",
+    "execution_status": "待计划闭环",
+    "browser_status": "未验收",
+    "paid_e2e": "未执行"
+  },
+  {
+    "code": "custom-commerce-product-set",
+    "name": "商品场景套图",
+    "source_id": "product-image-set",
+    "example_spec": {
+      "target": "image",
+      "bindings": {
+        "total_count": "目标生成图片数量"
+      },
+      "total_count": 4
+    },
+    "plan_type": "product_set",
+    "content_status": "已规范化",
+    "execution_status": "待计划闭环",
+    "browser_status": "未验收",
+    "paid_e2e": "未执行"
+  },
+  {
+    "code": "custom-commerce-promotion-host",
+    "name": "活动福利讲解",
+    "source_id": "offer-spoken-commerce",
+    "example_spec": {
+      "target": "video",
+      "bindings": {},
+      "total_count": 5
+    },
+    "plan_type": "ad_variants",
+    "content_status": "已规范化",
+    "execution_status": "待计划闭环",
+    "browser_status": "未验收",
+    "paid_e2e": "未执行"
+  },
+  {
+    "code": "custom-commerce-selfie",
+    "name": "自拍视角推荐",
+    "source_id": "selfie-spoken-commerce",
+    "example_spec": {
+      "target": "video",
+      "bindings": {},
+      "total_count": 5
+    },
+    "plan_type": "ad_variants",
+    "content_status": "已规范化",
+    "execution_status": "待计划闭环",
+    "browser_status": "未验收",
+    "paid_e2e": "未执行"
+  },
+  {
+    "code": "custom-commerce-selling-points",
+    "name": "产品卖点展示",
+    "source_id": "manual_skill_08yutl",
+    "example_spec": {
+      "target": "video",
+      "bindings": {},
+      "aspect_ratio": "9:16",
+      "duration_sec": 15
+    },
+    "plan_type": "direct",
+    "content_status": "已规范化",
+    "execution_status": "待完整参数预检",
+    "browser_status": "未验收",
+    "paid_e2e": "未执行"
+  },
+  {
+    "code": "custom-commerce-six-views",
+    "name": "商品多视图排版",
+    "source_id": "six-view-product-presentation",
+    "example_spec": {
+      "target": "image",
+      "bindings": {},
+      "aspect_ratio": "16:9"
+    },
+    "plan_type": "direct",
+    "content_status": "已规范化",
+    "execution_status": "待完整参数预检",
+    "browser_status": "未验收",
+    "paid_e2e": "未执行"
+  },
+  {
+    "code": "custom-commerce-store-story",
+    "name": "剧情探店短片",
+    "source_id": "manual_skill_05fl5i",
+    "example_spec": {
+      "target": "video",
+      "bindings": {},
+      "duration_sec": 15
+    },
+    "plan_type": "direct",
+    "content_status": "已规范化",
+    "execution_status": "待完整参数预检",
+    "browser_status": "未验收",
+    "paid_e2e": "未执行"
+  },
+  {
+    "code": "custom-commerce-store-visit",
+    "name": "探店推荐短片",
+    "source_id": "manual_skill_0ljv0d",
+    "example_spec": {
+      "target": "video",
+      "bindings": {},
+      "aspect_ratio": "9:16",
+      "duration_sec": 15
+    },
+    "plan_type": "direct",
+    "content_status": "已规范化",
+    "execution_status": "待完整参数预检",
+    "browser_status": "未验收",
+    "paid_e2e": "未执行"
+  },
+  {
+    "code": "custom-commerce-unboxing",
+    "name": "商品开箱介绍",
+    "source_id": "product_unboxing_video_gdwh38",
+    "example_spec": {
+      "target": "video",
+      "bindings": {},
+      "duration_sec": 15
+    },
+    "plan_type": "direct",
+    "content_status": "已规范化",
+    "execution_status": "待完整参数预检",
+    "browser_status": "未验收",
+    "paid_e2e": "未执行"
+  },
+  {
+    "code": "custom-commerce-usage-demo",
+    "name": "商品使用演示",
+    "source_id": "detail-demonstration",
+    "example_spec": {
+      "target": "video",
+      "bindings": {},
+      "total_count": 5
+    },
+    "plan_type": "ad_variants",
+    "content_status": "已规范化",
+    "execution_status": "待计划闭环",
+    "browser_status": "未验收",
+    "paid_e2e": "未执行"
+  },
+  {
+    "code": "custom-commerce-vacation",
+    "name": "度假穿搭推荐",
+    "source_id": "manual_skill_02le56",
+    "example_spec": {
+      "target": "video",
+      "bindings": {},
+      "duration_sec": 15
+    },
+    "plan_type": "direct",
+    "content_status": "已规范化",
+    "execution_status": "待完整参数预检",
+    "browser_status": "未验收",
+    "paid_e2e": "未执行"
+  },
+  {
+    "code": "director",
+    "name": "剧本导演",
+    "source_id": null,
+    "example_spec": {
+      "target": "drama",
+      "bindings": {}
+    },
+    "plan_type": "direct",
+    "content_status": "已规范化",
+    "execution_status": "待完整参数预检",
+    "browser_status": "未验收",
+    "paid_e2e": "未执行"
+  },
+  {
+    "code": "edit",
+    "name": "图片修改",
+    "source_id": null,
+    "example_spec": {
+      "target": "image",
+      "bindings": {}
+    },
+    "plan_type": "direct",
+    "content_status": "已规范化",
+    "execution_status": "待完整参数预检",
+    "browser_status": "未验收",
+    "paid_e2e": "未执行"
+  },
+  {
+    "code": "free",
+    "name": "自由创作",
+    "source_id": null,
+    "example_spec": {
+      "target": "image",
+      "bindings": {}
+    },
+    "plan_type": "direct",
+    "content_status": "已规范化",
+    "execution_status": "待完整参数预检",
+    "browser_status": "未验收",
+    "paid_e2e": "未执行"
+  },
+  {
+    "code": "image",
+    "name": "自由生图",
+    "source_id": null,
+    "example_spec": {
+      "target": "image",
+      "bindings": {}
+    },
+    "plan_type": "direct",
+    "content_status": "已规范化",
+    "execution_status": "待完整参数预检",
+    "browser_status": "未验收",
+    "paid_e2e": "未执行"
+  },
+  {
+    "code": "instrumental",
+    "name": "纯音乐配乐",
+    "source_id": null,
+    "example_spec": {
+      "target": "music",
+      "bindings": {}
+    },
+    "plan_type": "direct",
+    "content_status": "已规范化",
+    "execution_status": "待完整参数预检",
+    "browser_status": "未验收",
+    "paid_e2e": "未执行"
+  },
+  {
+    "code": "lyric-video",
+    "name": "歌词视频",
+    "source_id": null,
+    "example_spec": {
+      "target": "music",
+      "bindings": {}
+    },
+    "plan_type": "direct",
+    "content_status": "已规范化",
+    "execution_status": "待完整参数预检",
+    "browser_status": "未验收",
+    "paid_e2e": "未执行"
+  },
+  {
+    "code": "mv-dynamic",
+    "name": "动感 MV",
+    "source_id": null,
+    "example_spec": {
+      "target": "drama",
+      "bindings": {}
+    },
+    "plan_type": "direct",
+    "content_status": "已规范化",
+    "execution_status": "待完整参数预检",
+    "browser_status": "未验收",
+    "paid_e2e": "未执行"
+  },
+  {
+    "code": "mv-story",
+    "name": "剧情 MV",
+    "source_id": null,
+    "example_spec": {
+      "target": "drama",
+      "bindings": {}
+    },
+    "plan_type": "direct",
+    "content_status": "已规范化",
+    "execution_status": "待完整参数预检",
+    "browser_status": "未验收",
+    "paid_e2e": "未执行"
+  },
+  {
+    "code": "mv-visual",
+    "name": "视觉 MV",
+    "source_id": null,
+    "example_spec": {
+      "target": "drama",
+      "bindings": {}
+    },
+    "plan_type": "direct",
+    "content_status": "已规范化",
+    "execution_status": "待完整参数预检",
+    "browser_status": "未验收",
+    "paid_e2e": "未执行"
+  },
+  {
+    "code": "poster",
+    "name": "海报设计",
+    "source_id": "product_poster_01",
+    "example_spec": {
+      "target": "image",
+      "bindings": {
+        "total_count": "输出数量"
+      },
+      "total_count": 3,
+      "aspect_ratio": "3:4"
+    },
+    "plan_type": "direct",
+    "content_status": "已规范化",
+    "execution_status": "待完整参数预检",
+    "browser_status": "未验收",
+    "paid_e2e": "未执行"
+  },
+  {
+    "code": "product",
+    "name": "商品主图",
+    "source_id": "product_cover",
+    "example_spec": {
+      "target": "image",
+      "bindings": {
+        "total_count": "输出数量"
+      },
+      "total_count": 4
+    },
+    "plan_type": "direct",
+    "content_status": "已规范化",
+    "execution_status": "待完整参数预检",
+    "browser_status": "未验收",
+    "paid_e2e": "未执行"
+  },
+  {
+    "code": "reference",
+    "name": "参考音频创作",
+    "source_id": null,
+    "example_spec": {
+      "target": "music",
+      "bindings": {}
+    },
+    "plan_type": "direct",
+    "content_status": "已规范化",
+    "execution_status": "待完整参数预检",
+    "browser_status": "未验收",
+    "paid_e2e": "未执行"
+  },
+  {
+    "code": "remix",
+    "name": "音频改造",
+    "source_id": null,
+    "example_spec": {
+      "target": "music",
+      "bindings": {}
+    },
+    "plan_type": "direct",
+    "content_status": "已规范化",
+    "execution_status": "待完整参数预检",
+    "browser_status": "未验收",
+    "paid_e2e": "未执行"
+  },
+  {
+    "code": "showcase",
+    "name": "商品展示",
+    "source_id": null,
+    "example_spec": {
+      "target": "video",
+      "bindings": {}
+    },
+    "plan_type": "direct",
+    "content_status": "已规范化",
+    "execution_status": "待完整参数预检",
+    "browser_status": "未验收",
+    "paid_e2e": "未执行"
+  },
+  {
+    "code": "song",
+    "name": "写歌",
+    "source_id": null,
+    "example_spec": {
+      "target": "music",
+      "bindings": {}
+    },
+    "plan_type": "direct",
+    "content_status": "已规范化",
+    "execution_status": "待完整参数预检",
+    "browser_status": "未验收",
+    "paid_e2e": "未执行"
+  },
+  {
+    "code": "story",
+    "name": "故事短片",
+    "source_id": null,
+    "example_spec": {
+      "target": "video",
+      "bindings": {}
+    },
+    "plan_type": "direct",
+    "content_status": "已规范化",
+    "execution_status": "待完整参数预检",
+    "browser_status": "未验收",
+    "paid_e2e": "未执行"
+  }
+]

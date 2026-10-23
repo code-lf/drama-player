@@ -42,3 +42,22 @@ test('只有真实核价失败提供重试，需求变化提示不能重报旧�
   assert.ok(!html.includes('重试核算'))
   assert.ok(!html.includes('请确认本次'))
 })
+
+test('确认卡先说明立即执行及不可取消，停止中有明确反馈',async()=>{
+  const html=await render({hasQuote:true,credits:30})
+  assert.ok(html.includes('确认后将立即提交生成，执行期间无法取消'))
+  assert.ok(html.indexOf('执行期间无法取消')<html.indexOf('确认生成'))
+  assert.ok(html.includes('稍等一下'))
+  assert.ok((await render({hasQuote:true,credits:30,cancelling:true})).includes('正在停止'))
+})
+
+test('当前轮与历史轮只按真实取消状态显示停止反馈',()=>{
+  const studio=read('features/creation/components/CreationStudio.vue')
+  assert.ok(studio.includes('已为你停止本次待确认的生成任务，请问是否还有其他需求。'))
+  assert.ok(studio.includes('row.run.status===\'cancelled\''))
+  assert.ok(studio.includes(':cancelling="proposalCancelBusy"'))
+  const cancel=studio.slice(studio.indexOf('async function cancelProposal'),studio.indexOf('const proposalModelLabel'))
+  assert.ok(cancel.includes("cancelled.status!=='cancelled'||cancelled.executed_request"))
+  assert.ok(cancel.indexOf('await creationService.cancelRun')<cancel.indexOf('confirmation.value=null'))
+  assert.ok(cancel.includes('session.value?.id!==sid'))
+})

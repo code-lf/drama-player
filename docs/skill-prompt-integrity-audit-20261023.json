@@ -1,0 +1,3517 @@
+{
+  "platform_count": 67,
+  "active_count": 67,
+  "source_count": 165,
+  "mapped_count": 49,
+  "source_matches": 49,
+  "mapped_with_findings": 30,
+  "finding_counts": {
+    "no_public_example": 16,
+    "spec_alignment_pending": 19,
+    "multi_video": 11,
+    "external_workflow": 3,
+    "staged_or_postproduction": 6,
+    "over_workbench_batch": 10,
+    "broken_field": 1
+  },
+  "platform": [
+    {
+      "code": "ad",
+      "name": "广告短片",
+      "active": true,
+      "version": 11,
+      "executor": "ad",
+      "source_id": null,
+      "source_name": null,
+      "source_example": "",
+      "current_example": "",
+      "source_matches": null,
+      "findings": [
+        {
+          "kind": "no_public_example",
+          "explanation": "后台未配置公开示例；不等于没有内部指导，部分基础技能使用前端兜底，待单独核对。",
+          "evidence": ""
+        }
+      ]
+    },
+    {
+      "code": "animate",
+      "name": "图片转视频",
+      "active": true,
+      "version": 5,
+      "executor": "animate",
+      "source_id": null,
+      "source_name": null,
+      "source_example": "",
+      "current_example": "",
+      "source_matches": null,
+      "findings": [
+        {
+          "kind": "no_public_example",
+          "explanation": "后台未配置公开示例；不等于没有内部指导，部分基础技能使用前端兜底，待单独核对。",
+          "evidence": ""
+        }
+      ]
+    },
+    {
+      "code": "custom-ad-director",
+      "name": "广告创意短剧",
+      "active": true,
+      "version": 2,
+      "executor": "ad",
+      "source_id": null,
+      "source_name": null,
+      "source_example": "",
+      "current_example": "为{{商品:香水}}创作广告短剧：{{情节:主角在雨后街角与旧友重逢}}，突出{{卖点:清新自然的香气}}。",
+      "source_matches": null,
+      "findings": []
+    },
+    {
+      "code": "custom-ai-presenter",
+      "name": "AI口播",
+      "active": true,
+      "version": 2,
+      "executor": "ad",
+      "source_id": null,
+      "source_name": null,
+      "source_example": "",
+      "current_example": "为{{商品:香水}}制作{{时长:15秒}}中文口播，介绍{{卖点:清新自然的香气}}。",
+      "source_matches": null,
+      "findings": [
+        {
+          "kind": "spec_alignment_pending",
+          "explanation": "含明确比例／时长／画质，原文迁入不证明已与草稿和模型能力同步；需逐项验收。",
+          "evidence": "为香水制作15秒中文口播，介绍清新自然的香气。"
+        }
+      ]
+    },
+    {
+      "code": "custom-commerce-ad-storyboard",
+      "name": "营销分镜短片",
+      "active": true,
+      "version": 6,
+      "executor": "ad",
+      "source_id": "higgsfield_marketing_0q6z1y",
+      "source_name": "爆款广告分镜与9种营销风格短片",
+      "source_example": "请基于商品参考图，生成3段 15 秒 9:16 的广告视频，使用3款不同的营销风格预设和3款不同的Hook。\n\n1. 从以下范围内匹配适合该商品的营销风格：原生的 UGC 口播、直观的教程演示、沉浸式的开箱体验、极具视觉张力的超动感、客观的产品测评、电影级 TV 电视广告、打破常规的野牌创意、生活化的 UGC 虚拟试穿以及时尚杂志级的专业虚拟试穿；\n2. 选择最匹配的 2-3 秒的“黄金视觉挂钩”（Hooks）：特技级（如物品撞击、暴风雪）或细微级（如采访、相机颠簸）Hook；\n3. 选择适合的场景环境：例如写实（如卧室、厨房、车内）或超现实（例如火山边缘、飞机机翼）；",
+      "current_example": "请基于商品参考图，生成3段 15 秒 9:16 的广告视频，使用3款不同的营销风格预设和3款不同的Hook。\n\n1. 从以下范围内匹配适合该商品的营销风格：原生的 UGC 口播、直观的教程演示、沉浸式的开箱体验、极具视觉张力的超动感、客观的产品测评、电影级 TV 电视广告、打破常规的野牌创意、生活化的 UGC 虚拟试穿以及时尚杂志级的专业虚拟试穿；\n2. 选择最匹配的 2-3 秒的“黄金视觉挂钩”（Hooks）：特技级（如物品撞击、暴风雪）或细微级（如采访、相机颠簸）Hook；\n3. 选择适合的场景环境：例如写实（如卧室、厨房、车内）或超现实（例如火山边缘、飞机机翼）；",
+      "source_matches": true,
+      "findings": [
+        {
+          "kind": "multi_video",
+          "explanation": "文内要求多条视频，现有直接执行不等于已完成多版本计划。",
+          "evidence": "生成3段 15 秒 9:16 的广告视频"
+        },
+        {
+          "kind": "spec_alignment_pending",
+          "explanation": "含明确比例／时长／画质，原文迁入不证明已与草稿和模型能力同步；需逐项验收。",
+          "evidence": "请基于商品参考图，生成3段 15 秒 9:16 的广告视频，使用3款不同的营销风格预设和3款不同的Hook。\n2. 选择最匹配的 2-3 秒的“黄金视觉挂钩”（Hooks）：特技级（如物品撞击、暴风雪）或细微级（如采访、相机颠簸）Hook；"
+        }
+      ]
+    },
+    {
+      "code": "custom-commerce-arcade",
+      "name": "复古街机广告",
+      "active": true,
+      "version": 6,
+      "executor": "ad",
+      "source_id": "product_video_customizer_pcq89j",
+      "source_name": "复古街机风商品视频",
+      "source_example": "基于商品参考图，生成 15 秒漫画街机风格的广告片，9:16。",
+      "current_example": "基于商品参考图，生成 15 秒漫画街机风格的广告片，9:16。",
+      "source_matches": true,
+      "findings": [
+        {
+          "kind": "spec_alignment_pending",
+          "explanation": "含明确比例／时长／画质，原文迁入不证明已与草稿和模型能力同步；需逐项验收。",
+          "evidence": "基于商品参考图，生成 15 秒漫画街机风格的广告片，9:16。"
+        }
+      ]
+    },
+    {
+      "code": "custom-commerce-artifact",
+      "name": "文物灵感创意广告",
+      "active": true,
+      "version": 5,
+      "executor": "ad",
+      "source_id": "manual_skill_0xd76t",
+      "source_name": "文物复活电商视频生成",
+      "source_example": "基于上传的商品图和陶俑图，帮我生成一段 15 秒的 9:16 视频。商品是护肤面霜（主打深层补水，有金色瓶身和按压泵头），陶俑是一个唐代仕女彩塑。剧情：展馆中的唐代仕女陶俑眨眼苏醒，表面有些许陶土碎屑掉落，随后镜头转到闺房现代桌面，她好奇地按下金色面霜，面霜泵出，她惊讶地轻抚面部（面部保留亚洲特征和仕女服装），配乐轻快。",
+      "current_example": "基于上传的商品图和陶俑图，帮我生成一段 15 秒的 9:16 视频。商品是护肤面霜（主打深层补水，有金色瓶身和按压泵头），陶俑是一个唐代仕女彩塑。剧情：展馆中的唐代仕女陶俑眨眼苏醒，表面有些许陶土碎屑掉落，随后镜头转到闺房现代桌面，她好奇地按下金色面霜，面霜泵出，她惊讶地轻抚面部（面部保留亚洲特征和仕女服装），配乐轻快。",
+      "source_matches": true,
+      "findings": [
+        {
+          "kind": "spec_alignment_pending",
+          "explanation": "含明确比例／时长／画质，原文迁入不证明已与草稿和模型能力同步；需逐项验收。",
+          "evidence": "基于上传的商品图和陶俑图，帮我生成一段 15 秒的 9:16 视频。商品是护肤面霜（主打深层补水，有金色瓶身和按压泵头），陶俑是一个唐代仕女彩塑。剧情：展馆中的唐代仕女陶俑眨眼苏醒，表面有些许陶土碎屑掉落，随后镜头转到闺房现代桌面，她好奇地按下金色面霜，面霜泵出，她惊讶地轻抚面部（面部保留亚洲特征和仕女服装），配乐轻快。"
+        }
+      ]
+    },
+    {
+      "code": "custom-commerce-beauty-ad",
+      "name": "美妆个护展示",
+      "active": true,
+      "version": 5,
+      "executor": "ad",
+      "source_id": "cosmetics_skill",
+      "source_name": "美妆个护商品展示广告",
+      "source_example": "制作一款粉底液的商品展示广告",
+      "current_example": "制作一款粉底液的商品展示广告",
+      "source_matches": true,
+      "findings": []
+    },
+    {
+      "code": "custom-commerce-beauty-photo",
+      "name": "美妆商业摄影",
+      "active": true,
+      "version": 5,
+      "executor": "product",
+      "source_id": "manual_skill_0frzii",
+      "source_name": "高端美妆商业摄影 Skill",
+      "source_example": "上传产品白底图即可，最好是化妆品类目，无需写提示词",
+      "current_example": "上传产品白底图即可，最好是化妆品类目，无需写提示词",
+      "source_matches": true,
+      "findings": []
+    },
+    {
+      "code": "custom-commerce-behind-scenes",
+      "name": "片场揭秘广告",
+      "active": true,
+      "version": 5,
+      "executor": "ad",
+      "source_id": "manual_skill_0tv7gr",
+      "source_name": "片中片电商视频生成",
+      "source_example": "基于这张黑色皮革托特包的商品图，生成一个20秒、9:16的片中片电商视频。模特为成年亚洲女性，身穿米色风衣，在黄昏时分复古落日街头慢速行走。第8秒开始镜头向后平滑拉开，露出路旁的轨道摄像机和一盏暖色灯光。随后模特停下与旁边的助理相视一笑，最后以手包皮质缝线和Logo特写收尾。配以轻柔舒适的都市电音。",
+      "current_example": "基于这张黑色皮革托特包的商品图，生成一个20秒、9:16的片中片电商视频。模特为成年亚洲女性，身穿米色风衣，在黄昏时分复古落日街头慢速行走。第8秒开始镜头向后平滑拉开，露出路旁的轨道摄像机和一盏暖色灯光。随后模特停下与旁边的助理相视一笑，最后以手包皮质缝线和Logo特写收尾。配以轻柔舒适的都市电音。",
+      "source_matches": true,
+      "findings": [
+        {
+          "kind": "spec_alignment_pending",
+          "explanation": "含明确比例／时长／画质，原文迁入不证明已与草稿和模型能力同步；需逐项验收。",
+          "evidence": "基于这张黑色皮革托特包的商品图，生成一个20秒、9:16的片中片电商视频。模特为成年亚洲女性，身穿米色风衣，在黄昏时分复古落日街头慢速行走。第8秒开始镜头向后平滑拉开，露出路旁的轨道摄像机和一盏暖色灯光。随后模特停下与旁边的助理相视一笑，最后以手包皮质缝线和Logo特写收尾。配以轻柔舒适的都市电音。"
+        }
+      ]
+    },
+    {
+      "code": "custom-commerce-blogger-camera",
+      "name": "博主对镜种草",
+      "active": true,
+      "version": 5,
+      "executor": "ad",
+      "source_id": "creator_product_talk_video_bnif4b",
+      "source_name": "电商博主对镜种草视频生成",
+      "source_example": "请帮我制作一个电商视频。商品是一瓶「神经酰胺保湿面霜」，白色圆罐包装，主打修护屏障和24小时深层保湿。博主希望是一个20多岁的温和知性女性，在明亮的日系木质风卧室或梳妆台前，正对镜头介绍。视频时长15秒，包含她把面霜展示给镜头、用指腹挖取面霜展示冰淇淋质地并涂抹在手背上的近景特写。请生成对应的口播脚本并直接制作出成片。",
+      "current_example": "请帮我制作一个电商视频。商品是一瓶「神经酰胺保湿面霜」，白色圆罐包装，主打修护屏障和24小时深层保湿。博主希望是一个20多岁的温和知性女性，在明亮的日系木质风卧室或梳妆台前，正对镜头介绍。视频时长15秒，包含她把面霜展示给镜头、用指腹挖取面霜展示冰淇淋质地并涂抹在手背上的近景特写。请生成对应的口播脚本并直接制作出成片。",
+      "source_matches": true,
+      "findings": [
+        {
+          "kind": "spec_alignment_pending",
+          "explanation": "含明确比例／时长／画质，原文迁入不证明已与草稿和模型能力同步；需逐项验收。",
+          "evidence": "请帮我制作一个电商视频。商品是一瓶「神经酰胺保湿面霜」，白色圆罐包装，主打修护屏障和24小时深层保湿。博主希望是一个20多岁的温和知性女性，在明亮的日系木质风卧室或梳妆台前，正对镜头介绍。视频时长15秒，包含她把面霜展示给镜头、用指腹挖取面霜展示冰淇淋质地并涂抹在手背上的近景特写。请生成对应的口播脚本并直接制作出成片。"
+        }
+      ]
+    },
+    {
+      "code": "custom-commerce-blogger-life",
+      "name": "生活博主推荐",
+      "active": true,
+      "version": 5,
+      "executor": "ad",
+      "source_id": "multi_scene_product_video_6xnjqt",
+      "source_name": "博主种草",
+      "source_example": "【提示词示例】\n请为我的【便携榨汁机】制作一段15秒的多场景种草视频。\n- 商品信息：薄荷绿色，无线充电，杯身带硅胶防滑套，轻量便携，可直接做随行杯。\n- 主播要求：活力、运动风的年轻亚洲女性，口播语调轻快，富有感染力（普通话）。\n- 使用场景：\n  1. 场景一（家中准备）：在厨房切好草莓和香蕉放入榨汁机，双击启动搅拌，带上包出门；\n  2. 场景二（办公室）：在办公桌前，插着吸管直接饮用，露出满意的微笑；\n  3. 场景三（健身房）：健身后，在休息区单手拿着榨汁机，展现运动健康的生活方式。\n- 视频规格：9:16 竖屏，Seedance 2.5 视频模型，Oii Image 2.5 fast 生图参考，成片带字幕与配乐。",
+      "current_example": "【提示词示例】\n请为我的【便携榨汁机】制作一段15秒的多场景种草视频。\n- 商品信息：薄荷绿色，无线充电，杯身带硅胶防滑套，轻量便携，可直接做随行杯。\n- 主播要求：活力、运动风的年轻亚洲女性，口播语调轻快，富有感染力（普通话）。\n- 使用场景：\n  1. 场景一（家中准备）：在厨房切好草莓和香蕉放入榨汁机，双击启动搅拌，带上包出门；\n  2. 场景二（办公室）：在办公桌前，插着吸管直接饮用，露出满意的微笑；\n  3. 场景三（健身房）：健身后，在休息区单手拿着榨汁机，展现运动健康的生活方式。\n- 视频规格：9:16 竖屏，Seedance 2.5 视频模型，Oii Image 2.5 fast 生图参考，成片带字幕与配乐。",
+      "source_matches": true,
+      "findings": [
+        {
+          "kind": "external_workflow",
+          "explanation": "含外站专用素材标识、模型或画布流程，尚未完成本站语义改写。",
+          "evidence": "- 视频规格：9:16 竖屏，Seedance 2.5 视频模型，Oii Image 2.5 fast 生图参考，成片带字幕与配乐。"
+        },
+        {
+          "kind": "spec_alignment_pending",
+          "explanation": "含明确比例／时长／画质，原文迁入不证明已与草稿和模型能力同步；需逐项验收。",
+          "evidence": "请为我的【便携榨汁机】制作一段15秒的多场景种草视频。\n- 视频规格：9:16 竖屏，Seedance 2.5 视频模型，Oii Image 2.5 fast 生图参考，成片带字幕与配乐。"
+        },
+        {
+          "kind": "staged_or_postproduction",
+          "explanation": "含多步骤、前置素材或后期要求；需核对既有执行器与分阶段流程，不计作完整工作流完成。",
+          "evidence": "请为我的【便携榨汁机】制作一段15秒的多场景种草视频。\n- 视频规格：9:16 竖屏，Seedance 2.5 视频模型，Oii Image 2.5 fast 生图参考，成片带字幕与配乐。"
+        }
+      ]
+    },
+    {
+      "code": "custom-commerce-bullet-time",
+      "name": "商品环绕定格",
+      "active": true,
+      "version": 6,
+      "executor": "showcase",
+      "source_id": "commercial_product_bullet_time_video_8yenis",
+      "source_name": "商品子弹时间展示",
+      "source_example": "请帮我基于这张商品图片生成一个创意视频。",
+      "current_example": "请帮我基于这张商品图片生成一个创意视频。",
+      "source_matches": true,
+      "findings": []
+    },
+    {
+      "code": "custom-commerce-car-brand",
+      "name": "汽车形象短片",
+      "active": true,
+      "version": 5,
+      "executor": "ad",
+      "source_id": "car_promo_showcase",
+      "source_name": "汽车品牌宣传",
+      "source_example": "品牌：{{LUMERA}}。\n核心卖点：{{流线美学、澎湃动力}}。\n投放平台：抖音。\n语言：中文。",
+      "current_example": "品牌：{{品牌:LUMERA}}。\n核心卖点：{{核心卖点:流线美学、澎湃动力}}。\n投放平台：抖音。\n语言：中文。",
+      "source_matches": true,
+      "findings": []
+    },
+    {
+      "code": "custom-commerce-clothing-presenter",
+      "name": "服装讲解带货",
+      "active": true,
+      "version": 5,
+      "executor": "ad",
+      "source_id": "fashion-spoken-commerce",
+      "source_name": "服装展示口播带货",
+      "source_example": "商品：{{韩系呢子外套}}\n核心卖点：{{简约显瘦，版型挺阔}}。\n投放平台：抖音。\n语言：中文。",
+      "current_example": "商品：{{商品:韩系呢子外套}}\n核心卖点：{{核心卖点:简约显瘦，版型挺阔}}。\n投放平台：抖音。\n语言：中文。",
+      "source_matches": true,
+      "findings": []
+    },
+    {
+      "code": "custom-commerce-cooking",
+      "name": "美食制作短片",
+      "active": true,
+      "version": 6,
+      "executor": "showcase",
+      "source_id": "ecommerce_food_ad_creator_0jv147",
+      "source_name": "美食视频创作",
+      "source_example": "- 视频比例：9:16（竖屏推荐用于淘宝、抖音推广）\n- 视频时长：15s\n- 品牌/产品：酸汤牛肉米线\n- 核心卖点：番茄浓汤、猛火炸酱、大颗肉丁、非油炸米线\n- 模特参考：自备一名吃播模特全身白底参考图（若无则由 AI 自动生成）\n- 场景参考：温暖实木台面作为食物微距特写底图\n- 期望音乐：高弹性 Funk 律动的现代流行配乐（122 BPM）",
+      "current_example": "- 视频比例：9:16（竖屏推荐用于淘宝、抖音推广）\n- 视频时长：15s\n- 品牌/产品：酸汤牛肉米线\n- 核心卖点：番茄浓汤、猛火炸酱、大颗肉丁、非油炸米线\n- 模特参考：自备一名吃播模特全身白底参考图（若无则由 AI 自动生成）\n- 场景参考：温暖实木台面作为食物微距特写底图\n- 期望音乐：高弹性 Funk 律动的现代流行配乐（122 BPM）",
+      "source_matches": true,
+      "findings": [
+        {
+          "kind": "spec_alignment_pending",
+          "explanation": "含明确比例／时长／画质，原文迁入不证明已与草稿和模型能力同步；需逐项验收。",
+          "evidence": "- 视频比例：9:16（竖屏推荐用于淘宝、抖音推广）\n- 视频时长：15s"
+        }
+      ]
+    },
+    {
+      "code": "custom-commerce-costume-story",
+      "name": "古装剧情带货",
+      "active": true,
+      "version": 6,
+      "executor": "ad",
+      "source_id": "palace_parody_commercials",
+      "source_name": "古装剧情带货",
+      "source_example": "商品：{{云柔}}。\n核心卖点：{{云朵般柔软,湿水不易破}}。\n投放平台：抖音。\n语言：中文。\n目标生成视频数量：{{1支}}。",
+      "current_example": "商品：{{商品:云柔}}。\n核心卖点：{{核心卖点:云朵般柔软,湿水不易破}}。\n投放平台：抖音。\n语言：中文。\n目标生成视频数量：{{目标生成视频数量:1支}}。",
+      "source_matches": true,
+      "findings": []
+    },
+    {
+      "code": "custom-commerce-daily-care",
+      "name": "日化母婴展示",
+      "active": true,
+      "version": 5,
+      "executor": "ad",
+      "source_id": "personal_care",
+      "source_name": "日化母婴商品展示广告",
+      "source_example": "制作一款洗发水的商品展示广告",
+      "current_example": "制作一款洗发水的商品展示广告",
+      "source_matches": true,
+      "findings": []
+    },
+    {
+      "code": "custom-commerce-daily-outfit",
+      "name": "每日穿搭展示",
+      "active": true,
+      "version": 5,
+      "executor": "showcase",
+      "source_id": "manual_skill_0sx6fp",
+      "source_name": "每日穿搭电商视频生成 (daily-outfit-video)",
+      "source_example": "上传一张高清晰度的白色棒球帽图片，输入提示词：“主推商品：白色棉质棒球帽，核心卖点：遮阳显脸小、斜纹棉面料。风格：清爽街头风，亚洲女博主出镜，适合春夏季出行。”，即可一键生成15秒精致的街头风穿搭视频。",
+      "current_example": "上传一张高清晰度的白色棒球帽图片，输入提示词：“主推商品：白色棉质棒球帽，核心卖点：遮阳显脸小、斜纹棉面料。风格：清爽街头风，亚洲女博主出镜，适合春夏季出行。”，即可一键生成15秒精致的街头风穿搭视频。",
+      "source_matches": true,
+      "findings": [
+        {
+          "kind": "spec_alignment_pending",
+          "explanation": "含明确比例／时长／画质，原文迁入不证明已与草稿和模型能力同步；需逐项验收。",
+          "evidence": "上传一张高清晰度的白色棒球帽图片，输入提示词：“主推商品：白色棉质棒球帽，核心卖点：遮阳显脸小、斜纹棉面料。风格：清爽街头风，亚洲女博主出镜，适合春夏季出行。”，即可一键生成15秒精致的街头风穿搭视频。"
+        }
+      ]
+    },
+    {
+      "code": "custom-commerce-digital-ad",
+      "name": "3C数码广告",
+      "active": true,
+      "version": 5,
+      "executor": "ad",
+      "source_id": "3C_skill",
+      "source_name": "3C 数码展示广告",
+      "source_example": "制作一个头戴式耳机的商品展示广告",
+      "current_example": "制作一个头戴式耳机的商品展示广告",
+      "source_matches": true,
+      "findings": []
+    },
+    {
+      "code": "custom-commerce-exploded",
+      "name": "数码拆解悬浮展示",
+      "active": true,
+      "version": 6,
+      "executor": "showcase",
+      "source_id": "precision_digital_3d_ad_hvkch0",
+      "source_name": "3C拆解悬浮展示",
+      "source_example": "是正视图，  是背视图，  是左视图，  是右视图，  是底视图，  是顶视图。\n1，这是一个   产品，请你对该产品图1~图6进行六视图进行绑定。\n2，我想给我的产品制作出部件爆炸与组合效果，参考视频。【提供参考视频很重要，后续画布可能需要再次上传参考视频】",
+      "current_example": "是正视图，  是背视图，  是左视图，  是右视图，  是底视图，  是顶视图。\n1，这是一个   产品，请你对该产品图1~图6进行六视图进行绑定。\n2，我想给我的产品制作出部件爆炸与组合效果，参考视频。【提供参考视频很重要，后续画布可能需要再次上传参考视频】",
+      "source_matches": true,
+      "findings": [
+        {
+          "kind": "external_workflow",
+          "explanation": "含外站专用素材标识、模型或画布流程，尚未完成本站语义改写。",
+          "evidence": "2，我想给我的产品制作出部件爆炸与组合效果，参考视频。【提供参考视频很重要，后续画布可能需要再次上传参考视频】"
+        },
+        {
+          "kind": "staged_or_postproduction",
+          "explanation": "含多步骤、前置素材或后期要求；需核对既有执行器与分阶段流程，不计作完整工作流完成。",
+          "evidence": "1，这是一个   产品，请你对该产品图1~图6进行六视图进行绑定。"
+        }
+      ]
+    },
+    {
+      "code": "custom-commerce-fashion-women",
+      "name": "女装穿搭短片",
+      "active": true,
+      "version": 6,
+      "executor": "showcase",
+      "source_id": "character_clothing_swap_and_video_showcase_mbznwk",
+      "source_name": "女装穿搭带货展示视频",
+      "source_example": "基于用户提供的模特参考图和服装参考图，生成高一致性的人物换装定妆照。然后，结合生成的定妆照和用户提供的场景参考图，生成一段人物展示服装的短视频。",
+      "current_example": "基于用户提供的模特参考图和服装参考图，生成高一致性的人物换装定妆照。然后，结合生成的定妆照和用户提供的场景参考图，生成一段人物展示服装的短视频。",
+      "source_matches": true,
+      "findings": []
+    },
+    {
+      "code": "custom-commerce-floating-tech",
+      "name": "科技悬浮创意广告",
+      "active": true,
+      "version": 5,
+      "executor": "ad",
+      "source_id": "oiioii_product_stunt_video_0m9j1o",
+      "source_name": "特斯拉带你飞",
+      "source_example": "[产品图片] 用我刚上传的产品图帮我制作视频。",
+      "current_example": "[产品图片] 用我刚上传的产品图帮我制作视频。",
+      "source_matches": true,
+      "findings": []
+    },
+    {
+      "code": "custom-commerce-food-ad",
+      "name": "食品饮料广告",
+      "active": true,
+      "version": 5,
+      "executor": "ad",
+      "source_id": "food_skill",
+      "source_name": "食品饮料展示广告",
+      "source_example": "制作一款气泡水的商品展示广告",
+      "current_example": "制作一款气泡水的商品展示广告",
+      "source_matches": true,
+      "findings": []
+    },
+    {
+      "code": "custom-commerce-food-host",
+      "name": "食品讲解展示",
+      "active": true,
+      "version": 5,
+      "executor": "ad",
+      "source_id": "food-spoken-commerce",
+      "source_name": "商品直接展示",
+      "source_example": "商品：{{辣条}}\n核心卖点：{{香辣休闲食品}}。\n投放平台：抖音。\n语言：中文。\n目标生成视频数量：5支。",
+      "current_example": "商品：{{商品:辣条}}\n核心卖点：{{核心卖点:香辣休闲食品}}。\n投放平台：抖音。\n语言：中文。\n目标生成视频数量：5支。",
+      "source_matches": true,
+      "findings": [
+        {
+          "kind": "over_workbench_batch",
+          "explanation": "超过当前工作台单批4项；必须拆分计划或明确调整，不能原样承诺交付。",
+          "evidence": "5支"
+        },
+        {
+          "kind": "multi_video",
+          "explanation": "多条视频需求需多版本编排；目前试用仅填文本，不能认定数量已同步或整批可执行。",
+          "evidence": "5支"
+        }
+      ]
+    },
+    {
+      "code": "custom-commerce-general-ad",
+      "name": "通用商品广告",
+      "active": true,
+      "version": 5,
+      "executor": "ad",
+      "source_id": "ecommerce_ads_skill",
+      "source_name": "通用商品展示广告",
+      "source_example": "制作一个咖啡机的商品展示广告",
+      "current_example": "制作一个咖啡机的商品展示广告",
+      "source_matches": true,
+      "findings": []
+    },
+    {
+      "code": "custom-commerce-gift-reveal",
+      "name": "赠品组合展示",
+      "active": true,
+      "version": 5,
+      "executor": "ad",
+      "source_id": "gift-expansion-spoken-commerce",
+      "source_name": "礼物翻倍",
+      "source_example": "商品：{{定妆喷雾}}\n核心卖点：{{成膜快，不脱妆}}。\n投放平台：抖音。\n语言：中文。\n目标生成视频数量：5支。",
+      "current_example": "商品：{{商品:定妆喷雾}}\n核心卖点：{{核心卖点:成膜快，不脱妆}}。\n投放平台：抖音。\n语言：中文。\n目标生成视频数量：5支。",
+      "source_matches": true,
+      "findings": [
+        {
+          "kind": "over_workbench_batch",
+          "explanation": "超过当前工作台单批4项；必须拆分计划或明确调整，不能原样承诺交付。",
+          "evidence": "5支"
+        },
+        {
+          "kind": "multi_video",
+          "explanation": "多条视频需求需多版本编排；目前试用仅填文本，不能认定数量已同步或整批可执行。",
+          "evidence": "5支"
+        }
+      ]
+    },
+    {
+      "code": "custom-commerce-homewear",
+      "name": "家居贴身服饰展示",
+      "active": true,
+      "version": 5,
+      "executor": "ad",
+      "source_id": "flower_aigc_skill_skill_00kfgj",
+      "source_name": "内衣带货视频全流程skill",
+      "source_example": "请帮我分析我提供的这款蕾丝无钢圈文胸产品图和参数：1. 分析卖点与展示方式；2. 生成3版高转化口播脚本；3. 生成一致性生图资产任务；4. 提供3个15秒的视频“一条过”提示词及口播配音。",
+      "current_example": "请帮我分析我提供的这款蕾丝无钢圈文胸产品图和参数：1. 分析卖点与展示方式；2. 生成3版高转化口播脚本；3. 生成一致性生图资产任务；4. 提供3个15秒的视频“一条过”提示词及口播配音。",
+      "source_matches": true,
+      "findings": [
+        {
+          "kind": "multi_video",
+          "explanation": "文内要求多条视频，现有直接执行不等于已完成多版本计划。",
+          "evidence": "提供3个15秒的视频"
+        },
+        {
+          "kind": "spec_alignment_pending",
+          "explanation": "含明确比例／时长／画质，原文迁入不证明已与草稿和模型能力同步；需逐项验收。",
+          "evidence": "请帮我分析我提供的这款蕾丝无钢圈文胸产品图和参数：1. 分析卖点与展示方式；2. 生成3版高转化口播脚本；3. 生成一致性生图资产任务；4. 提供3个15秒的视频“一条过”提示词及口播配音。"
+        },
+        {
+          "kind": "staged_or_postproduction",
+          "explanation": "含多步骤、前置素材或后期要求；需核对既有执行器与分阶段流程，不计作完整工作流完成。",
+          "evidence": "请帮我分析我提供的这款蕾丝无钢圈文胸产品图和参数：1. 分析卖点与展示方式；2. 生成3版高转化口播脚本；3. 生成一致性生图资产任务；4. 提供3个15秒的视频“一条过”提示词及口播配音。"
+        }
+      ]
+    },
+    {
+      "code": "custom-commerce-host-demo",
+      "name": "主播讲解短片",
+      "active": true,
+      "version": 6,
+      "executor": "ad",
+      "source_id": "ai_live_broadcast_ecommerce_video_maker",
+      "source_name": "真人直播带货口播",
+      "source_example": "请基于上传的商品图，制作一条带货视频。\n 时长: 15 秒\n视频比例: 9:16\n品牌名: “清洛吟”\n买点: 29度，纯粮精酿，入口绵甜柔和，回甘清冽",
+      "current_example": "请基于上传的商品图，制作一条带货视频。\n 时长: 15 秒\n视频比例: 9:16\n品牌名: “清洛吟”\n买点: 29度，纯粮精酿，入口绵甜柔和，回甘清冽",
+      "source_matches": true,
+      "findings": [
+        {
+          "kind": "spec_alignment_pending",
+          "explanation": "含明确比例／时长／画质，原文迁入不证明已与草稿和模型能力同步；需逐项验收。",
+          "evidence": " 时长: 15 秒\n视频比例: 9:16"
+        }
+      ]
+    },
+    {
+      "code": "custom-commerce-interview",
+      "name": "情景采访带货",
+      "active": true,
+      "version": 5,
+      "executor": "ad",
+      "source_id": "street-interview-spoken-commerce",
+      "source_name": "街头采访",
+      "source_example": "商品：{{防晒喷雾}}\n核心卖点：{{成膜快}}。\n投放平台：抖音。\n语言：中文。\n目标生成视频数量：5支。",
+      "current_example": "商品：{{商品:防晒喷雾}}\n核心卖点：{{核心卖点:成膜快}}。\n投放平台：抖音。\n语言：中文。\n目标生成视频数量：5支。",
+      "source_matches": true,
+      "findings": [
+        {
+          "kind": "over_workbench_batch",
+          "explanation": "超过当前工作台单批4项；必须拆分计划或明确调整，不能原样承诺交付。",
+          "evidence": "5支"
+        },
+        {
+          "kind": "multi_video",
+          "explanation": "多条视频需求需多版本编排；目前试用仅填文本，不能认定数量已同步或整批可执行。",
+          "evidence": "5支"
+        }
+      ]
+    },
+    {
+      "code": "custom-commerce-jewelry",
+      "name": "首饰讲解展示",
+      "active": true,
+      "version": 5,
+      "executor": "ad",
+      "source_id": "jewelry-spoken-commerce",
+      "source_name": "首饰口播带货",
+      "source_example": "商品：{{项链}}\n核心卖点：{{精致，有特点，不大众}}。\n投放平台：抖音。\n语言：中文。\n目标生成视频数量：5支。",
+      "current_example": "商品：{{商品:项链}}\n核心卖点：{{核心卖点:精致，有特点，不大众}}。\n投放平台：抖音。\n语言：中文。\n目标生成视频数量：5支。",
+      "source_matches": true,
+      "findings": [
+        {
+          "kind": "over_workbench_batch",
+          "explanation": "超过当前工作台单批4项；必须拆分计划或明确调整，不能原样承诺交付。",
+          "evidence": "5支"
+        },
+        {
+          "kind": "multi_video",
+          "explanation": "多条视频需求需多版本编排；目前试用仅填文本，不能认定数量已同步或整批可执行。",
+          "evidence": "5支"
+        }
+      ]
+    },
+    {
+      "code": "custom-commerce-lifestyle",
+      "name": "生活方式种草图",
+      "active": true,
+      "version": 6,
+      "executor": "product",
+      "source_id": "social-product-story",
+      "source_name": "商品生活方式种草",
+      "source_example": "根据上传的商品图片，为「MARRON」栗子果酱制作一组秋日生活方式种草图。\n\n商品名称：MARRON 栗子果酱。\n商品外观：透明玻璃罐、米白色瓶盖、复古奶油色标签、金色吊牌，罐内为焦糖棕色栗子果酱。\n核心卖点：浓郁栗香、绵密细腻、真实栗子颗粒，适合搭配吐司、咖啡及下午茶。\n目标受众：20–35 岁喜欢精致生活、甜品烘焙和下午茶的年轻女性。\n投放平台：小红书、抖音。\n图片语言：中文。\n视觉风格：秋日暖棕色系、复古法式生活美学、自然窗边光影、木质餐桌、亚麻桌布、浅景深、高级美食商业摄影。",
+      "current_example": "根据上传的商品图片，为「MARRON」栗子果酱制作一组秋日生活方式种草图。\n\n商品名称：MARRON 栗子果酱。\n商品外观：透明玻璃罐、米白色瓶盖、复古奶油色标签、金色吊牌，罐内为焦糖棕色栗子果酱。\n核心卖点：浓郁栗香、绵密细腻、真实栗子颗粒，适合搭配吐司、咖啡及下午茶。\n目标受众：20–35 岁喜欢精致生活、甜品烘焙和下午茶的年轻女性。\n投放平台：小红书、抖音。\n图片语言：中文。\n视觉风格：秋日暖棕色系、复古法式生活美学、自然窗边光影、木质餐桌、亚麻桌布、浅景深、高级美食商业摄影。",
+      "source_matches": true,
+      "findings": []
+    },
+    {
+      "code": "custom-commerce-makeup-demo",
+      "name": "妆容使用讲解",
+      "active": true,
+      "version": 5,
+      "executor": "ad",
+      "source_id": "makeup-spoken-commerce",
+      "source_name": "效果对比展示",
+      "source_example": "商品：{{腮红}}\n核心卖点：{{清冷韩系}}。\n投放平台：抖音。\n语言：中文。\n目标生成视频数量：5支。",
+      "current_example": "商品：{{商品:腮红}}\n核心卖点：{{核心卖点:清冷韩系}}。\n投放平台：抖音。\n语言：中文。\n目标生成视频数量：5支。",
+      "source_matches": true,
+      "findings": [
+        {
+          "kind": "over_workbench_batch",
+          "explanation": "超过当前工作台单批4项；必须拆分计划或明确调整，不能原样承诺交付。",
+          "evidence": "5支"
+        },
+        {
+          "kind": "multi_video",
+          "explanation": "多条视频需求需多版本编排；目前试用仅填文本，不能认定数量已同步或整批可执行。",
+          "evidence": "5支"
+        }
+      ]
+    },
+    {
+      "code": "custom-commerce-multi-points",
+      "name": "多卖点主图策划",
+      "active": true,
+      "version": 6,
+      "executor": "product",
+      "source_id": "ecommerce_multi_point_main_pic_pwfchx",
+      "source_name": "多卖点主图批量输出与视频推广企划",
+      "source_example": "- 商品名称：头戴式Beats耳机\n- 投放平台：淘宝\n- 主图方案数：3",
+      "current_example": "- 商品名称：头戴式Beats耳机\n- 投放平台：淘宝\n- 主图方案数：3",
+      "source_matches": true,
+      "findings": []
+    },
+    {
+      "code": "custom-commerce-multi-style",
+      "name": "一件多穿展示",
+      "active": true,
+      "version": 5,
+      "executor": "showcase",
+      "source_id": "fashion_one_item_many_looks_p8knx6",
+      "source_name": "一件多穿电商视频生成",
+      "source_example": "请帮我为这款复古牛仔外套（见图：hogi://image/demo_jacket）做一套“一件多穿”的宣传视频策划与生成，分别搭配：1. 复古街头风 2. 休闲通勤风 3. 户外运动风。目标时长 15 秒，竖屏。",
+      "current_example": "请帮我为这款复古牛仔外套（见图：hogi://image/demo_jacket）做一套“一件多穿”的宣传视频策划与生成，分别搭配：1. 复古街头风 2. 休闲通勤风 3. 户外运动风。目标时长 15 秒，竖屏。",
+      "source_matches": true,
+      "findings": [
+        {
+          "kind": "external_workflow",
+          "explanation": "含外站专用素材标识、模型或画布流程，尚未完成本站语义改写。",
+          "evidence": "请帮我为这款复古牛仔外套（见图：hogi://image/demo_jacket）做一套“一件多穿”的宣传视频策划与生成，分别搭配：1. 复古街头风 2. 休闲通勤风 3. 户外运动风。目标时长 15 秒，竖屏。"
+        },
+        {
+          "kind": "spec_alignment_pending",
+          "explanation": "含明确比例／时长／画质，原文迁入不证明已与草稿和模型能力同步；需逐项验收。",
+          "evidence": "请帮我为这款复古牛仔外套（见图：hogi://image/demo_jacket）做一套“一件多穿”的宣传视频策划与生成，分别搭配：1. 复古街头风 2. 休闲通勤风 3. 户外运动风。目标时长 15 秒，竖屏。"
+        },
+        {
+          "kind": "staged_or_postproduction",
+          "explanation": "含多步骤、前置素材或后期要求；需核对既有执行器与分阶段流程，不计作完整工作流完成。",
+          "evidence": "请帮我为这款复古牛仔外套（见图：hogi://image/demo_jacket）做一套“一件多穿”的宣传视频策划与生成，分别搭配：1. 复古街头风 2. 休闲通勤风 3. 户外运动风。目标时长 15 秒，竖屏。"
+        }
+      ]
+    },
+    {
+      "code": "custom-commerce-multi-unbox",
+      "name": "多镜头开箱展示",
+      "active": true,
+      "version": 6,
+      "executor": "showcase",
+      "source_id": "high_end_unboxing_showcase",
+      "source_name": "多镜头开箱展示",
+      "source_example": "结合我上传的新产品实拍图，制作一支约 15秒的横屏多镜头开箱视频。镜头依次展示包装、双手开盖、盒内布局、取出主产品、产品细节，最后以物品陈列收尾。",
+      "current_example": "结合我上传的新产品实拍图，制作一支约 15秒的横屏多镜头开箱视频。镜头依次展示包装、双手开盖、盒内布局、取出主产品、产品细节，最后以物品陈列收尾。",
+      "source_matches": true,
+      "findings": [
+        {
+          "kind": "spec_alignment_pending",
+          "explanation": "含明确比例／时长／画质，原文迁入不证明已与草稿和模型能力同步；需逐项验收。",
+          "evidence": "结合我上传的新产品实拍图，制作一支约 15秒的横屏多镜头开箱视频。镜头依次展示包装、双手开盖、盒内布局、取出主产品、产品细节，最后以物品陈列收尾。"
+        }
+      ]
+    },
+    {
+      "code": "custom-commerce-outfit-cuts",
+      "name": "节奏换装展示",
+      "active": true,
+      "version": 6,
+      "executor": "showcase",
+      "source_id": "beat_sync_outfit_showcase",
+      "source_name": "卡点换装展示",
+      "source_example": "根据上传的服装和模特图生成卡点换装视频",
+      "current_example": "根据上传的服装和模特图生成卡点换装视频",
+      "source_matches": true,
+      "findings": []
+    },
+    {
+      "code": "custom-commerce-pet-host",
+      "name": "宠物用品讲解",
+      "active": true,
+      "version": 5,
+      "executor": "ad",
+      "source_id": "pet-spoken-commerce",
+      "source_name": "宠物口播带货",
+      "source_example": "商品：{{猫条}}\n核心卖点：{{健康美味}}。\n投放平台：抖音。\n语言：中文。\n目标生成视频数量：5支。",
+      "current_example": "商品：{{商品:猫条}}\n核心卖点：{{核心卖点:健康美味}}。\n投放平台：抖音。\n语言：中文。\n目标生成视频数量：5支。",
+      "source_matches": true,
+      "findings": [
+        {
+          "kind": "over_workbench_batch",
+          "explanation": "超过当前工作台单批4项；必须拆分计划或明确调整，不能原样承诺交付。",
+          "evidence": "5支"
+        },
+        {
+          "kind": "multi_video",
+          "explanation": "多条视频需求需多版本编排；目前试用仅填文本，不能认定数量已同步或整批可执行。",
+          "evidence": "5支"
+        }
+      ]
+    },
+    {
+      "code": "custom-commerce-platform-images",
+      "name": "电商平台风格主图",
+      "active": true,
+      "version": 5,
+      "executor": "product",
+      "source_id": "one-image-eight-marketplaces",
+      "source_name": "国内外8个电商风格直出",
+      "source_example": "商品：{{鞋子}}。\n核心卖点：{{柔软缓震、轻盈舒适、稳固支撑}}。\n投放平台：抖音。\n语言：中文。\n目标生成图片数量：{{8个}}。",
+      "current_example": "商品：{{商品:鞋子}}。\n核心卖点：{{核心卖点:柔软缓震、轻盈舒适、稳固支撑}}。\n投放平台：抖音。\n语言：中文。\n目标生成图片数量：{{目标生成图片数量:8个}}。",
+      "source_matches": true,
+      "findings": [
+        {
+          "kind": "over_workbench_batch",
+          "explanation": "超过当前工作台单批4项；必须拆分计划或明确调整，不能原样承诺交付。",
+          "evidence": "8个"
+        }
+      ]
+    },
+    {
+      "code": "custom-commerce-presenter-ad",
+      "name": "人物带货广告",
+      "active": true,
+      "version": 5,
+      "executor": "ad",
+      "source_id": "live_commerce_skill",
+      "source_name": "真人带货广告",
+      "source_example": "制作一个快速反转打脸的低调奢侈服装带货广告",
+      "current_example": "制作一个快速反转打脸的低调奢侈服装带货广告",
+      "source_matches": true,
+      "findings": []
+    },
+    {
+      "code": "custom-commerce-product-details",
+      "name": "商品详情图",
+      "active": true,
+      "version": 5,
+      "executor": "product",
+      "source_id": "ecommerce_detail_image_prompts_0mtuvv",
+      "source_name": "POPO-AI电商详情图",
+      "source_example": "上传包含正面、背面及标签细节的产品图。填写产品名称、受众、目标平台（如淘宝、京东等）。可选填营销主题和特殊要求。",
+      "current_example": "上传包含正面、背面及标签细节的产品图。填写产品名称、受众、目标平台（如淘宝、京东等）。可选填营销主题和特殊要求。",
+      "source_matches": true,
+      "findings": []
+    },
+    {
+      "code": "custom-commerce-product-set",
+      "name": "商品场景套图",
+      "active": true,
+      "version": 6,
+      "executor": "product",
+      "source_id": "product-image-set",
+      "source_name": "商品套图",
+      "source_example": "商品名称：{{森野复古便携露营灯}}。\n目标生成图片数量：{{4 张}}。\n商品外观：军绿色金属灯身、透明玻璃灯罩、暖黄色光源、棕色皮质提手、复古旋钮设计。\n核心卖点：{{便携提拿、柔和暖光、复古设计}}。\n投放平台：淘宝。\n\n视觉风格：高端户外生活方式摄影，森林绿与暖琥珀色为主色调，电影级自然光影，真实金属与玻璃材质，画面干净高级。",
+      "current_example": "商品名称：{{商品名称:森野复古便携露营灯}}。\n目标生成图片数量：{{目标生成图片数量:4 张}}。\n商品外观：军绿色金属灯身、透明玻璃灯罩、暖黄色光源、棕色皮质提手、复古旋钮设计。\n核心卖点：{{核心卖点:便携提拿、柔和暖光、复古设计}}。\n投放平台：淘宝。\n\n视觉风格：高端户外生活方式摄影，森林绿与暖琥珀色为主色调，电影级自然光影，真实金属与玻璃材质，画面干净高级。",
+      "source_matches": true,
+      "findings": []
+    },
+    {
+      "code": "custom-commerce-promotion-host",
+      "name": "活动福利讲解",
+      "active": true,
+      "version": 5,
+      "executor": "ad",
+      "source_id": "offer-spoken-commerce",
+      "source_name": "福利活动口播带货",
+      "source_example": "商品：{{面膜}}。\n核心卖点：{{保湿美白}}。\n投放平台：抖音。\n语言：中文。\n目标生成视频数量：5支。",
+      "current_example": "商品：{{商品:面膜}}。\n核心卖点：{{核心卖点:保湿美白}}。\n投放平台：抖音。\n语言：中文。\n目标生成视频数量：5支。",
+      "source_matches": true,
+      "findings": [
+        {
+          "kind": "over_workbench_batch",
+          "explanation": "超过当前工作台单批4项；必须拆分计划或明确调整，不能原样承诺交付。",
+          "evidence": "5支"
+        },
+        {
+          "kind": "multi_video",
+          "explanation": "多条视频需求需多版本编排；目前试用仅填文本，不能认定数量已同步或整批可执行。",
+          "evidence": "5支"
+        }
+      ]
+    },
+    {
+      "code": "custom-commerce-selfie",
+      "name": "自拍视角推荐",
+      "active": true,
+      "version": 5,
+      "executor": "ad",
+      "source_id": "selfie-spoken-commerce",
+      "source_name": "自拍/对镜视角",
+      "source_example": "商品：{{帽子}\n核心卖点：{{美观，遮油头}}。\n投放平台：抖音。\n语言：中文。\n目标生成视频数量：5支。",
+      "current_example": "商品：{{帽子}\n核心卖点：{{核心卖点:美观，遮油头}}。\n投放平台：抖音。\n语言：中文。\n目标生成视频数量：5支。",
+      "source_matches": true,
+      "findings": [
+        {
+          "kind": "broken_field",
+          "explanation": "残留非本站合法语法的括号，不能正常呈现可编辑字段。",
+          "evidence": "商品：{{帽子}"
+        },
+        {
+          "kind": "over_workbench_batch",
+          "explanation": "超过当前工作台单批4项；必须拆分计划或明确调整，不能原样承诺交付。",
+          "evidence": "5支"
+        },
+        {
+          "kind": "multi_video",
+          "explanation": "多条视频需求需多版本编排；目前试用仅填文本，不能认定数量已同步或整批可执行。",
+          "evidence": "5支"
+        }
+      ]
+    },
+    {
+      "code": "custom-commerce-selling-points",
+      "name": "产品卖点展示",
+      "active": true,
+      "version": 5,
+      "executor": "showcase",
+      "source_id": "manual_skill_08yutl",
+      "source_name": "产品卖点电商视频生成",
+      "source_example": "我想制作一个15秒、9:16画幅的电商主图视频。商品是一瓶「海洋保湿面霜」，包装是天蓝色玻璃瓶、带银色瓶盖，主要卖点是「24小时长效保湿，深海巨藻提取物，质地如冰淇淋般清爽不油腻」。附件是我上传的面霜瓶正面高清图、面霜膏体质地细节图以及包装盒背面成分表。请帮我生成纯产品卖点视频，突出冰淇淋膏体微距特写以及深海保湿功效。",
+      "current_example": "我想制作一个15秒、9:16画幅的电商主图视频。商品是一瓶「海洋保湿面霜」，包装是天蓝色玻璃瓶、带银色瓶盖，主要卖点是「24小时长效保湿，深海巨藻提取物，质地如冰淇淋般清爽不油腻」。附件是我上传的面霜瓶正面高清图、面霜膏体质地细节图以及包装盒背面成分表。请帮我生成纯产品卖点视频，突出冰淇淋膏体微距特写以及深海保湿功效。",
+      "source_matches": true,
+      "findings": [
+        {
+          "kind": "spec_alignment_pending",
+          "explanation": "含明确比例／时长／画质，原文迁入不证明已与草稿和模型能力同步；需逐项验收。",
+          "evidence": "我想制作一个15秒、9:16画幅的电商主图视频。商品是一瓶「海洋保湿面霜」，包装是天蓝色玻璃瓶、带银色瓶盖，主要卖点是「24小时长效保湿，深海巨藻提取物，质地如冰淇淋般清爽不油腻」。附件是我上传的面霜瓶正面高清图、面霜膏体质地细节图以及包装盒背面成分表。请帮我生成纯产品卖点视频，突出冰淇淋膏体微距特写以及深海保湿功效。"
+        }
+      ]
+    },
+    {
+      "code": "custom-commerce-six-views",
+      "name": "商品多视图排版",
+      "active": true,
+      "version": 5,
+      "executor": "product",
+      "source_id": "six-view-product-presentation",
+      "source_name": "六视图展示",
+      "source_example": "请根据上传物品图生成横版16:9白底六视图，保持物品一致，不加文字。",
+      "current_example": "请根据上传物品图生成横版16:9白底六视图，保持物品一致，不加文字。",
+      "source_matches": true,
+      "findings": [
+        {
+          "kind": "staged_or_postproduction",
+          "explanation": "含多步骤、前置素材或后期要求；需核对既有执行器与分阶段流程，不计作完整工作流完成。",
+          "evidence": "请根据上传物品图生成横版16:9白底六视图，保持物品一致，不加文字。"
+        }
+      ]
+    },
+    {
+      "code": "custom-commerce-store-story",
+      "name": "剧情探店短片",
+      "active": true,
+      "version": 5,
+      "executor": "ad",
+      "source_id": "manual_skill_05fl5i",
+      "source_name": "剧情探店视频创作",
+      "source_example": "基于我的贝果产品图，生成一支15秒的法式烘焙坊探店视频，人设为店主，主播是20多岁的温婉亚洲女孩，最后以贝果和奶酪摆盘静物收尾。",
+      "current_example": "基于我的贝果产品图，生成一支15秒的法式烘焙坊探店视频，人设为店主，主播是20多岁的温婉亚洲女孩，最后以贝果和奶酪摆盘静物收尾。",
+      "source_matches": true,
+      "findings": [
+        {
+          "kind": "spec_alignment_pending",
+          "explanation": "含明确比例／时长／画质，原文迁入不证明已与草稿和模型能力同步；需逐项验收。",
+          "evidence": "基于我的贝果产品图，生成一支15秒的法式烘焙坊探店视频，人设为店主，主播是20多岁的温婉亚洲女孩，最后以贝果和奶酪摆盘静物收尾。"
+        }
+      ]
+    },
+    {
+      "code": "custom-commerce-store-visit",
+      "name": "探店推荐短片",
+      "active": true,
+      "version": 5,
+      "executor": "ad",
+      "source_id": "manual_skill_0ljv0d",
+      "source_name": "亚洲主播探店安利视频生成",
+      "source_example": "基于商品参考图，帮我生成一个面包店探店视频，画幅9:16，时长15秒。店名：‘麦香工房’，主推商品：‘爆浆开心果可颂’，卖点是开心果酱浓郁、酥皮层层酥脆。视频中需要有一位20多岁、有亲和力的亚洲女播在店内撕开可颂、展示爆浆细节并试吃的画面，并配有自然流畅的探店口播和字幕。",
+      "current_example": "基于商品参考图，帮我生成一个面包店探店视频，画幅9:16，时长15秒。店名：‘麦香工房’，主推商品：‘爆浆开心果可颂’，卖点是开心果酱浓郁、酥皮层层酥脆。视频中需要有一位20多岁、有亲和力的亚洲女播在店内撕开可颂、展示爆浆细节并试吃的画面，并配有自然流畅的探店口播和字幕。",
+      "source_matches": true,
+      "findings": [
+        {
+          "kind": "spec_alignment_pending",
+          "explanation": "含明确比例／时长／画质，原文迁入不证明已与草稿和模型能力同步；需逐项验收。",
+          "evidence": "基于商品参考图，帮我生成一个面包店探店视频，画幅9:16，时长15秒。店名：‘麦香工房’，主推商品：‘爆浆开心果可颂’，卖点是开心果酱浓郁、酥皮层层酥脆。视频中需要有一位20多岁、有亲和力的亚洲女播在店内撕开可颂、展示爆浆细节并试吃的画面，并配有自然流畅的探店口播和字幕。"
+        },
+        {
+          "kind": "staged_or_postproduction",
+          "explanation": "含多步骤、前置素材或后期要求；需核对既有执行器与分阶段流程，不计作完整工作流完成。",
+          "evidence": "基于商品参考图，帮我生成一个面包店探店视频，画幅9:16，时长15秒。店名：‘麦香工房’，主推商品：‘爆浆开心果可颂’，卖点是开心果酱浓郁、酥皮层层酥脆。视频中需要有一位20多岁、有亲和力的亚洲女播在店内撕开可颂、展示爆浆细节并试吃的画面，并配有自然流畅的探店口播和字幕。"
+        }
+      ]
+    },
+    {
+      "code": "custom-commerce-unboxing",
+      "name": "商品开箱介绍",
+      "active": true,
+      "version": 5,
+      "executor": "showcase",
+      "source_id": "product_unboxing_video_gdwh38",
+      "source_name": "商品开箱介绍电商视频生成",
+      "source_example": "1. 我有一款复古绿色的牛皮单肩女包，配有防尘袋。卖点是皮质柔软、多隔层实用，包带可调节。请帮我生成一段15秒的写实风格开箱介绍视频。\n2. 我收到了一双白色网面运动鞋，帮我做一个开箱和上脚试穿的短视频，要求画面明亮，展示鞋带与鞋面细节。",
+      "current_example": "1. 我有一款复古绿色的牛皮单肩女包，配有防尘袋。卖点是皮质柔软、多隔层实用，包带可调节。请帮我生成一段15秒的写实风格开箱介绍视频。\n2. 我收到了一双白色网面运动鞋，帮我做一个开箱和上脚试穿的短视频，要求画面明亮，展示鞋带与鞋面细节。",
+      "source_matches": true,
+      "findings": [
+        {
+          "kind": "spec_alignment_pending",
+          "explanation": "含明确比例／时长／画质，原文迁入不证明已与草稿和模型能力同步；需逐项验收。",
+          "evidence": "1. 我有一款复古绿色的牛皮单肩女包，配有防尘袋。卖点是皮质柔软、多隔层实用，包带可调节。请帮我生成一段15秒的写实风格开箱介绍视频。"
+        }
+      ]
+    },
+    {
+      "code": "custom-commerce-usage-demo",
+      "name": "商品使用演示",
+      "active": true,
+      "version": 5,
+      "executor": "showcase",
+      "source_id": "detail-demonstration",
+      "source_name": "使用效果展示",
+      "source_example": "商品：{{水乳}}\n核心卖点：{{滋润，不黏腻}}。\n投放平台：抖音。\n语言：中文。\n目标生成视频数量：5支。",
+      "current_example": "商品：{{商品:水乳}}\n核心卖点：{{核心卖点:滋润，不黏腻}}。\n投放平台：抖音。\n语言：中文。\n目标生成视频数量：5支。",
+      "source_matches": true,
+      "findings": [
+        {
+          "kind": "over_workbench_batch",
+          "explanation": "超过当前工作台单批4项；必须拆分计划或明确调整，不能原样承诺交付。",
+          "evidence": "5支"
+        },
+        {
+          "kind": "multi_video",
+          "explanation": "多条视频需求需多版本编排；目前试用仅填文本，不能认定数量已同步或整批可执行。",
+          "evidence": "5支"
+        }
+      ]
+    },
+    {
+      "code": "custom-commerce-vacation",
+      "name": "度假穿搭推荐",
+      "active": true,
+      "version": 5,
+      "executor": "ad",
+      "source_id": "manual_skill_02le56",
+      "source_name": "度假风出片神器安利视频创作",
+      "source_example": "我这里有一顶手工编织的宽檐草帽和一副复古金属边框的茶色太阳镜。我希望为它们创作一支15秒的小红书种草视频。\n品牌名是：ANGOIL 自然有形。\n请采用“度假风”视觉风格，主播设定为20代阳光自然的亚洲女性。\n视频结构采用默认：墨镜与草帽特写开场 -> 阳光沙滩扶帽檐 -> 咖啡馆逆光戴墨镜侧身回眸 -> 品牌卡收尾。\n请帮我从第一步形象与合成锁定开始执行。",
+      "current_example": "我这里有一顶手工编织的宽檐草帽和一副复古金属边框的茶色太阳镜。我希望为它们创作一支15秒的小红书种草视频。\n品牌名是：ANGOIL 自然有形。\n请采用“度假风”视觉风格，主播设定为20代阳光自然的亚洲女性。\n视频结构采用默认：墨镜与草帽特写开场 -> 阳光沙滩扶帽檐 -> 咖啡馆逆光戴墨镜侧身回眸 -> 品牌卡收尾。\n请帮我从第一步形象与合成锁定开始执行。",
+      "source_matches": true,
+      "findings": [
+        {
+          "kind": "spec_alignment_pending",
+          "explanation": "含明确比例／时长／画质，原文迁入不证明已与草稿和模型能力同步；需逐项验收。",
+          "evidence": "我这里有一顶手工编织的宽檐草帽和一副复古金属边框的茶色太阳镜。我希望为它们创作一支15秒的小红书种草视频。"
+        }
+      ]
+    },
+    {
+      "code": "director",
+      "name": "剧本导演",
+      "active": true,
+      "version": 5,
+      "executor": "director",
+      "source_id": null,
+      "source_name": null,
+      "source_example": "",
+      "current_example": "",
+      "source_matches": null,
+      "findings": [
+        {
+          "kind": "no_public_example",
+          "explanation": "后台未配置公开示例；不等于没有内部指导，部分基础技能使用前端兜底，待单独核对。",
+          "evidence": ""
+        }
+      ]
+    },
+    {
+      "code": "edit",
+      "name": "图片修改",
+      "active": true,
+      "version": 6,
+      "executor": "edit",
+      "source_id": null,
+      "source_name": null,
+      "source_example": "",
+      "current_example": "",
+      "source_matches": null,
+      "findings": [
+        {
+          "kind": "no_public_example",
+          "explanation": "后台未配置公开示例；不等于没有内部指导，部分基础技能使用前端兜底，待单独核对。",
+          "evidence": ""
+        }
+      ]
+    },
+    {
+      "code": "free",
+      "name": "自由创作",
+      "active": true,
+      "version": 7,
+      "executor": "free",
+      "source_id": null,
+      "source_name": null,
+      "source_example": "",
+      "current_example": "",
+      "source_matches": null,
+      "findings": [
+        {
+          "kind": "no_public_example",
+          "explanation": "后台未配置公开示例；不等于没有内部指导，部分基础技能使用前端兜底，待单独核对。",
+          "evidence": ""
+        }
+      ]
+    },
+    {
+      "code": "image",
+      "name": "自由生图",
+      "active": true,
+      "version": 7,
+      "executor": "image",
+      "source_id": null,
+      "source_name": null,
+      "source_example": "",
+      "current_example": "",
+      "source_matches": null,
+      "findings": [
+        {
+          "kind": "no_public_example",
+          "explanation": "后台未配置公开示例；不等于没有内部指导，部分基础技能使用前端兜底，待单独核对。",
+          "evidence": ""
+        }
+      ]
+    },
+    {
+      "code": "instrumental",
+      "name": "纯音乐配乐",
+      "active": true,
+      "version": 6,
+      "executor": "instrumental",
+      "source_id": null,
+      "source_name": null,
+      "source_example": "",
+      "current_example": "",
+      "source_matches": null,
+      "findings": [
+        {
+          "kind": "no_public_example",
+          "explanation": "后台未配置公开示例；不等于没有内部指导，部分基础技能使用前端兜底，待单独核对。",
+          "evidence": ""
+        }
+      ]
+    },
+    {
+      "code": "lyric-video",
+      "name": "歌词视频",
+      "active": true,
+      "version": 6,
+      "executor": "lyric-video",
+      "source_id": null,
+      "source_name": null,
+      "source_example": "",
+      "current_example": "",
+      "source_matches": null,
+      "findings": [
+        {
+          "kind": "no_public_example",
+          "explanation": "后台未配置公开示例；不等于没有内部指导，部分基础技能使用前端兜底，待单独核对。",
+          "evidence": ""
+        }
+      ]
+    },
+    {
+      "code": "mv-dynamic",
+      "name": "动感 MV",
+      "active": true,
+      "version": 5,
+      "executor": "mv-dynamic",
+      "source_id": null,
+      "source_name": null,
+      "source_example": "",
+      "current_example": "",
+      "source_matches": null,
+      "findings": [
+        {
+          "kind": "no_public_example",
+          "explanation": "后台未配置公开示例；不等于没有内部指导，部分基础技能使用前端兜底，待单独核对。",
+          "evidence": ""
+        }
+      ]
+    },
+    {
+      "code": "mv-story",
+      "name": "剧情 MV",
+      "active": true,
+      "version": 5,
+      "executor": "mv-story",
+      "source_id": null,
+      "source_name": null,
+      "source_example": "",
+      "current_example": "",
+      "source_matches": null,
+      "findings": [
+        {
+          "kind": "no_public_example",
+          "explanation": "后台未配置公开示例；不等于没有内部指导，部分基础技能使用前端兜底，待单独核对。",
+          "evidence": ""
+        }
+      ]
+    },
+    {
+      "code": "mv-visual",
+      "name": "视觉 MV",
+      "active": true,
+      "version": 5,
+      "executor": "mv-visual",
+      "source_id": null,
+      "source_name": null,
+      "source_example": "",
+      "current_example": "",
+      "source_matches": null,
+      "findings": [
+        {
+          "kind": "no_public_example",
+          "explanation": "后台未配置公开示例；不等于没有内部指导，部分基础技能使用前端兜底，待单独核对。",
+          "evidence": ""
+        }
+      ]
+    },
+    {
+      "code": "poster",
+      "name": "海报设计",
+      "active": true,
+      "version": 14,
+      "executor": "poster",
+      "source_id": "product_poster_01",
+      "source_name": "商品海报设计(商品、促销、新品)",
+      "source_example": "商品名称：{{桃序·蜜桃奶油冰饮}}。\n输出数量：{{3 张}}\n商品特点：{{新鲜水蜜桃果肉、绵密轻奶油、清爽冰沙口感}}。\n投放平台：小红书。\n语言：中文。\n输出内容：商品展示海报，突出饮品外观、真实果肉与奶油质感，以蜜桃粉色系营造清新甜美的视觉氛围。\n\n输出比例：3:4 竖版，适用于社交媒体营销。品牌调性为年轻、清新、甜美、高级质感。",
+      "current_example": "商品名称：{{商品名称:桃序·蜜桃奶油冰饮}}。\n输出数量：{{输出数量:3 张}}\n商品特点：{{商品特点:新鲜水蜜桃果肉、绵密轻奶油、清爽冰沙口感}}。\n投放平台：小红书。\n语言：中文。\n输出内容：商品展示海报，突出饮品外观、真实果肉与奶油质感，以蜜桃粉色系营造清新甜美的视觉氛围。\n\n输出比例：3:4 竖版，适用于社交媒体营销。品牌调性为年轻、清新、甜美、高级质感。",
+      "source_matches": true,
+      "findings": [
+        {
+          "kind": "spec_alignment_pending",
+          "explanation": "含明确比例／时长／画质，原文迁入不证明已与草稿和模型能力同步；需逐项验收。",
+          "evidence": "输出比例：3:4 竖版，适用于社交媒体营销。品牌调性为年轻、清新、甜美、高级质感。"
+        }
+      ]
+    },
+    {
+      "code": "product",
+      "name": "商品主图",
+      "active": true,
+      "version": 14,
+      "executor": "product",
+      "source_id": "product_cover",
+      "source_name": "电商主图",
+      "source_example": "商品名称：{{BEAUTY 玻尿酸深层补水面霜}}。\n输出数量：{{4张}}。\n核心卖点：{{深层补水、持久保湿、改善肌肤干燥}}。\n投放平台：淘宝。\n主图文案：深层补水。\n\n视觉风格：高端美妆商业摄影，冰蓝色与纯净白色为主色调，结合水波纹、透明水滴、柔和自然光与玻璃反射，突出清透、水润、高级的产品质感。",
+      "current_example": "商品名称：{{商品名称:BEAUTY 玻尿酸深层补水面霜}}。\n输出数量：{{输出数量:4张}}。\n核心卖点：{{核心卖点:深层补水、持久保湿、改善肌肤干燥}}。\n投放平台：淘宝。\n主图文案：深层补水。\n\n视觉风格：高端美妆商业摄影，冰蓝色与纯净白色为主色调，结合水波纹、透明水滴、柔和自然光与玻璃反射，突出清透、水润、高级的产品质感。",
+      "source_matches": true,
+      "findings": []
+    },
+    {
+      "code": "reference",
+      "name": "参考音频创作",
+      "active": true,
+      "version": 6,
+      "executor": "reference",
+      "source_id": null,
+      "source_name": null,
+      "source_example": "",
+      "current_example": "",
+      "source_matches": null,
+      "findings": [
+        {
+          "kind": "no_public_example",
+          "explanation": "后台未配置公开示例；不等于没有内部指导，部分基础技能使用前端兜底，待单独核对。",
+          "evidence": ""
+        }
+      ]
+    },
+    {
+      "code": "remix",
+      "name": "音频改造",
+      "active": true,
+      "version": 6,
+      "executor": "remix",
+      "source_id": null,
+      "source_name": null,
+      "source_example": "",
+      "current_example": "",
+      "source_matches": null,
+      "findings": [
+        {
+          "kind": "no_public_example",
+          "explanation": "后台未配置公开示例；不等于没有内部指导，部分基础技能使用前端兜底，待单独核对。",
+          "evidence": ""
+        }
+      ]
+    },
+    {
+      "code": "showcase",
+      "name": "商品展示",
+      "active": true,
+      "version": 8,
+      "executor": "showcase",
+      "source_id": null,
+      "source_name": null,
+      "source_example": "",
+      "current_example": "",
+      "source_matches": null,
+      "findings": [
+        {
+          "kind": "no_public_example",
+          "explanation": "后台未配置公开示例；不等于没有内部指导，部分基础技能使用前端兜底，待单独核对。",
+          "evidence": ""
+        }
+      ]
+    },
+    {
+      "code": "song",
+      "name": "写歌",
+      "active": true,
+      "version": 7,
+      "executor": "song",
+      "source_id": null,
+      "source_name": null,
+      "source_example": "",
+      "current_example": "",
+      "source_matches": null,
+      "findings": [
+        {
+          "kind": "no_public_example",
+          "explanation": "后台未配置公开示例；不等于没有内部指导，部分基础技能使用前端兜底，待单独核对。",
+          "evidence": ""
+        }
+      ]
+    },
+    {
+      "code": "story",
+      "name": "故事短片",
+      "active": true,
+      "version": 6,
+      "executor": "story",
+      "source_id": null,
+      "source_name": null,
+      "source_example": "",
+      "current_example": "",
+      "source_matches": null,
+      "findings": [
+        {
+          "kind": "no_public_example",
+          "explanation": "后台未配置公开示例；不等于没有内部指导，部分基础技能使用前端兜底，待单独核对。",
+          "evidence": ""
+        }
+      ]
+    }
+  ],
+  "source": [
+    {
+      "source_id": "higgsfield_content_factory_04ltuf",
+      "name": "营销日历 → 批量生产变体广告",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": [
+        {
+          "kind": "over_workbench_batch",
+          "explanation": "超过当前工作台单批4项；必须拆分计划或明确调整，不能原样承诺交付。",
+          "evidence": "5支"
+        }
+      ]
+    },
+    {
+      "source_id": "higgsfield_repurpose_07y04j",
+      "name": "视频重构与传播指数评估",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": []
+    },
+    {
+      "source_id": "snack_ecommerce_ad_planner_0zhlrs",
+      "name": "零食电商广告",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": []
+    },
+    {
+      "source_id": "jewelry-display",
+      "name": "首饰佩戴展示",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": false,
+      "output_present": false,
+      "source_findings": []
+    },
+    {
+      "source_id": "product_360_showcase",
+      "name": "产品360度展示",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": false,
+      "output_present": false,
+      "source_findings": []
+    },
+    {
+      "source_id": "product_prompt_rewriter_clean_07l9ic",
+      "name": "汽水饮料商业短片",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": [
+        {
+          "kind": "spec_alignment_pending",
+          "explanation": "含明确比例／时长／画质，原文迁入不证明已与草稿和模型能力同步；需逐项验收。",
+          "evidence": "15秒，16:9。"
+        }
+      ]
+    },
+    {
+      "source_id": "video_bgm_matcher_ikdh6v",
+      "name": "视频智能配乐大师 (BGM Matcher)",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": []
+    },
+    {
+      "source_id": "char_expression_prompter_ddirhl",
+      "name": "人物表情提示词生成助手",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": []
+    },
+    {
+      "source_id": "dreamcore_first_person_exploration_c0y6js",
+      "name": "梦核风第一人称探险短片",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": []
+    },
+    {
+      "source_id": "felt_pet_relay_poster_u0cgrw_vw74aq",
+      "name": "毛毡IP接力变身动态海报",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": []
+    },
+    {
+      "source_id": "animal_apple_concept_ad_nbfmft",
+      "name": "科技发布会风IP广告营销",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": []
+    },
+    {
+      "source_id": "jelly_pet_packaging_pxok8e",
+      "name": "果冻捏捏",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": []
+    },
+    {
+      "source_id": "magic_tinbox_jpb7ze",
+      "name": "铁盒摇摇乐",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": []
+    },
+    {
+      "source_id": "precision_digital_3d_ad_hvkch0",
+      "name": "3C拆解悬浮展示",
+      "site_code": "custom-commerce-exploded",
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": false,
+      "source_findings": [
+        {
+          "kind": "external_workflow",
+          "explanation": "含外站专用素材标识、模型或画布流程，尚未完成本站语义改写。",
+          "evidence": "2，我想给我的产品制作出部件爆炸与组合效果，参考视频。【提供参考视频很重要，后续画布可能需要再次上传参考视频】"
+        },
+        {
+          "kind": "staged_or_postproduction",
+          "explanation": "含多步骤、前置素材或后期要求；需核对既有执行器与分阶段流程，不计作完整工作流完成。",
+          "evidence": "1，这是一个   产品，请你对该产品图1~图6进行六视图进行绑定。"
+        }
+      ]
+    },
+    {
+      "source_id": "seedance_reference_motion_director_clean_0osy0l",
+      "name": "武打动作与特效导演技能",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": [
+        {
+          "kind": "spec_alignment_pending",
+          "explanation": "含明确比例／时长／画质，原文迁入不证明已与草稿和模型能力同步；需逐项验收。",
+          "evidence": "请基于我提供的图1和图2作为两名原创角色的外观参考，场景设定在红叶林的开阔地，制作一段 16:9、15 秒的激烈交锋视频。"
+        }
+      ]
+    },
+    {
+      "source_id": "fashion_short_film_creation_f5uc0d",
+      "name": "2000s都市街头时尚品牌短片创作",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": false,
+      "output_present": false,
+      "source_findings": [
+        {
+          "kind": "spec_alignment_pending",
+          "explanation": "含明确比例／时长／画质，原文迁入不证明已与草稿和模型能力同步；需逐项验收。",
+          "evidence": "基于图1模特图，品牌名是：VÉRAINE — FALL/WINTER 2026，生成一支30秒竖屏时尚短片。"
+        }
+      ]
+    },
+    {
+      "source_id": "build_ai_wedding_film_zh_0z2z13",
+      "name": "AI 婚礼电影生产",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": []
+    },
+    {
+      "source_id": "product_video_customizer_pcq89j",
+      "name": "复古街机风商品视频",
+      "site_code": "custom-commerce-arcade",
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": [
+        {
+          "kind": "spec_alignment_pending",
+          "explanation": "含明确比例／时长／画质，原文迁入不证明已与草稿和模型能力同步；需逐项验收。",
+          "evidence": "基于商品参考图，生成 15 秒漫画街机风格的广告片，9:16。"
+        }
+      ]
+    },
+    {
+      "source_id": "commercial_product_bullet_time_video_8yenis",
+      "name": "商品子弹时间展示",
+      "site_code": "custom-commerce-bullet-time",
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": []
+    },
+    {
+      "source_id": "vox_director_fsyqs0_ydrzau",
+      "name": "插画拼贴风视频",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": []
+    },
+    {
+      "source_id": "art_motion_ai_05euhp",
+      "name": "艺术风格动画与解说视频",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": []
+    },
+    {
+      "source_id": "higgsfield_marketing_0q6z1y",
+      "name": "爆款广告分镜与9种营销风格短片",
+      "site_code": "custom-commerce-ad-storyboard",
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": [
+        {
+          "kind": "multi_video",
+          "explanation": "文内要求多条视频，现有直接执行不等于已完成多版本计划。",
+          "evidence": "生成3段 15 秒 9:16 的广告视频"
+        },
+        {
+          "kind": "spec_alignment_pending",
+          "explanation": "含明确比例／时长／画质，原文迁入不证明已与草稿和模型能力同步；需逐项验收。",
+          "evidence": "请基于商品参考图，生成3段 15 秒 9:16 的广告视频，使用3款不同的营销风格预设和3款不同的Hook。\n2. 选择最匹配的 2-3 秒的“黄金视觉挂钩”（Hooks）：特技级（如物品撞击、暴风雪）或细微级（如采访、相机颠簸）Hook；"
+        }
+      ]
+    },
+    {
+      "source_id": "ecommerce_detail_image_prompts_0mtuvv",
+      "name": "POPO-AI电商详情图",
+      "site_code": "custom-commerce-product-details",
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": []
+    },
+    {
+      "source_id": "oiioii_product_stunt_video_0m9j1o",
+      "name": "特斯拉带你飞",
+      "site_code": "custom-commerce-floating-tech",
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": []
+    },
+    {
+      "source_id": "flower_aigc_skill_skill_00kfgj",
+      "name": "内衣带货视频全流程skill",
+      "site_code": "custom-commerce-homewear",
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": [
+        {
+          "kind": "multi_video",
+          "explanation": "文内要求多条视频，现有直接执行不等于已完成多版本计划。",
+          "evidence": "提供3个15秒的视频"
+        },
+        {
+          "kind": "spec_alignment_pending",
+          "explanation": "含明确比例／时长／画质，原文迁入不证明已与草稿和模型能力同步；需逐项验收。",
+          "evidence": "请帮我分析我提供的这款蕾丝无钢圈文胸产品图和参数：1. 分析卖点与展示方式；2. 生成3版高转化口播脚本；3. 生成一致性生图资产任务；4. 提供3个15秒的视频“一条过”提示词及口播配音。"
+        },
+        {
+          "kind": "staged_or_postproduction",
+          "explanation": "含多步骤、前置素材或后期要求；需核对既有执行器与分阶段流程，不计作完整工作流完成。",
+          "evidence": "请帮我分析我提供的这款蕾丝无钢圈文胸产品图和参数：1. 分析卖点与展示方式；2. 生成3版高转化口播脚本；3. 生成一致性生图资产任务；4. 提供3个15秒的视频“一条过”提示词及口播配音。"
+        }
+      ]
+    },
+    {
+      "source_id": "manual_skill_0frzii",
+      "name": "高端美妆商业摄影 Skill",
+      "site_code": "custom-commerce-beauty-photo",
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": false,
+      "output_present": false,
+      "source_findings": []
+    },
+    {
+      "source_id": "functional_annotation",
+      "name": "分区功能注解图",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": false,
+      "output_present": false,
+      "source_findings": [
+        {
+          "kind": "broken_field",
+          "explanation": "残留非本站合法语法的括号，不能正常呈现可编辑字段。",
+          "evidence": "核心卖点：{{}}。"
+        },
+        {
+          "kind": "over_workbench_batch",
+          "explanation": "超过当前工作台单批4项；必须拆分计划或明确调整，不能原样承诺交付。",
+          "evidence": "6个"
+        }
+      ]
+    },
+    {
+      "source_id": "hardcore-selling-points",
+      "name": "硬核卖点讲解",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": false,
+      "output_present": false,
+      "source_findings": []
+    },
+    {
+      "source_id": "car_lifestyle_product_photography",
+      "name": "车内生活方式种草图",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": false,
+      "output_present": false,
+      "source_findings": [
+        {
+          "kind": "over_workbench_batch",
+          "explanation": "超过当前工作台单批4项；必须拆分计划或明确调整，不能原样承诺交付。",
+          "evidence": "5个"
+        }
+      ]
+    },
+    {
+      "source_id": "ins-cozy-home-lifestyle",
+      "name": "家居生活方式种草",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": false,
+      "output_present": false,
+      "source_findings": [
+        {
+          "kind": "over_workbench_batch",
+          "explanation": "超过当前工作台单批4项；必须拆分计划或明确调整，不能原样承诺交付。",
+          "evidence": "6个"
+        }
+      ]
+    },
+    {
+      "source_id": "outdoor_backpack_lifestyle",
+      "name": "户外背包上身种草图",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": false,
+      "output_present": false,
+      "source_findings": [
+        {
+          "kind": "over_workbench_batch",
+          "explanation": "超过当前工作台单批4项；必须拆分计划或明确调整，不能原样承诺交付。",
+          "evidence": "6个"
+        }
+      ]
+    },
+    {
+      "source_id": "ins_shoe_lifestyle",
+      "name": "鞋类日常种草图",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": false,
+      "output_present": false,
+      "source_findings": [
+        {
+          "kind": "over_workbench_batch",
+          "explanation": "超过当前工作台单批4项；必须拆分计划或明确调整，不能原样承诺交付。",
+          "evidence": "5个"
+        }
+      ]
+    },
+    {
+      "source_id": "manual_skill_0tv7gr",
+      "name": "片中片电商视频生成",
+      "site_code": "custom-commerce-behind-scenes",
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": [
+        {
+          "kind": "spec_alignment_pending",
+          "explanation": "含明确比例／时长／画质，原文迁入不证明已与草稿和模型能力同步；需逐项验收。",
+          "evidence": "基于这张黑色皮革托特包的商品图，生成一个20秒、9:16的片中片电商视频。模特为成年亚洲女性，身穿米色风衣，在黄昏时分复古落日街头慢速行走。第8秒开始镜头向后平滑拉开，露出路旁的轨道摄像机和一盏暖色灯光。随后模特停下与旁边的助理相视一笑，最后以手包皮质缝线和Logo特写收尾。配以轻柔舒适的都市电音。"
+        }
+      ]
+    },
+    {
+      "source_id": "manual_skill_08yutl",
+      "name": "产品卖点电商视频生成",
+      "site_code": "custom-commerce-selling-points",
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": [
+        {
+          "kind": "spec_alignment_pending",
+          "explanation": "含明确比例／时长／画质，原文迁入不证明已与草稿和模型能力同步；需逐项验收。",
+          "evidence": "我想制作一个15秒、9:16画幅的电商主图视频。商品是一瓶「海洋保湿面霜」，包装是天蓝色玻璃瓶、带银色瓶盖，主要卖点是「24小时长效保湿，深海巨藻提取物，质地如冰淇淋般清爽不油腻」。附件是我上传的面霜瓶正面高清图、面霜膏体质地细节图以及包装盒背面成分表。请帮我生成纯产品卖点视频，突出冰淇淋膏体微距特写以及深海保湿功效。"
+        }
+      ]
+    },
+    {
+      "source_id": "manual_skill_0ljv0d",
+      "name": "亚洲主播探店安利视频生成",
+      "site_code": "custom-commerce-store-visit",
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": [
+        {
+          "kind": "spec_alignment_pending",
+          "explanation": "含明确比例／时长／画质，原文迁入不证明已与草稿和模型能力同步；需逐项验收。",
+          "evidence": "基于商品参考图，帮我生成一个面包店探店视频，画幅9:16，时长15秒。店名：‘麦香工房’，主推商品：‘爆浆开心果可颂’，卖点是开心果酱浓郁、酥皮层层酥脆。视频中需要有一位20多岁、有亲和力的亚洲女播在店内撕开可颂、展示爆浆细节并试吃的画面，并配有自然流畅的探店口播和字幕。"
+        },
+        {
+          "kind": "staged_or_postproduction",
+          "explanation": "含多步骤、前置素材或后期要求；需核对既有执行器与分阶段流程，不计作完整工作流完成。",
+          "evidence": "基于商品参考图，帮我生成一个面包店探店视频，画幅9:16，时长15秒。店名：‘麦香工房’，主推商品：‘爆浆开心果可颂’，卖点是开心果酱浓郁、酥皮层层酥脆。视频中需要有一位20多岁、有亲和力的亚洲女播在店内撕开可颂、展示爆浆细节并试吃的画面，并配有自然流畅的探店口播和字幕。"
+        }
+      ]
+    },
+    {
+      "source_id": "manual_skill_0sx6fp",
+      "name": "每日穿搭电商视频生成 (daily-outfit-video)",
+      "site_code": "custom-commerce-daily-outfit",
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": [
+        {
+          "kind": "spec_alignment_pending",
+          "explanation": "含明确比例／时长／画质，原文迁入不证明已与草稿和模型能力同步；需逐项验收。",
+          "evidence": "上传一张高清晰度的白色棒球帽图片，输入提示词：“主推商品：白色棉质棒球帽，核心卖点：遮阳显脸小、斜纹棉面料。风格：清爽街头风，亚洲女博主出镜，适合春夏季出行。”，即可一键生成15秒精致的街头风穿搭视频。"
+        }
+      ]
+    },
+    {
+      "source_id": "product_unboxing_video_gdwh38",
+      "name": "商品开箱介绍电商视频生成",
+      "site_code": "custom-commerce-unboxing",
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": [
+        {
+          "kind": "spec_alignment_pending",
+          "explanation": "含明确比例／时长／画质，原文迁入不证明已与草稿和模型能力同步；需逐项验收。",
+          "evidence": "1. 我有一款复古绿色的牛皮单肩女包，配有防尘袋。卖点是皮质柔软、多隔层实用，包带可调节。请帮我生成一段15秒的写实风格开箱介绍视频。"
+        }
+      ]
+    },
+    {
+      "source_id": "fashion_one_item_many_looks_p8knx6",
+      "name": "一件多穿电商视频生成",
+      "site_code": "custom-commerce-multi-style",
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": [
+        {
+          "kind": "external_workflow",
+          "explanation": "含外站专用素材标识、模型或画布流程，尚未完成本站语义改写。",
+          "evidence": "请帮我为这款复古牛仔外套（见图：hogi://image/demo_jacket）做一套“一件多穿”的宣传视频策划与生成，分别搭配：1. 复古街头风 2. 休闲通勤风 3. 户外运动风。目标时长 15 秒，竖屏。"
+        },
+        {
+          "kind": "spec_alignment_pending",
+          "explanation": "含明确比例／时长／画质，原文迁入不证明已与草稿和模型能力同步；需逐项验收。",
+          "evidence": "请帮我为这款复古牛仔外套（见图：hogi://image/demo_jacket）做一套“一件多穿”的宣传视频策划与生成，分别搭配：1. 复古街头风 2. 休闲通勤风 3. 户外运动风。目标时长 15 秒，竖屏。"
+        },
+        {
+          "kind": "staged_or_postproduction",
+          "explanation": "含多步骤、前置素材或后期要求；需核对既有执行器与分阶段流程，不计作完整工作流完成。",
+          "evidence": "请帮我为这款复古牛仔外套（见图：hogi://image/demo_jacket）做一套“一件多穿”的宣传视频策划与生成，分别搭配：1. 复古街头风 2. 休闲通勤风 3. 户外运动风。目标时长 15 秒，竖屏。"
+        }
+      ]
+    },
+    {
+      "source_id": "surreal-ad-creative-skill",
+      "name": "超现实广告",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": [
+        {
+          "kind": "over_workbench_batch",
+          "explanation": "超过当前工作台单批4项；必须拆分计划或明确调整，不能原样承诺交付。",
+          "evidence": "5支"
+        }
+      ]
+    },
+    {
+      "source_id": "tech-product-ad-creative-skill",
+      "name": "手机产品广告",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": false,
+      "output_present": false,
+      "source_findings": [
+        {
+          "kind": "over_workbench_batch",
+          "explanation": "超过当前工作台单批4项；必须拆分计划或明确调整，不能原样承诺交付。",
+          "evidence": "5支"
+        }
+      ]
+    },
+    {
+      "source_id": "pet-product-ad-creative-skill",
+      "name": "宠物类产品品牌广告",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": [
+        {
+          "kind": "over_workbench_batch",
+          "explanation": "超过当前工作台单批4项；必须拆分计划或明确调整，不能原样承诺交付。",
+          "evidence": "5支"
+        }
+      ]
+    },
+    {
+      "source_id": "japanese-summer-sensory-brand-skill",
+      "name": "日系夏日感官品牌广告",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": [
+        {
+          "kind": "over_workbench_batch",
+          "explanation": "超过当前工作台单批4项；必须拆分计划或明确调整，不能原样承诺交付。",
+          "evidence": "5支"
+        }
+      ]
+    },
+    {
+      "source_id": "liquid-product-ad-skill",
+      "name": "液体类产品广告",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": [
+        {
+          "kind": "over_workbench_batch",
+          "explanation": "超过当前工作台单批4项；必须拆分计划或明确调整，不能原样承诺交付。",
+          "evidence": "5支"
+        }
+      ]
+    },
+    {
+      "source_id": "retro-product-ad",
+      "name": "Y2K全产品广告",
+      "site_code": null,
+      "has_example": false,
+      "description_present": true,
+      "how_to_use_present": false,
+      "output_present": false,
+      "source_findings": [
+        {
+          "kind": "no_public_example",
+          "explanation": "后台未配置公开示例；不等于没有内部指导，部分基础技能使用前端兜底，待单独核对。",
+          "evidence": ""
+        }
+      ]
+    },
+    {
+      "source_id": "sports-brand-ads",
+      "name": "运动产品品牌广告",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": false,
+      "output_present": false,
+      "source_findings": [
+        {
+          "kind": "over_workbench_batch",
+          "explanation": "超过当前工作台单批4项；必须拆分计划或明确调整，不能原样承诺交付。",
+          "evidence": "5支"
+        }
+      ]
+    },
+    {
+      "source_id": "journey-mood",
+      "name": "旅途情绪广告",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": false,
+      "output_present": false,
+      "source_findings": [
+        {
+          "kind": "over_workbench_batch",
+          "explanation": "超过当前工作台单批4项；必须拆分计划或明确调整，不能原样承诺交付。",
+          "evidence": "5支"
+        }
+      ]
+    },
+    {
+      "source_id": "creator_product_talk_video_bnif4b",
+      "name": "电商博主对镜种草视频生成",
+      "site_code": "custom-commerce-blogger-camera",
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": [
+        {
+          "kind": "spec_alignment_pending",
+          "explanation": "含明确比例／时长／画质，原文迁入不证明已与草稿和模型能力同步；需逐项验收。",
+          "evidence": "请帮我制作一个电商视频。商品是一瓶「神经酰胺保湿面霜」，白色圆罐包装，主打修护屏障和24小时深层保湿。博主希望是一个20多岁的温和知性女性，在明亮的日系木质风卧室或梳妆台前，正对镜头介绍。视频时长15秒，包含她把面霜展示给镜头、用指腹挖取面霜展示冰淇淋质地并涂抹在手背上的近景特写。请生成对应的口播脚本并直接制作出成片。"
+        }
+      ]
+    },
+    {
+      "source_id": "material-morphing-effect",
+      "name": "材质变形效果",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": false,
+      "output_present": false,
+      "source_findings": [
+        {
+          "kind": "over_workbench_batch",
+          "explanation": "超过当前工作台单批4项；必须拆分计划或明确调整，不能原样承诺交付。",
+          "evidence": "5支"
+        }
+      ]
+    },
+    {
+      "source_id": "Microcosm",
+      "name": "微观世界效果",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": false,
+      "output_present": false,
+      "source_findings": [
+        {
+          "kind": "over_workbench_batch",
+          "explanation": "超过当前工作台单批4项；必须拆分计划或明确调整，不能原样承诺交付。",
+          "evidence": "5支"
+        }
+      ]
+    },
+    {
+      "source_id": "multi_scene_product_video_6xnjqt",
+      "name": "博主种草",
+      "site_code": "custom-commerce-blogger-life",
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": [
+        {
+          "kind": "external_workflow",
+          "explanation": "含外站专用素材标识、模型或画布流程，尚未完成本站语义改写。",
+          "evidence": "- 视频规格：9:16 竖屏，Seedance 2.5 视频模型，Oii Image 2.5 fast 生图参考，成片带字幕与配乐。"
+        },
+        {
+          "kind": "spec_alignment_pending",
+          "explanation": "含明确比例／时长／画质，原文迁入不证明已与草稿和模型能力同步；需逐项验收。",
+          "evidence": "请为我的【便携榨汁机】制作一段15秒的多场景种草视频。\n- 视频规格：9:16 竖屏，Seedance 2.5 视频模型，Oii Image 2.5 fast 生图参考，成片带字幕与配乐。"
+        },
+        {
+          "kind": "staged_or_postproduction",
+          "explanation": "含多步骤、前置素材或后期要求；需核对既有执行器与分阶段流程，不计作完整工作流完成。",
+          "evidence": "请为我的【便携榨汁机】制作一段15秒的多场景种草视频。\n- 视频规格：9:16 竖屏，Seedance 2.5 视频模型，Oii Image 2.5 fast 生图参考，成片带字幕与配乐。"
+        }
+      ]
+    },
+    {
+      "source_id": "manual_skill_06yuzy",
+      "name": "多场景商品种草视频生成",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": [
+        {
+          "kind": "spec_alignment_pending",
+          "explanation": "含明确比例／时长／画质，原文迁入不证明已与草稿和模型能力同步；需逐项验收。",
+          "evidence": "请帮我为这款「智能真空保温水杯」制作一个15秒的多场景种草视频。"
+        },
+        {
+          "kind": "staged_or_postproduction",
+          "explanation": "含多步骤、前置素材或后期要求；需核对既有执行器与分阶段流程，不计作完整工作流完成。",
+          "evidence": "请帮我为这款「智能真空保温水杯」制作一个15秒的多场景种草视频。\n配音口播：请使用温暖自然的女生中文口播。"
+        }
+      ]
+    },
+    {
+      "source_id": "manual_skill_02le56",
+      "name": "度假风出片神器安利视频创作",
+      "site_code": "custom-commerce-vacation",
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": [
+        {
+          "kind": "spec_alignment_pending",
+          "explanation": "含明确比例／时长／画质，原文迁入不证明已与草稿和模型能力同步；需逐项验收。",
+          "evidence": "我这里有一顶手工编织的宽檐草帽和一副复古金属边框的茶色太阳镜。我希望为它们创作一支15秒的小红书种草视频。"
+        }
+      ]
+    },
+    {
+      "source_id": "home-corner-candid",
+      "name": "居家角落随手拍",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": false,
+      "output_present": false,
+      "source_findings": [
+        {
+          "kind": "broken_field",
+          "explanation": "残留非本站合法语法的括号，不能正常呈现可编辑字段。",
+          "evidence": "核心卖点：{{木质香调、安全持久}。"
+        },
+        {
+          "kind": "over_workbench_batch",
+          "explanation": "超过当前工作台单批4项；必须拆分计划或明确调整，不能原样承诺交付。",
+          "evidence": "5个"
+        }
+      ]
+    },
+    {
+      "source_id": "manual_skill_05fl5i",
+      "name": "剧情探店视频创作",
+      "site_code": "custom-commerce-store-story",
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": [
+        {
+          "kind": "spec_alignment_pending",
+          "explanation": "含明确比例／时长／画质，原文迁入不证明已与草稿和模型能力同步；需逐项验收。",
+          "evidence": "基于我的贝果产品图，生成一支15秒的法式烘焙坊探店视频，人设为店主，主播是20多岁的温婉亚洲女孩，最后以贝果和奶酪摆盘静物收尾。"
+        }
+      ]
+    },
+    {
+      "source_id": "manual_skill_0xd76t",
+      "name": "文物复活电商视频生成",
+      "site_code": "custom-commerce-artifact",
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": [
+        {
+          "kind": "spec_alignment_pending",
+          "explanation": "含明确比例／时长／画质，原文迁入不证明已与草稿和模型能力同步；需逐项验收。",
+          "evidence": "基于上传的商品图和陶俑图，帮我生成一段 15 秒的 9:16 视频。商品是护肤面霜（主打深层补水，有金色瓶身和按压泵头），陶俑是一个唐代仕女彩塑。剧情：展馆中的唐代仕女陶俑眨眼苏醒，表面有些许陶土碎屑掉落，随后镜头转到闺房现代桌面，她好奇地按下金色面霜，面霜泵出，她惊讶地轻抚面部（面部保留亚洲特征和仕女服装），配乐轻快。"
+        }
+      ]
+    },
+    {
+      "source_id": "manual_skill_0qge3h",
+      "name": "情侣种草分享",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": false,
+      "output_present": false,
+      "source_findings": [
+        {
+          "kind": "spec_alignment_pending",
+          "explanation": "含明确比例／时长／画质，原文迁入不证明已与草稿和模型能力同步；需逐项验收。",
+          "evidence": "基于产品图，「帮我为一款情侣共用的‘氨基酸极简洁面乳’设计视频。画幅 9:16 竖屏，时长 15 秒。卖点：按压一秒出细腻泡沫，男女通用温和无刺激。」"
+        }
+      ]
+    },
+    {
+      "source_id": "skill_09z38d",
+      "name": "达人口播饮品广告视频创作",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": []
+    },
+    {
+      "source_id": "manual_skill_0jmjsp",
+      "name": "街头采访带货广告",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": [
+        {
+          "kind": "spec_alignment_pending",
+          "explanation": "含明确比例／时长／画质，原文迁入不证明已与草稿和模型能力同步；需逐项验收。",
+          "evidence": "帮我制作一个15秒的街头采访带货短视频。根据上传的产品，产品名称：智能便携榨汁杯，核心卖点：30秒超快鲜榨、轻量易便携，目标受众：白领上班族和健身爱好者。主持人：开朗幽默的时尚女主持，受访者：正在路边买水果的健身小姐姐。"
+        }
+      ]
+    },
+    {
+      "source_id": "skill_0d985w",
+      "name": "对镜自拍电商种草视频广告",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": false,
+      "output_present": false,
+      "source_findings": []
+    },
+    {
+      "source_id": "car_promo_showcase",
+      "name": "汽车品牌宣传",
+      "site_code": "custom-commerce-car-brand",
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": false,
+      "output_present": false,
+      "source_findings": []
+    },
+    {
+      "source_id": "white-background-flatlay-deconstruction",
+      "name": "白底平铺解构",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": false,
+      "output_present": false,
+      "source_findings": [
+        {
+          "kind": "broken_field",
+          "explanation": "残留非本站合法语法的括号，不能正常呈现可编辑字段。",
+          "evidence": "核心卖点：{{}}。"
+        }
+      ]
+    },
+    {
+      "source_id": "functional-product-demo",
+      "name": "功能演示",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": false,
+      "output_present": false,
+      "source_findings": []
+    },
+    {
+      "source_id": "dacu-gift-reveal",
+      "name": "大促赠品逐项揭晓",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": false,
+      "output_present": false,
+      "source_findings": []
+    },
+    {
+      "source_id": "store_new_product_showcase",
+      "name": "真人探店新品促销",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": false,
+      "output_present": false,
+      "source_findings": []
+    },
+    {
+      "source_id": "billboard-ad-replica",
+      "name": "城市巨屏大促",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": false,
+      "output_present": false,
+      "source_findings": []
+    },
+    {
+      "source_id": "storyboard_prompt_editor",
+      "name": "分镜提示词修改",
+      "site_code": null,
+      "has_example": false,
+      "description_present": true,
+      "how_to_use_present": false,
+      "output_present": false,
+      "source_findings": [
+        {
+          "kind": "no_public_example",
+          "explanation": "后台未配置公开示例；不等于没有内部指导，部分基础技能使用前端兜底，待单独核对。",
+          "evidence": ""
+        }
+      ]
+    },
+    {
+      "source_id": "street-interview-spoken-commerce",
+      "name": "街头采访",
+      "site_code": "custom-commerce-interview",
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": false,
+      "output_present": false,
+      "source_findings": [
+        {
+          "kind": "over_workbench_batch",
+          "explanation": "超过当前工作台单批4项；必须拆分计划或明确调整，不能原样承诺交付。",
+          "evidence": "5支"
+        }
+      ]
+    },
+    {
+      "source_id": "fashion-spoken-commerce",
+      "name": "服装展示口播带货",
+      "site_code": "custom-commerce-clothing-presenter",
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": false,
+      "output_present": false,
+      "source_findings": []
+    },
+    {
+      "source_id": "jewelry-spoken-commerce",
+      "name": "首饰口播带货",
+      "site_code": "custom-commerce-jewelry",
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": false,
+      "output_present": false,
+      "source_findings": [
+        {
+          "kind": "over_workbench_batch",
+          "explanation": "超过当前工作台单批4项；必须拆分计划或明确调整，不能原样承诺交付。",
+          "evidence": "5支"
+        }
+      ]
+    },
+    {
+      "source_id": "makeup-spoken-commerce",
+      "name": "效果对比展示",
+      "site_code": "custom-commerce-makeup-demo",
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": false,
+      "output_present": false,
+      "source_findings": [
+        {
+          "kind": "over_workbench_batch",
+          "explanation": "超过当前工作台单批4项；必须拆分计划或明确调整，不能原样承诺交付。",
+          "evidence": "5支"
+        }
+      ]
+    },
+    {
+      "source_id": "gift-expansion-spoken-commerce",
+      "name": "礼物翻倍",
+      "site_code": "custom-commerce-gift-reveal",
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": false,
+      "output_present": false,
+      "source_findings": [
+        {
+          "kind": "over_workbench_batch",
+          "explanation": "超过当前工作台单批4项；必须拆分计划或明确调整，不能原样承诺交付。",
+          "evidence": "5支"
+        }
+      ]
+    },
+    {
+      "source_id": "ecommerce_multi_point_main_pic_pwfchx",
+      "name": "多卖点主图批量输出与视频推广企划",
+      "site_code": "custom-commerce-multi-points",
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": []
+    },
+    {
+      "source_id": "script_to_game_design_wdzasl",
+      "name": "3A游戏CG概念片制作skill",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": false,
+      "output_present": false,
+      "source_findings": []
+    },
+    {
+      "source_id": "character_clothing_swap_and_video_showcase_mbznwk",
+      "name": "女装穿搭带货展示视频",
+      "site_code": "custom-commerce-fashion-women",
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": []
+    },
+    {
+      "source_id": "oiioii_vox_broll_creator_hnmh6n",
+      "name": "口播扁平插画",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": [
+        {
+          "kind": "spec_alignment_pending",
+          "explanation": "含明确比例／时长／画质，原文迁入不证明已与草稿和模型能力同步；需逐项验收。",
+          "evidence": "视频画幅：9:16 竖屏或 16:9 横屏（二选一；未填写时请先询问）。"
+        }
+      ]
+    },
+    {
+      "source_id": "elevator_sale_reveal",
+      "name": "电梯开门大促",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": false,
+      "output_present": false,
+      "source_findings": []
+    },
+    {
+      "source_id": "gta_game_action_short_hnyfrm",
+      "name": "GTA 风格短片",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": false,
+      "source_findings": [
+        {
+          "kind": "spec_alignment_pending",
+          "explanation": "含明确比例／时长／画质，原文迁入不证明已与草稿和模型能力同步；需逐项验收。",
+          "evidence": "生成一条 15 秒的 GTA 风格短片，采用真人实拍感。大妈为领取免费鸡蛋跨过护栏，遭遇交警阻拦后，两拳将其击倒，随后突破人群，最终拿到鸡蛋。采用 1–2 个第三人称跟拍镜头，击打动作连贯、受击反馈明确，搭配同步的任务提示、小地图与奖励结算，突出市井生活的荒诞幽默。"
+        }
+      ]
+    },
+    {
+      "source_id": "product_mg_director_v2_hogi_0ku3nd",
+      "name": "产品广告MG导演",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": [
+        {
+          "kind": "spec_alignment_pending",
+          "explanation": "含明确比例／时长／画质，原文迁入不证明已与草稿和模型能力同步；需逐项验收。",
+          "evidence": "画幅：16:9。15秒。中文。"
+        },
+        {
+          "kind": "staged_or_postproduction",
+          "explanation": "含多步骤、前置素材或后期要求；需核对既有执行器与分阶段流程，不计作完整工作流完成。",
+          "evidence": "我希望你可以用极简几何动画的风格，基于这张产品界面截图做一套产品宣传片的MG动画视频。 \n在关键画面可以有文字特效。但不要字幕。"
+        }
+      ]
+    },
+    {
+      "source_id": "ai_live_broadcast_ecommerce_video_maker",
+      "name": "真人直播带货口播",
+      "site_code": "custom-commerce-host-demo",
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": false,
+      "output_present": false,
+      "source_findings": [
+        {
+          "kind": "spec_alignment_pending",
+          "explanation": "含明确比例／时长／画质，原文迁入不证明已与草稿和模型能力同步；需逐项验收。",
+          "evidence": " 时长: 15 秒\n视频比例: 9:16"
+        }
+      ]
+    },
+    {
+      "source_id": "social-product-story",
+      "name": "商品生活方式种草",
+      "site_code": "custom-commerce-lifestyle",
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": []
+    },
+    {
+      "source_id": "promo_collage_motion",
+      "name": "商品动态拼贴促销",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": false,
+      "output_present": false,
+      "source_findings": []
+    },
+    {
+      "source_id": "food-spoken-commerce",
+      "name": "商品直接展示",
+      "site_code": "custom-commerce-food-host",
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": false,
+      "output_present": false,
+      "source_findings": [
+        {
+          "kind": "over_workbench_batch",
+          "explanation": "超过当前工作台单批4项；必须拆分计划或明确调整，不能原样承诺交付。",
+          "evidence": "5支"
+        }
+      ]
+    },
+    {
+      "source_id": "pet-spoken-commerce",
+      "name": "宠物口播带货",
+      "site_code": "custom-commerce-pet-host",
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": false,
+      "output_present": false,
+      "source_findings": [
+        {
+          "kind": "over_workbench_batch",
+          "explanation": "超过当前工作台单批4项；必须拆分计划或明确调整，不能原样承诺交付。",
+          "evidence": "5支"
+        }
+      ]
+    },
+    {
+      "source_id": "detail-demonstration",
+      "name": "使用效果展示",
+      "site_code": "custom-commerce-usage-demo",
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": false,
+      "output_present": false,
+      "source_findings": [
+        {
+          "kind": "over_workbench_batch",
+          "explanation": "超过当前工作台单批4项；必须拆分计划或明确调整，不能原样承诺交付。",
+          "evidence": "5支"
+        }
+      ]
+    },
+    {
+      "source_id": "selfie-spoken-commerce",
+      "name": "自拍/对镜视角",
+      "site_code": "custom-commerce-selfie",
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": false,
+      "output_present": false,
+      "source_findings": [
+        {
+          "kind": "broken_field",
+          "explanation": "残留非本站合法语法的括号，不能正常呈现可编辑字段。",
+          "evidence": "商品：{{帽子}"
+        },
+        {
+          "kind": "over_workbench_batch",
+          "explanation": "超过当前工作台单批4项；必须拆分计划或明确调整，不能原样承诺交付。",
+          "evidence": "5支"
+        }
+      ]
+    },
+    {
+      "source_id": "palace_parody_commercials",
+      "name": "古装剧情带货",
+      "site_code": "custom-commerce-costume-story",
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": false,
+      "output_present": false,
+      "source_findings": []
+    },
+    {
+      "source_id": "offer-spoken-commerce",
+      "name": "福利活动口播带货",
+      "site_code": "custom-commerce-promotion-host",
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": false,
+      "output_present": false,
+      "source_findings": [
+        {
+          "kind": "over_workbench_batch",
+          "explanation": "超过当前工作台单批4项；必须拆分计划或明确调整，不能原样承诺交付。",
+          "evidence": "5支"
+        }
+      ]
+    },
+    {
+      "source_id": "product-image-set",
+      "name": "商品套图",
+      "site_code": "custom-commerce-product-set",
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": false,
+      "output_present": false,
+      "source_findings": []
+    },
+    {
+      "source_id": "ecommerce_promo_poster",
+      "name": "电商促销主图",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": false,
+      "output_present": false,
+      "source_findings": []
+    },
+    {
+      "source_id": "product_poster_01",
+      "name": "商品海报设计(商品、促销、新品)",
+      "site_code": "poster",
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": false,
+      "output_present": false,
+      "source_findings": [
+        {
+          "kind": "spec_alignment_pending",
+          "explanation": "含明确比例／时长／画质，原文迁入不证明已与草稿和模型能力同步；需逐项验收。",
+          "evidence": "输出比例：3:4 竖版，适用于社交媒体营销。品牌调性为年轻、清新、甜美、高级质感。"
+        }
+      ]
+    },
+    {
+      "source_id": "story_promo_video",
+      "name": "剧情大促视频",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": false,
+      "output_present": false,
+      "source_findings": []
+    },
+    {
+      "source_id": "higgsfield_seedance_2_5_0dzd1l",
+      "name": "Seedance 2.5 视频导演专家",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": [
+        {
+          "kind": "external_workflow",
+          "explanation": "含外站专用素材标识、模型或画布流程，尚未完成本站语义改写。",
+          "evidence": "我想要制作一段长 25 秒的玄幻短片。参考图片1（@Image 1）是主角的脸部和服装。场景发生在幽暗的玄武岩洞穴中。请为 Seedance 2.5 编写一套符合 omni_reference 模式的五步分镜导演提示词。"
+        },
+        {
+          "kind": "spec_alignment_pending",
+          "explanation": "含明确比例／时长／画质，原文迁入不证明已与草稿和模型能力同步；需逐项验收。",
+          "evidence": "我想要制作一段长 25 秒的玄幻短片。参考图片1（@Image 1）是主角的脸部和服装。场景发生在幽暗的玄武岩洞穴中。请为 Seedance 2.5 编写一套符合 omni_reference 模式的五步分镜导演提示词。"
+        },
+        {
+          "kind": "staged_or_postproduction",
+          "explanation": "含多步骤、前置素材或后期要求；需核对既有执行器与分阶段流程，不计作完整工作流完成。",
+          "evidence": "我想要制作一段长 25 秒的玄幻短片。参考图片1（@Image 1）是主角的脸部和服装。场景发生在幽暗的玄武岩洞穴中。请为 Seedance 2.5 编写一套符合 omni_reference 模式的五步分镜导演提示词。"
+        }
+      ]
+    },
+    {
+      "source_id": "higgsfield_seedance_00jbp2",
+      "name": "Seedance 2.0视频创作导演",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": [
+        {
+          "kind": "spec_alignment_pending",
+          "explanation": "含明确比例／时长／画质，原文迁入不证明已与草稿和模型能力同步；需逐项验收。",
+          "evidence": "我想要制作一段长 15 秒的玄幻短片。参考图片1（@Image 1）是主角的脸部和服装。场景发生在幽暗的玄武岩洞穴中。"
+        }
+      ]
+    },
+    {
+      "source_id": "airborne-promo-twist",
+      "name": "高空反转大促",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": false,
+      "output_present": false,
+      "source_findings": []
+    },
+    {
+      "source_id": "tryon-selling-point",
+      "name": "产品真人试戴",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": false,
+      "output_present": false,
+      "source_findings": []
+    },
+    {
+      "source_id": "one-image-eight-marketplaces",
+      "name": "国内外8个电商风格直出",
+      "site_code": "custom-commerce-platform-images",
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": false,
+      "output_present": false,
+      "source_findings": [
+        {
+          "kind": "over_workbench_batch",
+          "explanation": "超过当前工作台单批4项；必须拆分计划或明确调整，不能原样承诺交付。",
+          "evidence": "8个"
+        }
+      ]
+    },
+    {
+      "source_id": "motion_poster_video",
+      "name": "大促动态海报展示",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": false,
+      "output_present": false,
+      "source_findings": [
+        {
+          "kind": "spec_alignment_pending",
+          "explanation": "含明确比例／时长／画质，原文迁入不证明已与草稿和模型能力同步；需逐项验收。",
+          "evidence": "请制作3:4竖版、约6秒的首尾帧大促动态海报。"
+        }
+      ]
+    },
+    {
+      "source_id": "new_product_promo",
+      "name": "食物新品尝鲜促销",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": false,
+      "output_present": false,
+      "source_findings": []
+    },
+    {
+      "source_id": "product_cover",
+      "name": "电商主图",
+      "site_code": "product",
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": false,
+      "output_present": false,
+      "source_findings": []
+    },
+    {
+      "source_id": "high_end_unboxing_showcase",
+      "name": "多镜头开箱展示",
+      "site_code": "custom-commerce-multi-unbox",
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": false,
+      "output_present": false,
+      "source_findings": [
+        {
+          "kind": "spec_alignment_pending",
+          "explanation": "含明确比例／时长／画质，原文迁入不证明已与草稿和模型能力同步；需逐项验收。",
+          "evidence": "结合我上传的新产品实拍图，制作一支约 15秒的横屏多镜头开箱视频。镜头依次展示包装、双手开盖、盒内布局、取出主产品、产品细节，最后以物品陈列收尾。"
+        }
+      ]
+    },
+    {
+      "source_id": "ecommerce_promo_shorts_creator",
+      "name": "大促带货视频创作",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": false,
+      "output_present": false,
+      "source_findings": [
+        {
+          "kind": "spec_alignment_pending",
+          "explanation": "含明确比例／时长／画质，原文迁入不证明已与草稿和模型能力同步；需逐项验收。",
+          "evidence": "请根据上传的产品图和活动信息，制作一支 15 秒、9:16 竖屏的乐咔咔双十一零食促销视频。参考示例图的明亮直播间、红色礼盒和零食满桌陈列。镜头依次展示主播开场、两大包产品、多口味零食堆叠和限时购买引导。"
+        }
+      ]
+    },
+    {
+      "source_id": "ecommerce_food_ad_creator_0jv147",
+      "name": "美食视频创作",
+      "site_code": "custom-commerce-cooking",
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": false,
+      "output_present": false,
+      "source_findings": [
+        {
+          "kind": "spec_alignment_pending",
+          "explanation": "含明确比例／时长／画质，原文迁入不证明已与草稿和模型能力同步；需逐项验收。",
+          "evidence": "- 视频比例：9:16（竖屏推荐用于淘宝、抖音推广）\n- 视频时长：15s"
+        }
+      ]
+    },
+    {
+      "source_id": "double11_sale_launch",
+      "name": "双十一品牌大促开启",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": false,
+      "output_present": false,
+      "source_findings": []
+    },
+    {
+      "source_id": "beat_sync_outfit_showcase",
+      "name": "卡点换装展示",
+      "site_code": "custom-commerce-outfit-cuts",
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": false,
+      "output_present": false,
+      "source_findings": []
+    },
+    {
+      "source_id": "multi_color_showcase",
+      "name": "多配色展示",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": false,
+      "output_present": false,
+      "source_findings": [
+        {
+          "kind": "spec_alignment_pending",
+          "explanation": "含明确比例／时长／画质，原文迁入不证明已与草稿和模型能力同步；需逐项验收。",
+          "evidence": "比例：9:16。"
+        }
+      ]
+    },
+    {
+      "source_id": "product-multi-angle-showcase",
+      "name": "多角度特写展示",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": []
+    },
+    {
+      "source_id": "costume-drama-ad-creative-skill",
+      "name": "古装剧情广告",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": [
+        {
+          "kind": "over_workbench_batch",
+          "explanation": "超过当前工作台单批4项；必须拆分计划或明确调整，不能原样承诺交付。",
+          "evidence": "5支"
+        }
+      ]
+    },
+    {
+      "source_id": "product_assembly",
+      "name": "产品拆解组装展示",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": false,
+      "output_present": false,
+      "source_findings": []
+    },
+    {
+      "source_id": "six-view-product-presentation",
+      "name": "六视图展示",
+      "site_code": "custom-commerce-six-views",
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": [
+        {
+          "kind": "staged_or_postproduction",
+          "explanation": "含多步骤、前置素材或后期要求；需核对既有执行器与分阶段流程，不计作完整工作流完成。",
+          "evidence": "请根据上传物品图生成横版16:9白底六视图，保持物品一致，不加文字。"
+        }
+      ]
+    },
+    {
+      "source_id": "game_ua_general",
+      "name": "快速买量视频",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": [
+        {
+          "kind": "spec_alignment_pending",
+          "explanation": "含明确比例／时长／画质，原文迁入不证明已与草稿和模型能力同步；需逐项验收。",
+          "evidence": "时长：15秒\n比例：9:16"
+        }
+      ]
+    },
+    {
+      "source_id": "patch_video",
+      "name": "批量视频助手",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": false,
+      "output_present": false,
+      "source_findings": []
+    },
+    {
+      "source_id": "dance_ani",
+      "name": "动作版",
+      "site_code": null,
+      "has_example": false,
+      "description_present": true,
+      "how_to_use_present": false,
+      "output_present": false,
+      "source_findings": [
+        {
+          "kind": "no_public_example",
+          "explanation": "后台未配置公开示例；不等于没有内部指导，部分基础技能使用前端兜底，待单独核对。",
+          "evidence": ""
+        }
+      ]
+    },
+    {
+      "source_id": "top-pop-visual-ad-director",
+      "name": "TVC短片广告",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": [
+        {
+          "kind": "spec_alignment_pending",
+          "explanation": "含明确比例／时长／画质，原文迁入不证明已与草稿和模型能力同步；需逐项验收。",
+          "evidence": "请为上传的气泡饮料制作15秒9:16波普广告。"
+        }
+      ]
+    },
+    {
+      "source_id": "poster_cover_01",
+      "name": "封面设计",
+      "site_code": null,
+      "has_example": false,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": [
+        {
+          "kind": "no_public_example",
+          "explanation": "后台未配置公开示例；不等于没有内部指导，部分基础技能使用前端兜底，待单独核对。",
+          "evidence": ""
+        }
+      ]
+    },
+    {
+      "source_id": "attending_world_cup_in_person_skill",
+      "name": "我在世界杯现场",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": []
+    },
+    {
+      "source_id": "world_cup_smash_skill",
+      "name": "世界杯大乱斗",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": [
+        {
+          "kind": "spec_alignment_pending",
+          "explanation": "含明确比例／时长／画质，原文迁入不证明已与草稿和模型能力同步；需逐项验收。",
+          "evidence": "时长：30秒\n画幅：16:9"
+        }
+      ]
+    },
+    {
+      "source_id": "path-animation",
+      "name": "无人机航拍",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": [
+        {
+          "kind": "spec_alignment_pending",
+          "explanation": "含明确比例／时长／画质，原文迁入不证明已与草稿和模型能力同步；需逐项验收。",
+          "evidence": "时长：10秒，\n比例：16:9，"
+        }
+      ]
+    },
+    {
+      "source_id": "fruit_drama",
+      "name": "水果短剧",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": []
+    },
+    {
+      "source_id": "up_pixar",
+      "name": "B站百大共创-人生故事蒙太奇动画",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": []
+    },
+    {
+      "source_id": "anthropomorphism",
+      "name": "B站百大共创-万物拟人化短片",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": []
+    },
+    {
+      "source_id": "skill_cf5f375b",
+      "name": "萌宠故事",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": []
+    },
+    {
+      "source_id": "absurd_reversal_escalation_funny_story",
+      "name": "搞笑故事",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": []
+    },
+    {
+      "source_id": "weird-suspense-script-generator",
+      "name": "悬疑故事",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": []
+    },
+    {
+      "source_id": "kon-surreal-script-generator",
+      "name": "今敏视听美学",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": []
+    },
+    {
+      "source_id": "Gif_skill",
+      "name": "Gif小动画设计",
+      "site_code": null,
+      "has_example": false,
+      "description_present": true,
+      "how_to_use_present": false,
+      "output_present": false,
+      "source_findings": [
+        {
+          "kind": "no_public_example",
+          "explanation": "后台未配置公开示例；不等于没有内部指导，部分基础技能使用前端兜底，待单独核对。",
+          "evidence": ""
+        }
+      ]
+    },
+    {
+      "source_id": "ramen-short-script-generator",
+      "name": "泡面番",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": []
+    },
+    {
+      "source_id": "JP-drama-story-generator",
+      "name": "世奇小故事",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": []
+    },
+    {
+      "source_id": "wulitou-script-generator",
+      "name": "无厘头短片",
+      "site_code": null,
+      "has_example": false,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": [
+        {
+          "kind": "no_public_example",
+          "explanation": "后台未配置公开示例；不等于没有内部指导，部分基础技能使用前端兜底，待单独核对。",
+          "evidence": ""
+        }
+      ]
+    },
+    {
+      "source_id": "short_drama_skill",
+      "name": "短剧带货广告",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": []
+    },
+    {
+      "source_id": "storyboards",
+      "name": "故事板做视频",
+      "site_code": null,
+      "has_example": false,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": false,
+      "source_findings": [
+        {
+          "kind": "no_public_example",
+          "explanation": "后台未配置公开示例；不等于没有内部指导，部分基础技能使用前端兜底，待单独核对。",
+          "evidence": ""
+        }
+      ]
+    },
+    {
+      "source_id": "live_commerce_skill",
+      "name": "真人带货广告",
+      "site_code": "custom-commerce-presenter-ad",
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": []
+    },
+    {
+      "source_id": "game_rec",
+      "name": "视频克隆",
+      "site_code": null,
+      "has_example": false,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": false,
+      "source_findings": [
+        {
+          "kind": "no_public_example",
+          "explanation": "后台未配置公开示例；不等于没有内部指导，部分基础技能使用前端兜底，待单独核对。",
+          "evidence": ""
+        }
+      ]
+    },
+    {
+      "source_id": "ecommerce_ads_skill",
+      "name": "通用商品展示广告",
+      "site_code": "custom-commerce-general-ad",
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": []
+    },
+    {
+      "source_id": "home_skill",
+      "name": "家居建材展示广告",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": []
+    },
+    {
+      "source_id": "food_skill",
+      "name": "食品饮料展示广告",
+      "site_code": "custom-commerce-food-ad",
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": []
+    },
+    {
+      "source_id": "personal_care",
+      "name": "日化母婴商品展示广告",
+      "site_code": "custom-commerce-daily-care",
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": []
+    },
+    {
+      "source_id": "cloth_skill",
+      "name": "服装饰品展示广告",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": []
+    },
+    {
+      "source_id": "3C_skill",
+      "name": "3C 数码展示广告",
+      "site_code": "custom-commerce-digital-ad",
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": []
+    },
+    {
+      "source_id": "cosmetics_skill",
+      "name": "美妆个护商品展示广告",
+      "site_code": "custom-commerce-beauty-ad",
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": []
+    },
+    {
+      "source_id": "playable_ad_creative_director",
+      "name": "通用剧情类游戏买量视频",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": []
+    },
+    {
+      "source_id": "game_skill",
+      "name": "卡牌游戏买量视频",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": []
+    },
+    {
+      "source_id": "idle_game_skill",
+      "name": "休闲放置游戏买量视频",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": []
+    },
+    {
+      "source_id": "otome_romance_video_creator",
+      "name": "乙游浪漫情感买量视频",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": []
+    },
+    {
+      "source_id": "casual_puzzle_minigame",
+      "name": "休闲益智游戏买量视频",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": []
+    },
+    {
+      "source_id": "simulation_game_promotion",
+      "name": "模拟经营与建造类游戏买量视频",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": []
+    },
+    {
+      "source_id": "tower_defense_creative_ads",
+      "name": "塔防游戏创意类买量视频",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": []
+    },
+    {
+      "source_id": "roguelike_game_explainer",
+      "name": "肉鸽类游戏买量视频",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": []
+    },
+    {
+      "source_id": "slg_game_ads_creator",
+      "name": "SLG 游戏买量视频",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": []
+    },
+    {
+      "source_id": "moba_epic_cg_cinematic",
+      "name": "MOBA 类游戏买量视频",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": []
+    },
+    {
+      "source_id": "rpg_game_ads",
+      "name": "RPG 游戏买量视频",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": []
+    },
+    {
+      "source_id": "racing_game_campaign",
+      "name": "体育竞速游戏买量视频",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": [
+        {
+          "kind": "spec_alignment_pending",
+          "explanation": "含明确比例／时长／画质，原文迁入不证明已与草稿和模型能力同步；需逐项验收。",
+          "evidence": "请制作15秒9:16竞速游戏广告。"
+        }
+      ]
+    },
+    {
+      "source_id": "visualized_science_storytelling_notfree_v2",
+      "name": "知识科普",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": [
+        {
+          "kind": "spec_alignment_pending",
+          "explanation": "含明确比例／时长／画质，原文迁入不证明已与草稿和模型能力同步；需逐项验收。",
+          "evidence": "请制作60秒9:16可视化科普视频。"
+        }
+      ]
+    },
+    {
+      "source_id": "aigc-historical-immersion-shorts",
+      "name": "历史故事",
+      "site_code": null,
+      "has_example": false,
+      "description_present": true,
+      "how_to_use_present": false,
+      "output_present": false,
+      "source_findings": [
+        {
+          "kind": "no_public_example",
+          "explanation": "后台未配置公开示例；不等于没有内部指导，部分基础技能使用前端兜底，待单独核对。",
+          "evidence": ""
+        }
+      ]
+    },
+    {
+      "source_id": "minimalist_psychological_healing_animation_notfreeV1",
+      "name": "火柴人心理学",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": [
+        {
+          "kind": "spec_alignment_pending",
+          "explanation": "含明确比例／时长／画质，原文迁入不证明已与草稿和模型能力同步；需逐项验收。",
+          "evidence": "请制作60秒9:16心理疗愈动画。"
+        }
+      ]
+    },
+    {
+      "source_id": "badge_merch",
+      "name": "吧唧",
+      "site_code": null,
+      "has_example": false,
+      "description_present": true,
+      "how_to_use_present": false,
+      "output_present": false,
+      "source_findings": [
+        {
+          "kind": "no_public_example",
+          "explanation": "后台未配置公开示例；不等于没有内部指导，部分基础技能使用前端兜底，待单独核对。",
+          "evidence": ""
+        }
+      ]
+    },
+    {
+      "source_id": "acrylic_plate",
+      "name": "亚克力牌",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": [
+        {
+          "kind": "spec_alignment_pending",
+          "explanation": "含明确比例／时长／画质，原文迁入不证明已与草稿和模型能力同步；需逐项验收。",
+          "evidence": "比例：3:4"
+        }
+      ]
+    },
+    {
+      "source_id": "sticker_pack",
+      "name": "贴纸",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": [
+        {
+          "kind": "spec_alignment_pending",
+          "explanation": "含明确比例／时长／画质，原文迁入不证明已与草稿和模型能力同步；需逐项验收。",
+          "evidence": "比例：1:1"
+        }
+      ]
+    },
+    {
+      "source_id": "figure_merch",
+      "name": "手办模型",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": []
+    },
+    {
+      "source_id": "perler_bead",
+      "name": "拼豆",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": []
+    },
+    {
+      "source_id": "keychain",
+      "name": "钥匙扣",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": []
+    },
+    {
+      "source_id": "itabag",
+      "name": "痛包",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": [
+        {
+          "kind": "spec_alignment_pending",
+          "explanation": "含明确比例／时长／画质，原文迁入不证明已与草稿和模型能力同步；需逐项验收。",
+          "evidence": "比例：3:4"
+        }
+      ]
+    },
+    {
+      "source_id": "phone_case",
+      "name": "手机壳",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": [
+        {
+          "kind": "spec_alignment_pending",
+          "explanation": "含明确比例／时长／画质，原文迁入不证明已与草稿和模型能力同步；需逐项验收。",
+          "evidence": "比例：3:4"
+        }
+      ]
+    },
+    {
+      "source_id": "cp_polaroid",
+      "name": "CP拍立得",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": [
+        {
+          "kind": "spec_alignment_pending",
+          "explanation": "含明确比例／时长／画质，原文迁入不证明已与草稿和模型能力同步；需逐项验收。",
+          "evidence": "比例：3:4"
+        }
+      ]
+    },
+    {
+      "source_id": "mouse_pad",
+      "name": "鼠标垫",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": [
+        {
+          "kind": "spec_alignment_pending",
+          "explanation": "含明确比例／时长／画质，原文迁入不证明已与草稿和模型能力同步；需逐项验收。",
+          "evidence": "比例：16:9"
+        }
+      ]
+    },
+    {
+      "source_id": "merch_wall",
+      "name": "周边墙",
+      "site_code": null,
+      "has_example": true,
+      "description_present": true,
+      "how_to_use_present": true,
+      "output_present": true,
+      "source_findings": [
+        {
+          "kind": "spec_alignment_pending",
+          "explanation": "含明确比例／时长／画质，原文迁入不证明已与草稿和模型能力同步；需逐项验收。",
+          "evidence": "比例：16:9"
+        }
+      ]
+    }
+  ],
+  "source_sha256": "5163133f51d3dcecc6d44cdae9b5a0ec4aa2d22d4ecd33e55060921389e34ffd",
+  "generated_at": "2026-10-23T06:06:46.741442+00:00"
+}

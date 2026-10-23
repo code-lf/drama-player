@@ -3,8 +3,7 @@ import {
   Check,
   Eye,
   EyeOff,
-  Lock,
-  UserRound
+  Lock
 } from '@lucide/vue'
 import { authService } from '~/shared/api/services/authService'
 import { supportService } from '~/shared/api/services/supportService'
@@ -25,17 +24,13 @@ const accountStore = useAccountStore()
 // 登录页静态图统一走 OSS 素材前缀；配置读取失败时会自动回退本地 public 路径。
 const { $siteAsset: siteAsset } = useNuxtApp()
 
-type AuthMode = 'login' | 'register'
 type LoginMethod = 'password' | 'sms'
 
-const authMode = ref<AuthMode>('login')
 const loginMethod = ref<LoginMethod>('password')
 // 登录页不预填任何测试凭据，避免测试账号被误用于正式环境。
 const account = ref('')
-const nickname = ref('')
 const password = ref('')
 const verifyCode = ref('')
-const rememberMe = ref(true)
 const showPassword = ref(false)
 const loggingIn = ref(false)
 const sendingCode = ref(false)
@@ -46,12 +41,16 @@ const errorMessage = ref('')
 const successMessage = ref('')
 // 网站公开信息由后台统一维护，接口暂不可用时使用产品默认内容。
 const websiteInfo = ref<WebsiteInfo>({ ...defaultWebsiteInfo })
-// 协议只有后台发布后才显示并强制勾选，草稿不会干扰当前用户登录注册。
+// 继续按钮即为本次明确同意；只在点击提交时传当前已展示协议，不在读取或切换时签署。
 const legalDocuments = ref<LegalDocument[]>([])
-const legalAccepted = ref(false)
-const activeLegalDocument = ref<LegalDocument | null>(null)
+const legalLoading = ref(true)
+const legalError = ref('')
 const requiredLegalDocuments = computed(() => legalDocuments.value.filter(item => item.versions[0]?.requiresAcceptance))
-const acceptedDocumentCodes = computed(() => legalAccepted.value ? requiredLegalDocuments.value.map(item => item.code) : [])
+// 用户协议阅读页汇总当前强制条款原文，隐私单列；不改协议版本、不隐去创作条款。
+const loginLegalLinks=computed(()=>[
+  ...(requiredLegalDocuments.value.some(item=>item.code!=='privacy_policy')?[{code:'terms',title:'用户协议',url:'/auth-terms'}]:[]),
+  ...(requiredLegalDocuments.value.some(item=>item.code==='privacy_policy')?[{code:'privacy_policy',title:'隐私政策',url:'/legal/privacy_policy'}]:[])
+])
 
 // 主标题高亮文案的首个词沿用蓝色强调，其余文字保持白色，支持后台修改完整标题。
 const heroTitleHighlightParts = computed(() => {
@@ -66,10 +65,9 @@ const redirectPath = computed(() => {
 
 const canSubmit = computed(() => {
   const phoneReady = isValidPhone(account.value.trim()) && !loggingIn.value
-  const agreementReady = requiredLegalDocuments.value.length === 0 || legalAccepted.value
-  if (authMode.value === 'register') return phoneReady && password.value.trim().length > 0 && verifyCode.value.trim().length === 6 && agreementReady
+  const agreementReady = !legalLoading.value && !legalError.value
   return loginMethod.value === 'sms'
-    ? phoneReady && verifyCode.value.trim().length === 6 && agreementReady
+    ? authCapabilities.value.sms && phoneReady && /^\d{6}$/.test(verifyCode.value.trim()) && agreementReady
     : phoneReady && password.value.trim().length > 0 && agreementReady
 })
 
@@ -131,12 +129,7 @@ function getRequestErrorMessage(error: unknown, fallback: string): string {
   return fallback
 }
 
-function switchAuthMode(mode: AuthMode): void {
-  authMode.value = mode
-  verifyCode.value = ''
-  clearFeedback()
-}
-
+/** 切换只清理验证码和反馈，不发送短信、不创建账号。 */
 function switchLoginMethod(method: LoginMethod): void {
   loginMethod.value = method
   verifyCode.value = ''
@@ -160,6 +153,8 @@ function startCodeCooldown(seconds: number): void {
 }
 
 async function sendVerifyCode(): Promise<void> {
+  // 事件层同样阻止并发点击，冷却结束后仍由服务端决定能否发送。
+  if (sendingCode.value || codeCooldown.value > 0 || !authCapabilities.value.sms) return
   clearFeedback()
 
   if (!isValidPhone(account.value.trim())) {
@@ -169,7 +164,7 @@ async function sendVerifyCode(): Promise<void> {
 
   sendingCode.value = true
   try {
-    const result = await authService.sendSmsCode(account.value.trim(), authMode.value === 'register' ? 'register' : 'login')
+    const result = await authService.sendSmsCode(account.value.trim(), 'login')
     successMessage.value = result.message
     startCodeCooldown(result.retryAfterSeconds || 60)
   } catch (error) {
@@ -180,41 +175,39 @@ async function sendVerifyCode(): Promise<void> {
 }
 
 async function submitAuth(): Promise<void> {
+  if (loggingIn.value) return
   clearFeedback()
+  if (loginMethod.value==='sms' && !authCapabilities.value.sms) {
+    errorMessage.value = '短信登录暂不可用，请使用密码登录。'
+    return
+  }
 
   if (!isValidPhone(account.value.trim())) {
     errorMessage.value = '请输入有效的中国大陆手机号。'
     return
   }
 
-  if ((authMode.value === 'register' || loginMethod.value === 'password') && !password.value.trim()) {
+  if (loginMethod.value === 'password' && !password.value.trim()) {
     errorMessage.value = '请输入密码。'
     return
   }
 
-  if ((authMode.value === 'register' || loginMethod.value === 'sms') && verifyCode.value.trim().length !== 6) {
+  if (loginMethod.value === 'sms' && !/^\d{6}$/.test(verifyCode.value.trim())) {
     errorMessage.value = '请输入验证码。'
     return
   }
-  if (requiredLegalDocuments.value.length > 0 && !legalAccepted.value) {
-    errorMessage.value = '请阅读并同意服务协议与隐私政策后继续。'
+  if (legalLoading.value || legalError.value) {
+    errorMessage.value = '请先重试读取协议后继续。'
     return
   }
 
   loggingIn.value = true
   try {
-    // 登录和注册都会返回统一 session，页面层只负责应用登录态与跳转。
-    const session = authMode.value === 'register'
-      ? await authService.accountRegister({
-          account: account.value.trim(),
-          password: password.value.trim(),
-          code: verifyCode.value.trim(),
-          nickname: nickname.value.trim(),
-          acceptedDocumentCodes: acceptedDocumentCodes.value
-        })
-      : loginMethod.value === 'sms'
-        ? await authService.phoneLogin(account.value.trim(), verifyCode.value.trim(), acceptedDocumentCodes.value)
-        : await authService.accountLogin(account.value.trim(), password.value.trim(), acceptedDocumentCodes.value)
+    // 未注册手机号由短信接口验证后创建；密码入口绝不偷偷注册或给用户设置默认密码。
+    const acceptedCodes = requiredLegalDocuments.value.map(item => item.code)
+    const session = loginMethod.value === 'sms'
+      ? await authService.phoneLogin(account.value.trim(), verifyCode.value.trim(), acceptedCodes)
+      : await authService.accountLogin(account.value.trim(), password.value.trim(), acceptedCodes)
     authStore.applySession(session)
 
     try {
@@ -228,12 +221,19 @@ async function submitAuth(): Promise<void> {
     if (props.embedded) emit('authenticated')
     else await router.push(redirectPath.value)
   } catch (error) {
-    errorMessage.value = getRequestErrorMessage(error, authMode.value === 'register'
-      ? '注册失败，请检查账号、密码和验证码后重试。'
-      : '登录失败，请检查账号和密码后重试。')
+    errorMessage.value = getRequestErrorMessage(error, '登录失败，请检查手机号及登录凭据后重试。')
   } finally {
     loggingIn.value = false
   }
+}
+
+/** 协议失败时阻止提交并保留重试，不能把请求失败当成无需同意。 */
+async function loadLegalDocuments(): Promise<void> {
+  legalLoading.value = true
+  legalError.value = ''
+  try { legalDocuments.value = await supportService.getLegalDocuments() }
+  catch { legalError.value = '协议读取失败，请重试。' }
+  finally { legalLoading.value = false }
 }
 
 onMounted(async () => {
@@ -247,12 +247,7 @@ onMounted(async () => {
     console.warn('[livliv] 网站信息配置读取失败，已回退默认内容', error)
   }
 
-  try {
-    legalDocuments.value = await supportService.getLegalDocuments()
-  } catch (error) {
-    // 协议读取失败时由服务端在提交时兜底拒绝，避免前端错误地假设没有协议。
-    console.warn('[livliv] 登录页协议读取失败，将在提交时由服务端校验', error)
-  }
+  await loadLegalDocuments()
 
   if (authStore.session.loggedIn) {
     try {
@@ -327,60 +322,33 @@ onBeforeUnmount(() => {
       </div>
 
       <aside class="login-panel">
-        <img class="qr-corner" :src="siteAsset('/login/qr-corner.png')" alt="" />
-
-        <div class="panel-tabs">
-          <button
-            class="panel-tab"
-            :class="{ active: authMode === 'login' }"
-            type="button"
-            @click="switchAuthMode('login')"
-          >
-            登录
-          </button>
-          <button
-            v-if="authCapabilities.registration"
-            class="panel-tab"
-            :class="{ active: authMode === 'register' }"
-            type="button"
-            @click="switchAuthMode('register')"
-          >
-            注册
-          </button>
-        </div>
+        <header v-if="!embedded" class="login-heading"><h2>注册/登录享福利哦</h2></header>
 
         <form class="login-form" @submit.prevent="submitAuth">
-          <div v-if="authMode === 'login'" class="login-method-tabs">
-            <button type="button" :class="{ active: loginMethod === 'password' }" @click="switchLoginMethod('password')">密码登录</button>
-            <button v-if="authCapabilities.sms" type="button" :class="{ active: loginMethod === 'sms' }" @click="switchLoginMethod('sms')">验证码登录</button>
-          </div>
+          <UTabs v-model="loginMethod" :items="[{label:'密码登录',value:'password'},{label:'短信登录',value:'sms',disabled:!authCapabilities.sms||loggingIn}]" :content="false" color="neutral" class="login-method-tabs" :ui="{list:'login-method-list',trigger:'login-method-trigger',indicator:'login-method-indicator'}" @update:model-value="switchLoginMethod($event as LoginMethod)" />
           <label class="input-shell">
-            <UserRound class="field-icon" />
-            <input v-model.trim="account" type="tel" inputmode="numeric" maxlength="11" placeholder="手机号" autocomplete="tel" />
+            <span class="phone-prefix">+86</span>
+            <input v-model.trim="account" aria-label="手机号" type="tel" inputmode="numeric" maxlength="11" placeholder="请输入手机号" autocomplete="tel" />
           </label>
 
-          <label v-if="authMode === 'register'" class="input-shell">
-            <UserRound class="field-icon" />
-            <input v-model.trim="nickname" type="text" placeholder="昵称（可选）" autocomplete="nickname" />
-          </label>
-
-          <label v-if="authMode === 'register' || loginMethod === 'password'" class="input-shell">
+          <label v-if="loginMethod === 'password'" class="input-shell">
             <Lock class="field-icon" />
             <input
               v-model="password"
               :type="showPassword ? 'text' : 'password'"
-              placeholder="密码（至少 8 位，含字母和数字）"
+              aria-label="密码"
+              placeholder="请输入密码"
               autocomplete="current-password"
             />
-            <button class="eye-button" type="button" @click="showPassword = !showPassword">
+            <button class="eye-button" type="button" :aria-label="showPassword?'隐藏密码':'显示密码'" @click="showPassword = !showPassword">
               <EyeOff v-if="showPassword" class="h-5 w-5" />
               <Eye v-else class="h-5 w-5" />
             </button>
           </label>
 
-          <label v-if="authMode === 'register' || loginMethod === 'sms'" class="input-shell code-shell">
+          <label v-if="loginMethod === 'sms'" class="input-shell code-shell">
             <Lock class="field-icon" />
-            <input v-model.trim="verifyCode" type="text" inputmode="numeric" maxlength="6" placeholder="验证码" autocomplete="one-time-code" />
+            <input v-model.trim="verifyCode" aria-label="短信验证码" type="text" inputmode="numeric" maxlength="6" placeholder="请输入验证码" autocomplete="one-time-code" />
             <button class="code-button" type="button" :disabled="sendingCode || codeCooldown > 0" @click="sendVerifyCode">
               {{ sendingCode ? '发送中...' : codeCooldown > 0 ? `${codeCooldown}s 后重试` : '获取验证码' }}
             </button>
@@ -393,50 +361,48 @@ onBeforeUnmount(() => {
             {{ successMessage }}
           </div>
 
-          <div class="form-options">
-            <UCheckbox v-model="rememberMe" class="remember login-checkbox" size="sm" label="记住我"/>
-          </div>
-
-          <UCheckbox v-if="requiredLegalDocuments.length" v-model="legalAccepted" class="legal-consent login-checkbox" size="sm">
-            <template #label><span>我已阅读并同意
-            <button
-              v-for="document in requiredLegalDocuments"
-              :key="document.code"
-              type="button"
-              @click.prevent="activeLegalDocument = document"
-            >《{{ document.versions[0]?.title }}》</button></span></template>
-          </UCheckbox>
-
-          <button class="submit-button" type="submit" :disabled="!canSubmit">
-            {{ loggingIn ? (authMode === 'register' ? '注册中...' : '登录中...') : (authMode === 'register' ? '注册并登录' : '登录') }}
-          </button>
+          <p v-if="loginMethod==='sms'" class="login-note">未注册的手机号验证后将自动注册。</p>
+          <UButton class="submit-button" type="submit" block :loading="loggingIn" :disabled="!canSubmit">{{loginMethod==='sms'?'注册 / 登录':'登录'}}</UButton>
+          <p v-if="legalLoading" class="login-note">正在读取协议…</p>
+          <div v-else-if="legalError" class="login-note" role="alert">{{legalError}} <UButton color="neutral" variant="outline" size="sm" @click="loadLegalDocuments">重试</UButton></div>
+          <p v-else-if="loginLegalLinks.length" class="legal-consent">继续即表示您同意
+            <template v-for="(document,index) in loginLegalLinks" :key="document.code"><span v-if="index"> 与 </span><NuxtLink :to="document.url" target="_blank" rel="noopener">{{document.title}}</NuxtLink></template>。
+          </p>
         </form>
-
-        <div v-if="authCapabilities.registration" class="panel-footer">
-          <span>{{ authMode === 'login' ? '还没有账号？' : '已有账号？' }}</span>
-          <button type="button" @click="switchAuthMode(authMode === 'login' ? 'register' : 'login')">
-            {{ authMode === 'login' ? '立即注册' : '返回登录' }}
-          </button>
-        </div>
       </aside>
 
-      <Teleport to="body">
-        <div v-if="activeLegalDocument" class="legal-dialog-mask" :class="{'embedded-legal':embedded}" @click.self="activeLegalDocument = null">
-          <section class="legal-dialog" role="dialog" aria-modal="true" :aria-label="activeLegalDocument.versions[0]?.title">
-            <header>
-              <strong>{{ activeLegalDocument.versions[0]?.title }}</strong>
-              <button type="button" @click="activeLegalDocument = null">关闭</button>
-            </header>
-            <p v-if="activeLegalDocument.versions[0]?.summary">{{ activeLegalDocument.versions[0]?.summary }}</p>
-            <article>{{ activeLegalDocument.versions[0]?.content }}</article>
-          </section>
-        </div>
-      </Teleport>
     </section>
   </main>
 </template>
 
 <style scoped>
+/* 登录面板与弹窗共用固定深灰表面和品牌令牌，不沿用旧蓝色表单。 */
+.login-page .login-panel{background:var(--liv-account-surface);border-color:var(--liv-account-border);color:var(--liv-account-text)}
+.login-heading{text-align:center;margin-bottom:24px}
+.login-heading h2{font-size:var(--liv-recharge-title-size);font-weight:700}
+.login-heading p{color:var(--liv-ui-primary-foreground);font-size:14px;margin-top:8px}
+.login-page .login-method-tabs{display:block;margin:0 auto 8px;width:min(280px,100%)}
+.login-method-tabs :deep(.login-method-list){background:var(--liv-account-raised);border-radius:999px;padding:4px}
+.login-method-tabs :deep(.login-method-trigger){border-radius:999px;color:var(--liv-account-muted);font-size:14px;font-weight:500;cursor:pointer}
+.login-method-tabs :deep(.login-method-trigger[data-state=active]){color:var(--liv-account-text)}
+.login-method-tabs :deep(.login-method-indicator){background:var(--liv-account-hover);border-radius:999px;box-shadow:none}
+.login-page .login-form{gap:16px;width:100%;max-width:var(--liv-login-form-width);margin-inline:auto}
+.login-page .input-shell{height:48px;background:var(--liv-account-raised);border-color:var(--liv-account-border);box-shadow:none;border-radius:16px}
+.login-page .input-shell:focus-within{border-color:var(--liv-ui-primary-foreground)}
+.login-page .input-shell input{background:transparent!important;color:var(--liv-account-text);font-size:14px;font-weight:400;box-shadow:none}
+.login-page .input-shell input::placeholder{color:var(--liv-account-muted)}
+.phone-prefix{font-size:14px;font-weight:600;color:var(--liv-account-text)}
+.login-page .code-button{background:transparent;border-left:1px solid var(--liv-account-border);border-radius:0;color:var(--liv-account-muted);font-size:13px;font-weight:500;min-width:96px}
+.login-page .submit-button{height:48px;display:flex;justify-content:center;background:var(--liv-ui-primary);color:var(--liv-control-on-primary);font-size:14px;font-weight:600;box-shadow:none;border-radius:16px}
+.login-page .submit-button:not(:disabled):hover{background:var(--liv-ui-primary-hover);transform:none}
+.login-page .legal-consent{display:block;text-align:center;margin:8px 0 0;color:var(--liv-account-muted);font-size:13px;line-height:1.7}
+.login-page .legal-consent a{color:var(--liv-account-text);text-decoration:underline;text-underline-offset:3px}
+.login-note{font-size:13px;color:var(--liv-account-muted);line-height:1.7;margin:0}
+/* 独立地址保留品牌展示，内嵌登录只保留同一份表单，避免标题和外框重复。 */
+.login-page.login-embedded{min-height:0;background:none;overflow:visible}
+.login-embedded .login-hero{display:block;min-height:0;padding:0}
+.login-embedded .hero-content,.login-embedded .hero-bg,.login-embedded .hero-vignette{display:none}
+.login-page.login-embedded .login-panel{width:100%;padding:0;background:none;border:0;box-shadow:none}
 .login-page {
   /* 字号属于固定设计规范，不再交由后台配置，避免运营文案调整时破坏响应式布局。 */
   --login-brand-name-size: 38px;
@@ -994,11 +960,11 @@ onBeforeUnmount(() => {
   line-height: 1.6;
 }
 
-.legal-consent button:not([role='checkbox']) {
+.legal-consent a {
   padding: 0;
-  color: #1769ff;
+  color: var(--liv-ui-primary-foreground);
   font: inherit;
-  font-weight: 700;
+  font-weight: 500;
 }
 
 .legal-dialog-mask {

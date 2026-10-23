@@ -95,6 +95,34 @@
   --liv-settings-panel: #1b1b20;
   --liv-settings-text: #f4f4f5;
   --liv-settings-muted: #a1a1aa;
+  /* 收银台突出金额并统一分区间距，按钮尺寸仍沿用设置组件。 */
+  --liv-cashier-amount-size: 36px;
+  --liv-cashier-section-gap: 16px;
+  --liv-cashier-action-gap: 12px;
+  /* FAQ是宽版只读参考表：独立宽度和细边框令牌，不扩宽其他设置弹窗。 */
+  --liv-faq-width: 1040px;
+  /* 案例播放按真实比例限宽限高，不套固定横屏画布。 */
+  --liv-case-player-width: 1120px;
+  /* 小窗横屏560px、竖屏320px，操作区64px；放大后展示真实案例列表。 */
+  --liv-case-mini-width: 560px;
+  --liv-case-mini-portrait-width: 320px;
+  --liv-case-controls-height: 80px;
+  --liv-case-control-button-size: 44px;
+  --liv-case-progress-track: 3px;
+  --liv-case-progress-thumb: 10px;
+  --liv-case-recommendations-width: 320px;
+  /* 案例媒体表面使用固定深色：底栏与椭圆按钮分层，避免融成整片。 */
+  --liv-case-control-surface: #27272A;
+  --liv-case-button-surface: #3F3F46;
+  --liv-case-control-button-width: 56px;
+  /* 默认保留足够阅读高度；低视口按安全边距收缩，不随折叠内容跳动。 */
+  --liv-faq-height: 780px;
+  --liv-faq-border: #3f3f46;
+  /* FAQ 阅读密度独立放大，不改变其他设置弹窗的表单规格。 */
+  --liv-faq-body: 16px;
+  --liv-faq-note: 14px;
+  /* 折叠标题共用52px最小行高，文字与箭头垂直居中，展开正文仍自然增长。 */
+  --liv-faq-row-height: 52px;
   /* 开关固定为修长轨道，防止全局 button 间距规则撑成近圆形。 */
   --liv-switch-width: 40px;
   --liv-switch-height: 22px;
@@ -109,6 +137,25 @@
 .liv-settings-body{padding:0 24px!important;font-size:var(--liv-settings-body);font-weight:400;line-height:1.7}
 .liv-settings-footer{display:block!important;border:0!important;padding:20px 24px 24px!important}
 .liv-settings-copy{margin:0 0 16px;color:var(--liv-settings-muted);font-size:var(--liv-settings-body);line-height:1.7}
+/* 常见问题沿用深色设置表面，正文和问题标题均用亮白文字，表格独立滚动。 */
+.liv-settings-dialog.creation-dark-dialog.liv-faq-dialog{display:flex;flex-direction:column;overflow:hidden!important;width:min(var(--liv-faq-width),calc(100vw - 32px))!important;max-width:var(--liv-faq-width)!important;height:min(var(--liv-faq-height),calc(100dvh - 64px))!important;max-height:calc(100dvh - 64px)!important;color:var(--liv-settings-text)}
+/* 标题/关闭固定，只有正文滚动；长表格不能把内容层撑出弹窗和视口。 */
+.liv-faq-dialog .liv-settings-header{flex:0 0 auto}
+.liv-faq-dialog .liv-settings-body{flex:1 1 0%;min-height:0;overflow:auto;overscroll-behavior:contain;padding-bottom:24px!important}
+.liv-faq-copy,.liv-faq-copy .liv-settings-note,.liv-faq-question,.liv-faq-answer{color:var(--liv-settings-text)!important}
+.liv-faq-copy,.liv-faq-answer{font-size:var(--liv-faq-body);line-height:1.7}
+.liv-faq-copy .liv-settings-note{font-size:var(--liv-faq-note)!important}
+.liv-faq-item{border-bottom:1px solid var(--liv-faq-border)!important}
+.liv-faq-question{display:flex!important;align-items:center!important;min-height:var(--liv-faq-row-height)!important;padding:12px 0!important;box-sizing:border-box;line-height:28px!important;font-size:var(--liv-faq-body)!important;font-weight:600;cursor:pointer}
+.liv-faq-question [data-slot=label]{display:flex;align-items:center;line-height:28px;min-width:0}
+.liv-faq-question [data-slot=trailingIcon]{flex:none;align-self:center}
+.liv-faq-table{width:100%;border-collapse:collapse;color:var(--liv-settings-text);font-size:var(--liv-faq-body)}
+.liv-faq-table th,.liv-faq-table td{border:1px solid var(--liv-faq-border);padding:12px 16px;text-align:left;vertical-align:middle;overflow-wrap:anywhere}
+.liv-faq-table thead th{background:var(--liv-number-surface);font-weight:600}
+.liv-faq-table tbody th{font-weight:500}.liv-faq-table tbody+tbody{border-top:2px solid var(--liv-faq-border)}
+.liv-faq-table small{display:block;font-size:var(--liv-faq-note);line-height:1.6}
+.liv-recharge-header{position:relative}.liv-recharge-help{position:absolute;left:24px;top:50%;transform:translateY(-50%);color:var(--liv-settings-text)!important;font-size:var(--liv-settings-note)}
+@media(max-width:600px){.liv-settings-dialog.creation-dark-dialog.liv-faq-dialog{height:min(var(--liv-faq-height),calc(100dvh - 32px))!important;max-height:calc(100dvh - 32px)!important}.liv-faq-table th,.liv-faq-table td{padding:8px}}
 .liv-settings-row{display:flex;align-items:center;gap:12px;min-height:36px;font-size:var(--liv-settings-body);font-weight:500;line-height:20px}
 .liv-settings-note{margin:8px 0 0;font-size:var(--liv-settings-note);font-weight:400;line-height:1.6;color:var(--liv-settings-muted)}
 /* 复用 UCheckbox 的语义／键盘／勾选状态，只统一设置弹窗的外观规格。 */

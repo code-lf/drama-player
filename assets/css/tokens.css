@@ -1,12 +1,90 @@
 :root {
+  /* 登录与首页展示统一规格：窄屏由容器收缩，不压低表单控件高度。 */
+  --liv-login-dialog-width: 560px;
+  --liv-login-form-width: 408px;
+  --liv-showcase-title-size: 16px;
+  --liv-showcase-tab-gap: 32px;
+  --liv-showcase-gap: 12px;
+  /* 账户菜单与充值区固定深灰表面，强调色继续使用品牌靛紫，不复制第三方粉色。 */
+  --liv-account-surface: #1c1c1f;
+  --liv-account-raised: #252528;
+  --liv-account-hover: #303034;
+  --liv-account-border: #39393f;
+  --liv-account-text: #f2f2f5;
+  --liv-account-muted: #aaaab4;
+  --liv-account-selected: #4f46e51f;
+  /* 账户中心固定规格：切换分区不随记录数量改变外框，余额与斑马行使用中性灰。 */
+  /* 充值弹窗居中大标题与紧凑卡片的统一规格。 */
+  --liv-recharge-height: 560px;
+  --liv-recharge-title-size: 24px;
+  --liv-recharge-package-height: 96px;
+  --liv-account-hub-width: 1040px;
+  --liv-account-hub-height: 640px;
+  --liv-account-hub-nav-width: 160px;
+  --liv-account-balance-surface: #2c2c30;
+  --liv-account-row-stripe: #242427;
+  /* 模板浏览器是媒体选择大弹窗，不沿用 560px 轻量设置宽度；背景封面仅作模糊装饰。 */
+  --liv-template-browser-width: 1160px;
+  --liv-template-browser-height: 840px;
+  /* 首页宽度在1152px基础上缩小10%，编辑区沿用原高度比例并单独微调；窄屏服从容器。 */
+  --liv-home-composer-width: 800px;
+  /* 首页标题与输入区整体上收16px，制作模式使用次级13px文字。 */
+  --liv-home-content-offset: 56px;
+  /* 短剧上传区收紧留白，保持与其他首页输入区接近，不压缩上传按钮。 */
+  --liv-home-script-upload-height: 100px;
+  /* 短剧页签与正文连成同一表面，模板字段用高对比浅靛紫，品牌实心色不变。 */
+  --liv-drama-tab-height: 48px;
+  --liv-drama-tab-surface: #202022;
+  --liv-drama-tab-idle: #19191b;
+  --liv-drama-tab-text: #f4f4f5;
+  --liv-drama-tab-muted: #b5b5be;
+  --liv-template-field-surface: #37304d;
+  --liv-template-field-text: #d8dcff;
+  /* 本轮首页微调：编辑区增高5px，案例区左右各内收16px。 */
+  --liv-home-composer-extra-height: 5px;
+  --liv-home-cases-inset: 16px;
+  --liv-workflow-font-size: 13px;
+  --liv-home-composer-height-scale: .8421;
+  /* 普通首页输入框基准260px含138px工具与素材行；缩短留白，不压缩按钮。 */
+  --liv-home-composer-base-height: 260px;
+  --liv-home-composer-chrome-height: 138px;
+  --liv-home-mv-chrome-height: 134px;
+  --liv-home-composer-border: #73737b;
+  --liv-home-composer-border-active: #b5b5bd;
+  --liv-template-browser-surface: #191919;
+  --liv-template-browser-border: #303030;
+  --liv-template-browser-text: #f5f5f5;
+  --liv-template-browser-muted: #929292;
+  --liv-template-browser-overlay: rgba(0, 0, 0, .58);
+  --liv-template-browser-caption: linear-gradient(transparent, rgba(0, 0, 0, .82));
   /* 工作台页面底色统一纯黑；卡片、输入框及菜单保留可辨识的表面层级。 */
   --liv-page-background: #000000;
   --liv-session-hover: #202020;
+  /* 案例只轻微放大封面内容，不改变网格尺寸或遮挡相邻卡片。 */
+  --liv-case-hover-scale: 1.04;
+  /* 最近项目使用真实作品封面的小图标，侧栏与顶部项目浮层共享规格。 */
+  --liv-session-cover-size: 24px;
+  /* 最近项目菜单独立紧凑规格，传送到页面外层后仍保持文字与图标一致。 */
+  --liv-session-menu-width: 200px;
+  --liv-session-menu-font-size: 13px;
+  --liv-session-menu-icon-size: 16px;
+  --liv-session-menu-row-height: 36px;
+  /* 技能目录分类比普通控件突出，保持与共享瀑布流标题明确区分。 */
+  --liv-skill-directory-tab-size: 18px;
+  --liv-skill-directory-tab-weight: 700;
+  --liv-skill-directory-tab-gap: 24px;
+  /* MV 仅有比例一行，弹层按六个紧凑选项收宽，不沿用完整参数表单宽度。 */
+  --liv-creation-parameters-width: 384px;
+  --liv-mv-ratio-width: var(--liv-creation-parameters-width);
   /* 骨架占位与数字步进器使用统一中性表面，避免暴露浏览器原生控件。 */
   --liv-skeleton-surface: #242424;
   --liv-number-surface: #262626;
   /* 登录记住我与协议勾选框使用更紧凑的视觉尺寸，标签继续承担点击区域。 */
   --liv-login-checkbox-size: 14px;
+  /* 实心品牌控件上的图标固定白色，不随深浅主题反转为黑色。 */
+  --liv-control-on-primary: #ffffff;
+  /* 音乐参数仅含类型和人声，缩短按钮但不缩小可读字号。 */
+  --liv-music-parameters-width: 320px;
   /* 首次引导参照带封面的选择面板：左侧纵卡、右侧双行，独立于轻量设置宽度。 */
   --liv-onboarding-width: 896px;
   --liv-onboarding-padding: 40px;
@@ -57,7 +135,10 @@
   --liv-result-thumb-width: 80px;
   --liv-result-thumb-height: 64px;
   /* 首页滚动停靠栏尺寸及磨砂表面，不影响完整编辑器。 */
-  --liv-home-dock-height: 75px;
+  /* 收起态停靠条改为56px，减少对技能卡片的遮挡；展开编辑区维持原规格。 */
+  --liv-home-dock-height: 56px;
+  /* 分类吸顶后距顶部导航仅留8px，不继续保留正文原来的大内边距。 */
+  --liv-home-sticky-gap: 8px;
   --liv-home-dock-surface: #262626;
   /* 磨砂主要来自背后内容的模糊，只加薄白膜，避免在黑底上变成实心浅灰块。 */
   --liv-home-dock-glass: rgba(255, 255, 255, .18);
@@ -72,6 +153,9 @@
   --liv-chat-inset: 16px;
   --liv-chat-editor-min: 96px;
   --liv-chat-editor-max: 220px;
+  /* 对话内固定素材预览只缩小，不裁掉二维码或参考图边缘。 */
+  --liv-chat-reference-size: 150px;
+  --liv-chat-reference-thumb: 72px;
   /* 播放器为固定深色媒体表面，当前歌词不随明暗主题的反色文本变暗。 */
   --liv-music-current-text: #ffffff;
   /* 主背景：深色电影感基调 */
@@ -138,3 +222,7 @@
   --shadow-panel: 0 16px 60px rgba(13, 31, 66, 0.12);
   --shadow-neon: 0 0 0 1px rgba(79,70,229, 0.25), 0 10px 28px rgba(79,70,229, 0.12);
 }
+/* 风格媒体浏览器按参考布局保持七列竖卡，大窗口不无限拉伸。 */
+:root{--liv-style-browser-width:1160px;--liv-style-browser-height:780px;--liv-style-browser-gap:16px;--liv-style-card-ratio:3/5}
+/* 提示词恢复卡片与首行预留共用宽度，避免各入口文字被覆盖。 */
+:root{--liv-prompt-undo-width:128px;--liv-skill-preview-width:280px;--liv-model-list-height:320px;--liv-badge-indigo:#A5B4FC;--liv-badge-green:#86EFAC;--liv-badge-amber:#FCD34D;--liv-badge-rose:#FDA4AF;--liv-badge-cyan:#67E8F9}

@@ -1,4 +1,6 @@
 <script setup lang="ts">
+// 账户订单入口与工作台复用全站账单宿主。
+const billingDialog=useBillingDialog()
 import { useAuthStore } from '~/features/auth/store/useAuthStore'
 import { useAccountStore } from '~/features/billing/store/useAccountStore'
 import { supportService } from '~/shared/api/services/supportService'
@@ -352,14 +354,13 @@ watch(
                 v-if="isUserMenuOpen"
                 class="absolute right-0 top-full z-50 mt-3 w-52 rounded-2xl border border-[#d8e3f6] bg-white p-2 shadow-[0_24px_60px_rgba(13,43,89,0.16)]"
               >
-                <NuxtLink
-                  to="/dashboard-billing"
+                <UButton color="neutral" variant="ghost"
                   class="flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm font-semibold text-[#42506c] transition hover:bg-[#f2f7ff] hover:text-[#005ffe]"
-                  @click="isUserMenuOpen = false"
+                  @click="isUserMenuOpen = false; billingDialog.show('orders')"
                 >
                   <CreditCard class="h-4 w-4" />
                   我的订单
-                </NuxtLink>
+                </UButton>
                 <button
                   class="flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-sm font-semibold text-[#e14949] transition hover:bg-[#fff2f2]"
                   type="button"

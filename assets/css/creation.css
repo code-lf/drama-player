@@ -23,7 +23,12 @@
 .dashboard-shell--creation:not(.is-session-immersive) .creation-studio{min-height:0}
 /* 案例标题贴住右侧滚动区顶部，阅读区保留足够空间以到达吸顶位置。 */
 .creation-composer-slot{flex:none;min-width:0}
-.creation-cases .creation-case-header{position:sticky;top:0;z-index:5;background:var(--liv-page-background);padding:8px 0;margin:0 0 8px!important}
+/* 吸顶时抵消正文顶部留白，仅保留统一的小间距；未吸顶时保持自然排版。 */
+.creation-cases .creation-case-header{position:sticky;top:min(0px,calc(var(--liv-home-sticky-gap,8px) - var(--liv-home-scroll-inset,36px)));z-index:5;background:var(--liv-page-background);padding:8px 0;margin:0 0 8px!important}
+/* 吸顶背景延伸至滚动区域顶部，填平内边距形成的断层；不改变分类的初始位置和点击范围。 */
+.creation-cases .creation-case-header::before{content:"";display:none;position:absolute;left:0;right:0;bottom:100%;height:var(--liv-home-scroll-inset,36px);background:var(--liv-page-background);pointer-events:none}
+/* 未吸顶时不能向上绘制遮罩，否则会切掉紧邻标题上方的第二排快捷技能。 */
+.creation-cases .creation-case-header.is-stuck::before{display:block}
 /* 工作台底层统一纯黑，清除原有点阵与灰色背景，标题吸顶时也保持一致。 */
 :root .dashboard-shell.dashboard-shell--creation,
 :root .dashboard-shell.dashboard-shell--creation .dashboard-main,
@@ -31,6 +36,15 @@
 :root .dashboard-shell.dashboard-shell--creation .dashboard-sidebar,
 :root .dashboard-shell.dashboard-shell--creation .dashboard-main-content{background:var(--liv-page-background)!important}
 .liv-session-actions-menu{background:var(--liv-workspace-surface)!important;color:var(--liv-chat-assistant-text);border:1px solid var(--color-border-soft);border-radius:16px}
+/* 最近项目菜单采用紧凑令牌；直接约束组件图标，避免继承 UButton 默认的大图标。 */
+.liv-session-actions-menu{width:var(--liv-session-menu-width);padding:8px!important;box-shadow:0 12px 36px #0006}
+.liv-session-menu-item{min-height:var(--liv-session-menu-row-height);padding:8px 10px!important;font-size:var(--liv-session-menu-font-size)!important;line-height:20px;font-weight:500;cursor:pointer;border-radius:8px;gap:8px}
+.liv-session-menu-item>.iconify{width:var(--liv-session-menu-icon-size)!important;height:var(--liv-session-menu-icon-size)!important;flex:none}
+.liv-session-menu-item[data-disabled]{cursor:not-allowed;opacity:.4}
+.liv-session-menu-icon{width:18px;height:18px;flex:none}
+.liv-session-menu-actions{display:flex;flex-direction:column;gap:2px}
+.liv-session-menu-actions>.liv-session-menu-item{width:100%;justify-content:flex-start}
+.liv-session-favorite{width:12px!important;height:12px!important;flex:none;color:var(--liv-accent)}
 /* 侧栏使用中性白，操作高亮统一跟随靛紫品牌主题。 */
 .dashboard-shell.dashboard-shell--creation .dashboard-sidebar nav a,.dashboard-shell.dashboard-shell--creation .dashboard-sidebar nav button,.dashboard-shell.dashboard-shell--creation .dashboard-sidebar nav span{color:#efefef!important}.dashboard-shell.dashboard-shell--creation .dashboard-sidebar .dashboard-brand-subtitle{color:#bdbdbd!important}.dashboard-shell.dashboard-shell--creation .dashboard-sidebar .liv-sidebar-item.is-active,.dashboard-shell.dashboard-shell--creation .dashboard-sidebar .creation-sidebar-recent a.is-active{background:#242424!important;border-radius:12px!important}.dashboard-shell.dashboard-shell--creation .dashboard-sidebar nav a:hover{background:#252525!important}
 .dashboard-shell.dashboard-shell--creation .dashboard-sidebar .liv-sidebar-item{height:36px!important;min-height:36px!important;padding:7px 12px!important}.dashboard-shell.dashboard-shell--creation .dashboard-sidebar .liv-sidebar-item span{font-size:14px!important;font-weight:500!important}.skill-center .filters .category-nav button{font-size:16px!important;font-weight:450!important}
@@ -41,6 +55,8 @@
 /* 恢复最初的胶囊切换样式；左右等宽轨道确保相对主体居中，不受账户宽度影响。 */
 .dashboard-shell.dashboard-shell--creation .dashboard-topbar.has-creation-nav{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);gap:16px;height:64px!important}
 .creation-topbar-nav{min-width:0;display:flex;justify-content:center}
+/* 首页初始化时占住真实用途导航高度，资料读取完成后不再从空顶栏跳入。 */
+.home-nav-skeleton{width:min(450px,100%);height:46px;border-radius:999px;background:var(--liv-skeleton-surface)}
 .has-creation-nav>.creation-topbar-nav{grid-column:2}
 .has-creation-nav>div:not(.creation-topbar-nav){grid-column:3;justify-self:end}
 .dashboard-topbar .creation-entry-tabs{display:flex;gap:4px;align-items:center;justify-content:center;max-width:100%;margin:0;padding:5px;border-radius:999px;background:#1c1c1f}
@@ -59,6 +75,10 @@
 .creation-studio .creation-popover.is-parameters .creation-choice-row button{font-size:14px!important;min-height:36px;padding:7px 10px}
 .creation-studio .creation-popover.is-parameters .creation-duration b{font-size:17px}
 .creation-studio .creation-popover.is-parameters small{font-size:13px;color:#aaaab5}
+/* UPopover 内容传送到 body，尺寸规则不能依赖 creation-studio 祖先。 */
+.creation-popover.is-music-parameters{width:min(var(--liv-music-parameters-width),calc(100vw - 24px))!important}
+.creation-popover.is-music-parameters label{font-size:14px;line-height:1.7}
+.creation-popover.is-music-parameters .creation-choice-row button{font-size:14px;min-height:36px;padding:7px 10px}
 /* 加宽参数面板并将次级参数并排，常用画幅固定一行；窄屏恢复单列。 */
 .creation-parameter-fields{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px 16px}
 .creation-studio .creation-popover.is-parameters .creation-parameter-fields label{min-width:0;margin-bottom:0}
@@ -81,7 +101,83 @@
 .creation-popover.is-parameters label small,.creation-popover.is-parameters .creation-duration small{font-size:14px;line-height:1.7;color:var(--liv-settings-muted)}
 .creation-studio .creation-popover.is-parameters .creation-ratio-options button{min-height:52px;padding:6px 2px}
 /* 已选技能统一蓝色粗体，与普通工具区分，不覆盖白色正文。 */
-.creation-studio .creation-composer .creation-tool.creation-skill{color:var(--liv-ui-primary-foreground)!important;font-weight:650}
+.creation-studio .creation-composer .creation-tool.creation-skill{color:var(--liv-ui-primary-foreground)!important;font-weight:500}
+/* 工具栏可见文字统一正文规格；保持按钮、弹层与紧凑模式原有行为。 */
+.creation-studio .creation-composer .creation-toolbar .creation-tool,.creation-studio .creation-composer .creation-toolbar .creation-param,.creation-studio .creation-composer .creation-toolbar .creation-selected-style-open{font-size:14px!important;font-weight:500!important}
+.creation-solid-zap,.creation-solid-zap path{fill:currentColor}
+/* 模式切换保留在编辑器内，弱于底部技能工具栏；仅首页增加上方留白。 */
+.creation-studio .creation-workflow button{font-size:var(--liv-workflow-font-size);font-weight:500}
+.creation-studio .creation-hero{padding-top:var(--liv-home-content-offset)}
+/* 案例分类使用无边框文字Tab，仅改变呈现，筛选仍复用真实分类编码。 */
+.creation-case-tabs{flex:1;min-width:0;margin:0}.creation-cases .creation-case-header{display:flex;align-items:center;gap:16px;flex-wrap:nowrap}.creation-case-tab-list{display:flex!important;flex-wrap:nowrap!important;gap:28px;justify-content:flex-start!important;overflow-x:auto;padding:0!important;background:transparent!important;border:0!important}
+/* 技能展示使用自然媒体比例；只有明确配置画幅时才裁切，不按行统一卡片高度。 */
+.creation-case-tab-list{gap:var(--liv-showcase-tab-gap)!important}
+.creation-cases .creation-case-header h2{font-size:var(--liv-showcase-title-size);font-weight:600;color:var(--liv-account-text);margin:0}
+.creation-commerce-skills>.creation-case-tabs{position:sticky;top:0;z-index:5;background:var(--liv-page-background);padding:8px 0;margin-bottom:8px}
+.creation-skill-masonry{display:grid;grid-template-columns:repeat(var(--liv-showcase-columns,5),minmax(0,1fr));gap:var(--liv-showcase-gap);align-items:start}
+.creation-skill-column{min-width:0}
+.creation-skill-tile{position:relative;display:block;width:100%;break-inside:avoid;margin:0 0 var(--liv-showcase-gap);padding:0;overflow:hidden;border-radius:14px;background:var(--liv-account-raised);text-align:left;cursor:pointer}
+.creation-skill-tile .creation-preview-media{height:auto;aspect-ratio:auto;width:100%}
+.creation-skill-tile .creation-preview-media>img,.creation-skill-tile>img{display:block;width:100%;height:auto;object-fit:cover}
+.creation-skill-tile[style*="aspect-ratio"] .creation-preview-media,.creation-skill-tile[style*="aspect-ratio"] .creation-preview-media>img{height:100%}
+.creation-skill-tile>span{position:absolute;bottom:0;left:0;right:0;padding:32px 12px 12px;background:linear-gradient(transparent,#000b);color:var(--liv-account-text);font-size:14px;font-weight:600;line-height:1.5}
+.creation-skill-tile small{display:block;font-size:12px;font-weight:400}.creation-skill-tile:disabled{cursor:not-allowed;opacity:.65}
+.creation-skill-tile:focus-visible{outline:2px solid var(--liv-ui-primary-foreground);outline-offset:2px}
+@media(hover:hover) and (pointer:fine){.creation-skill-tile:has(video):hover>span,.creation-skill-tile:has(video):focus-within>span{opacity:0}}
+.creation-case-dialog-actions{display:flex;gap:8px;align-items:center}.creation-case-replica-note{font-size:13px;color:var(--liv-account-muted);margin-top:12px}
+/* 同一个媒体节点在右下角小窗与详情布局间切换，播放时间不因放大被重置。 */
+.creation-case-window{position:fixed!important;transform:none!important;translate:none!important;margin:0!important;max-width:none!important;max-height:none!important;padding:0!important;overflow:hidden!important;border:1px solid var(--liv-account-border)!important;background:var(--liv-workspace-surface)!important;color:var(--liv-account-text)!important;box-shadow:0 12px 48px #0005}
+.creation-case-window.is-mini{inset:auto 16px 16px auto!important;width:max-content!important;border-radius:24px!important}
+.creation-case-window-body{padding:0!important;overflow:hidden!important}
+.case-viewer-main{min-width:0}.case-viewer-player{position:relative;outline:none;background:var(--liv-workspace-surface);border-radius:24px;overflow:hidden}
+.case-viewer-stage{position:relative;line-height:0;border-radius:0 0 24px 24px;overflow:hidden;background:var(--liv-case-control-surface)}.case-viewer-stage>video,.case-viewer-stage>img{display:block;width:100%;height:auto;object-fit:contain}.case-viewer-stage>audio{width:100%;min-height:120px}
+.case-viewer-top{position:absolute;inset:12px 12px auto;display:flex;align-items:center;justify-content:space-between;gap:12px;line-height:1.5}
+.case-viewer-top-left{display:flex;align-items:center;border-radius:999px;background:var(--liv-case-control-surface);backdrop-filter:blur(12px)}
+.case-viewer-player button{border-radius:999px!important;min-height:36px;justify-content:center;color:var(--liv-account-text)}
+.case-viewer-top-left button{width:36px;height:36px;min-height:36px;padding:8px!important}
+.case-viewer-top .case-viewer-replica{background:var(--liv-control-on-primary)!important;color:var(--liv-workspace-surface)!important;font-size:14px;white-space:nowrap;padding:8px 12px!important}
+.case-viewer-center-play{position:absolute!important;top:50%;left:50%;transform:translate(-50%,-50%);width:64px;height:64px;background:var(--liv-case-control-surface)!important;color:var(--liv-control-on-primary)!important}
+.case-viewer-center-play .iconify{width:28px;height:28px}
+.case-viewer-footer{position:relative;height:var(--liv-case-controls-height);padding:18px 16px;box-sizing:border-box;background:var(--liv-case-control-surface)}
+/* 滑块命中区中心贴合视频底边；较大的可拖区域不再把细轨道顶离底边。 */
+.case-viewer-progress{position:absolute!important;top:-8px;left:16px;right:16px;height:16px!important;width:calc(100% - 32px)!important}
+.case-viewer-progress [data-slot=range],.case-viewer-progress [data-slot=thumb]{background:var(--liv-control-on-primary)!important}
+.case-viewer-progress [data-slot=track]{height:var(--liv-case-progress-track)!important}
+.case-viewer-progress [data-slot=thumb]{width:var(--liv-case-progress-thumb)!important;height:var(--liv-case-progress-thumb)!important;box-shadow:none!important}
+/* 底栏常显且四按钮均匀排列；横向胶囊扩大点击区，不挤压视频自然比例。 */
+.case-viewer-playback-actions{display:flex;align-items:center;justify-content:space-between;gap:8px;height:100%}
+.case-viewer-playback-actions button{width:var(--liv-case-control-button-width);height:var(--liv-case-control-button-size);min-height:var(--liv-case-control-button-size);padding:10px!important;background:var(--liv-case-button-surface)!important;flex:none}
+.case-viewer-playback-actions button:first-child{border:2px solid var(--liv-account-border)}
+.case-viewer-playback-actions button .iconify{width:22px;height:22px}
+/* 播放器内所有可操作目标使用手形，禁用目标不误示可点击。 */
+.creation-case-window button,.case-viewer-stage>video,.case-viewer-progress,.case-viewer-progress [data-slot=track],.case-viewer-progress [data-slot=thumb]{cursor:pointer!important}
+.creation-case-window button:disabled,.case-viewer-progress[data-disabled],.case-viewer-progress[data-disabled] [data-slot=thumb]{cursor:not-allowed!important;pointer-events:auto}
+/* 桌面仅悬停或键盘操作时显示控制栏；触屏始终可操作，不依赖假悬停。 */
+@media(hover:hover) and (pointer:fine){.case-viewer-hover-controls{opacity:0;pointer-events:none;transition:opacity var(--motion-normal)}.case-viewer-player:hover .case-viewer-hover-controls,.case-viewer-player:focus-visible .case-viewer-hover-controls,.case-viewer-player:has(:focus-visible) .case-viewer-hover-controls{opacity:1;pointer-events:auto}}
+.case-viewer-error{position:absolute;bottom:72px;left:12px;right:12px;margin:0;padding:12px;background:var(--liv-account-raised);color:var(--liv-account-text);border-radius:8px;font-size:14px;line-height:1.6}
+/* 放大是站内详情视图，不伪造系统全屏或不存在的创作过程。 */
+.creation-case-window.is-expanded{inset:0!important;width:100vw!important;height:100dvh!important;border-radius:0!important}
+.is-expanded .case-viewer-layout{display:grid;grid-template-columns:minmax(0,1fr) var(--liv-case-recommendations-width);gap:24px;height:100dvh;width:100%;padding:24px;box-sizing:border-box;overflow:hidden}
+.is-expanded .case-viewer-main{overflow-y:auto;overscroll-behavior:contain}.case-viewer-back{margin-bottom:16px}
+.is-expanded .case-viewer-stage{height:calc(100dvh - 260px);min-height:240px;display:flex;align-items:center;justify-content:center;background:var(--liv-workspace-surface)}
+.is-expanded .case-viewer-stage>video,.is-expanded .case-viewer-stage>img{height:100%;width:100%;object-fit:contain}
+.case-viewer-description h2{font-size:20px;font-weight:600;margin:16px 0 8px;line-height:1.5}.case-viewer-description p{font-size:14px;line-height:1.7;color:var(--liv-account-muted);margin:0}
+.case-viewer-recommendations{overflow-y:auto;overscroll-behavior:contain;display:flex;flex-direction:column;gap:16px;min-height:0}
+.case-viewer-recommendations>button{display:flex;flex-direction:column;align-items:stretch;gap:8px;padding:0!important;white-space:normal;text-align:left;flex:none;color:var(--liv-account-text);border-radius:12px!important}
+.case-viewer-recommendations img{width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:12px;border:2px solid transparent}.case-viewer-recommendations .is-current img{border-color:var(--liv-ui-primary)}
+.case-viewer-recommendations span{font-size:14px;line-height:1.5}
+@media(max-width:900px){.is-expanded .case-viewer-layout{grid-template-columns:minmax(0,1fr) 240px;gap:16px;padding:16px}}
+@media(max-width:600px){.is-expanded .case-viewer-layout{display:block;overflow:auto}.case-viewer-recommendations{margin-top:24px;overflow:visible}.is-expanded .case-viewer-stage{height:60dvh;min-height:180px}.case-viewer-description h2{font-size:18px}}
+@media(prefers-reduced-motion:reduce){.case-viewer-hover-controls{transition:none!important}}
+/* 封面媒体层占满统一16:9卡片，不随视频自然高度变化。 */
+.creation-case-cover>.creation-preview-media{width:100%;height:100%;aspect-ratio:16/9!important}
+.creation-case-tab{flex:0 0 auto!important;padding:12px 0!important;background:transparent!important;border:0!important;border-radius:0!important;font-size:var(--liv-showcase-title-size)!important;font-weight:600!important;color:var(--liv-account-muted)!important;cursor:pointer;white-space:nowrap}
+.creation-case-tab[data-state=active]{color:var(--liv-account-text)!important;font-weight:700!important}.creation-case-tab:focus-visible{outline:2px solid var(--liv-ui-primary-foreground);outline-offset:2px}
+/* 专用数字人技能沿用深色创作表面，不把旧视频页白卡和大占位图带进弹窗。 */
+.is-digital-skill{color:var(--liv-account-text)}.is-digital-skill .pv-form-card,.is-digital-skill .pv-preview-card{background:var(--liv-account-raised)!important;border-color:var(--liv-account-border)!important;box-shadow:none!important;padding:16px!important}
+.is-digital-skill .pv-create-layout{gap:16px!important}.is-digital-skill textarea{background:var(--liv-account-surface)!important;color:var(--liv-account-text)!important;border-color:var(--liv-account-border)!important;min-height:160px!important;height:160px!important}
+.is-digital-skill h2,.is-digital-skill h3,.is-digital-skill strong,.is-digital-skill b,.is-digital-skill label,.is-digital-skill dd{color:var(--liv-account-text)!important}.is-digital-skill p,.is-digital-skill dt,.is-digital-skill .pv-field-head>span{color:var(--liv-account-muted)!important}
+.is-digital-skill .pv-form-footer{background:var(--liv-account-surface)!important;border-color:var(--liv-account-border)!important}.is-digital-skill .pv-field,.is-digital-skill .pv-preview-card dl>div{border-color:var(--liv-account-border)!important}.is-digital-skill .pv-unavailable{background:var(--liv-account-surface)!important;border-color:var(--liv-account-border)!important;color:var(--liv-account-muted)!important}
 .creation-popover.is-skills{width:460px}
 .creation-skill-list{display:flex;flex-direction:column;gap:7px}
 .creation-skill-card{display:flex;align-items:center;gap:12px;width:100%;padding:12px;border-radius:14px;text-align:left;background:transparent}
@@ -128,11 +224,13 @@
 .creation-cases .creation-case-grid>button{min-width:0;overflow:hidden}
 .creation-cases .creation-case-grid>button>b{display:block;width:100%;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 /* 封面绝对铺入定高比例盒，避免原图内在尺寸将案例行撑高。 */
-.creation-cases .creation-case-cover{max-height:var(--liv-case-cover-max-height);min-height:0;flex-shrink:0}
+.creation-cases .creation-case-cover{max-height:none;min-height:0;flex-shrink:0}
 .creation-cases .creation-case-cover>img{position:absolute;inset:0;display:block;width:100%;height:100%;object-fit:cover}
 .creation-cases .dashboard-skeleton .skeleton-cover{max-height:var(--liv-case-cover-max-height)}
 @keyframes creation-browse-up{0%,100%{transform:translateY(2px);opacity:.55}50%{transform:translateY(-3px);opacity:1}}
-@media(max-width:1550px){.dashboard-shell.dashboard-shell--creation .dashboard-topbar.has-creation-nav{height:auto!important;min-height:114px;grid-template-columns:minmax(0,1fr);gap:8px;padding-top:8px;padding-bottom:10px}.has-creation-nav>.creation-topbar-nav{grid-column:1;grid-row:2;justify-content:center}.has-creation-nav>div:not(.creation-topbar-nav){grid-column:1;grid-row:1;justify-self:end}.dashboard-topbar .creation-entry-tabs{justify-content:flex-start;overflow-x:auto;scrollbar-width:none;width:max-content}.dashboard-topbar .creation-entry-tabs button{flex:none}.creation-studio .creation-hero{margin-top:22px}}
+/* 普通桌面仍保持单行顶栏，导航使用剩余空间，避免账户区挤占等分列。 */
+@media(min-width:768px) and (max-width:1550px){.dashboard-shell.dashboard-shell--creation .dashboard-topbar.has-creation-nav{grid-template-columns:minmax(0,1fr) auto}.has-creation-nav>.creation-topbar-nav{grid-column:1}.has-creation-nav>div:not(.creation-topbar-nav){grid-column:2}.dashboard-topbar .creation-entry-tabs{max-width:100%;overflow-x:auto;scrollbar-width:none}.dashboard-topbar .creation-entry-tabs button{flex:none}}
+@media(max-width:767.98px){.dashboard-shell.dashboard-shell--creation .dashboard-topbar.has-creation-nav{height:auto!important;min-height:96px;grid-template-columns:minmax(0,1fr);gap:8px;padding-top:8px;padding-bottom:10px}.has-creation-nav>.creation-topbar-nav{grid-column:1;grid-row:2;justify-content:center}.has-creation-nav>div:not(.creation-topbar-nav){grid-column:1;grid-row:1;justify-self:end}.dashboard-topbar .creation-entry-tabs{justify-content:flex-start;overflow-x:auto;scrollbar-width:none;width:max-content}.dashboard-topbar .creation-entry-tabs button{flex:none}.creation-studio .creation-hero{margin-top:22px}}
 @media(max-width:600px){.dashboard-topbar .creation-entry-tabs{gap:4px}.dashboard-topbar .creation-entry-tabs button{padding:0 10px;font-size:12px;height:34px}.creation-studio .creation-hero{margin:16px auto 20px;gap:7px}.creation-studio .creation-hero h1{font-size:21px}.creation-hero-mascot{width:36px;height:36px}.creation-studio .creation-recommendations{margin-top:30px}.creation-studio .creation-hero p{font-size:12px}}
 @media(prefers-reduced-motion:reduce){.creation-browse-cases .iconify{animation:none}}
 .dashboard-shell.dashboard-shell--creation[data-theme='dark']{color-scheme:dark;--color-bg:#0b0b0d;--color-panel:#19191d;--color-panel-soft:#222227;--color-surface-base:#222227;--color-surface-raised:#25252b;--color-surface-overlay:#ffffff0d;--color-surface-hover:#ffffff14;--color-text-main:#ededf3;--color-text-muted:#a5a5b2;--color-border-soft:#ffffff26;--color-border:#ffffff26;--panel:#19191d;--dashboard-panel-bg:#19191d;--dashboard-panel-soft-bg:#222227;--dashboard-raised-bg:#25252b;--dashboard-text-main:#ededf3;--dashboard-text-muted:#a5a5b2;--dashboard-border:#ffffff26;--ui-bg:#19191d;--ui-bg-muted:#222227;--ui-text:#ededf3;--ui-text-muted:#a5a5b2;--ui-border:#ffffff26}
@@ -179,7 +277,7 @@
 .creation-studio .creation-style-grid img{height:210px;object-fit:cover}
 .creation-studio .creation-style-grid button{padding:8px;gap:10px}
 .creation-studio .creation-style-grid b,.creation-studio .creation-template-grid b{font-size:15px}
-.creation-studio .creation-template-field{background:#632941;color:var(--liv-accent);border-radius:7px;padding:2px 4px;cursor:text;box-decoration-break:clone}
+.creation-studio .creation-template-field{background:var(--liv-template-field-surface);color:var(--liv-template-field-text);border-radius:7px;padding:2px 4px;cursor:text;box-decoration-break:clone}
 .creation-studio .creation-editor,.creation-studio .is-compact .creation-editor{font-size:16px;line-height:1.85}
 .creation-studio .creation-placeholder,.creation-studio .is-compact .creation-placeholder{font-size:15px;line-height:1.8}
 .creation-studio .creation-tool,.creation-studio .is-compact .creation-tool{font-size:14px!important;padding:7px}
@@ -248,11 +346,21 @@
 /* 仅会话工作台取消居中限宽：宽屏剩余空间交给画布，首页案例和输入区仍保留各自限宽。 */
 .dashboard-shell.is-session-immersive .creation-workspace{width:100%;max-width:none;margin:0}
 .session-workspace-nav{display:flex;align-items:center;gap:12px;margin-right:auto;min-width:0;max-width:calc(100% - 350px);height:var(--liv-topbar-control-height);box-sizing:border-box;border:1px solid #333338;border-radius:20px;padding:3px 6px 3px 4px;background:#171719;color:#eee}
-/* 同一顶栏共用 40px 外框，通知图标、积分和账号不再各取 32/44px 高度。 */
+/* 同一顶栏共用36px外框，积分和头像共用胶囊，内部按钮不嵌套。 */
 .dashboard-topbar .dashboard-credit-pill,.dashboard-topbar .dashboard-user-trigger,.dashboard-topbar .announcement-bell{height:var(--liv-topbar-control-height);min-height:var(--liv-topbar-control-height);box-sizing:border-box;align-items:center}
 .dashboard-topbar .announcement-bell{width:var(--liv-topbar-control-height)}
 .dashboard-topbar .dashboard-user-avatar{width:32px;height:32px;flex:none}
 .session-workspace-nav button{height:32px;min-height:32px;width:32px;padding:0;justify-content:center;flex:none}
+/* 品牌是带文字的旧胶囊按钮，不得继承历史／新建图标按钮的 32px 固定宽度。 */
+.session-workspace-nav .session-brand-trigger{width:auto;padding:5px 10px;min-width:76px}
+/* 恢复旧下拉深灰外观；浮层仍由 Nuxt UI 定位，不能沿用旧绝对定位偏移。 */
+.session-brand-dropdown.session-nav-dropdown{position:relative;inset:auto;width:164px;min-width:164px;background:#252527;border:1px solid #404044;border-radius:14px;padding:7px;color:#eee}
+.session-brand-dropdown .session-brand-menu-item{display:flex;align-items:center;gap:10px;padding:10px;min-height:40px;border-radius:8px;font-size:14px;line-height:20px;color:#eee;background:transparent;white-space:nowrap}
+.session-brand-dropdown .session-brand-menu-item[data-highlighted]{background:#36363a;color:#eee}
+/* Nuxt UI 的选中底色来自伪元素，必须同步使用旧中性悬停色，避免残留蓝灰底。 */
+.session-brand-dropdown .session-brand-menu-item::before{background:transparent}
+.session-brand-dropdown .session-brand-menu-item[data-highlighted]::before{background:#36363a}
+.session-brand-dropdown .session-brand-menu-icon{width:16px;height:16px;color:inherit}
 .session-nav-menu{position:relative;flex-shrink:0}.session-brand-trigger{display:flex;align-items:center;gap:6px;padding:5px 10px;border-radius:16px;background:var(--liv-accent-soft);color:var(--liv-ui-primary-foreground);font-weight:650;font-size:14px;white-space:nowrap}.session-brand-trigger>.iconify{width:12px;height:12px}
 .session-nav-title{min-width:0;max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;font-weight:600}.session-history-trigger{display:grid;place-items:center;width:28px;height:28px;border-radius:50%;color:#ccc}.session-history-trigger:hover{background:#303034}.session-history-trigger>.iconify{width:16px;height:16px}
 .session-menu-dismiss{position:fixed;inset:0;z-index:1}.session-nav-dropdown{position:absolute;left:0;top:calc(100% + 10px);width:164px;padding:7px;background:#252527;border:1px solid #404044;border-radius:14px;z-index:2;box-shadow:0 12px 35px #0007}.session-nav-dropdown a{display:flex;align-items:center;gap:10px;padding:10px;border-radius:8px;font-size:13px;color:#eee}.session-nav-dropdown a:hover{background:#36363a}.session-nav-dropdown a>.iconify{width:15px;height:15px}
@@ -281,7 +389,7 @@
 .creation-studio .creation-composer.is-compact .creation-skill>.iconify:last-child{width:10px;height:10px}
 .creation-studio .creation-composer.is-compact .creation-compact-add{background:#252528;color:#ddd}
 .creation-studio .creation-composer.is-compact .creation-toolbar-spacer{display:block;flex:1;min-width:0}
-.creation-studio .creation-composer.is-compact .creation-cost{position:static;max-width:100%;font-size:12px;white-space:normal;line-height:18px;justify-content:flex-end;margin:0 0 8px;padding:0}
+.creation-studio .creation-composer.is-compact .creation-cost{position:static;max-width:100%;font-size:12px;white-space:nowrap;line-height:18px;justify-content:flex-end;margin:0;padding:0}
 .creation-studio .creation-composer.is-compact .creation-send{flex-shrink:0;width:30px;height:30px}
 /* 图标也是 span，不能被菜单正文的 flex:1 拉满整行；浮层传送到 body 后仍独立生效。 */
 .creation-menu-row>.iconify{flex:0 0 18px;width:18px;height:18px}
@@ -305,3 +413,384 @@
 }
 /* 从作品态返回纯对话时，不沿用移动端隐藏聊天的旧选择。 */
 .is-conversation-only>.creation-chat-column{display:flex!important}
+/* 本轮参考独立于待发送附件；只操作下一轮快照，不伪装成重新上传。 */
+.creation-audio-source textarea{width:100%;font-size:var(--liv-chat-font)}
+/* MV 没有图片上传行，不继承大加号的留白；编辑区仍保留统一聊天最小高度。 */
+.creation-composer.is-mv .creation-editor-wrap{margin-top:12px}
+.creation-composer.is-mv .creation-editor{min-height:96px;max-height:220px}
+.creation-composer.is-mv .creation-audio-source{padding:0 0 12px}
+/* 弹层传送到页面根部，规格直接绑定业务类，不依赖 creation-studio 祖先。 */
+.creation-popover.is-parameters .creation-ratio-options{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:4px}
+.creation-popover.is-parameters .creation-ratio-options button{display:flex;flex-direction:column;align-items:center;gap:4px;min-width:0;min-height:48px;padding:4px 2px}
+.creation-popover.is-parameters .creation-ratio-options button:disabled{opacity:.35;cursor:not-allowed}
+/* 所有参数面板的字体、间距直接作用于传送层；不再只覆盖 MV 或依赖祖先。 */
+.creation-popover.is-parameters{padding:16px}
+.creation-popover.is-parameters label{font-size:14px;line-height:1.7;margin:0}
+.creation-popover.is-parameters .creation-parameter-fields{gap:16px}
+.creation-popover.is-parameters .creation-duration small{margin:0}
+/* 悬停放大限定在封面裁切框内；键盘焦点同样可辨识，触屏不保留悬停放大。 */
+.creation-cases .creation-case-cover>img{transition:transform var(--motion-normal) ease}
+@media(hover:hover) and (pointer:fine){.creation-case-grid>button:hover .creation-case-cover>img{transform:scale(var(--liv-case-hover-scale))}}
+.creation-case-grid>button:focus-visible .creation-case-cover>img{transform:scale(var(--liv-case-hover-scale))}
+@media(prefers-reduced-motion:reduce){.creation-cases .creation-case-cover>img{transition:none!important;transform:none!important}}
+.creation-template-atmosphere{position:fixed;inset:-40px;z-index:248;display:flex;pointer-events:none;overflow:hidden;filter:blur(32px);opacity:.38}
+.creation-template-atmosphere img{width:25%;flex:1;min-width:0;height:100%;object-fit:cover}
+/* UModal 仍负责焦点、Esc、外部点击和滚动锁定；这里仅调整媒体浏览器的表面与布局。 */
+.creation-template-overlay{z-index:249!important;background:var(--liv-template-browser-overlay)!important;backdrop-filter:blur(16px)}
+/* 风格弹窗复用UModal焦点、遮罩及磨砂背景，头部固定、卡片区域独立滚动。 */
+.creation-style-dialog{z-index:250!important;width:calc(100vw - 96px)!important;max-width:var(--liv-style-browser-width)!important;height:min(var(--liv-style-browser-height),calc(100dvh - 96px))!important;max-height:calc(100dvh - 32px)!important;border:1px solid var(--liv-template-browser-border)!important;border-radius:24px!important;background:var(--liv-template-browser-surface)!important;color:var(--liv-template-browser-text)!important;overflow:hidden;box-shadow:0 24px 80px rgba(0,0,0,.4)}
+.creation-style-dialog-header{position:relative;flex:none;min-height:72px!important;padding:16px 64px 16px 24px!important;border:0!important}
+.creation-style-dialog-header>[data-slot=wrapper]{position:absolute!important;width:1px;height:1px;overflow:hidden}
+.creation-style-heading{display:flex;align-items:center;justify-content:space-between;width:100%;gap:24px}
+.creation-style-scopes{display:flex;gap:4px;flex:none}.creation-style-scopes button{font-size:16px;font-weight:700;color:var(--liv-template-browser-muted);padding:4px 8px;white-space:nowrap}.creation-style-scopes button.active{color:var(--liv-template-browser-text)}
+.creation-style-search{width:280px;max-width:36%}.creation-style-search input{border-radius:999px;background:var(--liv-number-surface);color:var(--liv-template-browser-text);font-size:14px}
+.creation-style-close{position:absolute!important;top:20px!important;right:20px!important;width:28px;height:28px;min-height:28px;border-radius:999px;background:var(--liv-number-surface)!important;color:var(--liv-template-browser-muted)!important}
+.creation-style-dialog-body{display:flex;flex-direction:column;min-height:0;overflow:hidden!important;padding:0!important}
+.creation-style-categories{display:flex;gap:10px;flex:none;padding:0 24px 20px;overflow-x:auto}.creation-style-categories button{flex:none;font-size:14px;white-space:nowrap;box-shadow:inset 0 0 0 1px var(--liv-template-browser-border);border-radius:10px;background:transparent;color:var(--liv-template-browser-muted);padding:8px 16px}.creation-style-categories button[aria-pressed=true]{background:var(--liv-number-surface);color:var(--liv-template-browser-text)}
+.creation-style-results{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:16px 28px 28px}
+.creation-style-grid-large{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:var(--liv-style-browser-gap);align-items:start}
+.creation-style-card{position:relative;min-width:0}.creation-style-card>button:first-child,.creation-style-upload{position:relative;display:block;width:100%;aspect-ratio:var(--liv-style-card-ratio);border:0;padding:0;border-radius:12px;overflow:hidden;background:var(--liv-number-surface);text-align:left;cursor:pointer;color:var(--liv-template-browser-text)}
+.creation-style-card img{width:100%;height:100%;object-fit:cover}.creation-style-card strong{position:absolute;inset:auto 0 0;padding:32px 10px 10px;background:var(--liv-template-browser-caption);font-size:14px;line-height:20px;font-weight:600;overflow-wrap:anywhere}.creation-style-card button[aria-pressed=true]{outline:2px solid var(--liv-ui-primary-foreground);outline-offset:2px}
+.creation-style-upload{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;border:1px dashed var(--liv-template-browser-border);font-size:14px;color:var(--liv-template-browser-muted)}.creation-style-upload .iconify{width:20px;height:20px}.creation-style-no-cover{height:100%;display:grid;place-items:center;background:var(--liv-settings-panel)}.creation-style-no-cover .iconify{width:32px;height:32px;color:var(--liv-template-browser-muted)}
+.creation-style-favorite{position:absolute!important;top:8px;right:8px;width:28px;height:28px;min-height:28px;padding:4px;border-radius:8px}.creation-style-feedback{padding:4px 28px;color:var(--liv-template-browser-text);font-size:14px}.creation-style-empty{font-size:14px;line-height:1.7;color:var(--liv-template-browser-muted);padding:24px 0}
+.creation-style-card button:focus-visible,.creation-style-upload:focus-visible{outline:2px solid var(--liv-ui-primary-foreground);outline-offset:2px}
+@media(max-width:1100px){.creation-style-grid-large{grid-template-columns:repeat(6,minmax(0,1fr))}.creation-style-heading{gap:12px}.creation-style-scopes button{font-size:14px;padding:4px}}
+@media(max-width:800px){.creation-style-dialog{width:calc(100vw - 32px)!important;height:calc(100dvh - 32px)!important}.creation-style-heading{flex-wrap:wrap;gap:12px}.creation-style-search{width:100%;max-width:100%}.creation-style-grid-large{grid-template-columns:repeat(4,minmax(0,1fr))}}
+@media(max-width:540px){.creation-style-dialog-header{padding:16px 48px 16px 16px!important}.creation-style-scopes{gap:0;flex-wrap:wrap}.creation-style-scopes button{font-size:14px}.creation-style-results{padding:12px 16px 16px}.creation-style-grid-large{grid-template-columns:repeat(2,minmax(0,1fr))}.creation-style-categories{padding:0 16px 12px;gap:8px}.creation-style-close{top:16px!important;right:12px!important}}
+.creation-template-dialog{z-index:250!important;width:calc(100vw - 96px)!important;max-width:var(--liv-template-browser-width)!important;height:min(var(--liv-template-browser-height),calc(100dvh - 96px))!important;max-height:calc(100dvh - 32px)!important;border:1px solid var(--liv-template-browser-border)!important;border-radius:24px!important;background:var(--liv-template-browser-surface)!important;color:var(--liv-template-browser-text)!important;overflow:hidden;box-shadow:0 24px 80px rgba(0,0,0,.4)}
+.creation-template-dialog-header{position:relative;flex:none;min-height:72px!important;padding:16px 64px 16px 24px!important;border-color:var(--liv-template-browser-border)!important}
+.creation-template-dialog-header>[data-slot=wrapper]{position:absolute!important;width:1px;height:1px;overflow:hidden}
+.creation-template-heading{display:flex;align-items:center;justify-content:space-between;width:100%;gap:24px}
+.creation-template-tabs{display:flex;gap:8px;flex:none}
+.creation-template-tabs button{font-size:16px;font-weight:600;color:var(--liv-template-browser-muted);white-space:nowrap}
+.creation-template-tabs button.active{color:var(--liv-template-browser-text)}
+.creation-template-search{width:280px;max-width:40%}
+.creation-template-search input{background:var(--liv-number-surface);color:var(--liv-template-browser-text);border-radius:999px;font-size:14px}
+.creation-template-close{position:absolute!important;top:20px!important;right:20px!important;width:32px;height:32px;border-radius:999px;color:var(--liv-template-browser-muted)!important}
+.creation-template-dialog-body{display:flex;flex-direction:column;min-height:0;overflow:hidden!important;padding:0!important}
+.creation-template-categories{display:flex;gap:8px;flex:none;padding:16px 24px;overflow-x:auto;border-bottom:1px solid var(--liv-template-browser-border)}
+.creation-template-categories button{flex:none;white-space:nowrap;font-size:14px;color:var(--liv-template-browser-muted);border-color:var(--liv-template-browser-border);background:transparent;box-shadow:inset 0 0 0 1px var(--liv-template-browser-border)}
+.creation-template-categories button[aria-pressed=true]{background:var(--liv-number-surface);color:var(--liv-template-browser-text)}
+.creation-template-results{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:16px 24px 24px}
+.creation-template-masonry{columns:5;column-gap:12px}
+.creation-template-masonry.is-small-catalog{columns:4}
+.creation-template-tile{position:relative;display:block;width:100%;padding:0;margin:0 0 12px;break-inside:avoid;border:0;border-radius:16px;background:var(--liv-number-surface);overflow:hidden;text-align:left;cursor:pointer}
+/* 长短封面形成瀑布流节奏，仅裁切预览，不修改模板实际画幅和执行参数。 */
+.creation-template-tile .creation-preview-media{height:auto;aspect-ratio:4/5;max-height:280px}
+.creation-template-tile:nth-child(3n+2) .creation-preview-media{aspect-ratio:4/3}
+.creation-template-tile>span{position:absolute;inset:auto 0 0;display:block;padding:36px 12px 12px;background:var(--liv-template-browser-caption);color:var(--liv-template-browser-text);font-size:14px;line-height:1.5;font-weight:600;white-space:normal;overflow-wrap:anywhere;pointer-events:none}
+.creation-template-tile:focus-visible{outline:2px solid var(--liv-ui-primary-foreground);outline-offset:2px}
+.creation-template-empty{padding:48px 16px;text-align:center;font-size:14px;color:var(--liv-template-browser-muted)}
+@media(hover:hover) and (pointer:fine){.creation-template-tile:hover img{transform:scale(1.04)}}
+@media(max-width:1200px){.creation-template-masonry{columns:4}}
+@media(max-width:900px){.creation-template-dialog{width:calc(100vw - 32px)!important;height:calc(100dvh - 32px)!important}.creation-template-masonry,.creation-template-masonry.is-small-catalog{columns:3}}
+@media(max-width:600px){.creation-template-heading{flex-wrap:wrap;gap:8px}.creation-template-search{width:100%;max-width:100%}.creation-template-dialog-header{padding:16px 48px 16px 16px!important}.creation-template-tabs button{font-size:14px}.creation-template-categories{padding:12px 16px}.creation-template-results{padding:12px 16px 16px}.creation-template-masonry,.creation-template-masonry.is-small-catalog{columns:2;column-gap:8px}.creation-template-tile{margin-bottom:8px}.creation-template-tile img{min-height:120px}.creation-template-close{top:16px!important;right:12px!important}}
+@media(prefers-reduced-motion:reduce){.creation-template-tile img{transition:none}.creation-template-tile:hover img{transform:none}}
+/* 媒体结构在模板和公开案例间共用；视频覆盖封面，不改变布局或开启声音。 */
+.creation-preview-media{position:relative;width:100%;height:100%;overflow:hidden}
+.creation-preview-media>img,.creation-preview-media>video{display:block;width:100%;height:100%;object-fit:cover}
+.creation-preview-media>video{position:absolute;inset:0}
+.creation-template-tile>span{transition:opacity var(--motion-normal) ease}
+.creation-template-tile:hover>span,.creation-template-tile:focus-visible>span{opacity:0}
+.creation-case-cover .creation-preview-media>img{transition:transform var(--motion-normal) ease}
+.creation-case-cover:has(video)>.iconify{display:none}
+@media(hover:hover) and (pointer:fine){.creation-case-grid>button:hover .creation-preview-media>img{transform:scale(var(--liv-case-hover-scale))}}
+@media(prefers-reduced-motion:reduce){.creation-case-grid>button:hover .creation-preview-media>img{transition:none;transform:none}}
+/* 只缩首页编辑器，不压缩会话输入框、已添加素材或用户长文本；保留窄屏自适应。 */
+.creation-home{width:min(var(--liv-home-composer-width),100%);container-type:inline-size;container-name:home-composer}
+/* 保持居中，容器受限时也按原可用宽度缩小10%；案例单独轻微内收。 */
+.creation-studio .creation-cases{width:calc(100% - var(--liv-home-cases-inset) * 2)}
+.creation-home .creation-composer{min-height:calc(246px * var(--liv-home-composer-height-scale) + var(--liv-home-composer-extra-height));border-color:var(--liv-home-composer-border);transition:border-color var(--motion-normal) ease}
+.creation-home .creation-composer:hover,.creation-home .creation-composer:focus-within{border-color:var(--liv-home-composer-border-active)}
+.creation-home .creation-composer:not(.is-compact) .creation-editor{min-height:calc(var(--liv-home-composer-base-height) * var(--liv-home-composer-height-scale) - var(--liv-home-composer-chrome-height) + var(--liv-home-composer-extra-height))}
+.creation-home .creation-composer.is-mv .creation-editor{min-height:calc(246px * var(--liv-home-composer-height-scale) - var(--liv-home-mv-chrome-height) + var(--liv-home-composer-extra-height))}
+/* 仅收紧首页短剧上传留白，不改变会话输入框及文件选择功能。 */
+.creation-home .creation-script-upload{min-height:var(--liv-home-script-upload-height);gap:8px}
+/* 短剧页签选中项与正文同色相接；只隐藏组件的滑块，不替换原生键盘 Tab 行为。 */
+.creation-composer.is-drama{--creation-drama-inset:17px;padding-top:0;background:var(--liv-drama-tab-surface)}
+.creation-drama-tabs{margin-inline:calc(-1 * var(--creation-drama-inset));margin-bottom:12px}
+.creation-drama-tab-list{padding:0!important;gap:0!important;height:var(--liv-drama-tab-height);background:var(--liv-drama-tab-idle)!important;border-radius:23px 23px 0 0!important;isolation:isolate}
+.creation-drama-tab-indicator{display:none!important}
+.creation-drama-tab{flex:1;min-width:0;height:var(--liv-drama-tab-height);padding:0 8px!important;border-radius:23px 23px 0 0!important;color:var(--liv-drama-tab-muted)!important;font-size:14px!important;font-weight:600!important;overflow:visible!important}
+.creation-drama-tab[data-state=active]{background:var(--liv-drama-tab-surface)!important;color:var(--liv-drama-tab-text)!important}
+/* 选中页签两侧反向圆角与正文衔接，不改变可点击区域和键盘焦点。 */
+.creation-drama-tab{position:relative}
+.creation-drama-tab[data-state=active]:before,.creation-drama-tab[data-state=active]:after{content:'';position:absolute;bottom:0;width:24px;height:24px;pointer-events:none}
+.creation-drama-tab[data-state=active]:before{left:-24px;background:radial-gradient(circle at 0 0,transparent 24px,var(--liv-drama-tab-surface) 25px)}
+.creation-drama-tab[data-state=active]:after{right:-24px;background:radial-gradient(circle at 100% 0,transparent 24px,var(--liv-drama-tab-surface) 25px)}
+.creation-drama-tab:first-of-type:before,.creation-drama-tab:last-of-type:after{display:none}
+.creation-drama-tab-icon{width:16px;height:16px;flex:none}
+.creation-drama-tab:focus-visible{outline:2px solid var(--liv-ui-primary-foreground);outline-offset:-3px}
+.creation-home .is-drama .creation-script-upload{border:1px solid color-mix(in srgb,var(--liv-home-composer-border) 40%,transparent);border-radius:20px;padding:16px 12px}
+@media(max-width:600px){.creation-composer.is-drama{--creation-drama-inset:12px}.creation-drama-tab{font-size:13px!important}}
+/* 去掉装饰图标与空素材行占位，保留标题、格式说明、上传及已有素材。 */
+.creation-home .creation-script-upload>.large-icon,.creation-home .is-drama .creation-attachments:empty{display:none}
+/* 按输入区真实宽度收放高度；宽屏比原普通输入区约高20px，窄屏减少空白。 */
+.creation-home .creation-composer:not(.is-compact){min-height:clamp(190px,30cqi,240px)}
+.creation-home .creation-composer:not(.is-compact):not(.is-mv) .creation-editor{min-height:clamp(56px,13.25cqi,106px)}
+.creation-home .creation-script-upload{min-height:clamp(80px,15cqi,120px)}
+/* 快捷技能完整换行，不再使用手机横向滚动条；长名称在卡片内省略。 */
+.creation-home .creation-quick-templates{flex-wrap:wrap;justify-content:center;overflow:visible;padding-bottom:0}
+.creation-home .creation-quick-templates button{min-width:0;max-width:100%}
+.creation-home .creation-quick-templates button>span{min-width:0;overflow:hidden;text-overflow:ellipsis}
+/* 容器查询覆盖窄侧栏和手机：先收工具文字，再收参数摘要，最后收技能名称。 */
+@container home-composer (max-width:640px){
+  .creation-home .creation-composer .creation-skill{max-width:40cqi;min-width:32px}
+  .creation-home .creation-composer .creation-skill-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .creation-home .creation-composer .creation-icon-tool .creation-tool-label{display:none!important}
+  .creation-home .creation-composer .creation-toolbar{flex-wrap:nowrap;gap:3px}
+  .creation-home .creation-composer .creation-icon-tool{width:32px;min-width:32px;height:34px;padding:5px!important;justify-content:center;flex:none}
+  .creation-home .creation-composer .creation-param>.iconify:last-child:not(:first-child){display:none}
+  .creation-home .creation-composer .creation-toolbar-spacer{display:block;flex:1;min-width:0}
+  .creation-home .creation-composer .creation-selected-style{flex:0 0 32px;max-width:32px}
+  .creation-home .creation-composer .creation-selected-style-label{display:none}
+  .creation-home .creation-composer .creation-selected-style-open{padding:4px!important;justify-content:center}
+}
+@container home-composer (max-width:360px){
+  .creation-home .creation-composer .creation-skill{width:32px;min-width:32px;flex:none;justify-content:center;padding:5px!important}
+  .creation-home .creation-composer .creation-skill-label,.creation-home .creation-composer .creation-skill>.iconify:last-child{display:none}
+}
+.creation-music-shortcut{font-size:14px;color:var(--liv-template-browser-muted)}
+.creation-music-link{padding:0!important;min-height:0!important;font-size:inherit!important;color:var(--liv-ui-primary-foreground)!important;text-decoration:underline!important;text-underline-offset:3px}
+/* 账户与品牌菜单共享手型、悬停、键盘焦点和当前路由反馈；禁用项保留禁止光标。 */
+.liv-account-dropdown,.liv-credit-popover-shell{background:var(--liv-account-surface)!important;color:var(--liv-account-text)!important;border:1px solid var(--liv-account-border)!important;border-radius:20px!important;box-shadow:0 24px 64px #0006;--ui-text:var(--liv-account-text);--ui-text-highlighted:var(--liv-account-text);--ui-text-muted:var(--liv-account-muted);--ui-bg:var(--liv-account-surface);--ui-bg-elevated:var(--liv-account-raised);--ui-border:var(--liv-account-border)}
+.liv-account-dropdown{width:304px;max-width:calc(100vw - 32px);max-height:min(720px,calc(100dvh - 80px));overflow-y:auto;padding:8px}
+.liv-account-menu-item,.session-brand-menu-item{cursor:pointer!important;border-radius:10px!important;min-height:40px;font-size:14px!important;font-weight:500!important}
+/* 账户菜单仅上下居中，横向从图标旁左对齐；隔离全局按钮的居中文本，不影响购买按钮。 */
+.liv-account-dropdown .liv-account-menu-item{display:flex!important;align-items:center!important;justify-content:flex-start!important;text-align:left!important;box-sizing:border-box;min-height:44px;padding:10px 12px!important;line-height:24px!important}
+.liv-account-dropdown [data-slot=itemWrapper]{display:flex;flex-direction:row!important;align-items:center;justify-content:flex-start!important;text-align:left!important;min-width:0}
+.liv-account-dropdown [data-slot=itemLabel]{text-align:left!important;line-height:24px!important}
+.liv-account-menu-item:not([data-disabled]):hover,.liv-account-menu-item[data-highlighted],.session-brand-menu-item:not([data-disabled]):hover,.session-brand-menu-item[data-highlighted]{background:var(--liv-account-hover)!important;color:var(--liv-account-text)!important}
+.liv-account-menu-item.is-current-page,.session-brand-menu-item.is-current-page,.liv-account-menu-item[aria-current=page],.session-brand-menu-item[aria-current=page]{background:var(--liv-account-hover)!important;color:var(--liv-account-text)!important}
+.liv-account-menu-item:focus-visible,.session-brand-menu-item:focus-visible{outline:2px solid var(--liv-ui-primary-foreground);outline-offset:-2px}
+.liv-account-menu-item[data-disabled],.session-brand-menu-item[data-disabled]{cursor:not-allowed!important}
+.dashboard-user-trigger,.dashboard-credit-pill,.session-brand-trigger{cursor:pointer}
+.dashboard-user-trigger{display:flex;align-items:center;gap:8px;padding:4px 8px;border:1px solid var(--liv-account-border);border-radius:999px;color:var(--liv-account-text)}
+.dashboard-user-name{font-size:14px;font-weight:500;white-space:nowrap}.dashboard-user-chevron{width:16px;height:16px;flex:none}
+.liv-account-menu-icon{width:18px;height:18px;color:inherit!important}
+.liv-account-summary{padding:12px 8px 16px}
+.liv-account-identity{display:flex;gap:12px;align-items:center;margin-bottom:16px}
+.liv-account-identity>div{display:flex;flex-direction:column;min-width:0;gap:4px}
+.liv-account-identity strong{font-size:16px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.liv-account-identity span{font-size:12px;color:var(--liv-account-muted)}
+/* 中性余额卡内仅购买按钮高亮，余额图标和文字不随按钮变白。 */
+.liv-account-balance{display:flex;align-items:center;gap:12px;width:100%;padding:12px;border-radius:12px;background:var(--liv-account-raised);color:var(--liv-account-text)}
+.liv-account-purchase{display:inline-flex!important;align-items:center!important;justify-content:center!important;box-sizing:border-box;height:36px;min-height:36px;margin-left:auto;flex:none;padding:0 12px!important;line-height:20px!important;border-radius:999px!important;background:var(--liv-ui-primary)!important;color:var(--liv-control-on-primary)!important;font-size:14px!important;font-weight:500;cursor:pointer}
+/* 费用和发送在普通文档流内成组，不使用绝对定位覆盖参数。 */
+.creation-submit-actions{display:flex;flex-wrap:nowrap;align-items:center;gap:8px;flex:0 0 auto;margin-left:auto;min-width:0}
+.creation-submit-actions .creation-cost{margin:0;max-width:160px;overflow:hidden;text-overflow:ellipsis}
+.liv-credit-popover-shell{overflow:hidden;max-width:calc(100vw - 32px)}
+.liv-credit-account{width:336px;max-width:calc(100vw - 32px);padding:24px;color:var(--liv-account-text)}
+.liv-credit-account header{display:flex;flex-direction:column;gap:8px}
+.liv-credit-account header>span:first-child,.liv-credit-stats span{font-size:12px;color:var(--liv-account-muted)}
+.liv-credit-stats{display:grid;grid-template-columns:1fr 1fr;margin:20px 0;padding:16px 0;background:var(--liv-account-raised);border-radius:12px}
+.liv-credit-stats>div{display:flex;flex-direction:column;gap:4px;text-align:center}
+.liv-credit-stats>div+div{border-left:1px solid var(--liv-account-border)}
+.liv-credit-stats strong{font-size:16px;font-weight:600}
+.liv-credit-actions{display:grid;gap:8px}
+.liv-credit-actions button{height:40px;border-radius:999px;cursor:pointer;font-size:14px;font-weight:500;justify-content:center}
+.liv-credit-actions button:first-child,.liv-billing-selection button{background:var(--liv-accent)!important;color:var(--liv-control-on-primary)!important}
+.liv-credit-actions button:last-child{color:var(--liv-account-text);border-color:var(--liv-account-border);background:transparent}
+.liv-credit-record-title{display:flex;align-items:center;justify-content:space-between;margin-top:24px}
+.liv-credit-record-title h3{font-size:14px;font-weight:600}
+.liv-credit-record-title button{font-size:12px;color:var(--liv-account-muted);cursor:pointer}
+.liv-credit-records{padding:0;margin:0;list-style:none}
+.liv-credit-records li{display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--liv-account-border)}
+.liv-credit-records li>div{flex:1;min-width:0}
+.liv-credit-records p{margin:0;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--liv-account-text)}
+.liv-credit-records time{font-size:12px;color:var(--liv-account-muted)}
+.liv-credit-records strong{font-size:14px;font-weight:600}
+.liv-credit-record-icon{display:grid;place-items:center;width:28px;height:28px;border-radius:999px;background:var(--liv-account-raised);flex:none}
+.liv-credit-record-icon .iconify{width:14px;height:14px}
+.liv-credit-account .is-debit{color:var(--color-state-danger,#f87171)}
+.liv-credit-account .is-credit{color:var(--color-state-success,#34d399)}
+.liv-credit-note,.liv-credit-empty{font-size:12px;line-height:1.7;color:var(--liv-account-muted);margin:16px 0 0}
+/* 充值沿用真实套餐和购买确认方法，只压缩展示卡；不伪造会员、赠点、到账状态。 */
+.liv-billing-page{max-width:1100px;margin:0 auto;color:var(--liv-account-text)!important}
+.liv-billing-heading{display:flex;justify-content:space-between;align-items:flex-start;gap:24px;margin-bottom:24px}
+.liv-billing-heading h1{font-size:24px;font-weight:600;margin:0}
+.liv-billing-heading p,.liv-billing-section-title p{font-size:14px;line-height:1.7;color:var(--liv-account-muted);margin:8px 0 0}
+.liv-billing-heading>div:last-child{display:flex;gap:8px;flex:none}
+.liv-billing-heading button,.liv-billing-tabs button{height:40px;font-size:14px;cursor:pointer}
+.liv-billing-heading button{color:var(--liv-account-text);border-color:var(--liv-account-border)}
+.liv-billing-tabs{display:flex;gap:4px;margin-bottom:24px;padding:4px;background:var(--liv-account-surface);border-radius:12px;overflow-x:auto}
+.liv-billing-tabs button{color:var(--liv-account-muted);white-space:nowrap;padding:0 20px}
+.liv-billing-tabs button[aria-current=page]{background:var(--liv-account-hover);color:var(--liv-account-text)}
+.liv-billing-overview{display:flex;align-items:center;justify-content:space-between;gap:24px;border:1px solid var(--liv-account-border);border-radius:20px;padding:24px;background:var(--liv-account-surface)}
+.liv-billing-balance{display:flex;flex-direction:column;gap:8px}
+.liv-billing-balance>span:first-child,.liv-billing-recent span{font-size:12px;color:var(--liv-account-muted)}
+.liv-billing-recent{display:flex;gap:24px;align-items:center}
+.liv-billing-recent>div{display:flex;flex-direction:column;gap:8px;min-width:72px}
+.liv-billing-recent strong{font-size:16px;font-weight:600}
+.liv-billing-recent button{color:var(--liv-account-muted);cursor:pointer}
+.liv-billing-section-title{display:flex;justify-content:space-between;align-items:baseline;gap:16px;margin:32px 0 16px}
+.liv-billing-section-title h2{font-size:16px;font-weight:600}
+.liv-billing-packages{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.liv-billing-page .liv-billing-package{position:relative;display:flex;flex-direction:column;justify-content:center;gap:8px;min-height:128px;min-width:0;padding:24px 12px;background:var(--liv-account-surface)!important;border:1px solid var(--liv-account-border)!important;border-radius:20px!important;box-shadow:none!important;color:var(--liv-account-text)!important;cursor:pointer}
+.liv-billing-page .liv-billing-package:hover:not(:disabled){background:var(--liv-account-raised)!important;border-color:var(--liv-account-muted)!important}
+.liv-billing-page .liv-billing-package[aria-checked=true]{border-color:var(--liv-ui-primary-foreground)!important;background:var(--liv-account-selected)!important;color:var(--liv-ui-primary-foreground)!important}
+.liv-billing-package:focus-visible{outline:2px solid var(--liv-ui-primary-foreground);outline-offset:3px}
+.liv-billing-package:disabled{cursor:not-allowed;opacity:.5}
+.liv-billing-package-value{display:flex;align-items:center;justify-content:center;gap:8px;white-space:nowrap}
+.liv-billing-package-value strong{font-size:20px;font-weight:600}
+.liv-billing-package-value>span{font-size:12px}
+.liv-billing-price{font-size:14px;font-weight:500;color:var(--liv-account-text)}
+.liv-billing-price del{font-size:12px;color:var(--liv-account-muted);margin-left:4px}
+.liv-billing-package-tag{position:absolute;top:-8px;right:8px;border-radius:999px;padding:2px 8px;background:var(--liv-accent);color:var(--liv-control-on-primary);font-size:12px}
+.liv-billing-package-reason{font-size:12px;color:var(--liv-account-muted);white-space:normal}
+.liv-billing-selection{display:flex;align-items:center;justify-content:space-between;gap:24px;margin-top:24px;padding:24px;background:var(--liv-account-surface);border-radius:20px}
+.liv-billing-selection h3{font-size:14px;font-weight:600;margin:0 0 4px}
+.liv-billing-selection p{font-size:13px;line-height:1.7;color:var(--liv-account-muted);margin:0}
+.liv-billing-selection>div:last-child{display:flex;align-items:center;gap:24px;flex:none}
+.liv-billing-selection strong{font-size:20px;font-weight:600}
+.liv-billing-selection button{border-radius:999px;min-width:160px;justify-content:center;height:40px;font-size:14px;cursor:pointer}
+.liv-billing-footnote{display:flex;gap:8px;margin:20px 0 0;color:var(--liv-account-muted);font-size:12px;line-height:1.7}
+.liv-billing-footnote .iconify{flex:none;margin-top:3px}
+.liv-billing-empty{padding:32px;text-align:center;font-size:14px;color:var(--liv-account-muted)}
+/* 账户宽版业务弹窗：固定头部、内容独立滚动，复用账户和设置的深色令牌。 */
+.liv-account-dialog{width:calc(100vw - 48px);max-width:1040px;max-height:calc(100dvh - 64px);border-radius:24px;background:var(--liv-account-surface)!important;color:var(--liv-account-text);border:1px solid var(--liv-account-border)}
+.liv-account-dialog-header{padding:20px 24px;border-bottom:1px solid var(--liv-account-border);flex:none}
+.liv-account-dialog-body{padding:0 24px 24px;min-height:0;overflow:auto}
+.liv-account-dialog-identity,.liv-account-ledger-heading{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:12px 0;font-size:14px}
+.liv-account-dialog-identity>span{font-size:16px;font-weight:600}
+.liv-account-ledger-heading{color:var(--liv-account-muted)}
+.liv-account-ledger-heading p{margin:0}.liv-account-dialog .liv-billing-overview{margin-bottom:16px}
+.liv-account-dialog .liv-billing-tabs{position:sticky;top:-1px;background:var(--liv-account-surface);z-index:1;flex-wrap:wrap}
+.liv-account-dialog button{cursor:pointer}.liv-account-dialog button:disabled{cursor:not-allowed}
+.liv-account-table-scroll{overflow-x:auto;border:1px solid var(--liv-account-border);border-radius:16px}
+.liv-account-ledger-table{width:100%;border-collapse:collapse;font-size:14px;line-height:1.7}
+.liv-account-ledger-table th,.liv-account-ledger-table td{padding:14px 16px;text-align:left;border-bottom:1px solid var(--liv-account-border)}
+.liv-account-ledger-table th{background:var(--liv-account-raised);color:var(--liv-account-muted);font-weight:500;white-space:nowrap}
+.liv-account-ledger-table td:first-child{min-width:200px}.liv-account-ledger-table td:not(:first-child){white-space:nowrap}
+.liv-account-ledger-table tr:last-child td{border-bottom:0}.liv-account-income{color:var(--liv-ui-primary-foreground)}
+.liv-account-load-error{font-size:14px;line-height:1.7;color:var(--color-state-danger)}
+.liv-account-dialog .bg-primary{color:var(--liv-control-on-primary)!important;border-radius:999px;min-height:36px;padding-inline:20px}
+.liv-account-tab-list{display:flex;flex-wrap:wrap;gap:8px;background:transparent!important;padding:0!important;width:100%;justify-content:flex-start}
+.liv-account-tab-trigger{flex:0 0 auto!important;color:var(--liv-account-muted)!important;border-radius:8px!important;height:40px;font-size:14px;font-weight:500;cursor:pointer}
+.liv-account-tab-trigger[data-state=active]{background:var(--liv-account-raised)!important;color:var(--liv-account-text)!important}
+.liv-account-tab-trigger:focus-visible{outline:2px solid var(--liv-ui-primary-foreground);outline-offset:2px}
+/* 订单采用复合信息列和十条页内浏览，单号降为次级文字，不挤压金额、状态和操作。 */
+.liv-order-heading,.liv-order-selection,.liv-order-pagination{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:16px 0;font-size:14px}
+.liv-order-heading h2{font-size:16px;font-weight:600;margin:0}.liv-order-heading p{font-size:13px;color:var(--liv-account-muted);margin:4px 0 0}
+.liv-order-selection{justify-content:flex-start;padding:12px 16px;background:var(--liv-account-raised);border-radius:12px}.liv-order-selection>button:last-child{margin-left:auto}
+.liv-order-table{width:100%;min-width:800px;border-collapse:collapse;font-size:14px;line-height:1.7}
+.liv-order-table th,.liv-order-table td{padding:12px 16px;border-bottom:1px solid var(--liv-account-border);text-align:left;vertical-align:middle}
+.liv-order-table th{font-weight:500;color:var(--liv-account-muted);background:var(--liv-account-raised);white-space:nowrap}
+.liv-order-table th:first-child,.liv-order-table td:first-child{width:40px;padding-right:0}.liv-order-table td:nth-child(2){max-width:280px}
+.liv-order-package{display:block;font-size:14px;font-weight:500}.liv-order-number{display:block;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:var(--liv-account-muted);margin-top:4px}
+.liv-order-meta{display:block;font-size:12px;color:var(--liv-account-muted);margin-top:4px}.liv-order-amount{font-weight:600;white-space:nowrap}.liv-order-table time{font-size:13px;white-space:nowrap}
+.liv-order-table td:last-child{white-space:nowrap}.liv-order-pagination{color:var(--liv-account-muted)}.liv-recharge-dialog{max-width:900px}
+.liv-billing-payment{text-align:center;display:flex;flex-direction:column;align-items:center;gap:12px}.liv-billing-payment>strong{font-size:24px;font-weight:600}.liv-billing-payment p{margin:0}
+/* 仅调整收银台层级，不影响到账成功页及其他设置弹窗。 */
+.liv-billing-cashier{gap:var(--liv-cashier-section-gap);color:var(--liv-settings-text)}
+.liv-billing-cashier-total{display:grid;gap:4px}.liv-billing-cashier-total>span{color:var(--liv-settings-muted);font-size:var(--liv-settings-body)}
+.liv-billing-cashier-total>strong{color:var(--liv-settings-text);font-size:var(--liv-cashier-amount-size);font-weight:600;line-height:1.3;font-variant-numeric:tabular-nums}
+.liv-billing-cashier-countdown{color:var(--liv-settings-muted);font-size:var(--liv-settings-note)}.liv-billing-cashier-countdown b{color:var(--liv-settings-text);font-variant-numeric:tabular-nums}
+.liv-billing-cashier-order{overflow-wrap:anywhere;max-width:100%}.liv-billing-cashier-instruction{max-width:100%;text-wrap:pretty}
+.liv-billing-cashier-notice{width:100%;box-sizing:border-box;padding:12px;border-radius:var(--liv-radius-lg);background:var(--color-surface-hover);color:var(--liv-settings-text);font-size:var(--liv-settings-note);text-align:left}
+.liv-billing-cashier-actions{display:grid;gap:var(--liv-cashier-action-gap);width:100%}
+.liv-billing-qr{width:250px;max-width:100%;padding:8px;background:var(--liv-control-on-primary);border-radius:12px;color:var(--color-text-main)}.liv-billing-qr img{width:100%}.liv-billing-qr .is-expired{opacity:.2;filter:blur(2px)}
+/* 旧开票业务保持原接口，在传送后的深色账户表面统一其存量工具类。 */
+.liv-account-dialog .bg-white,.liv-account-dialog .bg-slate-50{background:var(--liv-account-raised)!important}
+.liv-account-dialog [class*="text-slate-"],.liv-account-dialog .text-xs{color:var(--liv-account-muted);font-size:12px}
+.liv-account-dialog .text-blue-600{color:var(--liv-ui-primary-foreground)!important}
+.liv-account-dialog .bg-blue-600{background:var(--liv-accent)!important;color:var(--liv-control-on-primary)!important}
+.liv-account-dialog table{font-size:14px}.liv-account-dialog th{font-weight:500}
+.liv-account-dialog [class*="border-"],.liv-account-dialog .divide-y>tr{border-color:var(--liv-account-border)!important}
+@media(max-width:600px){.liv-account-dialog{width:calc(100vw - 32px);max-height:calc(100dvh - 32px)}.liv-account-dialog-header{padding:16px}.liv-account-dialog-body{padding:0 16px 16px}.liv-account-dialog .liv-billing-tabs{gap:4px}.liv-account-dialog .liv-billing-tabs button{padding-inline:12px}}
+/* 充值账号余额常驻，套餐使用紧凑卡片，底部只留原购买入口。 */
+.liv-recharge-dialog{height:min(var(--liv-recharge-height),calc(100dvh - 64px));overflow:hidden;display:flex;flex-direction:column}
+.liv-recharge-header{position:relative;border-bottom:0;padding:20px 48px 16px;justify-content:center}
+.liv-recharge-header>div{width:100%}.liv-recharge-title{text-align:center;font-size:var(--liv-recharge-title-size)!important;font-weight:700!important;line-height:1.5}
+.liv-recharge-body{flex:1;display:flex;flex-direction:column;overflow:hidden;gap:16px}
+.liv-recharge-account{display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:60px;padding:12px 16px;border:1px solid var(--liv-account-border);border-radius:16px;background:var(--liv-account-balance-surface);flex:none;font-size:14px}
+.liv-recharge-account>div{display:flex;align-items:center;gap:12px}.liv-recharge-account>div>span:first-child{font-size:13px;color:var(--liv-account-muted)}
+.liv-recharge-body>.liv-billing-page{flex:1;min-height:0;max-width:none;width:100%;margin:0;display:flex;flex-direction:column}
+.liv-recharge-dialog .liv-billing-content{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden;gap:16px}
+.liv-recharge-dialog .liv-billing-section-title{margin:0;align-items:center;flex-direction:row;flex:none}.liv-recharge-dialog .liv-billing-section-title h2{font-size:14px}
+.liv-recharge-dialog .liv-billing-packages{min-height:0;overflow:auto;align-content:start;padding-top:8px;overscroll-behavior:contain}
+.liv-recharge-dialog .liv-billing-package{min-height:var(--liv-recharge-package-height);padding:16px 12px;border-radius:20px!important;gap:4px}
+.liv-billing-purchase-action{display:flex;justify-content:center;flex:none;margin-top:auto;padding-top:16px}
+.liv-billing-purchase-action>button{width:320px;max-width:100%;height:48px;justify-content:center;border-radius:999px;font-size:16px;font-weight:600;background:var(--liv-accent)!important;color:var(--liv-control-on-primary)!important}
+@media(max-width:600px){.liv-recharge-dialog{height:min(var(--liv-recharge-height),calc(100dvh - 32px))}.liv-recharge-account{padding:8px 12px}.liv-recharge-account>div{gap:8px}.liv-recharge-account>strong{max-width:42%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.liv-recharge-body{gap:12px}}
+.liv-billing-checkout-summary{display:flex;justify-content:space-between;gap:24px;padding:16px;border:1px solid var(--liv-account-border);border-radius:16px;background:var(--liv-account-raised)}
+.liv-billing-checkout-summary>div{display:flex;flex-direction:column;gap:8px}.liv-billing-checkout-summary>div>span:first-child{color:var(--liv-account-muted);font-size:12px}.liv-billing-checkout-summary strong{font-size:20px;font-weight:600}
+/* 紧凑账户中心：隐藏重复标题，左导航固定，右侧仅业务内容滚动。 */
+.liv-account-hub{display:grid!important;grid-template-columns:var(--liv-account-hub-nav-width) minmax(0,1fr);width:min(var(--liv-account-hub-width),calc(100vw - 48px));height:min(var(--liv-account-hub-height),calc(100dvh - 64px));max-height:none;overflow:hidden;padding:24px;gap:20px}
+.liv-account-hub-close{position:absolute!important;right:8px;top:8px;width:28px;height:28px;min-height:28px!important;z-index:2;color:var(--liv-account-muted)!important}
+.liv-account-hub-nav{display:flex;flex-direction:column;gap:8px;padding-right:16px;border-right:1px solid var(--liv-account-border)}
+.liv-account-hub-nav button{justify-content:flex-start;padding:10px 12px;border-radius:12px;font-size:14px;color:var(--liv-account-muted)!important;white-space:nowrap}
+.liv-account-hub-nav button[aria-current=page]{background:var(--liv-account-hover)!important;color:var(--liv-account-text)!important}
+.liv-account-hub-main{display:flex;flex-direction:column;min-width:0;min-height:0;gap:12px}
+.liv-account-hub-identity{display:flex;align-items:center;justify-content:space-between;padding-right:20px;min-height:28px;flex:none}.liv-account-hub-identity strong{font-size:16px;font-weight:600}.liv-account-hub-identity button{min-height:28px!important;width:28px;height:28px;color:var(--liv-account-muted)!important}
+.liv-account-hub-balance{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:12px 16px;border-radius:16px;background:var(--liv-account-balance-surface);min-height:60px;flex:none}
+.liv-account-hub-balance>button{color:var(--liv-account-text)!important;border:1px solid var(--liv-account-border)!important;background:var(--liv-account-raised)!important;border-radius:8px;height:32px;padding-inline:16px;font-size:14px}
+.liv-account-hub-detail{flex:1;min-height:0;overflow:hidden}.liv-account-hub .liv-billing-page{height:100%;display:flex;flex-direction:column;margin:0;max-width:none}
+.liv-account-hub .liv-billing-tabs{flex:none;position:static;margin:0 0 12px;padding:0;background:transparent!important}.liv-account-hub .liv-account-tab-trigger{height:32px;min-height:32px!important;padding:4px 16px!important}
+.liv-account-hub .liv-billing-content{flex:1;min-height:0;overflow:hidden}
+/* 仅表格滚动，余额、页签、操作区和分页固定；发票非表格区保留原内部滚动。 */
+.liv-account-hub .liv-order-panel,.liv-account-hub .liv-ledger-panel{height:100%;min-height:0;display:flex;flex-direction:column;overflow:hidden}
+.liv-account-hub .liv-account-table-scroll{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;scrollbar-gutter:stable}
+.liv-account-hub .liv-account-table-scroll th{position:sticky;top:0;z-index:1}
+.liv-account-hub .liv-order-selection,.liv-account-hub .liv-order-pagination,.liv-account-hub .liv-account-ledger-heading{flex:none}
+.liv-account-hub .liv-billing-content:has(.liv-invoice-workspace){overflow:auto;overscroll-behavior:contain}
+.liv-account-hub .liv-account-ledger-heading{padding:8px 0;gap:8px;font-size:12px}
+.liv-account-hub .liv-account-ledger-table th,.liv-account-hub .liv-account-ledger-table td{padding:10px 12px;font-size:13px;line-height:1.6;border-bottom:0}
+.liv-account-hub .liv-account-ledger-table td:first-child{min-width:180px}.liv-account-hub .liv-account-table-scroll{border-radius:12px}
+.liv-account-hub table tbody tr:nth-child(even){background:var(--liv-account-row-stripe)}
+.liv-account-hub .liv-order-heading{margin:0 0 8px}.liv-account-hub .liv-order-heading h2{display:none}.liv-account-hub .liv-order-heading p{margin:0;font-size:12px}
+.liv-account-hub .liv-order-selection{margin:0 0 12px;padding:8px 12px}.liv-account-hub .liv-order-pagination{margin:8px 0;font-size:12px}.liv-account-hub .liv-order-table{min-width:720px}.liv-account-hub .liv-order-table th,.liv-account-hub .liv-order-table td{padding:10px 12px;border-bottom:0}
+.liv-invoice-workspace{display:flex;flex-direction:column;gap:16px;color:var(--liv-account-text);font-size:14px;line-height:1.7}
+.liv-invoice-section{border:1px solid var(--liv-account-border);border-radius:12px;padding:16px;background:var(--liv-account-raised)}
+.liv-invoice-section>header{display:flex;justify-content:space-between;align-items:center;gap:12px}.liv-invoice-section h3{font-size:16px;font-weight:600;margin:0}
+.liv-invoice-workspace button{font-size:13px;min-height:32px;color:var(--liv-account-text)!important;border-radius:8px;cursor:pointer}.liv-invoice-workspace button:not(:disabled):hover{background:var(--liv-account-hover)!important}
+.liv-invoice-workspace button[data-state],.liv-invoice-workspace button[aria-pressed=true]{background:var(--liv-account-hover)!important}
+.liv-invoice-empty{color:var(--liv-account-muted);font-size:13px;padding:20px 0;text-align:center;margin:0}
+.liv-invoice-titles{display:grid;gap:12px;margin-top:12px}.liv-invoice-title-card,.liv-invoice-record{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;padding:12px;border:1px solid var(--liv-account-border);border-radius:8px}
+.liv-invoice-title-card>div:last-child{display:flex;gap:8px}.liv-invoice-title-card strong,.liv-invoice-record strong{font-weight:500}.liv-invoice-title-card p,.liv-invoice-record details{font-size:12px;color:var(--liv-account-muted);margin:4px 0 0}.liv-invoice-record{margin-top:12px}.liv-invoice-record summary{cursor:pointer}
+.liv-invoice-filters{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-top:12px}.liv-invoice-filters>button:last-child{margin-left:auto}
+@media(max-width:600px){.liv-account-hub{width:calc(100vw - 32px);height:min(var(--liv-account-hub-height),calc(100dvh - 32px));padding:16px;grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr);gap:12px}.liv-account-hub-nav{flex-direction:row;border-right:0;border-bottom:1px solid var(--liv-account-border);padding:0 20px 12px 0;gap:4px}.liv-account-hub-nav button{padding:6px 12px}.liv-account-hub-main{gap:8px}.liv-account-hub-balance{padding:8px 12px;min-height:52px}.liv-account-hub .liv-account-tab-trigger{padding:4px 12px!important}.liv-invoice-section{padding:12px}}
+@media(max-width:900px){.liv-billing-packages{grid-template-columns:repeat(3,minmax(0,1fr))}.liv-billing-heading,.liv-billing-overview{flex-wrap:wrap}.liv-billing-recent{flex-wrap:wrap}.liv-billing-selection{align-items:flex-start;flex-direction:column;width:100%}.liv-billing-selection>div:last-child{width:100%;justify-content:space-between}}
+@media(max-width:600px){.liv-billing-packages{grid-template-columns:repeat(2,minmax(0,1fr))}.liv-billing-section-title{align-items:flex-start;flex-direction:column;gap:0}.liv-billing-overview,.liv-billing-selection{padding:16px}.liv-billing-selection button{min-width:120px}.liv-account-dropdown{width:288px}}
+/* 顶栏胶囊紧凑统一：选中项从上到下填满，长标签不被相邻账户区压缩。 */
+.dashboard-topbar .creation-entry-tabs{height:var(--liv-topbar-control-height);padding:0;gap:0;max-width:100%}
+.dashboard-topbar .creation-entry-tabs button{height:var(--liv-topbar-control-height);min-height:var(--liv-topbar-control-height);padding:0 16px;font-size:14px;flex:0 0 auto}
+.dashboard-topbar .creation-entry-tabs button.active{background:var(--liv-account-text)}
+.dashboard-shell .dashboard-topbar .dashboard-account-pill{display:flex;align-items:center;gap:1px;flex:none;height:var(--liv-topbar-control-height);box-sizing:border-box;padding:2px;border:1px solid var(--liv-account-border);border-radius:999px;background:var(--liv-account-raised);color:var(--liv-account-text)}
+.dashboard-shell .dashboard-topbar .dashboard-account-pill .dashboard-credit-pill,.dashboard-shell .dashboard-topbar .dashboard-account-pill .dashboard-user-trigger{height:calc(var(--liv-topbar-control-height) - 6px)!important;min-height:calc(var(--liv-topbar-control-height) - 6px)!important;border:0!important;background:transparent!important;box-shadow:none!important}
+.dashboard-shell .dashboard-topbar .dashboard-account-pill .dashboard-credit-pill{padding:0 8px!important;font-size:14px;gap:6px}
+.dashboard-shell .dashboard-topbar .dashboard-account-pill .dashboard-user-trigger{padding:0!important;gap:0;width:calc(var(--liv-topbar-control-height) - 6px);justify-content:center}
+.dashboard-shell .dashboard-topbar .dashboard-account-pill .dashboard-user-avatar{width:calc(var(--liv-topbar-control-height) - 8px)!important;height:calc(var(--liv-topbar-control-height) - 8px)!important}
+.dashboard-topbar>.flex>.liv-settings-button{height:var(--liv-topbar-control-height)!important;min-height:var(--liv-topbar-control-height)!important}
+/* 桌面适度放大，手机仍沿用紧凑高度及留白，避免分类文字被挤出视口。 */
+@media(max-width:600px){.dashboard-topbar{--liv-topbar-control-height:36px}.dashboard-topbar .creation-entry-tabs button{padding:0 9px;font-size:12px}}
+/* 极窄手机进一步缩小左右留白，保留五个完整文字标签与统一控件高度。 */
+@media(max-width:360px){.dashboard-topbar .creation-entry-tabs button{padding-inline:6px}}
+/* 技能示例与模板同用字段语法，但此处仅提示，按 Tab 才写入编辑器。 */
+.creation-placeholder{white-space:pre-line;max-height:100%;overflow:hidden;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:4}
+/* 技能页只展示目录和同一停靠编辑器，不继承首页居中输入区的 800px 限宽。 */
+.creation-studio.is-skills-page .creation-home{width:100%;max-width:none;margin:0}
+.creation-studio.is-skills-page .creation-entry-column{width:100%;max-width:none}
+.creation-studio.is-skills-page .creation-composer-slot{height:0;min-height:0!important}
+.creation-studio.is-skills-page{padding-bottom:112px}
+.creation-studio.is-skills-page .skill-center{max-width:1500px;padding:16px 0 32px;margin:auto}
+/* 快捷技能沿用公开说明与 Nuxt 原生悬停范围，使用按钮为独立操作。 */
+/* 快捷技能卡片轻量收紧上下留白与按钮预留，不缩小封面和正文。 */
+.creation-home .creation-quick-templates{row-gap:6px}
+.creation-quick-skill{display:inline-flex;align-items:center;gap:4px;border:1px solid var(--color-border-soft);border-radius:12px;background:var(--liv-settings-panel);padding:3px;max-width:100%}
+/* 首行给恢复卡片预留位置，后续换行回到正文左边缘；按钮不进入可编辑文字或复制内容。 */
+.creation-composer .creation-skill-prompt-undo{position:absolute;z-index:1;top:4px;left:1px;width:var(--liv-prompt-undo-width);height:28px;min-height:28px;justify-content:center;color:var(--liv-settings-muted);background:var(--color-surface-hover);border-radius:8px;font-size:12px;line-height:20px;padding:0 4px;margin:0;white-space:nowrap}
+.creation-composer .has-skill-prompt-undo .creation-editor{text-indent:calc(var(--liv-prompt-undo-width) + 8px)}
+.creation-composer .has-skill-prompt-undo .creation-placeholder{left:calc(var(--liv-prompt-undo-width) + 9px)}
+.creation-quick-skill.active{border-color:var(--liv-ui-primary-foreground)}
+.creation-quick-skill .creation-quick-skill-main{display:flex;align-items:center;gap:6px;min-height:34px;padding:0;border:0;background:transparent;color:var(--liv-settings-text);font-size:14px;cursor:pointer}
+.creation-quick-skill-main img{width:48px;height:28px;object-fit:cover;border-radius:8px}
+/* 快捷技能仅保留下方使用按钮，沿用技能卡试一试的白底深字胶囊，不改变选用与发送边界。 */
+.creation-quick-templates .creation-quick-skill .creation-quick-skill-use{border:0;border-radius:999px!important;min-height:32px;font-size:12px;padding:0 8px;background:var(--liv-control-on-primary)!important;color:var(--liv-page-background)!important;visibility:hidden}
+.creation-quick-skill:hover .creation-quick-skill-use,.creation-quick-skill:focus-within .creation-quick-skill-use{visibility:visible}
+.creation-quick-skill-preview{width:var(--liv-skill-preview-width);overflow:hidden;border:1px solid var(--color-border-soft);border-radius:16px;background:var(--liv-settings-panel);color:var(--liv-settings-text)}
+.creation-quick-skill-media{aspect-ratio:16/9;cursor:pointer}.creation-quick-skill-media img{width:100%;height:100%;object-fit:cover}.creation-quick-skill-copy{padding:12px}.creation-quick-skill-copy b{font-size:14px}.creation-quick-skill-copy p{font-size:12px;line-height:1.6;color:var(--liv-settings-muted);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;margin:6px 0 0}
+.creation-model-list{position:relative;overflow-y:auto;overscroll-behavior:contain;max-height:var(--liv-model-list-height);min-height:0;scrollbar-gutter:stable}.creation-model-list h4{font-size:12px;font-weight:700;color:var(--liv-settings-muted);padding:8px}.creation-model-copy b{display:flex;align-items:center;gap:4px;min-width:0}.creation-model-copy b>span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.creation-model-badge{flex:none;font-size:12px;line-height:16px;border-radius:4px;padding:0 4px;color:var(--liv-badge-indigo);background:color-mix(in srgb,currentColor 14%,transparent)}
+.creation-model-badge[data-tone=green]{color:var(--liv-badge-green)}.creation-model-badge[data-tone=amber]{color:var(--liv-badge-amber)}.creation-model-badge[data-tone=rose]{color:var(--liv-badge-rose)}.creation-model-badge[data-tone=cyan]{color:var(--liv-badge-cyan)}
+.creation-composer.is-drama,.creation-composer.is-drama:hover,.creation-composer.is-drama:focus-within{border:0!important;box-shadow:none!important}
+@media(hover:none){.creation-quick-skill-use{visibility:visible}}

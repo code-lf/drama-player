@@ -60,17 +60,17 @@ test('滚动隔离、圆箭头锚定及停靠编辑器只有一个实例',()=>{
   assert.ok(composer.includes('grid-template-columns:48px minmax(0,1fr) 16px'))
 })
 
-test('首页仅在大编辑器滚出且案例标题吸顶后停靠，保留占位与窄屏宽度约束',()=>{
+test('首页大编辑器滚出立即停靠，保留占位与窄屏宽度约束',()=>{
   const studio=read('features/creation/components/CreationStudio.vue'),composer=read('features/creation/components/CreationComposer.vue')
   assert.ok(studio.includes(':docked="homeDockVisible"'))
-  assert.ok(studio.includes('homeComposerSlot.value.getBoundingClientRect().bottom<=top && caseHeader.value.getBoundingClientRect().top<=top+1'))
+  assert.ok(studio.includes('homeComposerShouldDock(homeComposerSlot.value.getBoundingClientRect().bottom,top)'))
   assert.ok(studio.includes('homeComposerExpanded.value?800:435'))
   assert.ok(studio.includes('minHeight:`${homeComposerHeight}px`'))
   assert.ok(composer.includes('class="creation-dock-arrow"'))
-  assert.ok(read('assets/css/tokens.css').includes('--liv-home-dock-height: 75px'))
+  assert.ok(read('assets/css/tokens.css').includes('--liv-home-dock-height: 56px'))
 })
 
 test('案例标题单行省略且保留完整标题提示',()=>{
   assert.ok(read('assets/css/creation.css').includes('overflow:hidden;white-space:nowrap;text-overflow:ellipsis'))
-  assert.ok(read('features/creation/components/CreationStudio.vue').includes('<b :title="item.title">{{ item.title }}</b>'))
+  assert.match(read('features/creation/components/CreationStudio.vue'),/<b :title="item.title">\{\{\s*item.title\s*\}\}<\/b>/)
 })

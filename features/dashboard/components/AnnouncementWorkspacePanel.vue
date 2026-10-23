@@ -1,331 +1,95 @@
 <script setup lang="ts">
-import type { SystemAnnouncement } from '~/entities/announcement/types'
-import { useAuthStore } from '~/features/auth/store/useAuthStore'
-import { announcementService } from '~/shared/api/services/announcementService'
-import { persistAnnouncementReadIds, restoreAnnouncementReadIds } from '~/shared/utils/announcementReadState'
-import { sanitizeAnnouncementContent } from '~/shared/utils/sanitizeAnnouncementContent'
-import { announcementExcerpt } from '~/shared/utils/announcementExcerpt'
-
-const authStore = useAuthStore()
-const announcements = ref<SystemAnnouncement[]>([])
-const readIds = ref<Set<string>>(new Set())
-const loading = ref(false)
-const detailAnnouncement = ref<SystemAnnouncement | null>(null)
-
-const currentUserKey = computed(() => authStore.session.user?.id || 'guest')
-const unreadCount = computed(() => announcements.value.filter((item) => !readIds.value.has(item.id)).length)
-
-function levelIconClass(level: SystemAnnouncement['level']): string {
-  if (level === 'success') return 'bg-emerald-50 text-emerald-500'
-  if (level === 'warning') return 'bg-orange-50 text-orange-500'
-  if (level === 'danger') return 'bg-rose-50 text-rose-500'
-  return 'bg-blue-50 text-[#005FFE]'
+import type {SystemAnnouncement} from '~/entities/announcement/types'
+import {useAuthStore} from '~/features/auth/store/useAuthStore'
+import {announcementService} from '~/shared/api/services/announcementService'
+import {persistAnnouncementReadIds,restoreAnnouncementReadIds} from '~/shared/utils/announcementReadState'
+import {sanitizeAnnouncementContent} from '~/shared/utils/sanitizeAnnouncementContent'
+import {safeAnnouncementLink} from '~/shared/utils/announcementFeed'
+const auth=useAuthStore(),owner=computed(()=>auth.session.user?.id||'guest')
+const announcements=ref<SystemAnnouncement[]>([]),loading=ref(false),error=ref(''),hasMore=ref(true),offset=ref(0),sentinel=ref<HTMLElement|null>(null),timeline=ref<HTMLElement|null>(null)
+let revision=0,controller:AbortController|undefined,loader:IntersectionObserver|undefined,reader:IntersectionObserver|undefined
+let readIds=new Set<string>()
+/** 观察器绑定本轮账号和请求版本，旧页面的可见回调不写入新账号已读记录。 */
+function createReader(){
+  const key=owner.value,current=revision,root=sentinel.value?.closest('.dashboard-main-content')||null
+  return new IntersectionObserver(entries=>{
+    if(key!==owner.value||current!==revision)return
+    let changed=false
+    for(const entry of entries){if(!entry.isIntersecting)continue;const id=(entry.target as HTMLElement).dataset.announcementId;if(id&&!readIds.has(id)){readIds.add(id);changed=true}reader?.unobserve(entry.target)}
+    if(changed)persistAnnouncementReadIds(key,readIds)
+  },{root,threshold:0.1})
 }
-
-function levelLabel(level: SystemAnnouncement['level']): string {
-  if (level === 'success') return '功能更新'
-  if (level === 'warning') return '重要提醒'
-  if (level === 'danger') return '安全提醒'
-  return '平台公告'
-}
-
-function relativeTime(value: string): string {
-  if (!value) return '刚刚'
-  const timestamp = new Date(value).getTime()
-  if (Number.isNaN(timestamp)) return '刚刚'
-  const diffMs = Date.now() - timestamp
-  const minute = 60 * 1000
-  const hour = 60 * minute
-  const day = 24 * hour
-  if (diffMs < hour) return `${Math.max(1, Math.floor(diffMs / minute))} 分钟前`
-  if (diffMs < day) return `${Math.floor(diffMs / hour)} 小时前`
-  return `${Math.floor(diffMs / day)} 天前`
-}
-
-function persistReadIds(): void {
-  persistAnnouncementReadIds(currentUserKey.value, readIds.value)
-}
-
-function markRead(id: string): void {
-  if (readIds.value.has(id)) return
-  readIds.value = new Set([...readIds.value, id])
-  persistReadIds()
-}
-
-function markAllRead(): void {
-  readIds.value = new Set(announcements.value.map((item) => item.id))
-  persistReadIds()
-}
-
-function openDetail(item: SystemAnnouncement): void {
-  detailAnnouncement.value = item
-  markRead(item.id)
-}
-
-function closeDetail(): void {
-  detailAnnouncement.value = null
-}
-
-async function loadAnnouncements(): Promise<void> {
-  if (loading.value) return
-  loading.value = true
-  try {
-    readIds.value = restoreAnnouncementReadIds(currentUserKey.value)
-    announcements.value = await announcementService.getActive('global')
-  } catch (error) {
-    // 公告页失败不影响短剧主流程，保留日志方便定位接口或网关问题。
-    console.error('[livliv] 全部公告加载失败', error)
-  } finally {
-    loading.value = false
+function dateLabel(value:string){const date=new Date(value);return Number.isNaN(date.getTime())?'':date.toLocaleDateString('zh-CN',{year:'numeric',month:'long',day:'numeric'})}
+/** 每页只拼接未出现的公告，账号切换、卸载和迟到请求均不能污染当前列表。 */
+async function loadMore(){
+  if(loading.value||!hasMore.value)return
+  const current=revision,key=owner.value,start=offset.value
+  controller?.abort();controller=new AbortController();loading.value=true;error.value=''
+  try{
+    const page=await announcementService.feed(start,controller.signal)
+    if(current!==revision||key!==owner.value)return
+    const ids=new Set(announcements.value.map(item=>item.id))
+    announcements.value=[...announcements.value,...page.items.filter(item=>!ids.has(item.id))]
+    hasMore.value=page.next_offset!==null&&page.next_offset>start
+    offset.value=page.next_offset??start
+    await nextTick()
+    timeline.value?.querySelectorAll<HTMLElement>('[data-announcement-id]').forEach(node=>{if(!readIds.has(node.dataset.announcementId||''))reader?.observe(node)})
+  }catch(reason){if(current===revision)error.value=reason instanceof Error?reason.message:'公告读取失败，请重试。'}
+  finally{
+    if(current===revision){
+      loading.value=false
+      // 首屏未填满时继续读下一页；没有真实下一页或失败时不自动循环。
+      const target=sentinel.value,root=target?.closest('.dashboard-main-content')
+      if(!error.value&&hasMore.value&&target&&target.getBoundingClientRect().top<(root?.getBoundingClientRect().bottom||window.innerHeight)+160)void loadMore()
+    }
   }
 }
-
-onMounted(loadAnnouncements)
+function reset(){revision++;controller?.abort();reader?.disconnect();reader=createReader();announcements.value=[];loading.value=false;offset.value=0;hasMore.value=true;readIds=restoreAnnouncementReadIds(owner.value);void loadMore()}
+watch(owner,()=>{if(import.meta.client)reset()})
+onMounted(()=>{
+  const root=sentinel.value?.closest('.dashboard-main-content')||null
+  // 公告只在实际进入可视区后记为已读，不因预加载整页而提前清除全部红点。
+  loader=new IntersectionObserver(entries=>{if(entries.some(entry=>entry.isIntersecting)&&!error.value)void loadMore()},{root,rootMargin:'160px'})
+  if(sentinel.value)loader.observe(sentinel.value)
+  reset()
+})
+onBeforeUnmount(()=>{revision++;controller?.abort();loader?.disconnect();reader?.disconnect()})
 </script>
-
 <template>
-  <section class="announcement-workspace mx-auto max-w-[1120px] space-y-5">
-    <div class="flex flex-wrap items-end justify-between gap-4">
-      <div>
-        <p class="text-[14px] font-black text-[#005FFE]">公告中心</p>
-        <h1 class="announcement-workspace-title mt-2 text-[30px] font-black tracking-[-0.04em] text-[#0b1220]">全部公告</h1>
-        <p class="announcement-workspace-subtitle mt-2 text-[14px] font-semibold text-[#64748b]">平台更新、活动提醒和账号安全信息都会展示在这里。</p>
-      </div>
-      <button
-        class="announcement-workspace-action flex h-10 items-center justify-center rounded-[12px] border border-[#dbe4f0] bg-white px-5 text-[14px] font-black text-[#005FFE] transition hover:border-[#005FFE]/45 hover:bg-[#f7faff] disabled:text-[#9aa7bd]"
-        type="button"
-        :disabled="unreadCount === 0 || announcements.length === 0"
-        @click="markAllRead"
-      >
-        全部已读
-      </button>
-    </div>
-
-    <div class="announcement-workspace-card rounded-[22px] border border-[#dfe7f2] bg-white p-4 shadow-[0_18px_56px_rgba(15,23,42,0.06)]">
-      <DashboardSkeleton v-if="loading" :rows="3" />
-
-      <div v-else-if="announcements.length === 0" class="announcement-workspace-empty rounded-[18px] border border-dashed border-[#cdd9e8] bg-[#f8fbff] px-6 py-16 text-center">
-        <p class="announcement-workspace-empty-title text-[18px] font-black text-[#111827]">暂无公告</p>
-        <p class="announcement-workspace-empty-desc mt-2 text-[14px] font-semibold text-[#7b8aa3]">有新的平台消息时会第一时间同步到这里。</p>
-      </div>
-
-      <div v-else class="divide-y divide-[#edf2f7]">
-        <button
-          v-for="item in announcements"
-          :key="item.id"
-          class="announcement-workspace-item group flex w-full items-start gap-4 rounded-[16px] px-4 py-4 text-left transition hover:bg-[#f7faff]"
-          type="button"
-          @click="openDetail(item)"
-        >
-          <span class="mt-1 flex h-12 w-12 shrink-0 items-center justify-center rounded-[14px]" :class="levelIconClass(item.level)">
-            <svg v-if="item.level === 'warning'" viewBox="0 0 24 24" class="h-6 w-6" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M12 9v4M12 17h.01" stroke-linecap="round" />
-              <path d="M10.3 4.3 2.8 17a2 2 0 0 0 1.7 3h15a2 2 0 0 0 1.7-3L13.7 4.3a2 2 0 0 0-3.4 0Z" stroke-linejoin="round" />
-            </svg>
-            <svg v-else-if="item.level === 'success'" viewBox="0 0 24 24" class="h-6 w-6" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M5 12.5 9.2 17 19 7" stroke-linecap="round" stroke-linejoin="round" />
-            </svg>
-            <svg v-else-if="item.level === 'danger'" viewBox="0 0 24 24" class="h-6 w-6" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M12 8v5M12 17h.01" stroke-linecap="round" />
-              <circle cx="12" cy="12" r="9" />
-            </svg>
-            <svg v-else viewBox="0 0 24 24" class="h-6 w-6" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M7 10.5 12 6l5 4.5M8 10v8h8v-8" stroke-linecap="round" stroke-linejoin="round" />
-              <path d="M10 14h4" stroke-linecap="round" />
-            </svg>
-          </span>
-
-          <span class="min-w-0 flex-1">
-            <span class="flex flex-wrap items-center gap-2">
-              <span v-if="!readIds.has(item.id)" class="h-2 w-2 shrink-0 rounded-full bg-[#005FFE]"></span>
-              <span class="rounded-full bg-[#edf5ff] px-2.5 py-1 text-[12px] font-black text-[#005FFE]">{{ levelLabel(item.level) }}</span>
-              <span class="text-[12px] font-semibold text-[#8a98ad]">{{ relativeTime(item.updatedAt || item.createdAt) }}</span>
-            </span>
-            <span class="mt-2 block truncate text-[17px] font-black text-[#111827]">{{ item.title }}</span>
-            <span class="mt-1 line-clamp-2 text-[14px] font-semibold leading-6 text-[#64748b]">{{ announcementExcerpt(item.content) || '点击查看公告详情' }}</span>
-          </span>
-
-          <svg viewBox="0 0 24 24" class="mt-5 h-5 w-5 shrink-0 text-[#94a3b8] transition group-hover:translate-x-0.5 group-hover:text-[#005FFE]" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="m9 18 6-6-6-6" stroke-linecap="round" stroke-linejoin="round" />
-          </svg>
-        </button>
-      </div>
-    </div>
-
-    <Teleport to="body">
-      <transition
-        enter-active-class="transition duration-180 ease-out"
-        enter-from-class="opacity-0"
-        enter-to-class="opacity-100"
-        leave-active-class="transition duration-120 ease-in"
-        leave-from-class="opacity-100"
-        leave-to-class="opacity-0"
-      >
-        <div v-if="detailAnnouncement" class="fixed inset-0 z-[260] flex items-center justify-center bg-slate-950/45 px-4 backdrop-blur-sm" @click.self="closeDetail">
-          <article class="announcement-workspace-detail-modal max-h-[82vh] w-full max-w-[680px] overflow-hidden rounded-[24px] bg-white shadow-[0_28px_90px_rgba(15,23,42,0.28)]">
-            <div class="announcement-workspace-detail-section flex items-start justify-between gap-4 border-b border-[#edf2f7] px-7 py-6">
-              <div class="min-w-0">
-                <p class="text-[13px] font-black text-[#005FFE]">公告详情</p>
-                <h3 class="announcement-workspace-detail-title mt-2 text-[24px] font-black leading-tight text-[#111827]">{{ detailAnnouncement.title }}</h3>
-                <p class="announcement-workspace-detail-time mt-2 text-[13px] font-semibold text-[#7b8aa3]">{{ relativeTime(detailAnnouncement.updatedAt || detailAnnouncement.createdAt) }}</p>
-              </div>
-              <button class="announcement-workspace-detail-close flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[#64748b] transition hover:bg-[#f3f6fb] hover:text-[#111827]" type="button" @click="closeDetail">
-                <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M6 6l12 12M18 6 6 18" stroke-linecap="round" />
-                </svg>
-              </button>
-            </div>
-
-            <div class="max-h-[52vh] overflow-y-auto px-7 py-6">
-              <div class="announcement-rich-content text-[15px] leading-7 text-[#334155]" v-html="sanitizeAnnouncementContent(detailAnnouncement.content)" />
-            </div>
-
-            <div class="announcement-workspace-detail-section flex justify-end gap-3 border-t border-[#edf2f7] px-7 py-5">
-              <button class="announcement-workspace-detail-close rounded-full border border-[#dbe4f0] px-5 py-2 text-[14px] font-bold text-[#53627c] transition hover:bg-[#f7faff]" type="button" @click="closeDetail">
-                关闭
-              </button>
-              <a
-                v-if="detailAnnouncement.linkUrl"
-                class="rounded-full bg-[#005FFE] px-5 py-2 text-[14px] font-bold text-white shadow-[0_12px_28px_rgba(0,95,254,0.22)] transition hover:bg-[#0054E0]"
-                :href="detailAnnouncement.linkUrl"
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                {{ detailAnnouncement.linkText || '查看详情' }}
-              </a>
-            </div>
-          </article>
+  <section class="announcement-timeline-page" :aria-busy="loading">
+    <h1>全部公告</h1>
+    <div ref="timeline" class="announcement-timeline">
+      <article v-for="item in announcements" :key="item.id" :data-announcement-id="item.id" class="announcement-timeline-item">
+        <aside><time :datetime="item.createdAt">{{dateLabel(item.createdAt)}}</time></aside>
+        <div class="announcement-timeline-copy">
+          <h2>{{item.title}}</h2>
+          <div class="announcement-timeline-body" v-html="sanitizeAnnouncementContent(item.content)"/>
+          <UButton v-if="safeAnnouncementLink(item.linkUrl)" :href="safeAnnouncementLink(item.linkUrl)" :target="item.linkUrl.startsWith('http')?'_blank':undefined" rel="noopener noreferrer" color="neutral" variant="soft" trailing-icon="i-lucide-arrow-up-right">{{item.linkText||'查看详情'}}</UButton>
         </div>
-      </transition>
-    </Teleport>
+      </article>
+    </div>
+    <p v-if="!loading&&!error&&!announcements.length" class="announcement-timeline-muted">暂无公告</p>
+    <div v-if="error" role="alert" class="announcement-timeline-error"><p>{{error}}</p><UButton color="neutral" variant="soft" @click="loadMore">重新加载</UButton></div>
+    <div v-if="loading" class="announcement-timeline-loading" role="status" aria-label="正在读取公告"><USkeleton class="announcement-date-placeholder"/><div><USkeleton class="announcement-title-placeholder"/><USkeleton class="announcement-body-placeholder"/></div></div>
+    <div ref="sentinel" class="announcement-feed-sentinel" aria-hidden="true"/>
   </section>
 </template>
-
 <style scoped>
-.announcement-rich-content :deep(p) {
-  margin: 0;
-}
-
-.announcement-rich-content :deep(p + p),
-.announcement-rich-content :deep(blockquote),
-.announcement-rich-content :deep(pre),
-.announcement-rich-content :deep(ul),
-.announcement-rich-content :deep(ol) {
-  margin-top: 10px;
-}
-
-.announcement-rich-content :deep(h1),
-.announcement-rich-content :deep(h2),
-.announcement-rich-content :deep(h3),
-.announcement-rich-content :deep(h4) {
-  margin: 10px 0 6px;
-  font-weight: 900;
-  line-height: 1.35;
-  color: #111827;
-}
-
-.announcement-rich-content :deep(ul),
-.announcement-rich-content :deep(ol) {
-  padding-left: 20px;
-}
-
-.announcement-rich-content :deep(ul) {
-  list-style: disc;
-}
-
-.announcement-rich-content :deep(ol) {
-  list-style: decimal;
-}
-
-.announcement-rich-content :deep(a) {
-  color: #005FFE;
-  font-weight: 800;
-  text-decoration: underline;
-  text-underline-offset: 3px;
-}
-
-.announcement-rich-content :deep(blockquote) {
-  padding-left: 12px;
-  border-left: 3px solid #005FFE;
-  color: #475569;
-}
-
-.announcement-rich-content :deep(img) {
-  max-width: min(100%, 560px);
-  max-height: 340px;
-  border-radius: 14px;
-}
-
-/* 全部公告页是独立工作区，空状态、列表和详情弹窗都要跟随当前主题。 */
-:global([data-theme='dark']) .announcement-workspace-title,
-:global([data-theme='dark']) .announcement-workspace-empty-title,
-:global([data-theme='dark']) .announcement-workspace-detail-title {
-  color: var(--color-text-main) !important;
-}
-
-:global([data-theme='dark']) .announcement-workspace-subtitle,
-:global([data-theme='dark']) .announcement-workspace-empty-desc,
-:global([data-theme='dark']) .announcement-workspace-detail-time,
-:global([data-theme='dark']) .announcement-workspace-item .text-\[\#64748b\],
-:global([data-theme='dark']) .announcement-workspace-item .text-\[\#8a98ad\] {
-  color: var(--color-text-muted) !important;
-}
-
-:global([data-theme='dark']) .announcement-workspace-card,
-:global([data-theme='dark']) .announcement-workspace-detail-modal {
-  background: var(--color-panel) !important;
-  border-color: var(--color-border-soft) !important;
-  color: var(--color-text-main) !important;
-  box-shadow: var(--shadow-panel) !important;
-}
-
-:global([data-theme='dark']) .announcement-workspace-empty {
-  background: var(--color-surface-base) !important;
-  border-color: var(--color-border-soft) !important;
-  color: var(--color-text-muted) !important;
-}
-
-:global([data-theme='dark']) .announcement-workspace-action,
-:global([data-theme='dark']) .announcement-workspace-detail-close {
-  background: var(--color-surface-raised) !important;
-  border-color: var(--color-border-soft) !important;
-  color: var(--color-neon) !important;
-}
-
-:global([data-theme='dark']) .announcement-workspace-action:hover,
-:global([data-theme='dark']) .announcement-workspace-detail-close:hover,
-:global([data-theme='dark']) .announcement-workspace-item:hover {
-  background: var(--color-surface-hover) !important;
-}
-
-:global([data-theme='dark']) .announcement-workspace-detail-section {
-  border-color: var(--color-border-soft) !important;
-}
-
-:global([data-theme='dark']) .announcement-workspace-item {
-  color: var(--color-text-main) !important;
-}
-
-:global([data-theme='dark']) .announcement-workspace-item .text-\[\#111827\] {
-  color: var(--color-text-main) !important;
-}
-
-:global([data-theme='dark']) .announcement-workspace-item + .announcement-workspace-item {
-  border-color: var(--color-border-soft) !important;
-}
-
-:global([data-theme='dark']) .announcement-rich-content {
-  color: var(--color-text-main) !important;
-}
-
-:global([data-theme='dark']) .announcement-rich-content :deep(h1),
-:global([data-theme='dark']) .announcement-rich-content :deep(h2),
-:global([data-theme='dark']) .announcement-rich-content :deep(h3),
-:global([data-theme='dark']) .announcement-rich-content :deep(h4) {
-  color: var(--color-text-main) !important;
-}
-
-:global([data-theme='dark']) .announcement-rich-content :deep(blockquote) {
-  color: var(--color-text-muted) !important;
-}
+.announcement-timeline-page{max-width:1000px;margin:0 auto;color:var(--liv-account-text)}
+.announcement-timeline-page>h1{font-size:24px;line-height:1.5;font-weight:700;margin:0 0 36px}
+.announcement-timeline-item{display:grid;grid-template-columns:160px minmax(0,1fr);gap:36px;padding:0 0 44px;margin-bottom:44px;border-bottom:1px solid var(--liv-account-border)}
+.announcement-timeline-item>aside{position:relative;font-size:13px;line-height:24px;color:var(--liv-account-muted);padding-left:18px;border-left:1px solid var(--liv-account-border)}
+.announcement-timeline-item>aside::before{content:'';position:absolute;left:-4px;top:8px;width:7px;height:7px;border-radius:50%;background:var(--liv-account-muted)}
+.announcement-timeline-copy{min-width:0}.announcement-timeline-copy>h2{margin:0 0 20px;font-size:20px;line-height:1.5;font-weight:600;color:var(--liv-account-text)}
+.announcement-timeline-body{font-size:14px;line-height:1.85;overflow-wrap:anywhere;color:var(--liv-account-muted)}
+.announcement-timeline-body :deep(p){margin:0 0 12px;color:inherit!important}
+.announcement-timeline-body :deep(h1),.announcement-timeline-body :deep(h2),.announcement-timeline-body :deep(h3),.announcement-timeline-body :deep(h4){font-size:18px;font-weight:600;line-height:1.6;margin:24px 0 12px;color:var(--liv-account-text)!important}
+.announcement-timeline-body :deep(ul),.announcement-timeline-body :deep(ol){padding-left:24px;margin:12px 0;list-style:revert}
+.announcement-timeline-body :deep(img){display:block;width:auto;max-width:100%;height:auto;border-radius:14px;margin:20px 0}
+.announcement-timeline-body :deep(a){color:var(--liv-ui-primary-foreground)!important;text-decoration:underline}
+.announcement-timeline-body :deep(pre){white-space:pre-wrap;overflow-wrap:anywhere;max-width:100%;padding:12px;background:var(--liv-account-raised);border-radius:8px}
+.announcement-timeline-copy>.liv-button,.announcement-timeline-copy>a{margin-top:12px}
+.announcement-timeline-muted,.announcement-timeline-error{color:var(--liv-account-muted);font-size:14px}.announcement-feed-sentinel{height:1px}
+.announcement-timeline-loading{display:grid;grid-template-columns:160px minmax(0,1fr);gap:36px}.announcement-date-placeholder{height:20px;width:120px}.announcement-title-placeholder{height:28px;width:60%;margin-bottom:20px}.announcement-body-placeholder{height:160px;width:100%}
+@media(max-width:640px){.announcement-timeline-page>h1{margin-bottom:24px}.announcement-timeline-item,.announcement-timeline-loading{grid-template-columns:minmax(0,1fr);gap:12px}.announcement-timeline-item{margin-bottom:28px;padding-bottom:28px}.announcement-timeline-copy>h2{font-size:18px;margin-bottom:16px}}
 </style>

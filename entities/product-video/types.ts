@@ -120,6 +120,8 @@ export interface DigitalHumanQuote {
 export interface ProductVideoCreditPreview {
   inputSnapshotId?: string
   referenceVideoSeconds?: number
+  /** 服务端核准的输出时长，确认卡不从素材长度推算。 */
+  outputDurationSeconds?: number
   provider: string
   model: string
   requiredCredits: number

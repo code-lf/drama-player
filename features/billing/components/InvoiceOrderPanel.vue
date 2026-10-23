@@ -1,16 +1,27 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import type { PaymentOrder } from '~/entities/account/types'
 import { invoiceService, type InvoiceRecord, type InvoiceTitle } from '~/shared/api/services/invoiceService'
 import { getApiErrorMessage } from '~/shared/api/client'
+import LivDialog from '~/components/liv-ui/LivDialog.vue'
+import LivButton from '~/components/liv-ui/LivButton.vue'
 import InvoiceTitleDialog from './InvoiceTitleDialog.vue'
 const props = defineProps<{ orders: PaymentOrder[]; loading: boolean; hasMore: boolean; orderError?: string }>()
 const emit = defineEmits<{ refresh: []; more: []; refreshStatus: [orderNo: string] }>()
+const billingDialog = useBillingDialog()
 const route = useRoute()
 const router = useRouter()
 const records = ref<InvoiceRecord[]>([])
 const titles = ref<InvoiceTitle[]>([])
 const selected = ref<string[]>([])
+// 每屏展示十笔已加载订单，避免几十行撑满账单弹窗；后端继续保留原分页读取。
+const displayPage=ref(1)
+const visibleOrders=computed(()=>props.orders.slice((displayPage.value-1)*10,displayPage.value*10))
+watch(()=>props.orders.length,length=>{displayPage.value=Math.min(displayPage.value,Math.max(1,Math.ceil(length/10)))})
+/** 支付状态使用真实枚举，不把收款失败或待创建统一误标为已关闭。 */
+function statusText(value:string){return ({created:'待创建收款',pending:'待支付',paid:'已支付',checkout_failed:'收款创建失败',channel_unavailable:'渠道未就绪',closed:'已关闭',refunded:'已退款'} as Record<string,string>)[value]||'状态待确认'}
+function statusColor(value:string):'success'|'warning'|'error'|'neutral'{return value==='paid'?'success':value==='pending'||value==='created'?'warning':['checkout_failed','channel_unavailable'].includes(value)?'error':'neutral'}
+function invoiceText(order:PaymentOrder){const state=recordByOrder.value.get(order.id)?.status;return state==='issued'?'已开票':state==='pending'?'待开票':state==='rejected'?'需修改':order.status==='paid'?'未申请发票':'不可开票'}
 const titleId = ref('')
 const ready = ref(false)
 const open = ref(false)
@@ -19,7 +30,7 @@ const busy = ref(false)
 const error = ref('')
 const notice = ref('')
 const recordByOrder = computed(() => new Map(records.value.flatMap(row => row.orders.map(order => [order.payment_order_id, row] as const))))
-const eligible = computed(() => props.orders.filter(order => canSelect(order)))
+const eligible = computed(() => visibleOrders.value.filter(order => canSelect(order)))
 const allSelected = computed(() => eligible.value.length > 0 && eligible.value.every(order => selected.value.includes(order.id)))
 // 用整数分累计金额；重提原申请时，未加载到当前页的订单也使用服务端保存的明细快照。
 const selectedOrders = computed(() => selected.value.map(id => {
@@ -41,7 +52,11 @@ function toggle(order: PaymentOrder): void {
   }
 }
 function selectAll(): void {
-  selected.value = allSelected.value ? [] : eligible.value.slice(0, 100).map(order => order.id)
+  // 页内全选只操作当前十笔，保留其他页明确勾选的订单，仍遵守合并100笔上限。
+  const ids=eligible.value.map(order=>order.id)
+  const next=allSelected.value?selected.value.filter(id=>!ids.includes(id)):[...new Set([...selected.value,...ids])]
+  if(next.length<=100)selected.value=next
+  else error.value='单次最多合并 100 笔订单。'
 }
 /** 开票状态加载失败时禁止勾选，避免将正在开票的订单误当成可申请订单。 */
 async function refresh(): Promise<void> {
@@ -75,32 +90,37 @@ async function apply(): Promise<void> {
     await invoiceService.applyBatch([...selected.value], titleId.value)
     open.value = false; selected.value = []; notice.value = '申请已提交，可在发票管理查看进度与下载。'
     await refresh(); emit('refresh')
-    const query = { ...route.query }; delete query.invoice_retry
-    await router.replace({ path: route.path, query })
+    billingDialog.invoiceRetry.value = ''
+    // 旧深链只清理自身重提参数，弹窗操作不触碰会话 URL。
+    if(route.query.invoice_retry) {
+      const query = { ...route.query }; delete query.invoice_retry
+      await router.replace({ path: route.path, query })
+    }
   } catch (cause) { error.value = getApiErrorMessage(cause, '申请失败，请核对订单和抬头。') }
   finally { busy.value = false }
 }
 onMounted(async () => {
   await refresh()
-  const retry = records.value.find(row => row.id === route.query.invoice_retry && row.status === 'rejected')
+  const retry = records.value.find(row => row.id === (billingDialog.invoiceRetry.value || route.query.invoice_retry) && row.status === 'rejected')
   if (retry) { selected.value = retry.orders.map(order => order.payment_order_id); open.value = true }
 })
 </script>
 <template>
-  <section class="rounded-2xl border border-[#e1eaf5] bg-white p-5">
-    <div class="flex items-center justify-between"><div><h2 class="text-xl font-black">订单记录</h2><p class="mt-1 text-xs text-slate-500">勾选已支付订单，可合并申请一张电子发票。</p></div><button :disabled="loading || busy" class="text-sm text-blue-600" @click="refresh(); emit('refresh')">刷新</button></div>
-    <p v-if="error && !open" role="alert" class="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-600">{{ error }}</p>
-    <p v-if="orderError" role="alert" class="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-600">{{ orderError }}</p>
-    <p v-if="notice" role="status" class="mt-3 rounded-lg bg-blue-50 p-3 text-sm text-blue-600">{{ notice }}</p>
-    <div class="mt-4 flex flex-wrap items-center gap-3 rounded-xl bg-slate-50 p-3 text-sm"><span>已选 {{ selected.length }} 笔 · 合计 <strong>¥{{ total.toFixed(2) }}</strong></span><button :disabled="!selected.length || !ready || busy" class="rounded-lg bg-blue-600 px-4 py-2 text-xs font-bold text-white disabled:opacity-40" @click="showApply()">批量申请开票</button><button v-if="selected.length" class="text-xs text-slate-500" @click="selected = []">清空选择</button><NuxtLink to="/dashboard-billing?view=invoices" class="ml-auto text-xs text-blue-600">发票管理</NuxtLink></div>
-    <div class="mt-4 overflow-x-auto rounded-xl border">
-      <table class="w-full min-w-[800px] text-left text-xs">
-        <thead class="bg-slate-50 text-slate-500"><tr><th class="p-3"><input type="checkbox" aria-label="选择当前页可开票订单" :checked="allSelected" :disabled="!eligible.length" @change="selectAll"></th><th class="p-3">订单号</th><th class="p-3">套餐内容</th><th class="p-3">实付金额</th><th class="p-3">支付状态</th><th class="p-3">支付时间</th><th class="p-3">发票状态</th><th class="p-3">操作</th></tr></thead>
-        <tbody class="divide-y"><tr v-for="order in orders" :key="order.id" class="text-slate-600"><td class="p-3"><input type="checkbox" :aria-label="`选择订单 ${order.orderNo}`" :checked="selected.includes(order.id)" :disabled="!canSelect(order)" @change="toggle(order)"></td><td class="p-3">{{ order.orderNo }}</td><td class="p-3">{{ order.packageNameSnapshot }} · {{ order.creditsSnapshot.toLocaleString() }} 积分</td><td class="p-3">¥{{ Number(order.amount).toFixed(2) }}</td><td class="p-3">{{ order.status === 'paid' ? '已支付' : order.status === 'pending' ? '待支付' : order.status === 'refunded' ? '已退款' : '已关闭' }}</td><td class="p-3">{{ new Date(order.paidAt || order.createdAt).toLocaleString('zh-CN') }}</td><td class="p-3"><span v-if="!ready" class="inline-block h-3 w-16 animate-pulse rounded bg-slate-200" aria-label="正在读取发票状态" /><span v-else :class="recordByOrder.get(order.id)?.status === 'issued' ? 'text-green-600' : 'text-slate-500'">{{ recordByOrder.get(order.id)?.status === 'issued' ? '已开票' : recordByOrder.get(order.id)?.status === 'pending' ? '待开票' : recordByOrder.get(order.id)?.status === 'rejected' ? '需修改' : order.status === 'paid' ? '未申请' : '不可申请' }}</span></td><td class="p-3"><button v-if="canSelect(order)" class="text-blue-600" @click="showApply(order)">{{ recordByOrder.get(order.id)?.status === 'rejected' ? '重新申请' : '申请开票' }}</button><NuxtLink v-else-if="recordByOrder.has(order.id)" to="/dashboard-billing?view=invoices" class="text-blue-600">查看发票</NuxtLink><button v-else-if="order.status === 'pending'" class="text-blue-600" @click="emit('refreshStatus', order.orderNo)">刷新支付</button></td></tr><tr v-if="!orders.length"><td colspan="8" class="p-12 text-center text-slate-400"><DashboardSkeleton v-if="loading" :rows="3" /><span v-else>暂无充值订单</span></td></tr></tbody>
-      </table>
+  <section class="liv-order-panel" aria-label="订单账单">
+    <!-- 顶部操作固定，错误时保留显式重试，不再常驻说明和刷新按钮。 -->
+    <p v-if="error&&!open" role="alert" class="liv-account-load-error">{{error}} <UButton color="neutral" variant="outline" @click="refresh">重试</UButton></p><p v-if="orderError" role="alert" class="liv-account-load-error">{{orderError}} <UButton color="neutral" variant="outline" @click="emit('refresh')">重试</UButton></p><p v-if="notice" role="status">{{notice}}</p>
+    <div class="liv-order-selection"><span>已选 {{selected.length}} 笔 · 合计 <strong>¥{{total.toFixed(2)}}</strong></span><UButton color="primary" variant="solid" :disabled="!selected.length||!ready||busy" @click="showApply()">申请发票</UButton><UButton v-if="selected.length" color="neutral" variant="ghost" @click="selected=[]">清空</UButton><UButton color="neutral" variant="ghost" @click="billingDialog.show('invoices')">发票管理</UButton></div>
+    <div class="liv-account-table-scroll">
+      <table class="liv-order-table"><thead><tr><th><UCheckbox :model-value="allSelected" :disabled="!eligible.length" aria-label="选择本页可开票订单" @update:model-value="selectAll"/></th><th>订单与套餐</th><th>实付金额</th><th>状态</th><th>时间</th><th>操作</th></tr></thead>
+        <tbody><tr v-for="order in visibleOrders" :key="order.id"><td><UCheckbox :model-value="selected.includes(order.id)" :disabled="!canSelect(order)" :aria-label="`选择订单 ${order.orderNo}`" @update:model-value="toggle(order)"/></td><td><strong class="liv-order-package">{{order.packageNameSnapshot}} · {{order.creditsSnapshot.toLocaleString()}} 积分</strong><span class="liv-order-number" :title="order.orderNo">{{order.orderNo}}</span></td><td class="liv-order-amount">¥{{Number(order.amount).toFixed(2)}}</td><td><UBadge :color="statusColor(order.status)" variant="soft">{{statusText(order.status)}}</UBadge><span class="liv-order-meta">{{ready?invoiceText(order):'正在读取发票状态'}}</span></td><td><time>{{new Date(order.paidAt||order.createdAt).toLocaleString('zh-CN',{hour12:false})}}</time><span class="liv-order-meta">{{order.paidAt?'支付时间':'创建时间'}}</span></td><td><UButton v-if="canSelect(order)" color="neutral" variant="ghost" @click="showApply(order)">{{recordByOrder.get(order.id)?.status==='rejected'?'重新申请':'申请开票'}}</UButton><UButton v-else-if="recordByOrder.has(order.id)" color="neutral" variant="ghost" @click="billingDialog.show('invoices')">查看发票</UButton><UButton v-else-if="order.status==='pending'" color="neutral" variant="ghost" @click="emit('refreshStatus',order.orderNo)">刷新支付</UButton><span v-else class="liv-order-meta">—</span></td></tr></tbody>
+      </table><DashboardSkeleton v-if="loading&&!orders.length" :rows="3"/><p v-else-if="!orders.length" class="liv-billing-empty">暂无充值订单</p>
     </div>
-    <button v-if="hasMore" :disabled="loading" class="mt-4 text-sm text-blue-600" @click="emit('more')">加载更早订单</button>
-    <Teleport to="body"><div v-if="open" class="fixed inset-0 z-[140] flex items-center justify-center bg-slate-950/40 p-4"><section role="dialog" aria-modal="true" aria-labelledby="invoice-apply-heading" class="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-6 shadow-xl"><div class="flex justify-between"><h3 id="invoice-apply-heading" class="text-lg font-black">申请电子发票</h3><button :disabled="busy" aria-label="关闭申请" @click="open = false">✕</button></div><p class="my-4 rounded-lg bg-blue-50 p-3 text-sm">合并 {{ selected.length }} 笔订单，开票总金额 <strong>¥{{ total.toFixed(2) }}</strong></p><details class="mb-4 text-xs text-slate-500"><summary>查看所选订单</summary><p v-for="order in selectedOrders" :key="order.id" class="mt-2">{{ order.orderNo }} · ¥{{ Number(order.amount).toFixed(2) }}</p></details><label class="text-sm">开票抬头<LivSelect v-model="titleId" class="mt-2 w-full rounded-lg border p-3"><option value="">请选择抬头</option><option v-for="title in titles" :key="title.id" :value="title.id">{{ title.title_name }}{{ title.is_default ? '（默认）' : '' }}</option></LivSelect></label><button class="mt-3 text-xs text-blue-600" @click="titleOpen = true">＋ 新增抬头</button><p class="mt-4 text-xs leading-6 text-slate-500">金额以订单实付金额为准，财务开具后可在发票管理下载。提交后不可拆分或重复申请。</p><p v-if="error" role="alert" class="mt-3 text-sm text-red-600">{{ error }}</p><div class="mt-5 flex justify-end gap-3"><button :disabled="busy" class="rounded-lg border px-4 py-2 text-sm" @click="open = false">取消</button><button :disabled="busy || !titleId || !ready" class="rounded-lg bg-blue-600 px-4 py-2 text-sm text-white disabled:opacity-40" @click="apply">{{ busy ? '提交中…' : '确认申请' }}</button></div></section></div></Teleport>
-    <InvoiceTitleDialog :open="titleOpen" @close="titleOpen = false" @saved="savedTitle" />
+    <footer class="liv-order-pagination"><span>已加载 {{orders.length}} 笔 · 第 {{displayPage}} 页</span><div><UButton color="neutral" variant="ghost" :disabled="displayPage<=1" @click="displayPage--">上一页订单</UButton><UButton color="neutral" variant="ghost" :disabled="displayPage*10>=orders.length" @click="displayPage++">下一页订单</UButton><UButton v-if="hasMore" color="neutral" variant="outline" :loading="loading" @click="emit('more')">加载更早订单</UButton></div></footer>
+    <!-- 开票确认使用组件库嵌套弹窗，避免手写遮罩被账单焦点锁阻挡。 -->
+    <LivDialog :open="open" title="申请电子发票" settings dark @update:open="!$event&&!busy&&(open=false)">
+      <div class="liv-settings-copy"><p>合并 {{selected.length}} 笔订单 · 实付金额 ¥{{total.toFixed(2)}}</p><details><summary>查看所选订单</summary><p v-for="order in selectedOrders" :key="order.id">{{order.orderNo}} · ¥{{Number(order.amount).toFixed(2)}}</p></details><label>开票抬头<USelect v-model="titleId" :items="titles.map(title=>({value:title.id,label:title.title_name+(title.is_default?'（默认）':'')}))" placeholder="请选择抬头" class="w-full"/></label><UButton color="neutral" variant="ghost" @click="titleOpen=true">新增抬头</UButton><p class="liv-settings-note">按订单实付金额申请，财务开具后可在发票管理下载。</p><p v-if="error" role="alert">{{error}}</p></div>
+      <template #footer><LivButton settings variant="secondary" :disabled="busy" @click="open=false">取消</LivButton><LivButton settings variant="primary" :loading="busy" :disabled="busy||!titleId||!ready" @click="apply">确认申请</LivButton></template>
+    </LivDialog>
+    <InvoiceTitleDialog :open="titleOpen" @close="titleOpen=false" @saved="savedTitle"/>
   </section>
 </template>

@@ -1,209 +1,125 @@
 <script setup lang="ts">
 import type { SystemAnnouncement } from '~/entities/announcement/types'
+// liv-ui 目录具有自动组件名前缀，显式导入防止被渲染成无样式自定义标签。
+import LivDialog from '~/components/liv-ui/LivDialog.vue'
+import LivButton from '~/components/liv-ui/LivButton.vue'
 import { useAuthStore } from '~/features/auth/store/useAuthStore'
 import { announcementService } from '~/shared/api/services/announcementService'
-import { announcementExcerpt } from '~/shared/utils/announcementExcerpt'
 import { ANNOUNCEMENT_READ_CHANGED_EVENT, restoreAnnouncementReadIds } from '~/shared/utils/announcementReadState'
+import { sanitizeAnnouncementContent } from '~/shared/utils/sanitizeAnnouncementContent'
+import { safeAnnouncementLink } from '~/shared/utils/announcementFeed'
 
 const authStore = useAuthStore()
+const route = useRoute()
+const maintenanceBlocked = useState<boolean>('maintenance:full-blocked', () => false)
 const announcements = ref<SystemAnnouncement[]>([])
-const loading = ref(false)
-const dismissedIds = ref<Set<string>>(new Set())
+const activeId = ref('')
 const readIds = ref<Set<string>>(new Set())
-const currentUserKey = computed(() => authStore.session.user?.id || 'guest')
+// 完整登录态才读取和展示，游客不能沿用上一账号的公告。
+const currentUserKey = computed(() => authStore.session.loggedIn && authStore.session.user?.id ? authStore.session.user.id : '')
+const visibleAnnouncement = computed(() => currentUserKey.value
+  ? announcements.value.find(item => item.id === activeId.value && !readIds.value.has(item.id))
+  : undefined)
+const dialogOpen = computed(() => Boolean(visibleAnnouncement.value) && !maintenanceBlocked.value && route.path !== '/dashboard-announcements')
+const actionLink = computed(() => safeAnnouncementLink(visibleAnnouncement.value?.linkUrl))
+let requestVersion = 0
 
-// 全局提示只露出最新一条未读公告；完整内容留在公告中心查看。
-const visibleAnnouncement = computed(() => announcements.value.find((item) => !readIds.value.has(item.id) && !dismissedIds.value.has(item.id)))
+/** 关闭记录按账号、公告及内容版本隔离，不继承旧的游客关闭记录。 */
+function storageKey(item: SystemAnnouncement): string {
+  return `livliv:announcement:dismissed:${currentUserKey.value}:${item.id}:${item.updatedAt || item.createdAt}`
+}
 
 function restoreReadIds(): void {
-  readIds.value = restoreAnnouncementReadIds(currentUserKey.value)
+  readIds.value = currentUserKey.value ? restoreAnnouncementReadIds(currentUserKey.value) : new Set()
 }
 
-function storageKey(id: string): string {
-  return `livliv:announcement:dismissed:${id}`
+/** 关闭只表示本版本不再自动提醒，不冒充已经阅读全部公告。 */
+function dismissAnnouncement(): void {
+  const item = visibleAnnouncement.value
+  if (!item?.dismissible) return
+  try { localStorage.setItem(storageKey(item), '1') } catch { /* 禁用存储时仍允许关闭本次弹窗。 */ }
+  activeId.value = ''
 }
 
-function levelClass(level: SystemAnnouncement['level']): string {
-  if (level === 'success') return 'border-emerald-300/70 bg-emerald-50 text-emerald-900 dark:border-emerald-400/30 dark:bg-emerald-400/10 dark:text-emerald-100'
-  if (level === 'warning') return 'border-amber-300/70 bg-amber-50 text-amber-950 dark:border-amber-400/30 dark:bg-amber-400/10 dark:text-amber-100'
-  if (level === 'danger') return 'border-rose-300/70 bg-rose-50 text-rose-950 dark:border-rose-400/30 dark:bg-rose-400/10 dark:text-rose-100'
-  return 'border-sky-300/70 bg-sky-50 text-sky-950 dark:border-sky-400/30 dark:bg-sky-400/10 dark:text-sky-100'
+function updateOpen(open: boolean): void {
+  if (!open) dismissAnnouncement()
 }
 
-function badgeClass(level: SystemAnnouncement['level']): string {
-  if (level === 'success') return 'bg-emerald-500 text-white'
-  if (level === 'warning') return 'bg-amber-500 text-white'
-  if (level === 'danger') return 'bg-rose-500 text-white'
-  return 'bg-sky-500 text-white'
+/** 进入公告中心后由原时间线的真实可见逻辑记已读，不连环弹出其他公告。 */
+function viewAll(): void {
+  dismissAnnouncement()
+  void navigateTo('/dashboard-announcements')
 }
 
-function levelLabel(level: SystemAnnouncement['level']): string {
-  if (level === 'success') return '更新'
-  if (level === 'warning') return '提醒'
-  if (level === 'danger') return '重要'
-  return '公告'
+function dateLabel(value: string): string {
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? '' : date.toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' })
 }
 
-function openAnnouncementLink(item: SystemAnnouncement): void {
-  if (!item.linkUrl) return
-  if (item.linkUrl.startsWith('http://') || item.linkUrl.startsWith('https://')) {
-    window.open(item.linkUrl, '_blank')
-    return
-  }
-  navigateTo(item.linkUrl)
-}
-
-function dismissAnnouncement(item: SystemAnnouncement): void {
-  if (!item.dismissible) return
-  dismissedIds.value = new Set([...dismissedIds.value, item.id])
-  if (import.meta.client) localStorage.setItem(storageKey(item.id), '1')
-}
-
+/** 换号立即失效旧请求，避免登出后的迟到响应重新打开弹窗。 */
 async function loadAnnouncements(): Promise<void> {
-  if (loading.value) return
-  loading.value = true
+  const version = ++requestVersion
+  const owner = currentUserKey.value
+  announcements.value = []
+  activeId.value = ''
+  restoreReadIds()
+  if (!owner) return
   try {
-    restoreReadIds()
     const items = await announcementService.getActive('global')
+    if (version !== requestVersion || owner !== currentUserKey.value) return
     announcements.value = items || []
-    if (import.meta.client) {
-      dismissedIds.value = new Set(
-        announcements.value
-          .filter((item) => localStorage.getItem(storageKey(item.id)) === '1')
-          .map((item) => item.id)
-      )
-    }
+    activeId.value = announcements.value.find(item => {
+      if (readIds.value.has(item.id)) return false
+      try { return localStorage.getItem(storageKey(item)) !== '1' } catch { return true }
+    })?.id || ''
   } catch {
-    // 公告加载失败不影响主流程，优雅降级为空公告列表
-    announcements.value = []
-  } finally {
-    loading.value = false
+    // 普通公告失败不阻断创作；全站维护继续由独立维护组件处理。
+    if (version === requestVersion) announcements.value = []
   }
 }
 
 onMounted(() => {
-  loadAnnouncements()
+  void loadAnnouncements()
   window.addEventListener(ANNOUNCEMENT_READ_CHANGED_EVENT, restoreReadIds)
 })
-
+watch(currentUserKey, () => { if (import.meta.client) void loadAnnouncements() })
 onBeforeUnmount(() => {
+  requestVersion++
   window.removeEventListener(ANNOUNCEMENT_READ_CHANGED_EVENT, restoreReadIds)
 })
-
-watch(currentUserKey, restoreReadIds)
 </script>
 
 <template>
-  <div v-if="visibleAnnouncement" class="pointer-events-none fixed right-4 top-[72px] z-[120] w-[min(440px,calc(100vw-32px))]">
-    <article
-      :key="visibleAnnouncement.id"
-      class="pointer-events-auto flex items-start gap-3 rounded-2xl border px-4 py-3 shadow-[0_12px_36px_rgba(15,23,42,0.12)] backdrop-blur"
-      :class="levelClass(visibleAnnouncement.level)"
-    >
-      <span class="mt-0.5 shrink-0 rounded-full px-2.5 py-1 text-[11px] font-bold" :class="badgeClass(visibleAnnouncement.level)">
-        {{ levelLabel(visibleAnnouncement.level) }}
-      </span>
-      <div class="min-w-0 flex-1">
-        <p class="truncate text-sm font-semibold">{{ visibleAnnouncement.title }}</p>
-        <p v-if="visibleAnnouncement.content" class="mt-1 line-clamp-2 text-xs leading-5 opacity-85">{{ announcementExcerpt(visibleAnnouncement.content) }}</p>
-        <NuxtLink to="/dashboard-announcements" class="mt-1 inline-block text-xs font-semibold underline underline-offset-2">查看公告</NuxtLink>
+  <LivDialog
+    v-if="visibleAnnouncement"
+    :open="dialogOpen"
+    :title="visibleAnnouncement.title"
+    :dismissible="visibleAnnouncement.dismissible"
+    close-label="关闭公告"
+    settings dark
+    @update:open="updateOpen"
+  >
+    <div class="flex items-center gap-2 text-xs text-muted">
+      <UBadge color="primary" variant="soft">平台公告</UBadge>
+      <time :datetime="visibleAnnouncement.createdAt">{{ dateLabel(visibleAnnouncement.createdAt) }}</time>
+    </div>
+    <div class="announcement-dialog-content mt-4 text-sm leading-7" v-html="sanitizeAnnouncementContent(visibleAnnouncement.content)" />
+    <template #footer>
+      <div class="flex w-full flex-wrap items-center justify-end gap-3">
+        <LivButton settings variant="secondary" @click="viewAll">全部公告</LivButton>
+        <UButton v-if="actionLink" :href="actionLink" :target="actionLink.startsWith('http') ? '_blank' : undefined" rel="noopener noreferrer" color="neutral" variant="soft">{{ visibleAnnouncement.linkText || '查看详情' }}</UButton>
+        <LivButton v-if="visibleAnnouncement.dismissible" settings variant="primary" @click="dismissAnnouncement">知道了</LivButton>
       </div>
-      <button
-        v-if="visibleAnnouncement.linkUrl"
-        type="button"
-        class="shrink-0 rounded-full border border-current/20 px-3 py-1.5 text-xs font-semibold transition hover:bg-current/10"
-        @click="openAnnouncementLink(visibleAnnouncement)"
-      >
-        {{ visibleAnnouncement.linkText || '查看详情' }}
-      </button>
-      <button
-        v-if="visibleAnnouncement.dismissible"
-        type="button"
-        class="shrink-0 rounded-full px-2 py-1 text-lg leading-none opacity-60 transition hover:bg-current/10 hover:opacity-100"
-        aria-label="关闭公告"
-        @click="dismissAnnouncement(visibleAnnouncement)"
-      >
-        ×
-      </button>
-    </article>
-  </div>
+    </template>
+  </LivDialog>
 </template>
 
 <style scoped>
-.announcement-rich-content :deep(p) {
-  margin: 0;
-}
-
-.announcement-rich-content :deep(p + p),
-.announcement-rich-content :deep(blockquote),
-.announcement-rich-content :deep(pre),
-.announcement-rich-content :deep(ul),
-.announcement-rich-content :deep(ol) {
-  margin-top: 4px;
-}
-
-.announcement-rich-content :deep(h1),
-.announcement-rich-content :deep(h2),
-.announcement-rich-content :deep(h3),
-.announcement-rich-content :deep(h4) {
-  margin: 2px 0 4px;
-  font-weight: 800;
-  line-height: 1.35;
-}
-
-.announcement-rich-content :deep(h1) {
-  font-size: 1rem;
-}
-
-.announcement-rich-content :deep(h2),
-.announcement-rich-content :deep(h3),
-.announcement-rich-content :deep(h4) {
-  font-size: 0.92rem;
-}
-
-.announcement-rich-content :deep(ul),
-.announcement-rich-content :deep(ol) {
-  padding-left: 18px;
-}
-
-.announcement-rich-content :deep(ul) {
-  list-style: disc;
-}
-
-.announcement-rich-content :deep(ol) {
-  list-style: decimal;
-}
-
-.announcement-rich-content :deep(a) {
-  font-weight: 700;
-  text-decoration: underline;
-  text-underline-offset: 3px;
-}
-
-.announcement-rich-content :deep(blockquote) {
-  padding-left: 10px;
-  border-left: 3px solid currentColor;
-  opacity: 0.86;
-}
-
-.announcement-rich-content :deep(code),
-.announcement-rich-content :deep(pre) {
-  border-radius: 8px;
-  background: rgb(15 23 42 / 8%);
-}
-
-.announcement-rich-content :deep(code) {
-  padding: 1px 5px;
-}
-
-.announcement-rich-content :deep(pre) {
-  padding: 8px 10px;
-  overflow: auto;
-}
-
-.announcement-rich-content :deep(img) {
-  max-width: min(100%, 360px);
-  max-height: 160px;
-  border-radius: 12px;
-}
+.announcement-dialog-content{color:var(--liv-settings-text);overflow-wrap:anywhere;white-space:pre-wrap}
+.announcement-dialog-content :deep(p){margin:0 0 12px;color:inherit!important}
+.announcement-dialog-content :deep(h1),.announcement-dialog-content :deep(h2),.announcement-dialog-content :deep(h3),.announcement-dialog-content :deep(h4){font-size:18px;font-weight:600;line-height:1.6;margin:16px 0 12px;color:inherit!important}
+.announcement-dialog-content :deep(ul),.announcement-dialog-content :deep(ol){padding-left:24px;list-style:revert}
+.announcement-dialog-content :deep(img){max-width:100%;height:auto;border-radius:8px;margin:12px 0}
+.announcement-dialog-content :deep(a){color:var(--liv-ui-primary-foreground)!important;text-decoration:underline}
+.announcement-dialog-content :deep(pre){white-space:pre-wrap;overflow-wrap:anywhere;max-width:100%;padding:12px;background:var(--liv-number-surface);border-radius:8px}
 </style>

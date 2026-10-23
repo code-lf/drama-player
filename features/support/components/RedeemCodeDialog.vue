@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { supportService } from '~/shared/api/services/supportService'
+import LivDialog from '~/components/liv-ui/LivDialog.vue'
+import LivButton from '~/components/liv-ui/LivButton.vue'
 
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ close: []; redeemed: [] }>()
@@ -16,6 +18,7 @@ watch(() => props.open, (open) => {
   successMessage.value = ''
 })
 
+/** 继续使用真实兑换接口；仅显式提交时核销，加载期间避免重复请求。 */
 async function submitRedeem(): Promise<void> {
   if (!code.value.trim() || busy.value) return
   busy.value = true
@@ -34,26 +37,28 @@ async function submitRedeem(): Promise<void> {
 </script>
 
 <template>
-  <div v-if="open" class="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-sm" @click.self="emit('close')">
-    <section class="w-full max-w-[440px] rounded-[24px] border border-[#dbe6f4] bg-white p-6 shadow-[0_28px_80px_rgba(15,23,42,0.28)]">
-      <div class="flex items-start justify-between gap-4">
-        <div>
-          <p class="text-[13px] font-bold text-[#4F46E5]">兑换中心</p>
-          <h2 class="mt-1 text-[22px] font-black tracking-[-0.03em] text-[#0f172a]">兑换套餐或活动积分</h2>
-          <p class="mt-2 text-sm leading-6 text-[#64748b]">淘宝订单或内测发放的兑换码可在这里一次性核销。</p>
-        </div>
-        <button type="button" class="rounded-lg px-2 py-1 text-lg text-[#64748b] hover:bg-[#f1f5f9]" aria-label="关闭兑换窗口" @click="emit('close')">×</button>
+  <!-- 复用设置弹窗的深色令牌、焦点锁定和关闭行为，避免旧浅色样式混入。 -->
+  <LivDialog :open="open" settings dark title="兑换积分" close-label="关闭兑换窗口" @update:open="!$event && emit('close')">
+    <div class="liv-settings-copy liv-redeem-copy">
+      <p>输入兑换码，兑换套餐或活动积分。</p>
+      <UFormField label="兑换码" name="redeem-code">
+        <UInput v-model="code" class="w-full" size="lg" aria-label="兑换码" placeholder="例如 LIV-ABCD-EFGH-JKLM" :disabled="busy" @keyup.enter="submitRedeem" />
+      </UFormField>
+      <UAlert v-if="errorMessage" color="error" variant="soft" :description="errorMessage" role="alert" />
+      <UAlert v-if="successMessage" color="success" variant="soft" :description="successMessage" role="status" />
+    </div>
+    <template #footer>
+      <div class="liv-redeem-actions">
+      <LivButton settings @click="emit('close')">关闭</LivButton>
+      <LivButton settings variant="primary" :loading="busy" :disabled="busy || !code.trim()" @click="submitRedeem">确认兑换</LivButton>
       </div>
-      <label class="mt-6 block text-sm font-bold text-[#334155]">
-        兑换码
-        <input v-model="code" class="mt-2 h-12 w-full rounded-xl border border-[#cfdced] px-4 font-mono text-[15px] tracking-[0.08em] outline-none focus:border-[#4F46E5] focus:ring-4 focus:ring-[#4F46E5]/10" placeholder="例如 LIV-ABCD-EFGH-JKLM" @keyup.enter="submitRedeem">
-      </label>
-      <p v-if="errorMessage" class="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-sm font-medium text-rose-600">{{ errorMessage }}</p>
-      <p v-if="successMessage" class="mt-3 rounded-lg bg-emerald-50 px-3 py-2 text-sm font-medium leading-6 text-emerald-700">{{ successMessage }}</p>
-      <div class="mt-6 flex justify-end gap-3">
-        <button type="button" class="rounded-xl border border-[#dbe4f0] px-4 py-2.5 text-sm font-bold text-[#475569]" @click="emit('close')">关闭</button>
-        <button type="button" class="rounded-xl bg-[#4F46E5] px-5 py-2.5 text-sm font-black text-white shadow-[0_10px_24px_rgba(37,99,235,.22)] disabled:opacity-55" :disabled="busy || !code.trim()" @click="submitRedeem">{{ busy ? '正在核销…' : '确认兑换' }}</button>
-      </div>
-    </section>
-  </div>
+    </template>
+  </LivDialog>
 </template>
+
+<style scoped>
+/* 输入与说明沿用设置正文规格，不再在页面指定浅色背景或深色文字。 */
+.liv-redeem-copy{display:grid;gap:20px}
+.liv-redeem-copy p{margin:0}
+.liv-redeem-actions{display:flex;justify-content:flex-end;gap:12px}
+</style>

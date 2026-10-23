@@ -1,9 +1,13 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import BillingLedgerPanel from './BillingLedgerPanel.vue'
+import type { BillingDialogView } from '~/composables/useBillingDialog'
 import QRCode from 'qrcode'
 import type { CreditLedgerItem, CreditPackage, PaymentOrder } from '~/entities/account/types'
 import CreditAmount from '~/components/ui/CreditAmount.vue'
 import CreditIcon from '~/components/ui/CreditIcon.vue'
+import LivDialog from '~/components/liv-ui/LivDialog.vue'
+import LivButton from '~/components/liv-ui/LivButton.vue'
 import RedeemCodeDialog from '~/features/support/components/RedeemCodeDialog.vue'
 import InvoiceWorkspacePanel from '~/features/billing/components/InvoiceWorkspacePanel.vue'
 import InvoiceOrderPanel from '~/features/billing/components/InvoiceOrderPanel.vue'
@@ -11,6 +15,12 @@ import { accountService } from '~/shared/api/services/accountService'
 import { getApiErrorMessage } from '~/shared/api/client'
 
 interface Props {
+  /** 弹窗嵌入时由父级控制页签，旧路由继续兼容。 */
+  embedded?: boolean
+  /** 充值独立显示，不混入账单页签，也不重复显示购买入口。 */
+  rechargeOnly?: boolean
+  view?: BillingDialogView
+  balanceLoaded?: boolean
   currentCreditBalance: number
   billingPackages: CreditPackage[]
   billingLedgers: CreditLedgerItem[]
@@ -18,12 +28,11 @@ interface Props {
 }
 
 const props = defineProps<Props>()
-const emit = defineEmits<{ redeemed: [] }>()
+const emit = defineEmits<{ redeemed: []; 'update:view': [view: BillingDialogView] }>()
 const route = useRoute()
 const router = useRouter()
 
-type BillingView = 'recharge' | 'orders' | 'invoices'
-type LedgerFilter = 'all' | 'consume' | 'recharge' | 'grant'
+type BillingView = BillingDialogView
 type PaymentMethod = 'wechat' | 'alipay'
 
 const activeBillingView = ref<BillingView>('recharge')
@@ -31,12 +40,10 @@ const isRedeemDialogOpen = ref(false)
 const selectedBillingPackageId = ref('')
 const purchaseDialogPackageId = ref('')
 const paymentSuccessOrder = ref<PaymentOrder | null>(null)
-const selectedLedgerFilter = ref<LedgerFilter>('all')
 const selectedPaymentMethod = ref<PaymentMethod>('wechat')
 // 这里只保存后端判定为“启用且配置完整”的渠道；被后台停用的渠道不会进入渲染列表。
 const availablePaymentMethods = ref<Array<{ value: PaymentMethod; label: string }>>([])
 const isLoadingPaymentMethods = ref(false)
-const isLedgerDrawerOpen = ref(false)
 const purchaseNotice = ref('')
 const paymentOrders = ref<PaymentOrder[]>([])
 // 订单逐页加载，保留已加载订单供批量勾选，不限制用户只能开第一页的票。
@@ -66,7 +73,7 @@ const paymentCountdownLabel = computed(() => {
 
 /**
  * 顶部账户卡中的统计全部从已加载流水推导，避免前端再维护一份可能过期的余额。
- * “冻结积分”目前后端还没有冻结字段，因此先明确展示 0，后续接订单预占接口再替换。
+ * 当前接口只返回一页流水，界面明确为近期统计；没有冻结字段，不展示假定的冻结值。
  */
 const monthlyConsumed = computed(() => props.billingLedgers
   .filter((ledger) => ledger.amount < 0)
@@ -75,12 +82,6 @@ const totalEarned = computed(() => props.billingLedgers
   .filter((ledger) => ledger.amount > 0)
   .reduce((total, ledger) => total + ledger.amount, 0))
 
-const filteredLedgers = computed(() => props.billingLedgers.filter((ledger) => {
-  if (selectedLedgerFilter.value === 'all') return true
-  if (selectedLedgerFilter.value === 'consume') return ledger.transactionType === 'consume'
-  if (selectedLedgerFilter.value === 'recharge') return ledger.transactionType === 'recharge'
-  return ['system_grant', 'system_deduct', 'refund'].includes(ledger.transactionType)
-}))
 
 /** 订单记录以支付订单为准，不能再用积分到账流水反推支付是否成功。 */
 
@@ -96,6 +97,8 @@ watch(
 watch(activeBillingView, (view) => {
   if (view === 'orders') void loadPaymentOrders()
 })
+// 弹窗只同步当前页签，不改动会话 URL；立即同步确保订单首次打开即读取。
+watch(() => props.view, view => { if(props.embedded && view) activeBillingView.value = view }, {immediate:true})
 
 onBeforeUnmount(() => {
   if (paymentPollTimer) clearInterval(paymentPollTimer)
@@ -110,9 +113,9 @@ onMounted(() => {
 watch(
   () => route.query.view,
   (view) => {
+    if (props.embedded) return
     // 订单记录从左侧导航进入时仍复用同一个充值中心，只切换内容视图，不再创建第二套页面。
-    activeBillingView.value = view === 'orders' || view === 'invoices' ? view : 'recharge'
-    isLedgerDrawerOpen.value = view === 'ledger'
+    activeBillingView.value = view === 'orders' || view === 'invoices' || view === 'ledger' ? view : 'recharge'
   },
   { immediate: true }
 )
@@ -126,49 +129,6 @@ function formatMoney(value: number): string {
     minimumFractionDigits: 1,
     maximumFractionDigits: 2
   }).format(Number(value || 0))
-}
-
-function formatTime(value: string): string {
-  if (!value) return '--'
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return value
-  return new Intl.DateTimeFormat('zh-CN', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false
-  }).format(date)
-}
-
-function formatLedgerTypeLabel(type: string): string {
-  if (type === 'consume') return '消耗'
-  if (type === 'recharge') return '充值'
-  if (type === 'refund') return '退款'
-  if (type === 'system_grant') return '赠送/调整'
-  if (type === 'system_deduct') return '人工扣减'
-  return type || '记录'
-}
-
-function getLedgerTitle(ledger: CreditLedgerItem): string {
-  if (ledger.description) return ledger.description
-  if (ledger.transactionType === 'consume') return '创作任务消耗'
-  if (ledger.transactionType === 'recharge') return '积分充值'
-  return formatLedgerTypeLabel(ledger.transactionType)
-}
-
-function getLedgerIcon(ledger: CreditLedgerItem): string {
-  if (ledger.amount < 0) return 'consume'
-  if (ledger.transactionType === 'system_grant') return 'gift'
-  return 'recharge'
-}
-
-function getPackageTag(pkg: CreditPackage): string {
-  if (pkg.promotionType === 'new_customer') return pkg.promotionLabel || '新客专享'
-  if (pkg.creditsAmount >= 20000) return '专业创作'
-  if (pkg.creditsAmount >= 5000) return '推荐'
-  return ''
 }
 
 function getPackageSavings(pkg: CreditPackage): number {
@@ -267,20 +227,14 @@ function closePurchaseDialog(): void {
   purchaseDialogPackageId.value = ''
 }
 
-function openLedgerDrawer(): void {
-  isLedgerDrawerOpen.value = true
-  router.replace({ query: { ...route.query, view: 'ledger' } })
-}
+/** 流水与订单共用页签，不再另开一层抽屉。 */
+function openLedgerDrawer(): void { openBillingView('ledger') }
 
-function closeLedgerDrawer(): void {
-  isLedgerDrawerOpen.value = false
-  const query = { ...route.query }
-  delete query.view
-  router.replace({ query })
-}
 
 function openBillingView(view: BillingView): void {
   activeBillingView.value = view
+  emit('update:view', view)
+  if(props.embedded) return
   // 标签与侧边栏统一使用路由视图，刷新或复制地址后仍能停留在发票管理。
   const query = { ...route.query }
   if (view === 'recharge') delete query.view
@@ -355,8 +309,9 @@ function openAlipayCashier(checkoutUrl?: string): void {
       paymentQrNotice.value = '支付地址不是支付宝官方网关，已阻止打开。请联系管理员检查渠道配置。'
       return
     }
-    const cashierWindow = window.open(target.toString(), '_blank', 'noopener,noreferrer')
-    if (!cashierWindow) paymentQrNotice.value = '浏览器阻止了新窗口，请点击“打开支付宝收银台”继续。'
+    window.open(target.toString(), '_blank', 'noopener,noreferrer')
+    // noopener 下成功打开也可能返回 null，不能据此误报浏览器已拦截。
+    paymentQrNotice.value = '若未出现收银台，请允许浏览器弹出窗口后再次点击。'
   } catch {
     paymentQrNotice.value = '支付宝收银台地址格式无效，请联系管理员检查渠道配置。'
   }
@@ -428,6 +383,7 @@ async function refreshPendingPayment(orderNo: string): Promise<void> {
       paymentCountdownTimer = undefined
       paymentQrDataUrl.value = ''
       // 订单创建时已冻结到账点数；套餐后续调价不能影响支付成功页的展示。
+      pendingPaymentOrder.value = null
       paymentSuccessOrder.value = latest
       // 成功支付后重新读取服务端套餐与余额，让新客卡即时切换为同档原价卡。
       emit('redeemed')
@@ -480,218 +436,70 @@ function closeSuccessPage(): void {
 </script>
 
 <template>
-  <div class="billing-page mx-auto max-w-[1235px] text-[#17233a]">
-    <div class="mb-6 flex items-start justify-between gap-5">
-      <div>
-        <h1 class="text-[32px] font-black tracking-[-0.05em]">{{ activeBillingView === 'invoices' ? '发票管理' : activeBillingView === 'orders' ? '订单记录' : '积分充值' }}</h1>
-        <p class="mt-2 text-[13px] font-semibold text-[#8492a8]">{{ activeBillingView === 'invoices' ? '维护开票抬头，为已支付订单申请并下载电子发票。' : '购买积分，用于角色、场景、分镜与视频生成等 AI 创作任务。' }}</p>
+  <div class="billing-page liv-billing-page">
+    <header v-if="!embedded" class="liv-billing-heading"><div><h1>{{activeBillingView==='invoices'?'发票管理':activeBillingView==='orders'?'订单记录':'积分充值'}}</h1><p>{{activeBillingView==='invoices'?'维护开票抬头，申请与下载电子发票。':activeBillingView==='orders'?'查看真实支付订单与支付状态。':'为灵感补充能量，图片、视频与音乐创作按需使用。'}}</p></div><div><UButton color="neutral" variant="outline" @click="isRedeemDialogOpen=true">兑换码</UButton><UButton color="neutral" variant="ghost" icon="i-lucide-list-ordered" @click="openLedgerDrawer">积分流水</UButton></div></header>
+    <UTabs v-if="!rechargeOnly&&activeBillingView!=='invoices'" :model-value="activeBillingView" :items="[{value:'ledger',label:'积分明细'},{value:'orders',label:'订单'}]" :content="false" color="neutral" variant="pill" class="liv-billing-tabs" aria-label="账单页签" :ui="{list:'liv-account-tab-list',trigger:'liv-account-tab-trigger',indicator:'hidden'}" @update:model-value="openBillingView($event as BillingView)"/>
+    <div class="liv-billing-content">
+    <template v-if="activeBillingView==='recharge'">
+      <section v-if="!embedded" class="liv-billing-overview"><div class="liv-billing-balance"><span>当前可用积分</span><CreditAmount :value="currentCreditBalance" size="lg" tone="inherit"/></div><div class="liv-billing-recent"><div><span>近期消耗</span><strong>{{formatNumber(monthlyConsumed)}}</strong></div><div><span>近期入账</span><strong>{{formatNumber(totalEarned)}}</strong></div><UButton color="neutral" variant="ghost" @click="openLedgerDrawer">查看全部流水 <UIcon name="i-lucide-chevron-right"/></UButton></div></section>
+      <div class="liv-billing-section-title"><h2>选择积分套餐</h2><UButton color="neutral" variant="ghost" @click="isRedeemDialogOpen=true">兑换码</UButton></div>
+      <DashboardSkeleton v-if="isBillingLoading&&!billingPackages.length" variant="cards" :rows="4"/>
+      <p v-else-if="!billingPackages.length" class="liv-billing-empty">暂无可购买的积分套餐，请稍后重试。</p>
+      <div v-else class="liv-billing-packages" role="radiogroup" aria-label="积分套餐">
+        <UButton v-for="pkg in billingPackages" :key="pkg.id" class="liv-billing-package" color="neutral" variant="outline" role="radio" :aria-checked="selectedBillingPackageId===pkg.id" :aria-label="pkg.packageName+'，'+formatNumber(pkg.creditsAmount)+'积分，'+formatMoney(pkg.priceAmount)+'元'" :disabled="!pkg.eligible" :title="pkg.eligibilityReason||pkg.packageName" @click="selectBillingPackage(pkg.id)">
+          <span v-if="pkg.promotionLabel" class="liv-billing-package-tag">{{pkg.promotionLabel}}</span>
+          <span class="liv-billing-package-value"><CreditIcon size="sm"/><strong>{{formatNumber(pkg.creditsAmount)}}</strong><span>积分</span></span>
+          <span class="liv-billing-price">¥ {{formatMoney(pkg.priceAmount)}} <del v-if="getPackageSavings(pkg)">¥ {{formatMoney(pkg.originalPrice)}}</del></span>
+          <span v-if="!pkg.eligible" class="liv-billing-package-reason">{{pkg.eligibilityReason||'暂不可购买'}}</span>
+        </UButton>
       </div>
-      <div class="flex shrink-0 items-center gap-3 pt-2">
-        <button class="rounded-[10px] border border-[#d5e4fa] bg-white px-4 py-2 text-[12px] font-black text-[#075fff] transition hover:bg-[#edf4ff]" type="button" @click="isRedeemDialogOpen = true">兑换码</button>
-        <button class="flex items-center gap-1.5 text-[12px] font-black text-[#0d63ff] hover:text-[#0050d5]" type="button" @click="openLedgerDrawer">
-          <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M7 4h10v16H7zM9.5 8h5M9.5 12h5M9.5 16h3" stroke-linecap="round" stroke-linejoin="round" /></svg>
-          交易记录
-        </button>
-      </div>
-    </div>
-
-    <div class="mb-6 flex items-center gap-2 rounded-[13px] bg-[#eef4ff] p-1.5 shadow-[0_8px_22px_rgba(15,23,42,0.03)]">
-      <button
-        class="flex h-10 items-center gap-2 rounded-[10px] px-5 text-[13px] font-black transition"
-        :class="activeBillingView === 'recharge' ? 'bg-white text-[#075fff] shadow-[0_5px_18px_rgba(15,23,42,0.07)]' : 'text-[#73839d] hover:text-[#075fff]'"
-        type="button"
-        @click="openBillingView('recharge')"
-      >
-        <CreditIcon size="xs" />
-        积分充值
-      </button>
-      <button
-        class="flex h-10 items-center gap-2 rounded-[10px] px-5 text-[13px] font-black transition"
-        :class="activeBillingView === 'orders' ? 'bg-white text-[#075fff] shadow-[0_5px_18px_rgba(15,23,42,0.07)]' : 'text-[#73839d] hover:text-[#075fff]'"
-        type="button"
-        @click="openBillingView('orders')"
-      >
-        <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 4h12v16H6zM9 8h6M9 12h6M9 16h3" stroke-linecap="round" stroke-linejoin="round" /></svg>
-        订单记录
-      </button>
-      <button class="flex h-10 items-center gap-2 rounded-[10px] px-5 text-[13px] font-black transition" :class="activeBillingView === 'invoices' ? 'bg-white text-[#075fff] shadow-[0_5px_18px_rgba(15,23,42,0.07)]' : 'text-[#73839d] hover:text-[#075fff]'" type="button" @click="openBillingView('invoices')">发票管理</button>
-    </div>
-
-    <template v-if="activeBillingView === 'recharge'">
-      <section class="rounded-[18px] border border-[#e1eaf5] bg-white px-7 py-5 shadow-[0_14px_42px_rgba(15,23,42,0.06)]">
-        <div class="flex flex-wrap items-center gap-6">
-          <div class="flex min-w-[250px] flex-1 items-center gap-3">
-            <span class="flex h-11 w-11 items-center justify-center rounded-full bg-[#eef4ff]">
-              <CreditIcon size="lg" />
-            </span>
-            <div>
-              <div class="flex items-baseline gap-2">
-                <span class="text-[25px] font-black tracking-[-0.04em]">{{ formatNumber(currentCreditBalance) }}</span>
-                <span class="text-[12px] font-bold text-[#8190a7]">当前积分余额</span>
-              </div>
-            </div>
-          </div>
-          <div class="h-10 w-px bg-[#e9eff7]"></div>
-          <div class="min-w-[110px] text-center">
-            <p class="text-[11px] font-bold text-[#8b98aa]">本月消耗</p>
-            <p class="mt-1 text-[14px] font-black">{{ formatNumber(monthlyConsumed) }}</p>
-          </div>
-          <div class="min-w-[110px] text-center">
-            <p class="text-[11px] font-bold text-[#8b98aa]">累计获得</p>
-            <p class="mt-1 text-[14px] font-black">{{ formatNumber(totalEarned) }}</p>
-          </div>
-          <div class="min-w-[110px] text-center">
-            <p class="text-[11px] font-bold text-[#8b98aa]">冻结积分</p>
-            <p class="mt-1 text-[14px] font-black">0</p>
-          </div>
-          <button class="rounded-[9px] bg-[#edf4ff] px-4 py-2.5 text-[12px] font-black text-[#075fff] transition hover:bg-[#dceaff]" type="button" @click="openLedgerDrawer">查看流水</button>
-        </div>
-      </section>
-
-      <div class="mt-7 flex items-center justify-between">
-        <h2 class="text-[15px] font-black">选择充值金额</h2>
-        <span class="text-[11px] font-semibold text-[#98a5b6]">积分实时到账，可用于所有 AI 创作任务</span>
-      </div>
-
-      <DashboardSkeleton v-if="isBillingLoading && billingPackages.length === 0" variant="cards" :rows="4" />
-      <div v-else-if="billingPackages.length === 0" class="mt-4 rounded-[18px] border border-dashed border-[#cbd9ec] bg-white px-6 py-12 text-center text-[13px] font-semibold text-[#8492a8]">当前还没有上架套餐，请先到后台管理端配置充值套餐。</div>
-      <div v-else class="mt-4 grid gap-4 md:grid-cols-3">
-        <article
-          v-for="pkg in billingPackages"
-          :key="pkg.id"
-          class="relative flex min-h-[292px] cursor-pointer flex-col rounded-[16px] border bg-white px-5 py-5 transition hover:-translate-y-0.5 hover:shadow-[0_16px_34px_rgba(15,23,42,0.09)]"
-          :class="[
-            selectedBillingPackageId === pkg.id ? 'border-[#0d63ff] shadow-[0_0_0_1px_rgba(13,99,255,0.18)]' : 'border-[#e2eaf5]',
-            !pkg.eligible ? 'cursor-not-allowed opacity-60' : ''
-          ]"
-          @click="selectBillingPackage(pkg.id)"
-        >
-          <span v-if="getPackageTag(pkg)" class="absolute right-0 top-0 rounded-bl-[9px] rounded-tr-[15px] bg-[#0d63ff] px-3 py-1 text-[10px] font-black text-white">{{ getPackageTag(pkg) }}</span>
-          <div class="flex items-center gap-2">
-            <CreditAmount :value="pkg.creditsAmount" size="lg" tone="inherit" />
-            <span class="text-[12px] font-bold text-[#73839d]">积分</span>
-          </div>
-          <div class="mt-3 flex items-baseline gap-1 text-[#075fff]">
-            <span class="text-[15px] font-black">¥</span>
-            <span class="text-[24px] font-black">{{ formatMoney(pkg.priceAmount) }}</span>
-            <span v-if="getPackageSavings(pkg)" class="ml-2 text-[11px] font-semibold text-[#9aa7b8] line-through">¥ {{ formatMoney(pkg.originalPrice) }}</span>
-          </div>
-          <div class="mt-5 flex-1 space-y-2 text-[11px] font-semibold leading-5 text-[#8b98aa]">
-            <p v-for="description in getPackageDescription(pkg)" :key="description" class="flex items-start gap-2">
-              <span class="mt-[7px] h-1 w-1 shrink-0 rounded-full bg-[#a8b8ce]"></span>
-              {{ description }}
-            </p>
-          </div>
-          <button class="mt-4 h-10 w-full rounded-[9px] text-[12px] font-black transition disabled:cursor-not-allowed disabled:bg-[#edf1f6] disabled:text-[#9aa7b8]" :class="selectedBillingPackageId === pkg.id && pkg.eligible ? 'bg-[#075fff] text-white shadow-[0_8px_18px_rgba(0,95,254,0.2)]' : 'bg-[#eff4fc] text-[#075fff] hover:bg-[#e1ecff]'" type="button" :disabled="!pkg.eligible" :title="pkg.eligibilityReason" @click.stop="openPurchaseDialog(pkg.id)">{{ pkg.eligible ? '立即购买' : '仅限新客' }}</button>
-        </article>
-      </div>
-
-      <div class="mt-5 flex items-start gap-2 rounded-[12px] bg-[#f2f6fc] px-4 py-3 text-[11px] font-semibold leading-5 text-[#8998ac]">
-        <svg viewBox="0 0 24 24" class="mt-0.5 h-4 w-4 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 4h14v16H5zM8 8h8M8 12h8M8 16h5" stroke-linecap="round" stroke-linejoin="round" /></svg>
-        积分实时到账，可用于角色、场景、分镜和视频生成；实际消耗以生成前显示的预计积分为准。
-      </div>
-
+      <!-- 套餐金额在选项内展示，底部仅保留居中购买入口；点击后仍进入原费用确认。 -->
+      <section v-if="selectedBillingPackage" class="liv-billing-purchase-action" aria-label="已选套餐"><UButton color="primary" variant="solid" :disabled="!selectedBillingPackage.eligible||isBillingLoading" @click="openPurchaseDialog(selectedBillingPackage.id)">购买积分</UButton></section>
     </template>
+    <BillingLedgerPanel v-else-if="activeBillingView==='ledger'"/>
+    <InvoiceWorkspacePanel v-else-if="activeBillingView==='invoices'"/>
+    <InvoiceOrderPanel v-else :orders="paymentOrders" :loading="isLoadingOrders" :order-error="orderError" :has-more="paymentOrders.length<orderTotal" @refresh="loadPaymentOrders()" @more="loadPaymentOrders(true)" @refresh-status="refreshPendingPayment"/>
 
-    <InvoiceWorkspacePanel v-else-if="activeBillingView === 'invoices'" />
-
-    <InvoiceOrderPanel v-else :orders="paymentOrders" :loading="isLoadingOrders" :order-error="orderError" :has-more="paymentOrders.length < orderTotal" @refresh="loadPaymentOrders()" @more="loadPaymentOrders(true)" @refresh-status="refreshPendingPayment" />
-
+    </div>
     <RedeemCodeDialog :open="isRedeemDialogOpen" @close="isRedeemDialogOpen = false" @redeemed="emit('redeemed')" />
 
-    <Teleport to="body">
-      <div v-if="isLedgerDrawerOpen" class="fixed inset-0 z-[120] bg-slate-950/20" @click.self="closeLedgerDrawer">
-        <aside class="absolute right-0 top-0 flex h-full w-full max-w-[430px] flex-col bg-white shadow-[-20px_0_70px_rgba(15,23,42,0.16)]">
-          <div class="flex items-start justify-between border-b border-[#e9eff7] px-6 py-5">
-            <div><h3 class="text-[21px] font-black">点数流水</h3><p class="mt-1 text-[11px] font-semibold text-[#8b98aa]">查看充值、赠送、消耗与调整记录</p></div>
-            <button class="flex h-8 w-8 items-center justify-center rounded-full text-[#6c7c93] hover:bg-[#f3f6fb]" type="button" aria-label="关闭流水抽屉" @click="closeLedgerDrawer"><svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6L6 18" stroke-linecap="round" /></svg></button>
-          </div>
-          <div class="border-b border-[#eef3f8] px-5 py-4">
-            <div class="grid grid-cols-4 gap-2">
-              <button v-for="filter in ([['all', '全部'], ['consume', '消耗'], ['recharge', '充值'], ['grant', '赠送/调整']] as const)" :key="filter[0]" class="h-9 rounded-[8px] border text-[11px] font-black transition" :class="selectedLedgerFilter === filter[0] ? 'border-[#075fff] bg-[#075fff] text-white' : 'border-[#e0e8f3] bg-white text-[#75849a] hover:border-[#9bbcff]'" type="button" @click="selectedLedgerFilter = filter[0]">{{ filter[1] }}</button>
-            </div>
-            <div class="mt-3 flex h-9 items-center justify-between rounded-[8px] border border-[#e0e8f3] px-3 text-[11px] font-bold text-[#61718a]">近 30 天 <span class="text-[#8391a5]">▣</span></div>
-          </div>
-          <div class="flex-1 overflow-y-auto px-5 py-4">
-            <div v-if="filteredLedgers.length > 0" class="space-y-5">
-              <div v-for="ledger in filteredLedgers" :key="ledger.id" class="flex items-start gap-3 border-b border-[#f0f3f7] pb-4">
-                <span class="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full" :class="ledger.amount < 0 ? 'bg-[#fff1f1] text-[#ff4d55]' : ledger.transactionType === 'system_grant' ? 'bg-[#edfff4] text-[#1ab56e]' : 'bg-[#edf5ff] text-[#075fff]'">
-                  <svg v-if="getLedgerIcon(ledger) === 'consume'" viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 12h12" stroke-linecap="round" /></svg>
-                  <svg v-else-if="getLedgerIcon(ledger) === 'gift'" viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 10h16v10H4zM3 7h18v3H3zM12 7v13M12 7H8.5a2 2 0 1 1 0-4c2 0 3.5 4 3.5 4Z" stroke-linecap="round" stroke-linejoin="round" /></svg>
-                  <svg v-else viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 6v12M6 12h12" stroke-linecap="round" /></svg>
-                </span>
-                <div class="min-w-0 flex-1"><p class="text-[13px] font-black text-[#39475e]">{{ getLedgerTitle(ledger) }}</p><p class="mt-1 text-[10px] font-semibold text-[#8c9aab]">{{ formatLedgerTypeLabel(ledger.transactionType) }} · {{ formatTime(ledger.createdAt) }}</p><p class="mt-1 text-[10px] font-semibold text-[#9aa7b8]">余额 {{ formatNumber(ledger.balanceAfter) }}</p></div>
-                <p class="shrink-0 text-[14px] font-black" :class="ledger.amount < 0 ? 'text-[#ff4d55]' : 'text-[#13a966]'">{{ ledger.amount > 0 ? '+' : '' }}{{ formatNumber(ledger.amount) }}</p>
-              </div>
-            </div>
-            <div v-else class="rounded-[12px] bg-[#f7faff] px-4 py-12 text-center text-[12px] font-semibold text-[#95a2b4]">暂无符合条件的流水记录</div>
-          </div>
-          <div class="border-t border-[#eef3f8] px-5 py-4 text-center text-[10px] font-semibold text-[#9aa7b8]">仅展示近 6 个月流水记录</div>
-        </aside>
-      </div>
-    </Teleport>
 
-    <Teleport to="body">
-      <div v-if="purchaseDialogPackage" class="fixed inset-0 z-[130] flex items-center justify-center bg-slate-950/40 px-4 backdrop-blur-[2px]" @click.self="closePurchaseDialog">
-        <div class="w-full max-w-[440px] rounded-[17px] bg-white p-5 shadow-[0_30px_90px_rgba(15,23,42,0.25)]">
-          <div class="flex items-center justify-between"><h3 class="text-[18px] font-black">确认购买</h3><button class="text-[#7d8ba0]" type="button" @click="closePurchaseDialog"><svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6L6 18" stroke-linecap="round" /></svg></button></div>
-          <p class="mt-5 text-[11px] font-black text-[#7d8ba0]">充值套餐</p>
-          <div class="mt-2 flex items-center justify-between rounded-[10px] bg-[#f4f7fc] px-4 py-3"><div class="flex items-center gap-2"><CreditAmount :value="purchaseDialogPackage.creditsAmount" size="md" tone="inherit" /><span class="text-[11px] font-bold text-[#77869c]">点实际到账</span></div><span class="text-[15px] font-black">¥ {{ formatMoney(purchaseDialogPackage.priceAmount) }}</span></div>
-          <p class="mt-5 text-[11px] font-black text-[#7d8ba0]">应付金额</p><p class="mt-1 text-[22px] font-black">¥ {{ formatMoney(purchaseDialogPackage.priceAmount) }}</p>
-          <p class="mt-5 text-[11px] font-black text-[#7d8ba0]">支付方式</p>
-          <DashboardSkeleton v-if="isLoadingPaymentMethods" :rows="2" />
-          <div v-else-if="availablePaymentMethods.length" class="mt-2 space-y-2">
-            <button v-for="method in availablePaymentMethods" :key="method.value" class="flex h-10 w-full items-center justify-between rounded-[9px] border px-3 text-left text-[12px] font-bold transition" :class="selectedPaymentMethod === method.value ? 'border-[#0d63ff] bg-[#f5f9ff] text-[#26344b]' : 'border-[#e2eaf5] text-[#66758c] hover:border-[#b8d0ff]'" type="button" @click="selectedPaymentMethod = method.value"><span>{{ method.label }}</span><span class="h-4 w-4 rounded-full border-2" :class="selectedPaymentMethod === method.value ? 'border-[#0d63ff] bg-[#0d63ff] shadow-[inset_0_0_0_3px_white]' : 'border-[#c4d0df]'" /></button>
-          </div>
-          <div v-else class="mt-2 rounded-[9px] bg-[#fff6e8] px-3 py-3 text-[11px] font-semibold text-[#b26b00]">当前暂无可用支付方式，请联系管理员或稍后再试。</div>
-          <p v-if="purchaseNotice" class="mt-3 rounded-[9px] bg-[#fff6e8] px-3 py-2 text-[11px] font-semibold leading-5 text-[#b26b00]">{{ purchaseNotice }}</p>
-          <div class="mt-5 flex gap-3"><button class="h-10 flex-1 rounded-[9px] border border-[#e0e8f3] text-[12px] font-black text-[#6b7a90]" type="button" @click="closePurchaseDialog">取消</button><button class="h-10 flex-1 rounded-[9px] bg-[#075fff] text-[12px] font-black text-white shadow-[0_10px_20px_rgba(0,95,254,0.2)] disabled:cursor-not-allowed disabled:bg-[#9abbf5]" type="button" :disabled="isCreatingPayment || isLoadingPaymentMethods || !availablePaymentMethods.length" @click="confirmPurchase">{{ isCreatingPayment ? '正在创建订单…' : !availablePaymentMethods.length ? '暂无可用支付方式' : selectedPaymentMethod === 'alipay' ? '前往支付宝支付' : '生成支付二维码' }}</button></div>
-          <p class="mt-3 text-center text-[10px] font-semibold text-[#a0adbc]">付款成功仅以服务端验签回调或主动查单结果为准。</p>
-        </div>
+    <!-- 仅替换购买确认外观，确认方法、真实渠道、幂等提交与支付回调校验保持原样。 -->
+    <LivDialog :open="!!purchaseDialogPackage" title="确认购买积分" settings dark sectioned @update:open="!$event&&closePurchaseDialog()">
+      <div v-if="purchaseDialogPackage" class="liv-settings-copy">
+        <section class="liv-billing-checkout-summary"><div><span>本次到账</span><CreditAmount :value="purchaseDialogPackage.creditsAmount" size="lg" tone="inherit"/></div><div><span>应付金额</span><strong>¥ {{formatMoney(purchaseDialogPackage.priceAmount)}}</strong></div></section>
+        <h3 class="mt-6 mb-3">支付方式</h3>
+        <DashboardSkeleton v-if="isLoadingPaymentMethods" :rows="2"/>
+        <URadioGroup v-else-if="availablePaymentMethods.length" v-model="selectedPaymentMethod" :items="availablePaymentMethods" :disabled="isCreatingPayment" aria-label="支付方式"/>
+        <p v-else class="liv-settings-note">当前暂无可用支付方式，请稍后再试。</p>
+        <p v-if="purchaseNotice" class="liv-settings-note mt-3" role="status">{{purchaseNotice}}</p>
+        <p class="liv-settings-note mt-4">确认后创建支付订单，到账以实际支付结果为准。</p>
       </div>
-    </Teleport>
+      <template #footer><LivButton settings variant="secondary" :disabled="isCreatingPayment" @click="closePurchaseDialog">取消</LivButton><LivButton settings variant="primary" :disabled="isCreatingPayment||isLoadingPaymentMethods||!availablePaymentMethods.length" :loading="isCreatingPayment" @click="confirmPurchase">{{isCreatingPayment?'正在创建订单…':!availablePaymentMethods.length?'暂无可用支付方式':selectedPaymentMethod==='alipay'?'前往支付宝支付':'生成支付二维码'}}</LivButton></template>
+    </LivDialog>
 
-    <Teleport to="body">
-      <div v-if="pendingPaymentOrder" class="fixed inset-0 z-[140] flex items-center justify-center bg-slate-950/40 px-4 backdrop-blur-[2px]" @click.self="closePaymentQr">
-        <div class="w-full max-w-[390px] rounded-[18px] bg-white px-7 py-6 text-center shadow-[0_30px_90px_rgba(15,23,42,0.25)]">
-          <div class="flex items-center justify-between"><div class="text-left"><h3 class="text-[19px] font-black">{{ isAlipayCashier ? '请完成支付宝支付' : '请扫码支付' }}</h3><p class="mt-1 text-[11px] font-semibold text-[#7c8ba0]">订单 {{ pendingPaymentOrder.orderNo }}</p></div><button class="text-[#7d8ba0]" type="button" aria-label="关闭支付窗口" @click="closePaymentQr">×</button></div>
-          <div v-if="isAlipayCashier" class="mx-auto mt-5 flex h-[180px] w-full flex-col items-center justify-center rounded-[12px] border border-[#dce9ff] bg-[#f6f9ff] px-6">
-            <div class="flex h-14 w-14 items-center justify-center rounded-2xl bg-[#4F46E5] text-2xl font-black text-white">支</div>
-            <p class="mt-4 text-[14px] font-black text-[#26344b]">支付宝官方收银台已在新窗口打开</p>
-            <p class="mt-2 text-[11px] font-semibold leading-5 text-[#8998ac]">请在官方页面扫码或登录付款；本站不会仿制支付宝二维码。</p>
-          </div>
-          <div v-else class="relative mx-auto mt-5 h-[250px] w-[250px] overflow-hidden rounded-[12px] border border-[#e6edf6] bg-white p-2">
-            <img v-if="paymentQrDataUrl" :src="paymentQrDataUrl" class="h-full w-full" :class="isPaymentQrExpired ? 'blur-[2px] opacity-30' : ''" alt="支付二维码">
-            <div v-if="isPaymentQrExpired" class="absolute inset-0 flex flex-col items-center justify-center bg-white/75 px-5">
-              <p class="text-[15px] font-black text-[#39475e]">二维码已过期</p>
-              <p class="mt-1 text-[11px] font-semibold text-[#8998ac]">请重新生成后再扫码</p>
-            </div>
-          </div>
-          <p class="mt-4 text-[13px] font-black text-[#26344b]">¥ {{ formatMoney(pendingPaymentOrder.amount) }}</p>
-          <p class="mt-2 text-[12px] font-black" :class="isPaymentQrExpired ? 'text-[#e05252]' : 'text-[#075fff]'">
-            {{ isPaymentQrExpired ? '支付时间已结束' : `支付剩余 ${paymentCountdownLabel}` }}
-          </p>
-          <p class="mt-2 text-[11px] font-semibold text-[#8998ac]">付款后系统会自动验签到账，请勿手动上传支付截图。</p>
-          <p v-if="paymentQrNotice" class="mt-3 rounded-[9px] bg-[#fff6e8] px-3 py-2 text-[11px] font-semibold leading-5 text-[#b26b00]">{{ paymentQrNotice }}</p>
-          <button v-if="isPaymentQrExpired" class="mt-4 h-10 w-full rounded-[9px] bg-[#075fff] text-[12px] font-black text-white disabled:cursor-not-allowed disabled:bg-[#9abbf5]" type="button" :disabled="isRetryingPayment" @click="retryExpiredPayment">{{ isRetryingPayment ? '正在重新发起…' : '重新发起支付' }}</button>
-          <button v-else-if="isAlipayCashier" class="mt-4 h-10 w-full rounded-[9px] bg-[#4F46E5] text-[12px] font-black text-white" type="button" @click="openAlipayCashier(pendingPaymentOrder.checkoutUrl)">打开支付宝收银台</button>
-          <button v-else class="mt-4 h-10 w-full rounded-[9px] border border-[#d8e5f8] text-[12px] font-black text-[#075fff]" type="button" @click="refreshPendingPayment(pendingPaymentOrder.orderNo)">我已支付，刷新状态</button>
-          <button v-if="isAlipayCashier && !isPaymentQrExpired" class="mt-2 h-9 w-full rounded-[9px] border border-[#d8e5f8] text-[11px] font-black text-[#075fff]" type="button" @click="refreshPendingPayment(pendingPaymentOrder.orderNo)">我已支付，刷新状态</button>
-        </div>
+    <!-- 收银台复用嵌套设置弹窗，二维码仅本地生成，支付状态只读服务端。 -->
+    <LivDialog :open="!!pendingPaymentOrder" :title="isAlipayCashier?'支付宝支付':'扫码支付'" settings dark @update:open="!$event&&closePaymentQr()">
+      <div v-if="pendingPaymentOrder" class="liv-billing-payment liv-billing-cashier">
+        <!-- 金额与支付期限优先展示，订单号允许换行，不影响窄屏布局。 -->
+        <div class="liv-billing-cashier-total"><span>应付金额</span><strong>¥ {{Number(pendingPaymentOrder.amount).toFixed(2)}}</strong></div>
+        <p class="liv-billing-cashier-countdown">{{isPaymentQrExpired?'支付时间已结束':'请在'}} <b v-if="!isPaymentQrExpired">{{paymentCountdownLabel}}</b> <span v-if="!isPaymentQrExpired">内完成支付</span></p>
+        <p v-if="isAlipayCashier" class="liv-billing-cashier-instruction">点击下方按钮，在支付宝官方收银台扫码或登录付款。</p>
+        <div v-else class="liv-billing-qr"><img v-if="paymentQrDataUrl" :src="paymentQrDataUrl" :class="{'is-expired':isPaymentQrExpired}" alt="支付二维码"/><p v-if="isPaymentQrExpired">二维码已过期，请重新发起支付。</p></div>
+        <p class="liv-settings-note liv-billing-cashier-order">订单号 {{pendingPaymentOrder.orderNo}}</p>
+        <p class="liv-settings-note">支付成功后自动到账，无需上传截图。</p>
+        <p v-if="paymentQrNotice" role="status" class="liv-billing-cashier-notice">{{paymentQrNotice}}</p>
       </div>
-    </Teleport>
-
-    <Teleport to="body">
-      <div v-if="paymentSuccessOrder" class="fixed inset-0 z-[140] flex items-center justify-center bg-slate-950/20 px-4">
-        <div class="w-full max-w-[420px] rounded-[18px] bg-white px-7 py-8 text-center shadow-[0_30px_90px_rgba(15,23,42,0.22)]">
-          <div class="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-[#dff9eb] text-[#18ae69]"><svg viewBox="0 0 24 24" class="h-9 w-9" fill="none" stroke="currentColor" stroke-width="2.6"><path d="m5 12 4.5 4.5L19 7" stroke-linecap="round" stroke-linejoin="round" /></svg></div>
-          <h3 class="mt-5 text-[24px] font-black">支付成功</h3>
-          <p class="mt-2 text-[14px] font-semibold text-[#6f7e94]">{{ formatNumber(paymentSuccessOrder.creditsSnapshot) }} 积分已到账</p>
-          <div class="mx-auto mt-5 w-full max-w-[280px] rounded-[12px] border border-[#e6edf6] px-5 py-4 text-left text-[12px] font-semibold"><div class="flex justify-between"><span class="text-[#8b98aa]">本次获得积分</span><span class="font-black">{{ formatNumber(paymentSuccessOrder.creditsSnapshot) }}</span></div><div class="mt-2 flex justify-between"><span class="text-[#8b98aa]">当前账户余额</span><span class="font-black">{{ formatNumber(currentCreditBalance) }}</span></div></div>
-          <button class="mt-6 h-10 w-full rounded-[9px] bg-[#075fff] text-[12px] font-black text-white" type="button" @click="router.push('/dashboard')">返回工作台</button>
-          <button class="mt-2 h-10 w-full rounded-[9px] border border-[#dfe8f4] text-[12px] font-black text-[#075fff]" type="button" @click="closeSuccessPage">继续充值</button>
+      <template #footer>
+        <div class="liv-billing-cashier-actions">
+        <LivButton v-if="isPaymentQrExpired" settings variant="primary" block :loading="isRetryingPayment" :disabled="isRetryingPayment" @click="retryExpiredPayment">重新发起支付</LivButton>
+        <template v-else><LivButton v-if="isAlipayCashier" settings variant="primary" block @click="openAlipayCashier(pendingPaymentOrder?.checkoutUrl)">打开支付宝收银台</LivButton><LivButton settings variant="secondary" block @click="pendingPaymentOrder&&refreshPendingPayment(pendingPaymentOrder.orderNo)">我已支付，刷新状态</LivButton></template>
         </div>
-      </div>
-    </Teleport>
+      </template>
+    </LivDialog>
+    <LivDialog :open="!!paymentSuccessOrder" title="支付成功" settings dark @update:open="!$event&&closeSuccessPage()">
+      <div v-if="paymentSuccessOrder" class="liv-billing-payment liv-settings-copy"><CreditAmount :value="paymentSuccessOrder.creditsSnapshot" size="lg" tone="inherit"/><p>积分已到账</p><p class="liv-settings-note">当前账户余额 {{formatNumber(currentCreditBalance)}} 积分</p></div>
+      <template #footer><LivButton settings variant="primary" block @click="closeSuccessPage">完成</LivButton></template>
+    </LivDialog>
   </div>
 </template>

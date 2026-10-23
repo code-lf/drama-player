@@ -21,6 +21,8 @@ const emit = defineEmits<{
 }>()
 
 const themeStore = useThemeStore()
+// 登录后的充值入口复用全站弹窗，不离开当前页面。
+const billingDialog=useBillingDialog()
 
 const isUserMenuOpen = ref(false)
 const userMenuRef = ref<HTMLElement | null>(null)
@@ -72,10 +74,10 @@ onUnmounted(() => {
 
       <template v-else>
         <!-- 余额展示 -->
-        <NuxtLink to="/dashboard-billing" class="group flex items-center gap-2 rounded-full border border-slate-300 dark:border-borderSoft bg-slate-100 dark:bg-panelSoft px-4 py-2 text-sm transition hover:border-emerald-500/50 hover:bg-emerald-500/10">
+        <UButton color="neutral" variant="ghost" @click="billingDialog.show('recharge')" class="group flex items-center gap-2 rounded-full border border-slate-300 dark:border-borderSoft bg-slate-100 dark:bg-panelSoft px-4 py-2 text-sm transition hover:border-emerald-500/50 hover:bg-emerald-500/10">
           <CreditAmount :value="props.creditBalance" size="sm" tone="success" />
           <span class="text-xs text-slate-500 dark:text-textMuted group-hover:text-emerald-600 dark:group-hover:text-emerald-300">充值</span>
-        </NuxtLink>
+        </UButton>
 
         <NuxtLink 
           to="/dashboard" 

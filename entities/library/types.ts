@@ -14,6 +14,7 @@ export interface LibraryItem {
 export interface LibraryCollectionMember { item_id?: string; version_id: string; name?: string; category?: string; media_type?: string; preview_url?: string; available: boolean; reason: string }
 export interface LibraryCollection { id: string; name: string; status: string; version_id: string; version_no: number; is_favorite: boolean; versions: Array<{id:string;version_no:number;name:string}>; members: LibraryCollectionMember[] }
 export interface LibraryConfiguration {
+  audio_upload?: {extensions:string[];max_bytes:number}
   categories: Array<{ code: string; name: string }>; max_upload_bytes: number; user_quota_bytes: number
 }
 export interface LibraryPage { items: LibraryItem[]; total: number; page: number; page_size: number }

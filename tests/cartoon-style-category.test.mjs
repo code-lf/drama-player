@@ -14,9 +14,10 @@ test('3D 卡通喜剧使用新角色原创封面及通用指导，不自动引�
   assert.equal(style.cover_url,'/creation-presets/cartoon-comedy-3d-v2.png');
   assert.ok(existsSync(new URL('../public'+style.cover_url,import.meta.url)));
 });
-test('首页案例分类使用服务端内容分类，不与媒体和展示入口混用',()=>{
+test('案例分类数据保留，首页仅电商使用技能分类',()=>{
   const studio=readFileSync(new URL('../features/creation/components/CreationStudio.vue',import.meta.url),'utf8');
-  assert.ok(studio.includes('aria-label="案例内容分类"'));
-  assert.ok(studio.includes('v-for="item in filteredCases"'));
-  assert.ok(studio.includes("item.category_label||'其他创作'"));
+  assert.ok(studio.includes('aria-label="技能内容分类"'));
+  assert.ok(studio.includes('v-for="item in cases"'));
+  assert.ok(!studio.includes('<span class="creation-muted">{{item.category_label'));
+  assert.ok(studio.includes('<h2>{{caseHeading}}</h2>'));
 });

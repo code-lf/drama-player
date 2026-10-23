@@ -20,14 +20,21 @@ async function mountSetup(source){
   let storeReads=0
   const scopedRequire=name=>{
     if(name==='vue')return vue
+    if(name==='~/features/dashboard/hoverMenuBoundary')return {hoverMenuBoundary:()=>()=>{}}
+    if(name==='~/features/billing/accountNavigation'){
+      const module={exports:{}}
+      const helper=readFileSync(new URL('../features/billing/accountNavigation.ts',import.meta.url),'utf8')
+      new Function('exports',ts.transpileModule(helper,{compilerOptions:{module:ts.ModuleKind.CommonJS}}).outputText)(module.exports)
+      return module.exports
+    }
     if(name==='~/features/auth/store/useAuthStore')return {useAuthStore(){storeReads++;return vue.reactive({session:{user:{id:'isolated-test'}}})}}
     throw new Error(`测试中不允许的依赖：${name}`)
   }
   const route=vue.reactive({fullPath:'/dashboard?session=isolated',query:{session:'isolated'}})
   const states=new Map()
-  new Function('require','module','exports','useRoute','useState','ref','computed','watch','onBeforeUnmount',code)(
+  new Function('require','module','exports','useRoute','useState','ref','computed','watch','onBeforeUnmount','onMounted',code)(
     scopedRequire,exported,exported.exports,()=>route,(key,init)=>{if(!states.has(key))states.set(key,vue.ref(init()));return states.get(key)},
-    vue.ref,vue.computed,vue.watch,vue.onBeforeUnmount,
+    vue.ref,vue.computed,vue.watch,vue.onBeforeUnmount,vue.onMounted,
   )
   const component=exported.exports.default
   component.render=()=>vue.h('nav',{'aria-label':'会话导航运行测试'})

@@ -5,21 +5,25 @@ import type { ProductVideoCreatePayload, ProductVideoTask } from '~/entities/pro
 import type { MusicQuote, MusicTask } from '~/shared/api/services/musicService'
 import type { CreationCatalog, CreationDraft, CreationEntryType, CreationMessage, CreationParameterState, CreationSession, CreationTarget, ComposerReference, ComposerSegment, DirectorPreview, SkillExecution } from './types'
 import { defaultParameters, defaultSkills } from './catalog'
+import { allowedDurations, referenceDurationValues } from './durationOptions'
+import { imageRatioOptions } from './imageRatioOptions'
 import { creationService } from '~/shared/api/services/creationService'
 import { productImageService } from '~/shared/api/services/productImageService'
 import { productVideoService } from '~/shared/api/services/productVideoService'
 import { musicService } from '~/shared/api/services/musicService'
 import { dramaService } from '~/shared/api/services/dramaService'
 import { libraryService } from '~/shared/api/services/libraryService'
-import { request } from '~/shared/api/adapters/httpAdapter'
+import { request, buildProductImagePayload, buildProductVideoPayload } from '~/shared/api/adapters/httpAdapter'
 import { useAccountStore } from '~/features/billing/store/useAccountStore'
 import { fallbackDramaVisualStyleOptions } from '~/shared/constants/dramaVisualStyles'
 import { sessionErrorText } from './sessionRecovery'
 import {hasRenderableResult} from './resultCatalog'
 import {resultReadState} from './workflowState'
+import { createCreditHint } from './creditHint'
+import { imageQualityError } from './imageQuality'
 
 /** 入口、报价及会话使用同一冻结草稿，防止报价后改参数而错扣点。 */
-export function useCreationWorkspace(options:{beforeSubmit?:()=>Promise<()=>Promise<void>>;beforeScopeChange?:()=>Promise<void>;beforeExecute?:()=>Promise<void>}={}) {
+export function useCreationWorkspace(options:{beforeSubmit?:()=>Promise<()=>Promise<void>>;beforeScopeChange?:()=>Promise<void>;beforeExecute?:()=>Promise<void>;entryPath?:()=>string}={}) {
   const { auth, requireLogin } = useWorkbenchAuth()
   const explicitLogout=useState<boolean>('workbench-explicit-logout',()=>false)
   let draftOwner=auth.session.user?.id
@@ -51,8 +55,7 @@ export function useCreationWorkspace(options:{beforeSubmit?:()=>Promise<()=>Prom
     if (!session.value) return
     sessionDrafts.set(session.value.id, { entry: entry.value, skill: skill.value, prompt: prompt.value, segments: JSON.parse(JSON.stringify(segments.value)), references: JSON.parse(JSON.stringify(references.value)), parameters: JSON.parse(JSON.stringify(parameters.value)), file: scriptFile.value })
   }
-  // 游客只缓存纯文字，不缓存私人编号、媒体链接、文件或登录凭据。
-  watch([prompt,entry],()=>{if(!import.meta.client||auth.session.loggedIn||draftOwner)return;try{if(prompt.value.trim())localStorage.setItem('liv-workbench-guest-draft',JSON.stringify({entry:entry.value,prompt:prompt.value.slice(0,20000)}));else localStorage.removeItem('liv-workbench-guest-draft')}catch{/* 浏览器禁用存储时保持内存草稿可用。 */}})
+  // 首页游客文字也只保留在本页内存；不再写入浏览器持久缓存。
   const selectedSkill = computed(() => catalog.value?.skills.find(item => item.id === skill.value))
   const target = computed<CreationTarget>(() => entry.value === 'drama' ? 'drama' : (selectedSkill.value?.base_code || skill.value) === 'free' ? parameters.value.output === 'auto' ? 'image' : parameters.value.output : selectedSkill.value?.target || 'image')
   const profile = computed(() => catalog.value?.profiles[target.value === 'video' ? 'product_video' : 'product_image'])
@@ -73,59 +76,43 @@ export function useCreationWorkspace(options:{beforeSubmit?:()=>Promise<()=>Prom
     const allowed = spec?.model_strategy === 'fixed' ? [spec.default_model] : spec?.model_strategy === 'candidates' ? spec.allowed_models || [] : null
     return options.filter(item => !allowed || allowed.includes(item.code))
   })
-  const ratios = computed(() => target.value === 'drama' ? ['16:9', '9:16'] : (modelSchema.value.aspect_ratio || modelSchema.value.aspect_ratios || []).map(String))
+  // MV 走通用导演项目，六种画幅与服务端创建契约一致；具体镜头报价继续校验模型能力。
+  // 广告／故事导演规划的是整片，画幅使用项目创建契约，不受当前单镜头模型目录影响。
+  const isDirectorProduction = computed(() => ['ad','story'].includes(selectedSkill.value?.base_code || skill.value) && parameters.value.workflow === 'director')
+  const ratios = computed(() => (selectedSkill.value?.base_code || skill.value).startsWith('mv-') || isDirectorProduction.value ? ['16:9', '9:16', '4:3', '3:4', '1:1', '21:9'] : target.value === 'drama' ? ['16:9', '9:16'] : imageRatioOptions(modelSchema.value,parameters.value.resolution))
   const resolutions = computed(() => target.value === 'drama' ? ['480p', '720p'] : (modelSchema.value.resolution || modelSchema.value.resolutions || []).map((value: string) => target.value === 'image' ? value.toUpperCase() : value.toLowerCase()))
   // 生图质量沿用后端能力白名单；旧能力目录未列举时使用接口已有的三个合法值。
   const qualities = computed<string[]>(() => (modelSchema.value.quality || ['low', 'medium', 'high']).filter((value: string) => ['low', 'medium', 'high'].includes(value)))
   const estimateLabel = ref('填写需求后预估')
-  let estimateTimer: ReturnType<typeof setTimeout> | null = null, estimateRevision = 0
-  /** 自动报价不创建任务、不扣点；修订号防止旧请求覆盖新参数对应的费用。 */
-  async function estimate(current: number) {
-    try {
-      let value = draft()
-      let nextTarget = target.value
-      if (value.skill === 'free' && value.parameters.output === 'auto') {
-        const routed = await creationService.route(value); nextTarget = routed.target; value.skill = routed.skill; value.parameters.output = nextTarget
-        const defaults = catalog.value?.profiles[nextTarget === 'video' ? 'product_video' : 'product_image']
-        if (nextTarget !== target.value && nextTarget!=='music' && defaults) value.parameters = { ...value.parameters, model: defaults.model.code, aspectRatio: String(defaults.default_params.aspect_ratio || '16:9'), resolution: String(defaults.default_params.resolution || (nextTarget === 'video' ? '720p' : '1K')) }
-      }
-      // 自动预估和最终确认均使用服务端配方组装结果，避免提示词与报价脱节。
-      const fingerprint = canonical(draft())
-      const prepared = await creationService.prepareSkill(value)
-      value = prepared.draft
-      // 响应丢失后沿用已落库消息的编号；重新报价不能悄悄变成第二笔生成。
-      const pending = messages.value[messages.value.length - 1]
-      const id = pending && !pending.task_id && canonical(pending.content) === canonical(value) ? pending.request_id : crypto.randomUUID()
-      let credits: number, quote: any, payload: any
-      if (nextTarget === 'image') { payload = { ...imagePayload(value, id), creationContext: prepared.creation_context }; quote = await productImageService.previewCredits(payload); credits = quote.requiredCredits; payload.inputSnapshotId = quote.inputSnapshotId }
-      else if (nextTarget === 'video') { payload = { ...videoPayload(value, id), creationContext: prepared.creation_context }; quote = await productVideoService.previewCredits(payload); credits = quote.requiredCredits; payload.inputSnapshotId = quote.inputSnapshotId }
-      else if (nextTarget === 'music') { payload = {...musicInputs(value),creationContext:prepared.creation_context}; quote = await musicService.quote(payload.operation, payload.inputs, value.parameters.rightsConfirmed); credits = quote.retail_credits }
-      else { estimateLabel.value = '提交后预估'; return }
-      if (!disposed && current === estimateRevision) {
-        estimateLabel.value = `${credits} 点`
-        confirmation.value = { draft: value, credits, sufficient: quote.sufficient ?? Number(account.profile?.creditBalance ?? 0) >= credits, target: nextTarget, quote, payload, requestId: id, execution: prepared.execution, fingerprint, createdAt: Date.now() }
-      }
-    } catch { if (!disposed && current === estimateRevision) estimateLabel.value = '补全条件后预估' }
-  }
+  const creditHint=createCreditHint(label=>{estimateLabel.value=label})
   // 比较业务内容而非对象引用，打开弹层、重复选择相同参数或目录刷新不撤销有效报价。
-  watch([()=>canonical(draft()), scriptFile], () => {
-    const current = ++estimateRevision
-    confirmation.value = null
-    if (estimateTimer) clearTimeout(estimateTimer)
-    if (target.value === 'drama' || parameters.value.workflow === 'director') { estimateLabel.value = '先规划脚本'; return }
-    if (!auth.session.loggedIn) { estimateLabel.value = '登录后预估'; return }
-    if (!catalog.value || (!prompt.value.trim() && !['reference', 'lyric-video'].includes(skill.value))) { estimateLabel.value = '填写需求后预估'; return }
-    // 非导演入口由助手方案显式报价，输入期间不调用收费预估链。
-    if(entry.value!=='drama'){estimateLabel.value='方案确认后报价';return}
-    estimateLabel.value = '预估中…'
-    estimateTimer = setTimeout(() => void estimate(current), 650)
+  watch([()=>canonical(draft()), scriptFile, models, ()=>auth.session.loggedIn, ()=>auth.session.user?.id], (values, previous) => {
+    // 目录重读只刷新参考提示；只有业务草稿或文件真的变化才撤销旧报价。
+    if (!previous || values[0] !== previous[0] || values[1] !== previous[1]) confirmation.value = null
+    // 尚无本次费用的导演／短剧阶段不显示占位文案，实际阶段报价仍由确认卡提供。
+    creditHint.refresh()
+    if (!['image','video'].includes(target.value) || parameters.value.workflow === 'director') return
+    // 游客只查不含私人素材的公开预算；本人素材仍走登录后的权限校验，不能降成无参考图价格。
+    if (!auth.session.loggedIn && (references.value.length || scriptFile.value)) return
+    if (!models.value.some(item=>item.code===parameters.value.model)) return
+    // 复用正式计价参数编译与服务端公式；只读预算不调用LLM、不冻结快照、不创建任务或扣费。
+    const value=JSON.parse(JSON.stringify(draft())) as CreationDraft
+    const kind=target.value
+    creditHint.refresh(async()=>{
+      const body=kind==='image'?buildProductImagePayload(imagePayload(value,'')):buildProductVideoPayload(videoPayload(value,''))
+        const endpoint=auth.session.loggedIn?'credit-preview':'public-credit-preview'
+        const quote=await request<{required_credits:number}>(`/product-${kind}/${endpoint}`,{method:'POST',body:{...body,hint_only:true}})
+      return quote.required_credits
+    })
   }, { deep: true })
   // 模型时长既支持连续范围，也支持离散选项；不把 5/10 秒模型伪装成任意秒数。
   const durationRange = computed(() => {
+    // DirectorDraft 的 4–120 秒是脚本目标总长；切回直接生成时仍按原模型重新收敛。
+    if (isDirectorProduction.value) return {min:4,max:120,step:1,values:[] as number[]}
     const spec = modelSchema.value.duration_sec || modelSchema.value.duration || {}
-    const values = (Array.isArray(spec) ? spec : spec.enum || spec.values || []).map(Number).filter((v: number) => Number.isFinite(v) && v > 0 && v <= 30).sort((a: number, b: number) => a - b)
-    const min = Math.max(selectedSkill.value?.minimum_duration_sec||0,values[0] || Math.max(1, Number(spec.min || 4)))
-    return { min, max: values[values.length - 1] || Math.max(min, Math.min(30, Number(spec.max || 15))), step: Math.max(1, Number(spec.step || 1)), values: values as number[] }
+    // 技能下限也须参与离散档过滤，否则会把6秒重新吸附到要求至少10秒的技能。
+    const values = referenceDurationValues(allowedDurations(Array.isArray(spec)?spec:{min:spec.min||4,max:spec.max||15,step:spec.step||1,...spec},Math.max(1,selectedSkill.value?.minimum_duration_sec||1),30),modelSchema.value.duration_constraints,references.value)
+    return { min: values[0]||0, max: values[values.length-1]||0, step: Math.max(1,Number(spec.step||1)), values }
   })
   const musicSources = computed(() => musicTasks.value.filter(item => item.status === 'completed' && ['generation', 'coverSong', 'uploadCover', 'extend'].includes(item.operation)).flatMap(item => {
     const songs = Array.isArray(item.result.music) ? item.result.music as Record<string, unknown>[] : []
@@ -143,7 +130,7 @@ export function useCreationWorkspace(options:{beforeSubmit?:()=>Promise<()=>Prom
       session.value=null;messages.value=[];focusedMessage.value='';confirmation.value=null;director.value=null;sessionLoading.value=false;sessionError.value=''
       // “首页”保留当前草稿；“新建创作”明确开始空白输入，原会话草稿仍可恢复。
       // 新建项目可选择短剧入口；清空草稿时不能强行降回自由创作。
-      if (route.query.new === '1') { entry.value=['free','drama','commerce','music','image'].includes(String(route.query.entry))?route.query.entry as CreationEntryType:'free';skill.value=defaultSkills[entry.value];parameters.value=defaultParameters();prompt.value='';segments.value=[];references.value=[];scriptFile.value=null }
+      if (route.query.new === '1') { entry.value=['free','drama','commerce','marketing','music','image'].includes(String(route.query.entry))?route.query.entry as CreationEntryType:'free';skill.value=defaultSkills[entry.value];parameters.value=defaultParameters();prompt.value='';segments.value=[];references.value=[];scriptFile.value=null }
     }
   })
 
@@ -170,7 +157,13 @@ export function useCreationWorkspace(options:{beforeSubmit?:()=>Promise<()=>Prom
   function applyCapabilities() {
     // 后台限制允许流程时同步收敛前端选项，不能继续选择已停用的导演/直接模式。
     if (selectedSkill.value?.workflows?.length && !selectedSkill.value.workflows.includes(parameters.value.workflow)) parameters.value.workflow = selectedSkill.value.workflows[0]!
-    if (target.value === 'drama') { if(!['480p','720p','1080p'].includes(parameters.value.resolution))parameters.value.resolution='720p';if(!['16:9','9:16','1:1'].includes(parameters.value.aspectRatio))parameters.value.aspectRatio='16:9';return }
+    if (target.value === 'drama') {
+      if(!['480p','720p','1080p'].includes(parameters.value.resolution))parameters.value.resolution='720p'
+      // 仅 MV 扩展画幅；其他历史导演草稿的三种合法值保持兼容。
+      const allowedRatios=(selectedSkill.value?.base_code || skill.value).startsWith('mv-')?ratios.value:['16:9','9:16','1:1']
+      if(!allowedRatios.includes(parameters.value.aspectRatio))parameters.value.aspectRatio='16:9'
+      return
+    }
     if (target.value === 'music') return
     const current = profile.value
     if (!current) return
@@ -186,17 +179,24 @@ export function useCreationWorkspace(options:{beforeSubmit?:()=>Promise<()=>Prom
     if (!ratios.value.includes(parameters.value.aspectRatio)) parameters.value.aspectRatio = ratios.value.includes(String(defaults.aspect_ratio)) ? String(defaults.aspect_ratio) : ratios.value[0] || ''
     if (!resolutions.value.includes(parameters.value.resolution)) parameters.value.resolution = resolutions.value[0] || ''
     // 记住会话质量；不兼容时由报价校验提示，不静默降档或改变收费参数。
-    if (target.value === 'image' && !qualities.value.includes(parameters.value.quality)) error.value = '当前模型不支持已保存的图片质量，请重新选择质量后预估。'
+    error.value = imageQualityError(error.value,target.value,parameters.value.quality,qualities.value)
     parameters.value.durationSec = Math.min(durationRange.value.max, Math.max(durationRange.value.min, parameters.value.durationSec))
     const range = durationRange.value
     if (range.values.length) parameters.value.durationSec = range.values.reduce((best, value) => Math.abs(value - parameters.value.durationSec) < Math.abs(best - parameters.value.durationSec) ? value : best)
     else parameters.value.durationSec = Math.min(range.max, range.min + Math.round((parameters.value.durationSec - range.min) / range.step) * range.step)
   }
   watch(() => parameters.value.model, applyCapabilities)
+  // 用户重新选回合法质量时立即撤销旧错误，而不是一直挂到刷新页面。
+  watch(() => parameters.value.quality, applyCapabilities)
   watch(target, applyCapabilities)
   watch(modelSchema, applyCapabilities, { deep: true })
+  // 清晰度切换后立即收敛比例；图片报价/确认只能消费当前合法组合。
+  watch(() => parameters.value.resolution, applyCapabilities)
+  // 上传、移除或恢复参考素材后重新吸附，不能留下协议不支持但仍可确认的旧秒数。
+  watch(() => durationRange.value.values.join(','), applyCapabilities)
   // 剧本修改使之前的解析报价失效，不允许按旧脚本价格提交新脚本。
   watch(()=>[director.value?.title,director.value?.script],()=>{confirmation.value=null;directorAccepted.value=false})
+  watch(scriptFile,(file,previous)=>{if(file!==previous){director.value=null;directorAccepted.value=false}})
   async function loadCatalog() {
     const current = ++revision
     loading.value = true
@@ -225,7 +225,8 @@ export function useCreationWorkspace(options:{beforeSubmit?:()=>Promise<()=>Prom
     scriptFile.value = null; session.value = null; messages.value = []; error.value = ''; confirmation.value = null
     const prior = entryDrafts.get(value)
     if (prior) { skill.value = prior.skill; prompt.value = prior.prompt; segments.value = prior.segments; references.value = prior.references; parameters.value = prior.parameters; scriptFile.value = prior.file }
-    await router.replace({ path: '/dashboard', query: { entry: value } }); await loadCatalog()
+    // 技能页只切换入口草稿，不为试用跳回首页；正式发送后仍走原会话路由。
+    await router.replace({ path: options.entryPath?.() || '/dashboard', query: { entry: value } }); await loadCatalog()
   }
   function draft(): CreationDraft {
     return { entry: entry.value, skill: skill.value, prompt: prompt.value,
@@ -250,7 +251,7 @@ export function useCreationWorkspace(options:{beforeSubmit?:()=>Promise<()=>Prom
         try {
         const media = file.type.startsWith('image/') ? 'image' : file.type.startsWith('audio/') ? 'audio' : file.type.startsWith('video/') ? 'video' : 'document'
         if (!allowedMedia(media)) throw new Error(`当前技能不能使用${({ image: '图片', video: '视频', audio: '音频', document: '文档' } as Record<string, string>)[media]}，请切换技能。`)
-        const item = await libraryService.upload(file, media === 'audio' ? 'music' : entry.value === 'commerce' ? 'product' : 'other', percent => { job.progress = percent })
+        const item = await libraryService.upload(file, media === 'audio' ? 'music' : ['commerce','marketing'].includes(entry.value) ? 'product' : 'other', percent => { job.progress = percent })
         if (disposed || auth.session.user?.id !== owner) break
         const version = item.versions[0]
         if (!version) throw new Error('上传文件尚未生成可引用版本，请从资料库检查。')
@@ -481,12 +482,31 @@ export function useCreationWorkspace(options:{beforeSubmit?:()=>Promise<()=>Prom
       // 助手方案可独立报价，不必把已发送的需求重新填回用户正在编辑的输入框。
       let inputFingerprint=canonical(draft())
       let value = proposalDraft ? JSON.parse(JSON.stringify(proposalDraft)) as CreationDraft : draft(), nextTarget = target.value
-      if (entry.value === 'drama') {
+      // 已发送附件已移到消息区；后续阶段消费规划时的同一输入，而不是空的编辑器。
+      if(directorAccepted.value && director.value?.input_draft){
+        const snapshot=director.value.input_draft
+        const keys=['mv_lyrics','mv_instrumental','mv_range_mode','mv_start_sec','mv_end_sec','mv_song_version','mv_alignment_id','mv_alignment_confirmation']
+        if(director.value.mv_run_id && keys.some(key=>JSON.stringify(snapshot.parameters.extra?.[key])!==JSON.stringify(parameters.value.extra[key]))){
+          directorAccepted.value=false
+          throw new Error('歌曲、歌词或范围已改变，请重新发送需求规划 MV 剧本。')
+        }
+        if(parameters.value.extra.director_input_mode!=='file' && !snapshot.parameters.extra.script_file_name && prompt.value.trim() && ![snapshot.prompt,snapshot.original_prompt].includes(prompt.value)){
+          directorAccepted.value=false
+          throw new Error('创作需求已改变，请重新规划脚本。')
+        }
+        value=JSON.parse(JSON.stringify(snapshot)) as CreationDraft
+        value.parameters={...value.parameters,...parameters.value,extra:{...value.parameters.extra,...parameters.value.extra}}
+      }
+      if (entry.value === 'drama' && !directorAccepted.value && (!value.parameters.extra.director_input_mode || value.parameters.extra.director_input_mode === 'file')) {
         if (!scriptFile.value) throw new Error('请上传剧本文件。')
         if (scriptFile.value.size > 20 * 1024 * 1024 || !/\.(txt|docx|pdf)$/i.test(scriptFile.value.name)) throw new Error('剧本仅支持 20 MB 内的 TXT、DOCX 或 PDF。')
         // 文件内容摘要区分同名剧本；刷新后重新选择相同文件仍可恢复原创建编号。
         const hash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', await scriptFile.value.arrayBuffer()))).map(byte => byte.toString(16).padStart(2, '0')).join('')
         value.parameters.extra = { ...value.parameters.extra, script_file_sha256: hash, script_file_name: scriptFile.value.name }
+        director.value=await creationService.directorFile(value,scriptFile.value)
+        parameters.value.extra={...parameters.value.extra,director_run_id:director.value.director_run_id}
+        await router.replace({path:'/dashboard',query:{...route.query,entry:entry.value,skill:skill.value,run:director.value.director_run_id}})
+        return
       } else if (!value.prompt.trim() && !['reference', 'lyric-video'].includes(value.skill) && !value.skill.startsWith('mv-')) throw new Error('请先描述创作要求。')
       if (skill.value === 'free' && !value.parameters.extra.creation_run_id) {
         const suggested = parameters.value.output === 'auto' ? await creationService.route(value) : { target: parameters.value.output, skill: parameters.value.output === 'video' ? 'story' : parameters.value.output === 'music' ? 'free' : 'image' }
@@ -505,7 +525,7 @@ export function useCreationWorkspace(options:{beforeSubmit?:()=>Promise<()=>Prom
         return
       }
       const base=selectedSkill.value?.base_code || value.skill
-      if (['ad', 'story'].includes(base) && value.parameters.workflow === 'director' && !directorAccepted.value) {
+      if ((base==='director' && value.parameters.extra.director_input_mode && value.parameters.extra.director_input_mode!=='file' || ['ad', 'story'].includes(base) && value.parameters.workflow === 'director') && !directorAccepted.value) {
         director.value = await creationService.director(value, base === 'ad' ? 'ad' : 'general')
         parameters.value.extra={...parameters.value.extra,director_run_id:director.value.director_run_id}
         await router.replace({path:'/dashboard',query:{...route.query,entry:entry.value,skill:skill.value,run:director.value.director_run_id}})
@@ -525,8 +545,8 @@ export function useCreationWorkspace(options:{beforeSubmit?:()=>Promise<()=>Prom
         const payload = {...musicInputs(value),creationContext:recipe.creation_context}, quote = await musicService.quote(payload.operation, payload.inputs, value.parameters.rightsConfirmed)
         confirmation.value = { draft: value, credits: quote.retail_credits, sufficient: Number(account.profile?.creditBalance ?? Infinity) >= quote.retail_credits, target: nextTarget, quote, payload, requestId }
       } else {
-        const quote = entry.value === 'drama' && scriptFile.value ? await dramaService.previewEntryFileCredits(scriptFile.value) : await dramaService.previewEntryCredits({ content: director.value!.script })
-        confirmation.value = { draft: value, credits: quote.requiredCredits, sufficient: quote.sufficient, target: 'drama', quote, payload: null, requestId, scriptFile: scriptFile.value || undefined, director: director.value ? JSON.parse(JSON.stringify(director.value)) : undefined }
+        const quote = director.value ? await dramaService.previewEntryCredits({ content: director.value.script }) : await dramaService.previewEntryFileCredits(scriptFile.value!)
+        confirmation.value = { draft: value, credits: quote.requiredCredits, sufficient: quote.sufficient, target: 'drama', quote, payload: null, requestId, scriptFile: director.value ? undefined : scriptFile.value || undefined, director: director.value ? JSON.parse(JSON.stringify(director.value)) : undefined }
       }
       if (confirmation.value) {
         // 报价期间用户改了草稿，旧价格只作废，不能绑定到新的参数或正文。
@@ -630,7 +650,8 @@ export function useCreationWorkspace(options:{beforeSubmit?:()=>Promise<()=>Prom
     try {
       const content = draft()
       content.references = []; content.reference_names = {}
-      content.entry = kind === 'music' ? 'music' : 'commerce'
+      // 广告来源工具结果回到当前广告会话，不强制改写为旧电商入口。
+      content.entry = kind === 'music' ? 'music' : entry.value === 'marketing' ? 'marketing' : 'commerce'
       content.skill = kind === 'music' ? 'remix' : 'showcase'
       content.prompt = kind === 'music' ? `音频工具：${(task as MusicTask).label}` : (task as ProductVideoTask).prompt
       content.segments = [{ type: 'text', text: content.prompt }]
@@ -649,8 +670,9 @@ export function useCreationWorkspace(options:{beforeSubmit?:()=>Promise<()=>Prom
   onMounted(async () => {
     explicitLogout.value=false
     try {
-      let initial: CreationEntryType = route.path === '/dashboard-product' ? 'commerce' : route.path === '/dashboard-product-video' ? 'commerce' : route.path === '/dashboard-music' ? 'music' : ['free', 'drama', 'commerce', 'music', 'image'].includes(String(route.query.entry)) ? route.query.entry as CreationEntryType : 'free'
-      if(!auth.session.loggedIn&&!route.query.session&&!route.query.run){try{const cached=JSON.parse(localStorage.getItem('liv-workbench-guest-draft')||'null');if(cached&&typeof cached.prompt==='string'&&['free','drama','commerce','music','image'].includes(cached.entry)){if(!route.query.entry&&route.path.replace(/\/$/,'')==='/dashboard')initial=cached.entry;if(initial===cached.entry){prompt.value=cached.prompt.slice(0,20000);segments.value=[{type:'text',text:prompt.value}]}}}catch{/* 损坏缓存不覆盖当前工作台。 */}}
+      let initial: CreationEntryType = route.path === '/dashboard-product' ? 'commerce' : route.path === '/dashboard-product-video' ? 'commerce' : route.path === '/dashboard-music' ? 'music' : ['free', 'drama', 'commerce', 'marketing', 'music', 'image'].includes(String(route.query.entry)) ? route.query.entry as CreationEntryType : 'free'
+      // 清理旧版游客文字缓存，不读取或复活其中内容；会话恢复仍走原流程。
+      try{localStorage.removeItem('liv-workbench-guest-draft')}catch{/* 存储被禁用不影响当前输入。 */}
       entry.value = initial; skill.value = typeof route.query.skill === 'string' ? route.query.skill : route.path === '/dashboard-product-video' ? 'showcase' : defaultSkills[initial]
       // 深链会话独立恢复，目录或侧栏请求失败不能阻止会话错误和重试入口展示。
       if (typeof route.query.session === 'string' && requireLogin()) await restore(route.query.session)
@@ -668,7 +690,7 @@ export function useCreationWorkspace(options:{beforeSubmit?:()=>Promise<()=>Prom
     if(clearText){prompt.value='';segments.value=[];pendingReferences=[];draftOwner=undefined}
     explicitLogout.value=false
     // 登录失效保留文字草稿，但立刻清理上一账号的私人结果、素材与报价。
-    ++restoreRevision; ++estimateRevision;restoreController?.abort();if(pollTimer)clearTimeout(pollTimer);if(estimateTimer)clearTimeout(estimateTimer);sessions.value=[]; messages.value=[]; musicTasks.value=[]; session.value=null; focusedMessage.value=''; references.value=[]; confirmation.value=null; director.value=null
+    ++restoreRevision;restoreController?.abort();if(pollTimer)clearTimeout(pollTimer);sessions.value=[]; messages.value=[]; musicTasks.value=[]; session.value=null; focusedMessage.value=''; references.value=[]; confirmation.value=null; director.value=null
     for(const key of Object.keys(taskData)) delete taskData[key]
     taskActivity.value={}
     entryDrafts.clear()
@@ -683,7 +705,7 @@ export function useCreationWorkspace(options:{beforeSubmit?:()=>Promise<()=>Prom
       else for(const ref of resume){try{const item=await libraryService.detail(ref.item_id),version=item.versions.find(value=>value.id===ref.version_id);if(version&&auth.session.user?.id===owner)addReference({...ref,name:item.name,media_type:item.media_type,preview_url:libraryService.previewUrl(version.preview_url)})}catch{/* 失效素材不恢复为有效附件，历史任务仍保留。 */}}
     }else await loadCatalog()
   })
-  onBeforeUnmount(() => { disposed = true; uploads.value.forEach(item => { if(item.preview)URL.revokeObjectURL(item.preview) }); restoreController?.abort(); if (pollTimer) clearTimeout(pollTimer); if (estimateTimer) clearTimeout(estimateTimer) })
+  onBeforeUnmount(() => { disposed = true; creditHint.dispose(); uploads.value.forEach(item => { if(item.preview)URL.revokeObjectURL(item.preview) }); restoreController?.abort(); if (pollTimer) clearTimeout(pollTimer) })
   return { taskActivity, entry, skill, prompt, segments, references, parameters, scriptFile, catalog, sessions, session, messages, focusedMessage, busy, loading, error, director, directorAccepted,
     musicTasks, taskData, confirmation, selectedSkill, target, profile, modelSchema, models, ratios, resolutions, qualities, estimateLabel, durationRange, musicSources, focused, activeResult, active,
     uploads, dismissUpload, sessionLoading, sessionError, pendingSession, patchParameters, setText, setSkill, chooseEntry, upload, addReference, removeReference, replaceReference, reorder, refreshSessions, restore, focusMessage, refreshResults, draft, prepare, submit, continueImage, recordToolTask }

@@ -1,11 +1,20 @@
 <script setup lang="ts">
 // 读取页面资料时展示布局占位；生成、上传和支付等业务进度仍使用真实任务状态。
-withDefaults(defineProps<{ layout?: 'unknown' | 'conversation' | 'media'; variant?: 'workspace' | 'cards' | 'rows' | 'conversation' | 'toolbar'; rows?: number; heading?: boolean }>(), { layout: 'unknown', variant: 'rows', rows: 3, heading: true })
+withDefaults(defineProps<{ layout?: 'unknown' | 'conversation' | 'media'; variant?: 'home' | 'workspace' | 'cards' | 'rows' | 'conversation' | 'toolbar'; rows?: number; heading?: boolean }>(), { layout: 'unknown', variant: 'rows', rows: 3, heading: true })
 </script>
 <template>
-  <div class="dashboard-skeleton" :class="[`dashboard-skeleton--${variant}`,{'is-conversation-only':variant==='conversation'&&layout==='conversation'}]" role="status" aria-label="正在载入页面" aria-busy="true">
+  <div class="dashboard-skeleton" :class="[`dashboard-skeleton--${variant}`,{'creation-studio':variant==='home','is-conversation-only':variant==='conversation'&&layout==='conversation'}]" role="status" aria-label="正在载入页面" aria-busy="true">
     <!-- 占位均复用 Nuxt UI；会话恢复保持消息区、编辑器、工具栏和画布的位置。 -->
-    <div v-if="variant==='conversation' && layout==='unknown'" class="dashboard-skeleton-neutral"><USkeleton class="skeleton-title"/><USkeleton class="skeleton-line"/><USkeleton class="skeleton-line short"/></div>
+    <!-- 首页占位复用实际标题位置、800px输入区及案例区域，不能套项目列表布局。 -->
+    <template v-if="variant==='home'">
+      <div class="creation-hero home-skeleton-hero"><USkeleton class="home-skeleton-title"/><USkeleton class="home-skeleton-subtitle"/></div>
+      <div class="creation-home">
+        <div class="home-skeleton-composer"><USkeleton class="home-skeleton-upload"/><USkeleton class="skeleton-line"/><div class="skeleton-tools"><USkeleton v-for="index in 4" :key="index" class="skeleton-tool"/><USkeleton class="skeleton-send"/></div></div>
+        <div class="home-skeleton-shortcuts"><USkeleton v-for="index in 4" :key="index" class="home-skeleton-shortcut"/></div>
+      </div>
+      <div class="creation-cases home-skeleton-cases"><USkeleton class="skeleton-tool-label"/><div class="home-skeleton-grid"><div v-for="index in rows" :key="index"><USkeleton class="skeleton-cover"/><USkeleton class="skeleton-line"/></div></div></div>
+    </template>
+    <div v-else-if="variant==='conversation' && layout==='unknown'" class="dashboard-skeleton-neutral"><USkeleton class="skeleton-title"/><USkeleton class="skeleton-line"/><USkeleton class="skeleton-line short"/></div>
     <div v-else-if="variant === 'conversation'" class="dashboard-skeleton-conversation">
       <div class="dashboard-skeleton-chat"><USkeleton class="skeleton-title"/><div class="skeleton-user"><USkeleton class="skeleton-line"/></div><div v-for="index in 2" :key="index" class="skeleton-message"><USkeleton class="skeleton-avatar"/><USkeleton class="skeleton-line"/><USkeleton class="skeleton-line short"/></div><div class="skeleton-editor"><USkeleton class="skeleton-line"/><div class="skeleton-tools"><USkeleton v-for="index in 4" :key="index" class="skeleton-tool"/><USkeleton class="skeleton-send"/></div></div></div>
       <USkeleton v-if="layout==='media'" class="dashboard-skeleton-canvas"/>
@@ -24,6 +33,21 @@ withDefaults(defineProps<{ layout?: 'unknown' | 'conversation' | 'media'; varian
 </template>
 <style scoped>
 .dashboard-skeleton{width:100%;padding:20px 0;color-scheme:dark}
+/* 首页与真实内容共享外边距及容器令牌，移动端快捷入口同样换行。 */
+.dashboard-skeleton--home{padding:0}
+.home-skeleton-hero{flex-direction:column}
+.home-skeleton-title{width:min(300px,75%);height:32px}
+.home-skeleton-subtitle{width:min(400px,85%);height:20px}
+.home-skeleton-composer{height:clamp(190px,30cqi,240px);border:1px solid var(--liv-home-composer-border);border-radius:24px;padding:16px;display:flex;flex-direction:column;gap:16px}
+.home-skeleton-upload{width:48px;height:48px;flex:none}
+.home-skeleton-composer>.skeleton-tools{margin-top:auto}
+.home-skeleton-shortcuts{display:flex;justify-content:center;flex-wrap:wrap;gap:8px;margin-top:17px}
+.home-skeleton-shortcut{width:120px;height:40px}
+.home-skeleton-cases{margin:32px auto 0;display:grid;gap:16px}
+.home-skeleton-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px}
+.home-skeleton-grid>div{display:grid;gap:12px;min-width:0}
+@media(max-width:1023.98px){.home-skeleton-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:600px){.home-skeleton-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.home-skeleton-title{height:28px}.home-skeleton-composer{padding:12px;border-radius:19px}}
 .dashboard-skeleton-heading{display:grid;gap:14px;margin-bottom:28px}
 .dashboard-skeleton :deep([aria-busy='true']){background:var(--liv-skeleton-surface);border-radius:8px}
 .skeleton-title{width:210px;height:28px}.skeleton-subtitle{width:36%;height:14px}

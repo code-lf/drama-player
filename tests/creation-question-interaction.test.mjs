@@ -86,7 +86,8 @@ test('视频缩略图暂停定位首帧，风格模板保留输入工具栏且�
 
 test('同值参数和弹层操作不撤销报价，真实改动自动核价，视频审核建议有读取入口',()=>{
   const workspace=read('features/creation/useCreationWorkspace.ts'),studio=read('features/creation/components/CreationStudio.vue')
-  assert.ok(workspace.includes('watch([()=>canonical(draft()), scriptFile]'))
+  // 模型目录也是现有监听依赖，校验保留草稿／文件监听，不限制后续附加依赖。
+  assert.match(workspace,/watch\(\[\(\)=>canonical\(draft\(\)\), scriptFile, models, \(\)=>auth.session.loggedIn, \(\)=>auth.session.user\?\.id\]/)
   assert.ok(workspace.includes('if(before!==canonical(draft()))confirmation.value = null'))
   assert.ok(studio.includes('proposalParametersKey,planningBusy'))
   assert.ok(studio.includes('taskData[item.id]?.video?.safetyRepair'))
@@ -115,5 +116,7 @@ test('紧凑风格只显示缩略图和叉号，大输入框与悬停保留名�
   assert.ok(source.includes('<span class="creation-selected-style-label">{{activeStyleLabel}}</span>'))
   assert.ok(source.includes('<UTooltip :text="activeStyleLabel"'))
   assert.ok(source.includes('aria-label="清除风格"'))
-  assert.ok(source.includes('max-width:calc(13em + 46px)'))
+  // 标签由实际名称决定宽度，不能再次恢复固定字数占位。
+  assert.ok(source.includes('flex:0 1 auto;width:max-content;min-width:32px;max-width:100%'))
+  assert.ok(!source.includes('calc(13em + 46px)'))
 })

@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { useActionDialog } from '~/composables/useActionDialog'
+import CreationDurationSlider from '~/features/creation/components/CreationDurationSlider.vue'
+import { allowedDurations, nearestDurationIndex, referenceDurationValues } from '~/features/creation/durationOptions'
 const { confirm: confirmAction } = useActionDialog()
 import type { DigitalHumanAvailability, ProductVideoReferenceAnalysis, ProductVideoReferenceLinkInspection, ProductVideoTask, ProductVideoTemplate } from '~/entities/product-video/types'
 import CreditAmount from '~/components/ui/CreditAmount.vue'
@@ -19,13 +21,15 @@ interface Props {
   currentCreditBalance: number | string
   defaultVideoModel: string
   initialSource?:{taskId:string;resultId:string}
+  /** 技能入口只展示数字人口播，不加载或进入旧视频工作区首页。 */
+  digitalOnly?: boolean
 }
 
 const props = defineProps<Props>()
 const emit = defineEmits<{ created: [task: ProductVideoTask] }>()
 const accountStore = useAccountStore()
 const { $siteAsset: siteAsset } = useNuxtApp()
-const view = ref<WorkspaceView>('home')
+const view = ref<WorkspaceView>(props.digitalOnly?'digital':'home')
 const creationType = ref<CreationType>('model')
 const studioMode = ref<'free' | 'reference' | 'trending' | 'digital'>('free')
 const referenceAnalysis = ref<ProductVideoReferenceAnalysis | null>(null)
@@ -133,6 +137,14 @@ const referenceUsesVideoInput = computed(() => creationType.value === 'reference
   && Boolean(modelOptions.value.find(item => item.code === activeVideoModel.value)?.supportsReferenceVideo))
 const referenceAnalysisOnly = computed(() => studioMode.value === 'reference'
   && creationType.value === 'reference_video' && !referenceUsesVideoInput.value)
+// 旧商品视频入口同样消费服务端素材约束；当前秒数失效时吸附到最近合法档。
+watch(() => [referenceUsesVideoInput.value, sourceImages.value.length, activeVideoModel.value], () => {
+  const schema = modelOptions.value.find(item => item.code === activeVideoModel.value)?.inputSchema
+  if (!schema) return
+  durationOptions.value = referenceDurationValues(allowedDurations(schema.duration_sec || {min:4,max:15,step:1},1,30), schema.duration_constraints,
+    [...sourceImages.value.map(() => ({media_type:'image'})), ...(referenceUsesVideoInput.value ? [{media_type:'video'}] : [])])
+  durationSec.value = durationOptions.value[nearestDurationIndex(durationOptions.value,durationSec.value)] || 0
+})
 const resultCount = ref(2)
 const activeTask = ref<ProductVideoTask | null>(null)
 const selectedCategory = ref('全部')
@@ -211,9 +223,8 @@ function selectTemplate(template: ProductVideoTemplate): void {
   activeTemplateId.value = template.id
   // 旧模板时长按当前功能能力收敛，避免模型切换后继续提交过期规格。
   const supportedDurations = durationOptions.value
-  const minDuration = supportedDurations[0] || 4
-  const maxDuration = supportedDurations[supportedDurations.length - 1] || 15
-  durationSec.value = Math.min(maxDuration, Math.max(minDuration, template.durationSec))
+  // 离散档位不能仅夹在上下限内，例如 Grok 的旧模板 8 秒应吸附至 6 秒。
+  durationSec.value = supportedDurations[nearestDurationIndex(supportedDurations, template.durationSec)] || 0
   aspectRatio.value = template.aspectRatio
   view.value = 'create'
 }
@@ -313,6 +324,8 @@ function openTrending(): void {
 async function loadDigitalAvailability(): Promise<void> {
   try {
     digitalAvailability.value = await productVideoService.getDigitalHumanAvailability()
+    // 技能工具明确显示真实未配置状态，不把接入术语或默认可用状态展示给用户。
+    if(props.digitalOnly&&!digitalAvailability.value.available)digitalAvailability.value.message='数字人口播暂未配置完成，请稍后使用。'
   } catch (error) {
     digitalAvailability.value = { available: false, maxSeconds: 180, message: error instanceof Error ? error.message : '数字人口播配置暂不可用。' }
   }
@@ -405,7 +418,7 @@ function applyModelSchema(schema: Record<string, any>, defaults: Record<string, 
     referenceImageLimit.value = Math.max(0, Number(schema.max_reference_count ?? 3))
     const ratiosRaw = schema.aspect_ratio || schema.aspect_ratios
     const resolutionsRaw = schema.resolution || schema.resolutions
-    const durationRule = (schema.duration_sec || {}) as { min?: number; max?: number }
+    const durationRule = schema.duration_sec || {min:4,max:15,step:1}
     // 页面展示后台白名单与商品视频接口的交集，不向模型提交不支持的规格。
     if (Array.isArray(ratiosRaw)) {
       const allowedRatios = new Set(['9:16', '1:1', '16:9', '3:2', '2:3'])
@@ -413,14 +426,13 @@ function applyModelSchema(schema: Record<string, any>, defaults: Record<string, 
       if (supported.length) aspectRatioOptions.value = supported
     }
     if (Array.isArray(resolutionsRaw)) resolutionOptions.value = resolutionsRaw.map(value => String(value).toLowerCase())
-    const minDuration = Math.max(1, Number(durationRule.min || 4))
-    const maxDuration = Math.max(minDuration, Number(durationRule.max || 15))
-    durationOptions.value = Array.from({ length: maxDuration - minDuration + 1 }, (_, index) => minDuration + index)
+    // 旧工作区也必须读取离散数组；[6,10]不能被错误展开为4到15秒。
+    durationOptions.value = allowedDurations(durationRule,1,30)
     aspectRatio.value = aspectRatioOptions.value.includes(String(defaults.aspect_ratio || aspectRatio.value)) ? String(defaults.aspect_ratio || aspectRatio.value) : aspectRatioOptions.value[0] || '9:16'
     const preferredResolution = String(defaults.resolution || resolution.value).toLowerCase()
     resolution.value = resolutionOptions.value.includes(preferredResolution) ? preferredResolution : resolutionOptions.value[0] || '720p'
     const preferredDuration = Number(defaults.duration_sec || durationSec.value)
-    durationSec.value = durationOptions.value.includes(preferredDuration) ? preferredDuration : durationOptions.value[0] || 10
+    durationSec.value = durationOptions.value[nearestDurationIndex(durationOptions.value,preferredDuration)] || 0
 }
 
 function selectVideoModel(code: string): void {
@@ -589,6 +601,7 @@ function resetCreation(): void {
 }
 
 onMounted(async () => {
+  if(props.digitalOnly){await loadDigitalAvailability();return}
   await Promise.all([loadHome(), loadGenerationProfile()])
   // 从会话作品进入时只固定素材，不自动提炼脚本、调用模型或提交收费任务。
   if(props.initialSource){
@@ -600,7 +613,7 @@ onBeforeUnmount(stopPolling)
 </script>
 
 <template>
-  <section class="product-video-shell mx-auto max-w-[1460px]">
+  <section class="product-video-shell mx-auto max-w-[1460px]" :class="{'is-digital-skill':digitalOnly}">
     <LibraryPicker v-model:open="libraryPickerOpen" kind="video" :model="activeVideoModel" :media-type="libraryPickerType" :analysis-only="libraryPickerType === 'video'" :remaining="libraryPickerType === 'video' ? 1 : libraryPickerType === 'document' ? 3 - libraryDocuments.length : referenceImageLimit - sourceImages.length - imageUploadsInFlight - pendingLibraryUploads.filter(value => value.kind === 'image').length" @select="selectLibrary" />
     <div v-if="libraryEnabled && view === 'create'" class="flex gap-3 mb-4 text-sm text-blue-600"><button @click="libraryPickerType = 'image'; libraryPickerOpen = true">商品图片：从资料库选择</button><button v-if="studioMode === 'reference'" @click="libraryPickerType = 'video'; libraryPickerOpen = true">参考视频：从资料库选择</button><button @click="libraryPickerType = 'document'; libraryPickerOpen = true">引用参考原文</button></div>
     <button v-if="libraryEnabled && activeTask && selectedResult?.videoUrl && view === 'result'" class="mb-3 text-blue-600 text-sm" @click="saveLibraryResult(activeTask.id, selectedResult.id)">保存当前视频到个人资料</button>
@@ -664,7 +677,7 @@ onBeforeUnmount(stopPolling)
           <div class="pv-field"><div class="pv-field-head"><b>{{ studioMode === 'reference' ? '4. 视频画面描述（可编辑）' : '创意描述' }}</b><span>{{ prompt.length }}/1500</span></div><textarea v-model="prompt" maxlength="1500" :placeholder="studioMode === 'reference' ? 'AI 改写后自动填入，也可自己描述商品画面、动作与节奏' : '描述商品、人物、画面风格与想突出的卖点'"></textarea></div>
           <div v-if="userCanSelectModel && modelOptions.length > 1" class="pv-field"><div class="pv-field-head"><b>视频模型</b></div><div class="pv-setting-grid"><label>本次使用<LivSelect :value="activeVideoModel" @change="selectVideoModel(($event.target as HTMLSelectElement).value)"><option v-for="item in modelOptions" :key="item.code" :value="item.code">{{ item.name }}</option></LivSelect></label></div><p class="pv-field-hint">切换模型后，时长、清晰度和比例将按当前模型能力重新匹配，生成前仍会显示实际报价。</p></div>
           <p v-if="studioMode === 'reference' && creationType === 'reference_video'" class="pv-field-hint">{{ referenceAnalysisOnly ? '当前模型仅使用提炼后的脚本与商品图生成新视频；不直接使用原参考片，不收取视频输入费用。' : '当前模型可接收原参考视频；报价包含输入视频时长。' }}</p>
-          <div class="pv-field"><div class="pv-field-head"><b>视频设置</b></div><div class="pv-setting-grid"><label>比例<LivSelect v-model="aspectRatio"><option v-for="ratio in aspectRatioOptions" :key="ratio" :value="ratio">{{ ratio }}</option></LivSelect></label><label>时长<LivSelect v-model.number="durationSec"><option v-for="second in durationOptions" :key="second" :value="second">{{ second }} 秒</option></LivSelect></label><label>生成数量<LivSelect v-model.number="resultCount"><option :value="1">1 个</option><option :value="2">2 个</option><option :value="4">4 个</option></LivSelect></label><label>清晰度<LivSelect v-model="resolution"><option v-for="item in resolutionOptions" :key="item" :value="item">{{ item.toUpperCase() }}</option></LivSelect></label></div></div>
+          <div class="pv-field"><div class="pv-field-head"><b>视频设置</b></div><div class="pv-setting-grid"><label>比例<LivSelect v-model="aspectRatio"><option v-for="ratio in aspectRatioOptions" :key="ratio" :value="ratio">{{ ratio }}</option></LivSelect></label><div><CreationDurationSlider v-model="durationSec" :values="durationOptions" label="时长"/></div><label>生成数量<LivSelect v-model.number="resultCount"><option :value="1">1 个</option><option :value="2">2 个</option><option :value="4">4 个</option></LivSelect></label><label>清晰度<LivSelect v-model="resolution"><option v-for="item in resolutionOptions" :key="item" :value="item">{{ item.toUpperCase() }}</option></LivSelect></label></div></div>
           <footer class="pv-form-footer"><div><span>当前点数</span><CreditAmount :value="props.currentCreditBalance" size="sm" tone="accent" /></div><div><span>生成费用</span><b>提交前获取实时报价</b></div><button type="button" :disabled="loading || referenceAnalyzing" @click="startCreation"><span class="i-lucide-sparkles"></span>{{ loading ? '正在获取报价…' : '一键生成视频' }}</button></footer>
         </div>
         <aside class="pv-preview-card"><h2>效果参考</h2><div class="pv-preview-media"><img v-if="activeTemplate" :src="siteAsset(activeTemplate.coverUrl)" :alt="activeTemplate.name" /></div><h3>{{ activeTemplate?.name }}</h3><p>{{ activeTemplate?.description }}。图片仅示意视觉方向，成片以实际生成结果为准。</p><dl><div><dt>适合</dt><dd>{{ activeTemplate?.styleTags.join(' / ') }}</dd></div><div><dt>时长</dt><dd>{{ durationSec }} 秒</dd></div><div><dt>比例</dt><dd>{{ aspectRatio }}</dd></div></dl></aside>
@@ -672,8 +685,8 @@ onBeforeUnmount(stopPolling)
     </template>
 
     <template v-else-if="view === 'digital'">
-      <header class="pv-heading pv-heading--compact"><div><p class="pv-eyebrow">DIGITAL PRESENTER</p><h1>数字人口播</h1><p>写好播报文稿，使用平台预设的数字人形象与音色生成完整口播视频。</p></div><button type="button" class="pv-template-link" @click="view = 'home'"><span class="i-lucide-arrow-left"></span>返回 AI 视频</button></header>
-      <div class="pv-create-layout"><section class="pv-form-card"><div class="pv-field"><div class="pv-field-head"><b>播报文稿</b><span>{{ digitalScript.length }}/540 字</span></div><textarea v-model="digitalScript" class="pv-digital-script" maxlength="540" placeholder="例如：今天为大家介绍这款产品的亮点……"></textarea><p class="pv-field-hint">适合商品讲解、资讯播报和知识分享；预计时长由文稿字数计算。</p></div><div class="pv-field"><div class="pv-field-head"><b>输出清晰度</b></div><div class="pv-setting-grid"><label>分辨率<LivSelect v-model="digitalResolution"><option value="720p">720P</option><option value="1080p">1080P</option></LivSelect></label></div></div><div v-if="digitalAvailability && !digitalAvailability.available" class="pv-unavailable">{{ digitalAvailability.message }}</div><footer class="pv-form-footer"><div><span>当前点数</span><CreditAmount :value="props.currentCreditBalance" size="sm" tone="accent" /></div><div><span>生成费用</span><b>按预估播报时长报价</b></div><button type="button" :disabled="loading || !digitalAvailability?.available" @click="startDigitalHuman"><span class="i-lucide-mic-vocal"></span>{{ loading ? '正在获取报价…' : '生成口播视频' }}</button></footer></section><aside class="pv-preview-card"><h2>播报设置</h2><div class="pv-digital-visual"><span class="i-lucide-user-round"></span></div><h3>平台预设数字人</h3><p>形象、声音和背景由阿里云播报模板配置，后续支持更多形象选择。</p><dl><div><dt>最长时长</dt><dd>约 3 分钟</dd></div><div><dt>生成模型</dt><dd>阿里云灵眸</dd></div></dl></aside></div>
+<header v-if="!digitalOnly" class="pv-heading pv-heading--compact"><div><p class="pv-eyebrow">DIGITAL PRESENTER</p><h1>数字人口播</h1><p>写好播报文稿，使用平台预设的数字人形象与音色生成完整口播视频。</p></div><button type="button" class="pv-template-link" @click="view = 'home'"><span class="i-lucide-arrow-left"></span>返回 AI 视频</button></header>
+<div class="pv-create-layout"><section class="pv-form-card"><div class="pv-field"><div class="pv-field-head"><b>播报文稿</b><span>{{ digitalScript.length }}/540 字</span></div><textarea v-model="digitalScript" class="pv-digital-script" maxlength="540" placeholder="例如：今天为大家介绍这款产品的亮点……"></textarea><p class="pv-field-hint">适合商品讲解、资讯播报和知识分享；预计时长由文稿字数计算。</p></div><div class="pv-field"><div class="pv-field-head"><b>输出清晰度</b></div><div class="pv-setting-grid"><label>分辨率<LivSelect v-model="digitalResolution"><option value="720p">720P</option><option value="1080p">1080P</option></LivSelect></label></div></div><div v-if="digitalAvailability && !digitalAvailability.available" class="pv-unavailable">{{ digitalAvailability.message }}</div><footer class="pv-form-footer"><div><span>当前点数</span><CreditAmount :value="props.currentCreditBalance" size="sm" tone="accent" /></div><div><span>生成费用</span><b>按预估播报时长报价</b></div><button type="button" :disabled="loading || !digitalAvailability?.available" @click="startDigitalHuman"><span class="i-lucide-mic-vocal"></span>{{ loading ? '正在获取报价…' : '生成口播视频' }}</button></footer></section><aside class="pv-preview-card"><h2>播报设置</h2><div v-if="!digitalOnly" class="pv-digital-visual"><span class="i-lucide-user-round"></span></div><h3>平台预设数字人</h3><p>形象、声音和背景由阿里云播报模板配置，后续支持更多形象选择。</p><dl><div><dt>最长时长</dt><dd>约 3 分钟</dd></div><div><dt>生成模型</dt><dd>阿里云灵眸</dd></div></dl></aside></div>
     </template>
 
     <template v-else-if="view === 'progress'">

@@ -9,6 +9,13 @@ export default defineAppConfig({
       error: 'red',
       info: 'sky'
     },
+    // 勾选图标使用品牌实心表面的前景色，避免深色主题 text-inverted 变成黑勾。
+    checkbox: {
+      slots: {
+        indicator: 'text-[var(--liv-control-on-primary)]',
+        icon: 'text-[var(--liv-control-on-primary)]'
+      }
+    },
     button: {
       defaultVariants: {
         size: 'md',

@@ -14,11 +14,16 @@ const props = withDefaults(defineProps<{
   settings?: boolean
   /** 分区设置布局：左对齐标题和说明，底部并排操作，不影响普通设置弹窗。 */
   sectioned?: boolean
+  /** 宽版只读参考表例外，复用同一弹窗交互，不改变普通设置560px规格。 */
+  reference?: boolean
+  /** 普通公告遵守运营配置的可关闭状态；其他弹窗默认保持可关闭。 */
+  dismissible?: boolean
 }>(), {
   description: '',
   width: 'md',
   closeLabel: '关闭弹窗',
-  flush: false
+  flush: false,
+  dismissible: true
 })
 
 const emit = defineEmits<{ 'update:open': [value: boolean] }>()
@@ -38,10 +43,11 @@ const contentClass = computed(() => ({
     :open="open"
     :title="title"
     :description="description"
-    :close="true"
+    :close="dismissible"
+    :dismissible="dismissible"
     :ui="{
       overlay: settings ? 'bg-black/70 backdrop-blur-sm' : undefined,
-      content: `${contentClass} liv-dialog-size-${width} ${dark ? 'creation-dark-dialog' : ''} ${settings ? 'liv-settings-dialog' : 'rounded-lg'} ${sectioned ? 'liv-settings-sectioned' : ''} ring-1 ring-default shadow-2xl`,
+      content: `${contentClass} liv-dialog-size-${width} ${dark ? 'creation-dark-dialog' : ''} ${settings ? 'liv-settings-dialog' : 'rounded-lg'} ${sectioned ? 'liv-settings-sectioned' : ''} ${reference ? 'liv-faq-dialog' : ''} ring-1 ring-default shadow-2xl`,
       header: settings ? 'liv-settings-header min-h-0' : 'min-h-0 border-b border-default px-5 py-4 sm:px-6',
       title: settings ? 'liv-settings-title' : 'text-lg font-bold tracking-normal text-highlighted',
       description: 'mt-1 text-sm leading-5 text-muted',
@@ -51,7 +57,7 @@ const contentClass = computed(() => ({
     @update:open="emit('update:open', $event)"
   >
     <!-- 原生 aria-label 放在实际按钮上，避免当作 Nuxt UI 配置字段导致类型错误。 -->
-    <template #close><UButton icon="i-lucide-x" color="neutral" variant="ghost" square :class="{'liv-settings-close':settings}" :aria-label="closeLabel" /></template>
+    <template v-if="dismissible" #close><UButton icon="i-lucide-x" color="neutral" variant="ghost" square :class="{'liv-settings-close':settings}" :aria-label="closeLabel" /></template>
     <!-- 图文标题放入组件库标题槽，保留 DialogTitle 的可访问名称与默认关闭行为。 -->
     <template v-if="$slots.icon" #title>
       <span class="liv-dialog-header-copy">

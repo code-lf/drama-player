@@ -4,6 +4,7 @@ export interface CreationCase { id: string; title: string; cover: string; descri
 /** 临时静态案例与可应用模板分离；这些案例不会填充提示词或自动启动收费任务。 */
 const item = (id: string, title: string, cover: string, description: string): CreationCase => ({ id, title, cover, description })
 export const creationCases: Record<CreationEntryType, CreationCase[]> = {
+  marketing: [],
   free: [item('free-photo', '雨夜电影人像', '/creation-presets/portrait-wide.png', '电影摄影风格参考'), item('free-anime', '落日海边小镇', '/creation-presets/anime-wide.png', '二维动画场景参考'), item('free-product', '香氛产品展示', '/creation-presets/perfume.png', '商品摄影参考')],
   drama: [],
   commerce: [item('ad-perfume', '香氛质感广告', '/creation-presets/perfume.png', '光影、材质与商品展示参考'), item('ad-fashion', '电影感穿搭', '/creation-presets/portrait-wide.png', '人物与服装视觉参考')],

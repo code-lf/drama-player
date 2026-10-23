@@ -112,6 +112,7 @@ interface BackendProjectItem {
 }
 
 interface BackendEpisodeCut {
+  mv?: EpisodeCutDraft['mv']
   id: string
   episode_no: number
   version_no: number
@@ -2560,6 +2561,7 @@ function mapEpisodeCut(raw: BackendEpisodeCut): EpisodeCutDraft {
     bgmGain: raw.bgm_gain,
     bgmFadeInMs: raw.bgm_fade_in_ms,
     bgmFadeOutMs: raw.bgm_fade_out_ms,
+    mv: raw.mv || null,
     subtitleStyle: raw.subtitle_style || {},
     exportSettings: raw.export_settings || {}
   }
@@ -2588,6 +2590,7 @@ function mapEpisodeCutTask(raw: BackendEpisodeCutTask): EpisodeCutTask {
 
 function buildEpisodeCutPayload(payload: EpisodeCutSavePayload) {
   return {
+    confirm_mv_lyrics:payload.confirmMvLyrics===true,
     clips: payload.clips.map(clip => ({
       storyboard_row_id: clip.storyboardRowId,
       take_id: clip.takeId,
@@ -2966,19 +2969,9 @@ export const httpAdapter: ApiAdapter = {
     const response = await request<BackendProductImageCreditPreviewResponse>('/product-image/credit-preview', {
       method: 'POST',
       body: {
-        library_refs: payload.libraryRefs || [], input_order: payload.inputOrder || [],
-        aspect_ratio: payload.aspectRatio || '1:1',
-        reference_images: (payload.referenceImages || []).map(image => ({ name: image.name, data_url: image.dataUrl })),
-        prompt: payload.prompt,
-        model: payload.model || '',
-        template_id: payload.templateId || '',
-        count: payload.count,
-        split_selling_points: payload.splitSellingPoints,
-        resolution: payload.resolution,
-        quality: payload.quality,
-        background: payload.background,
-        output_format: payload.outputFormat,
-        output_compression: payload.outputFormat === 'jpeg' ? payload.outputCompression : undefined
+        // 预估与生成使用同一编译字段，避免漏传风格、场景等文字造成Token预算不一致。
+        ...buildProductImagePayload(payload as ProductImageGeneratePayload),
+        aspect_ratio: payload.aspectRatio || '1:1'
       }
     })
     return ok(mapProductImageCreditPreview(response))
@@ -3159,6 +3152,7 @@ export const httpAdapter: ApiAdapter = {
     const response = await request<any>('/product-video/credit-preview', { method: 'POST', body: buildProductVideoPayload({ creationType: 'product', prompt: '', sourceImages: [], aspectRatio: '9:16', ...payload }) })
     const result: ProductVideoCreditPreview = {
       inputSnapshotId: response?.input_snapshot_id || '', referenceVideoSeconds: Number(response?.reference_video_seconds || 0),
+      outputDurationSeconds: Number(response?.output_duration_seconds || 0),
       provider: String(response?.provider || ''),
       model: String(response?.model || ''),
       requiredCredits: Number(response?.required_credits || 0),

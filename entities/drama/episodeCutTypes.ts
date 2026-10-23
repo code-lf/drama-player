@@ -18,6 +18,7 @@ export interface EpisodeCaptionCue {
 }
 
 export interface EpisodeCutDraft {
+  mv?: {preview_url:string;audio_name:string;start_ms:number;end_ms:number;audio_duration_ms:number;lyrics_status:string;current_revision:string;confirmed_revision:string;alignment_source:string} | null
   id: string
   episodeNo: number
   versionNo: number
@@ -32,7 +33,7 @@ export interface EpisodeCutDraft {
   exportSettings: Record<string, unknown>
 }
 
-export type EpisodeCutSavePayload = Omit<EpisodeCutDraft, 'id' | 'episodeNo' | 'versionNo' | 'status'>
+export type EpisodeCutSavePayload = Omit<EpisodeCutDraft, 'id' | 'episodeNo' | 'versionNo' | 'status' | 'mv'> & {confirmMvLyrics?:boolean}
 
 export interface EpisodeCutTask {
   id: string

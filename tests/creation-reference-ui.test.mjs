@@ -3,7 +3,15 @@ import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 const read=path=>readFileSync(new URL(`../${path}`,import.meta.url),'utf8')
-test('输出类型只在模型选择入口切换，不展示重复的智能选择行',()=>{const source=read('features/creation/components/CreationComposer.vue');assert.doesNotMatch(source,/class="creation-output"/);assert.doesNotMatch(source,/label:'智能选择'/);assert.match(source,/update\(\{model:item.code/);assert.match(source,/output:modelKind/);assert.match(source,/chooseMusicType/)})
+test('隐藏突兀的独立参考栏，但保留下一轮素材引用上下文',()=>{
+  // 只撤下展示，不允许通过清空引用来隐藏，避免后续创作丢失商品或图片上下文。
+  const source=read('features/creation/components/CreationStudio.vue')
+  assert.doesNotMatch(source,/class="creation-round-references"/)
+  assert.doesNotMatch(source,/aria-label="本轮参考素材"/)
+  assert.match(source,/mergeRoundReferences\(roundReferences\.value,sentReferences\)/)
+  assert.match(source,/round_reference_state/)
+})
+test('输出类型只在模型选择入口切换，不展示重复的智能选择行',()=>{const source=read('features/creation/components/CreationComposer.vue');assert.doesNotMatch(source,/class="creation-output"/);assert.doesNotMatch(source,/label:'智能选择'/);assert.match(source,/function chooseModel\(code:string\)/);assert.match(source,/output:modelKind/);assert.match(source,/chooseMusicType/)})
 test('最近会话小于主导航并保留长标题全名',()=>{const css=read('assets/css/creation.css');assert.match(css,/\.creation-sidebar-recent a\{height:36px;min-height:36px;padding:6px 10px;gap:8px;font-size:12px!important/);assert.match(css,/\.creation-sidebar-recent \.iconify\{width:14px!important;height:14px!important/);assert.ok(read('features/dashboard/components/DashboardSidebar.vue').includes(':title="sessionLabel(item.title)"'))})
 test('侧栏使用轻微加粗的 SVG 与中性白，操作主题为靛紫',()=>{assert.match(read('features/dashboard/components/SidebarIcon.vue'),/:stroke-width="2.4"/);assert.match(read('features/dashboard/components/DashboardSidebar.vue'),/<SidebarIcon/);assert.match(read('assets/css/creation.css'),/color:#efefef!important/);assert.match(read('assets/css/creation.css'),/--liv-accent:#4F46E5/)})
 test('技能分类单行且我的技能分创建和收藏',()=>{const source=read('features/creation/components/SkillCenterPanel.vue');assert.match(source,/自媒体','广告营销','游戏','短漫剧','周边设计/);assert.match(source,/aria-label="技能分类"/);assert.match(source,/我创建的/);assert.match(source,/我收藏的/);assert.match(source,/container-type:inline-size/)} )

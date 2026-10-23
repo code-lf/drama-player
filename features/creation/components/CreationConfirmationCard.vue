@@ -3,7 +3,7 @@ import {computed} from 'vue'
 import CreditIcon from '~/components/ui/CreditIcon.vue'
 import {hasValidGenerationQuote} from '../confirmationRules'
 /** 只展示服务端真实报价；确认与取消由工作台沿用原授权和幂等链路。 */
-const props=defineProps<{model:string;spec:string;target:string;credits?:number;hasQuote:boolean;sufficient:boolean;quoting:boolean;busy:boolean;error?:string;skipConfirmation?:boolean;rulesReady?:boolean;rulesBusy?:boolean;rulesError?:string}>()
+const props=defineProps<{model:string;spec:string;target:string;credits?:number;hasQuote:boolean;sufficient:boolean;quoting:boolean;busy:boolean;cancelling?:boolean;error?:string;skipConfirmation?:boolean;rulesReady?:boolean;rulesBusy?:boolean;rulesError?:string}>()
 defineEmits<{confirm:[];cancel:[];retry:[];settings:[];rule:[enabled:boolean]}>()
 const targetLabel=computed(()=>( {image:'图片',video:'视频',music:'音频',drama:'短剧'} as Record<string,string>)[props.target]||'作品')
 const validQuote=computed(()=>hasValidGenerationQuote(props.hasQuote,props.credits))
@@ -14,15 +14,19 @@ const validQuote=computed(()=>hasValidGenerationQuote(props.hasQuote,props.credi
     <template v-if="quoting"><span>正在核算方案与积分…</span><USkeleton class="liv-confirm-price-skeleton"/></template>
     <template v-else-if="error"><p class="liv-confirm-note">{{error}}</p><UButton v-if="!error.includes('需求或来源已改变')" :disabled="busy" variant="soft" @click="$emit('retry')">重试核算</UButton></template>
   </div>
-  <section v-else class="liv-generation-confirmation" aria-label="生成确认" :aria-busy="busy">
+  <section v-else class="liv-generation-confirmation" aria-label="生成确认" :aria-busy="busy||cancelling">
     <p class="liv-confirm-heading">请确认本次{{targetLabel}}生成任务：</p>
     <div class="liv-confirm-request"><UIcon :name="target==='video'?'i-lucide-clapperboard':target==='music'?'i-lucide-music':'i-lucide-image'"/><div><strong>{{model}}</strong><span>{{spec}}</span></div></div>
-    <p class="liv-confirm-quote">本次生成预计消耗 <span class="liv-confirm-price"><CreditIcon size="sm"/><strong>{{credits}} 积分</strong></span></p>
+    <!-- 提交前明确不可中途取消；稍等一下只停止尚未提交的当前方案。 -->
+    <p class="liv-confirm-execution-warning">确认后将立即提交生成，执行期间无法取消，请确认内容与积分。</p>
+    <p class="liv-confirm-quote">本次生成消耗 <span class="liv-confirm-price"><CreditIcon size="sm"/><strong>{{credits}} 积分</strong></span></p>
+    <!-- 固定媒体报价与后台采购估值分开，不能向用户承诺每单采购毛利。 -->
+    <p v-if="target==='image'||target==='video'" class="liv-confirm-note">提交成功后按本次报价扣费，不因实际用量增加而补扣。</p>
     <p v-if="validQuote&&!sufficient" class="liv-confirm-note" role="alert">积分不足，请充值后继续。</p>
     <p v-if="error&&validQuote" class="liv-confirm-note" role="alert">{{error}}</p>
     <div class="liv-confirm-actions">
-      <UButton class="liv-confirm-primary" color="primary" variant="solid" :loading="busy" :disabled="busy||!sufficient" @click="$emit('confirm')">确认生成</UButton>
-      <UButton class="liv-confirm-cancel" color="neutral" variant="outline" :disabled="busy||quoting" @click="$emit('cancel')">取消</UButton>
+      <UButton class="liv-confirm-primary" color="primary" variant="solid" :loading="busy" :disabled="busy||cancelling||!sufficient" @click="$emit('confirm')">确认生成</UButton>
+      <UButton class="liv-confirm-cancel" color="neutral" variant="outline" :loading="cancelling" :disabled="busy||quoting||cancelling" title="停止本次待确认方案，保留草稿" @click="$emit('cancel')">{{cancelling?'正在停止':'稍等一下'}}</UButton>
     </div>
     <div class="liv-confirm-footer">
       <UCheckbox :model-value="!!skipConfirmation" :disabled="!rulesReady||rulesBusy||busy" :label="`本会话后续的${targetLabel}生成任务，不再二次确认`" @update:model-value="$emit('rule',$event===true)"/>
@@ -37,6 +41,7 @@ const validQuote=computed(()=>hasValidGenerationQuote(props.hasQuote,props.credi
 .liv-generation-confirmation{display:grid;gap:16px;margin-top:16px;padding:16px;border:1px solid var(--color-border-soft);border-radius:16px;background:var(--liv-workspace-surface);min-width:0}
 .liv-generation-confirmation p{margin:0;padding:0;line-height:1.7;color:var(--liv-chat-assistant-text)}
 .liv-confirm-heading{font-weight:500}
+.liv-confirm-execution-warning{font-size:14px;font-weight:500}
 .liv-confirm-request{display:flex;align-items:center;gap:12px;padding:12px;border-radius:8px;background:var(--liv-number-surface);min-width:0}
 .liv-confirm-request>.iconify{flex:none;width:20px;height:20px}.liv-confirm-request>div{display:grid;gap:4px;min-width:0}.liv-confirm-request strong{font-size:14px;font-weight:500;overflow-wrap:anywhere}.liv-confirm-request span{font-size:12px;color:var(--liv-settings-muted)}
 .liv-confirm-quote,.liv-confirm-price{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.liv-confirm-price-skeleton{width:72px;height:20px;background:var(--liv-skeleton-surface)}

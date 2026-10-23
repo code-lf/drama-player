@@ -1,7 +1,7 @@
 import { request, buildProductImagePayload, buildProductVideoPayload, mapProductVideoTask } from '~/shared/api/adapters/httpAdapter'
 
 /** 合规候选经服务端校验后必须人工核对，不能被会话免确认设置跳过。 */
-export interface CreationRun { requires_manual_confirmation?: boolean }
+export interface CreationRun { response_phase?:'queued'|'thinking'|'responding'; requires_manual_confirmation?: boolean; reference_previews?: Record<string, import('~/features/creation/types').WorkspacePreview> }
 import type { ProductImageGeneratePayload } from '~/entities/product-image/types'
 import type { ProductVideoCreatePayload } from '~/entities/product-video/types'
 import type { MusicQuote, MusicTask } from '~/shared/api/services/musicService'
@@ -10,6 +10,9 @@ import type { CreationCatalog, CreationDraft, CreationEntryType, CreationMessage
 
 /** 会话只保存用户需求及任务编号，报价/扣点继续走现有业务服务。 */
 export const creationService = {
+  /** 阶段翻页只保存答案；提交后再由既有 advance 领取一次文字分析。 */
+  beginStage: (id:string) => request<CollectionStage>(`/creation/runs/${id}/stage`,{method:'POST'}),
+  saveStage: (id:string, body:{expected_revision:number;request_id:string;answers:Record<string,unknown>},submit=false) => request<CollectionStage>(`/creation/runs/${id}/stage${submit?'/submit':''}`,{method:submit?'POST':'PATCH',body}),
   /** 复用统一鉴权请求读取持久化事件流，不将认证令牌拼到 URL。 */
   async observeRun(id:string,signal:AbortSignal,onState:(state:CreationRun)=>void,minCalls=0){
     let attempt=0
@@ -73,16 +76,28 @@ export const creationService = {
   // 文字规划只保存状态与问题，媒体收费仍需下一次显式点击生成。
   startRun: (draft: CreationDraft, request_id: string, session_id?: string,current_source?:WorkspaceSource,parent_run_id?:string|null) => request<CreationRun>('/creation/runs', {method:'POST',body:{draft,request_id,session_id,current_source,parent_run_id,mode:draft.skill?'skill':'chat',deferred:true}}),
   run: (id: string) => request<CreationRun>(`/creation/runs/${id}`),
+  runByRequest: (id:string) => request<CreationRun>(`/creation/runs/by-request/${id}`),
+  savePreview: (id:string,preview:DirectorPreview) => request<DirectorPreview>(`/creation/runs/${id}/preview`,{method:'PATCH',body:{title:preview.title,script:preview.script,expected_revision:preview.preview_revision||0}}),
   previousQuestion: (id:string,expected_calls:number,expected_revision?:number) => request<CreationRun>(`/creation/runs/${id}/back`,{method:'POST',body:{expected_calls,expected_revision}}),
   answerRun: (id: string, expected_calls: number, answer: string,expected_revision?:number,draft?:CreationDraft) => request<CreationRun>(`/creation/runs/${id}/answer`, {method:'POST',body:{expected_calls,answer,expected_revision,draft}}),
   cancelRun: (id: string) => request<CreationRun>(`/creation/runs/${id}/cancel`, {method:'POST'}),
   mv: (draft: CreationDraft) => request<DirectorPreview>('/creation/mv/prepare',{method:'POST',body:draft}),
+  // 对齐由平台承担且按固定歌曲去重；刷新只 GET，不重放创建或明确重试。
+  startMvAlignment: (draft:CreationDraft,retry=false) => request<MvAlignment>('/creation/mv/alignments',{method:'POST',body:{draft,retry}}),
+  mvAlignment: (id:string,confirmation='') => request<MvAlignment>(`/creation/mv/alignments/${id}`,{query:{confirmation}}),
+  confirmMvAlignment: (id:string,lyrics:string,cues:MvLyricCue[],input_revision:string) => request<{alignment_id:string;confirmation:string;lyrics:string}>(`/creation/mv/alignments/${id}/confirm`,{method:'POST',body:{lyrics,cues,input_revision}}),
+  // 只读取或补建平台内含歌词；外部音频没有转写能力时明确手填。
+  mvLyrics: (draft: CreationDraft) => request<{status:string;source:string;lyrics:string;timing_mode:string;can_transcribe:boolean}>('/creation/mv/lyrics',{method:'POST',body:draft}),
   attachMv: (project: string, run_id: string) => request(`/creation/mv/projects/${project}/attach`,{method:'POST',body:{run_id}}),
   // MV 来源导入只接收音频地址，不伪造用户授权勾选；服务端仍验证下载安全与真实媒体。
   importAudio: (url: string) => request<import('~/entities/library/types').LibraryItem>('/creation/mv/audio-import',{method:'POST',body:{url}}),
   catalog: (entry: CreationEntryType) => request<CreationCatalog>('/creation/catalog', { query: { entry } }),
   publicCatalog: (entry: CreationEntryType) => request<CreationCatalog>('/creation/public-catalog', {query:{entry}}),
   // 免费编译配方，返回真实素材校验后的提示词和固定版本；不创建生成任务。
+  directorFile: (draft:CreationDraft,file:File) => {
+    const body=new FormData();body.append('file',file);body.append('draft',JSON.stringify(draft))
+    return request<DirectorPreview>('/drama/director-draft/file',{method:'POST',body})
+  },
   prepareSkill: (draft: CreationDraft) => request<{ draft: CreationDraft; execution: SkillExecution; creation_context: string }>('/creation/skills/prepare', { method: 'POST', body: draft }),
   route: (draft: CreationDraft) => request<{ skill: string; target: CreationTarget; reason: string }>('/creation/route-preview', { method: 'POST', body: draft }),
   // 侧栏默认少量，项目目录按后端上限读取一百条会话。
@@ -93,6 +108,12 @@ export const creationService = {
   create: (session: Pick<CreationSession, 'id' | 'entry' | 'title' | 'skill'>) => request<CreationSession>('/creation/sessions', { method: 'POST', body: session }),
   message: (id: string, request_id: string, content: CreationDraft, task_type: CreationTarget | '' = '', task_id = '') => request<CreationMessage>(`/creation/sessions/${id}/messages`, { method: 'POST', body: { request_id, content, task_type, task_id } }),
   bind: (id: string, message: string, task_type: CreationTarget, task_id: string) => request<CreationMessage>(`/creation/sessions/${id}/messages/${message}/task`, { method: 'PATCH', body: { task_type, task_id } }),
-  director: (draft: CreationDraft, entry_intent: 'ad' | 'general') => request<DirectorPreview>('/drama/director-draft', { method: 'POST', body: { ...draft, entry_intent, duration_sec: draft.parameters.durationSec, style: draft.parameters.style } }),
+  director: (draft: CreationDraft, entry_intent: 'ad' | 'general') => request<DirectorPreview>('/drama/director-draft', { method: 'POST', body: { ...draft, input_mode:draft.parameters.extra.director_input_mode==='script'?'script':'idea', entry_intent, duration_sec: draft.parameters.durationSec, style: draft.parameters.style } }),
 }
+/** 对齐时间为原歌曲毫秒，片段偏移仅在创建制作快照时应用。 */
+export interface MvLyricCue {sort_index:number;start_ms:number;end_ms:number;text:string}
+/** 阶段定义仅描述表单，不包含工具地址或费用授权。 */
+export interface CollectionStage {definition:{id:string;title:string;fields:Array<{id:string;label:string;kind:'text'|'single'|'multiple'|'reference';required:boolean;options:string[]}>};answers:Record<string,unknown>;revision:number;status:'collecting'|'submitted'}
+export interface CreationRun {collection_stage?:CollectionStage}
+export interface MvAlignment {id:string;version_id:string;status:string;source:string;duration_ms:number;cues:MvLyricCue[];lyrics:string;input_revision:string;error:string;can_retry:boolean}
 export interface CreationRun { task_input?:{schema_version:1;revision:number;prompt:string;skill:string;skill_version:number;target:CreationTarget;parameters:Partial<CreationDraft['parameters']>;references:CreationDraft['references']}; response_started_at?:string|null;response_finished_at?:string|null;response_elapsed_ms?:number|null;response_first_text_at?:string|null; stream_seq?:number; parent_run_id?:string|null;generation_prompt?:string; discussion?:Array<{user:string;reply:string}>; awaiting_calls?:number; executed_request?:unknown; question_revision?:number; created_at?:string; stream_text?:string; id: string; session_id?:string|null; status: string; calls: number; skill: string; version: number; draft: CreationDraft; restored_answer?:string; question?: {text:string;options:string[];kind?:'text'|'single'|'multiple'|'reference';label?:string;field_id?:string}; answers: Array<{question:string;answer:string}>; error?: string; preview?: DirectorPreview; revision?:number; card?:{type:'reply'|'proposal';text:string;skill?:string;target?:string;model?:string} }

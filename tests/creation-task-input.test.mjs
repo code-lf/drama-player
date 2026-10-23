@@ -23,7 +23,8 @@ test('费用不绝对覆盖，进度隐藏更新时间且详情去重，方案�
   assert.ok(canvas.includes('detail!==stage.value'))
   assert.ok(studio.includes('run.task_input?.prompt||run.generation_prompt'))
   // 已采用方案后的手动规格修改必须保留，不能在重报价时重新盖回首次方案值。
-  assert.ok(studio.includes('if(run.task_input && parameters.value.extra.creation_run_id!==run.id)patchParameters(run.task_input.parameters)'))
+  assert.ok(studio.includes('if(run.task_input && parameters.value.extra.creation_run_id!==run.id)'))
+  assert.ok(studio.includes('patchParameters({...run.task_input.parameters,extra:{...run.task_input.parameters.extra,...mvExtra}})'))
   assert.ok(studio.indexOf('v-if="row.active && planning"')<studio.indexOf('v-for="item in row.media"'))
   const workspace=read('features/creation/useCreationWorkspace.ts')
   assert.match(workspace,/imagePayload\(value, requestId\),creationContext:recipe.creation_context\}, quote/)
