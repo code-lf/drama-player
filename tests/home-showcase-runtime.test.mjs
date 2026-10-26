@@ -63,7 +63,10 @@ test('首页选择技能保留已有文字及素材，不提交或清空用户�
   // 补齐当前页面的真实读取／恢复门禁依赖；本例仅检查能力选择，不测试示例替换算法。
   const deps={loading:ref(false),cloudDraft:{restoring:ref(false)},directoryTrialBusy:ref(false),selectedSkillWorkflow:()=>null,applySkillPrompt:()=>{},entry,catalog,notice,parameters,previewDockScroll:ref(null),pendingSkillFocus:ref(false),pendingSkillScroll:ref(null),homeScrollRoot:null,finishHomeSkillSelection:async()=>{},selectedSkillPreview:ref({id:'ad'}),workInProgress:ref(false),homeDockVisible:ref(false),expandHomeComposer:async()=>{},skill:ref('product'),director:ref({old:true}),directorAccepted:ref(true),auth:{session:{user:{id:'owner'}}},active:ref(false),homeComposerSlot:ref(null),creationService:{publicCatalog:async()=>({skills:[{id:'ad',entries:['commerce'],is_active:true}]})},patchParameters:value=>calls.push(value),setSkill:id=>calls.push(id)}
   const methodJs=ts.transpileModule(method,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText
-  await new Function(...Object.keys(deps),'let caseRevision=0;'+methodJs+';return useHomeSkill')(...Object.values(deps))('ad')
+  // 新的目录读取门禁也必须在夹具内存在，失败不能被catch吞掉后误认为已切换。
+  Object.assign(deps,{nextTick,homeComposerExpanded:ref(false),validateSkillTrial:async()=>true,prompt,references})
+  await new Function(...Object.keys(deps),'let caseRevision=0,directoryTrialRevision=0;'+methodJs+';return useHomeSkill')(...Object.values(deps))('ad')
+  assert.equal(notice.value,'')
   assert.equal(prompt.value,'保留原文');assert.equal(references.value[0].version_id,'own');assert.equal(calls.at(-1),'ad');assert.deepEqual(calls[0].extra,{custom:'keep'})
 })
 for(const path of ['features/creation/components/CreationSkillShowcase.vue','features/creation/components/CreationStudio.vue'])test(`${path} 编译`,()=>{

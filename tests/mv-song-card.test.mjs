@@ -19,7 +19,10 @@ test('MV 来源使用歌曲卡，原始来源长表单收进真实弹窗',()=>{
 test('本人歌曲传入固定版本与封面，替换成外部上传时清理原确认',()=>{
  const studio=read('features/creation/components/CreationStudio.vue')
  assert.ok(studio.includes('mv_song_version:version.id'))
- assert.ok(studio.includes('sourceTask:mvSource.value,rightsConfirmed:false'))
+ // 来源在网络前冻结为selection，并核对迟到响应，不再直接读取可能已切换的下拉值。
+ assert.ok(studio.includes('const selection=mvSource.value'))
+ assert.ok(studio.includes('selection!==mvSource.value||stamp!==JSON.stringify(draft())'))
+ assert.ok(studio.includes('sourceTask:selection,rightsConfirmed:false'))
  assert.ok(studio.includes('cover_url:String(song?.image_large_url||song?.image_url'))
- assert.ok(studio.includes("sourceTask:'',extra:{...parameters.value.extra,mv_song_version:'',mv_lyrics:''"))
+ assert.ok(studio.includes("sourceTask:'',rightsConfirmed:false,extra:{...parameters.value.extra,mv_song_version:'',mv_lyrics:''"))
 })

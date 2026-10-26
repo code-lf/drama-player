@@ -6,9 +6,10 @@ const read = path => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8'
 const composer = read('features/creation/components/CreationComposer.vue')
 
 test('大输入框不重复底栏加号，紧凑输入框仍有素材入口，技能闪电实心且工具文字统一', () => {
-  assert.ok(composer.includes('v-if="compact && !isMv && entry!==\'drama\'"'))
-  assert.ok(composer.includes('v-if="!compact && !isMv && entry!==\'drama\'" class="creation-add"'))
-  assert.ok(composer.includes('name="i-lucide-zap" mode="svg" class="creation-solid-zap"'))
+  // 节点也复用compact排版，但固定引用只由画布管理；聊天仍保留添加素材入口。
+  assert.ok(composer.includes('v-if="compact && !nodeEditor && !isMv && entry!==\'drama\'"'))
+  assert.ok(composer.includes('v-if="!nodeEditor && !compact && !isMv && entry!==\'drama\'" class="creation-add"'))
+  assert.ok(composer.includes(':name="trialPending?\'i-lucide-loader-circle\':\'i-lucide-zap\'" mode="svg" :class="trialPending?\'animate-spin\':\'creation-solid-zap\'"'))
   const css=read('assets/css/creation.css')
   assert.match(css,/creation-toolbar \.creation-tool,[^}]*font-size:14px!important;font-weight:500!important/)
   assert.ok(css.includes('.creation-solid-zap,.creation-solid-zap path{fill:currentColor}'))
@@ -26,8 +27,8 @@ test('会话上传移到底栏，图标有提示和可访问名称且费用未�
   assert.ok(composer.includes(`:aria-label="isMv?'调整 MV 比例':'调整创作参数'"`))
   assert.ok(composer.includes('从资料库选择'))
   assert.ok(!composer.includes('aria-label="引用资产"'))
-  assert.match(composer, /class="creation-cost" role="status" :aria-label="creditLabel"/)
-  assert.match(composer, /v-if="hasCreditQuote">\{\{ creditLabel \}\}/)
+  assert.match(composer, /class="creation-cost" v-if="creditNumber" role="status" :aria-label="creditLabel"/)
+  assert.match(composer, /<CreditIcon size="xs" \/>\{\{ creditNumber \}\}/)
   assert.ok(composer.includes("(canStop&&emit('stop')) : emit('send')"))
 })
 

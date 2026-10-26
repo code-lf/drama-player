@@ -17,8 +17,8 @@ import { request, buildProductImagePayload, buildProductVideoPayload } from '~/s
 import { useAccountStore } from '~/features/billing/store/useAccountStore'
 import { fallbackDramaVisualStyleOptions } from '~/shared/constants/dramaVisualStyles'
 import { sessionErrorText } from './sessionRecovery'
-import {hasRenderableResult} from './resultCatalog'
-import {resultReadState} from './workflowState'
+import {hasCompleteResults} from './resultCatalog'
+import {resultReadState,shouldRefreshTaskBalance} from './workflowState'
 import { createCreditHint } from './creditHint'
 import { imageQualityError } from './imageQuality'
 
@@ -197,17 +197,20 @@ export function useCreationWorkspace(options:{beforeSubmit?:()=>Promise<()=>Prom
   // 剧本修改使之前的解析报价失效，不允许按旧脚本价格提交新脚本。
   watch(()=>[director.value?.title,director.value?.script],()=>{confirmation.value=null;directorAccepted.value=false})
   watch(scriptFile,(file,previous)=>{if(file!==previous){director.value=null;directorAccepted.value=false}})
+  /** 目录封面复用同一映射，异步准备新入口时不提前改动当前目录或草稿。 */
+  function catalogWithCovers(value:CreationCatalog):CreationCatalog{
+    return {...value,styles:value.styles.map(item=>{
+      const option=fallbackDramaVisualStyleOptions.find(option=>option.styleId===item.style_id)
+      return {...item,cover_url:option?.image?option.image.startsWith('http')?option.image:siteAsset(option.image):undefined}
+    })}
+  }
   async function loadCatalog() {
     const current = ++revision
     loading.value = true
     try {
       const value = await (auth.session.loggedIn ? creationService.catalog(entry.value) : creationService.publicCatalog(entry.value))
       if (disposed || current !== revision) return
-      value.styles = value.styles.map(item => {
-        const option = fallbackDramaVisualStyleOptions.find(option => option.styleId === item.style_id)
-        return { ...item, cover_url: option?.image ? option.image.startsWith('http') ? option.image : siteAsset(option.image) : undefined }
-      })
-      catalog.value = value; applyCapabilities()
+      catalog.value = catalogWithCovers(value); applyCapabilities()
       // 仅音乐入口或需要音频来源的技能读取曲目，避免普通聊天反复请求音乐目录。
       musicTasks.value = auth.session.loggedIn && (entry.value==='music'||target.value==='music') ? await musicService.tasks(30) : []
     } catch (cause) { if (current === revision) error.value = message(cause) }
@@ -366,7 +369,10 @@ export function useCreationWorkspace(options:{beforeSubmit?:()=>Promise<()=>Prom
       // 目录先就绪再校验原始规格，避免旧入口的能力监听器提前覆盖新会话的质量与画幅。
       if (conversationParameters) { parameters.value = { ...defaultParameters(), ...conversationParameters }; applyCapabilities() }
       await refreshResults(); if(stale())return
-      await router.replace({ path: '/dashboard', query: { session: id } })
+      // 刷新同会话时保留已选视频深链；主动切换其他会话不能携带旧作品选择。
+      const videoQuery=route.query.session===id&&typeof route.query.videoRun==='string'&&typeof route.query.videoItem==='string'
+        ?{videoRun:route.query.videoRun,videoItem:route.query.videoItem}:{}
+      await router.replace({ path: '/dashboard', query: { session: id,...videoQuery } })
     } catch (cause) { if(!stale()){session.value=null;messages.value=[];sessionError.value=sessionErrorText(cause)} }
     finally { if(!stale()){busy.value = false;sessionLoading.value=false} }
   }
@@ -382,7 +388,7 @@ export function useCreationWorkspace(options:{beforeSubmit?:()=>Promise<()=>Prom
     }
     if(import.meta.client && document.visibilityState==='hidden'){if(pollTimer)clearTimeout(pollTimer);pollTimer=setTimeout(()=>void refreshResults(),15000);return}
     refreshingResults=true
-    let failed=false
+    let failed=false,balanceChanged=false
     const owner=auth.session.user?.id
     const sid=session.value?.id
     try{
@@ -392,6 +398,7 @@ export function useCreationWorkspace(options:{beforeSubmit?:()=>Promise<()=>Prom
     }
     await Promise.all(messages.value.filter(item => item.task_id && (force===true || !taskData[item.id] || ['queued','submitting','in_progress','pending','running','result_pending','status_unavailable'].includes(taskData[item.id]!.status) || hasPendingLyrics(taskData[item.id]?.music))).map(async item => {
       try {
+        const previousStatus=taskData[item.id]?.status
         if(Date.now()<resultRateLimitedUntil)throw Object.assign(new Error('任务状态正在等待同步'),{statusCode:429})
         if (item.task_type === 'image') {
           const images = await productImageService.getHistory(item.task_id)
@@ -409,10 +416,11 @@ export function useCreationWorkspace(options:{beforeSubmit?:()=>Promise<()=>Prom
           musicTasks.value = [music, ...musicTasks.value.filter(existing => existing.id !== music.id)]
         }
         const state=taskData[item.id]
-        if(state&&['completed','success','succeeded'].includes(state.status)&&!hasRenderableResult(state)){
+        if(state&&['completed','success','succeeded'].includes(state.status)&&!hasCompleteResults(state,item.content?.parameters?.count)){
           const attempt=force===true?1:(resultReadAttempts.get(item.id)||0)+1;resultReadAttempts.set(item.id,attempt)
           const pending=resultReadState(state.status,false,attempt);state.status=pending.status;state.detail=pending.detail
-        }else if(state&&hasRenderableResult(state))resultReadAttempts.delete(item.id)
+        }else if(state&&hasCompleteResults(state,item.content?.parameters?.count))resultReadAttempts.delete(item.id)
+        if(state&&shouldRefreshTaskBalance(previousStatus,state.status))balanceChanged=true
       } catch (cause) {
         if(owner!==auth.session.user?.id||sid!==session.value?.id)return
         failed=true
@@ -425,6 +433,8 @@ export function useCreationWorkspace(options:{beforeSubmit?:()=>Promise<()=>Prom
         // 查询错误只显示在对应任务，不污染另一轮尚未提交方案的报价确认卡。
       }
     }))
+    // 同一轮多个任务结束只读一次账户；失败退款后不能一直显示创建时的预扣余额。
+    if(balanceChanged&&!disposed&&owner===auth.session.user?.id&&sid===session.value?.id)void account.refreshProfile().catch(()=>{})
     pollFailures=failed?Math.min(4,pollFailures+1):0
     if (pollTimer) clearTimeout(pollTimer)
     if (!disposed && messages.value.some(item => {
@@ -628,22 +638,35 @@ export function useCreationWorkspace(options:{beforeSubmit?:()=>Promise<()=>Prom
     finally { busy.value = false }
   }
   async function continueImage(batch: string, result: string, video = false) {
+    if(busy.value||!requireLogin())return false
+    const owner=auth.session.user?.id,sid=session.value?.id,scope=restoreRevision,stamp=canonical(draft())
+    const sameScope=()=>!disposed&&owner===auth.session.user?.id&&sid===session.value?.id&&scope===restoreRevision
+    /** 私人素材和用户新输入都不能被旧请求回填；内部准备不改动全局草稿。 */
+    const current=()=>{if(!sameScope())return false;if(stamp!==canonical(draft())){error.value='准备图片期间草稿已变化，未替换当前输入，请重新选择工具。';return false}return true}
     busy.value = true; error.value = ''
     try {
-      const item = await libraryService.saveResult('product_image', batch, result, 'other'), version = item.versions[0]!
-      references.value = [{ item_id: item.id, version_id: version.id, purpose: 'reference', name: item.name, media_type: 'image', preview_url: libraryService.previewUrl(version.preview_url) }]
+      const item = await libraryService.saveResult('product_image', batch, result, 'other'), version = item.versions[0]
+      if(!current())return false
+      if(!version||item.media_type!=='image')throw new Error('原图片尚未形成可用的固定版本。')
       const nextSkill=video?'animate':'edit'
-      if (!catalog.value?.skills.some(item => item.id === nextSkill)) {
-        entry.value = 'free'; await loadCatalog()
+      let nextEntry=entry.value,nextCatalog=catalog.value
+      if (!nextCatalog?.skills.some(item => item.id === nextSkill)) {
+        nextCatalog=catalogWithCovers(await creationService.catalog('free'));nextEntry='free'
+        if(!current())return false
       }
-      if(!catalog.value?.skills.some(item=>item.id===nextSkill))throw new Error('当前修改能力未开放，请选择其他技能。')
+      if(!nextCatalog?.skills.some(item=>item.id===nextSkill))throw new Error('当前修改能力未开放，请选择其他技能。')
+      // 同步提交已准备好的目录/来源；使旧目录请求失效，但不提交媒体或费用授权。
+      ++revision;loading.value=false;entry.value=nextEntry;catalog.value=nextCatalog
+      references.value = [{ item_id: item.id, version_id: version.id, purpose: 'reference', name: item.name, media_type: 'image', preview_url: libraryService.previewUrl(version.preview_url) }]
       // 原海报模板和规划编号不属于新工具；保留它们会把修改误编译为旧模板任务。
-      director.value=null;directorAccepted.value=false
+      director.value=null;directorAccepted.value=false;confirmation.value=null
       const extra={...parameters.value.extra};for(const key of ['creation_run_id','mv_run_id','director_run_id','workspace_tool'])delete extra[key]
       parameters.value={...parameters.value,extra,templateId:'',selectedTemplateId:'',workflow:'direct',output:video?'video':'image'}
       setSkill(nextSkill); prompt.value = ''; segments.value = []
-    } catch (cause) { error.value = message(cause) }
-    finally { busy.value = false }
+      return true
+    } catch (cause) { if(sameScope())error.value = message(cause);return false }
+    // 换号/切会话的新请求自行管理忙碌状态，旧请求不能提前解锁它。
+    finally { if(sameScope())busy.value = false }
   }
   async function recordToolTask(task: MusicTask | ProductVideoTask, kind: 'music' | 'video') {
     // 旧工具仍自行报价和创建任务；此处只把已经成功创建的任务接回当前会话。
@@ -682,6 +705,8 @@ export function useCreationWorkspace(options:{beforeSubmit?:()=>Promise<()=>Prom
   })
   watch(() => auth.session.user?.id, async (owner, previous) => {
     sessionDrafts.clear()
+    // 清除旧账号的界面请求锁，不表示取消该账号已经提交的媒体任务。
+    busy.value=false
     // 账号变化立即撤销临时预览；在途上传的响应也必须匹配原账号才能成为引用。
     for (const item of [...uploads.value]) dismissUpload(item.id)
     // 过期只保留编号意图，同账号重新登录后重新鉴权；显式退出或换号则清空。

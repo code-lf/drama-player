@@ -29,7 +29,8 @@ export interface CreationDraft {
   parameters: CreationParameterState & { reference_types?: string[] }; reference_names: Record<string, string>; segments: ComposerSegment[]
 }
 export interface CreationMessage { id: string; request_id: string; role: string; content: CreationDraft; task_type: CreationTarget | ''; task_id: string; created_at: string; skill_execution?: SkillExecution }
-export interface WorkspaceSource { kind: 'image' | 'video' | 'music' | 'artifact' | 'reference'; id: string; result_id?: string; item_id?: string; audio_index?: number }
+/** result_id为真实作品版本或音乐处理文件的路径标识；audio_index只用于原歌曲，二者不混用。 */
+export interface WorkspaceSource { kind: 'image' | 'video' | 'music' | 'artifact' | 'reference' | 'composition'; id: string; result_id?: string; item_id?: string; audio_index?: number }
 export interface WorkspacePreview { available: boolean; name: string; media_type?: string; preview_url?: string }
 export interface WorkspaceArtifact { id: string; source: WorkspaceSource; operations: Record<string, unknown>[]; item_id: string; version_id: string; preview_url: string; created_at: string }
 export interface WorkspaceDraftResponse { revision: number; content: CreationDraft | null; updated_at?: string }

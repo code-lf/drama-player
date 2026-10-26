@@ -32,3 +32,7 @@ export function resultReadState(status:string,renderable:boolean,attempt:number)
   if(!['completed','success','succeeded'].includes(status)||renderable)return {status,detail:''}
   return attempt<=5?{status:'result_pending',detail:'正在读取生成结果'}:{status:'result_error',detail:'结果暂未读取成功，请刷新状态重试。'}
 }
+/** 媒体首次进入终态后重读真实账户；不使用单个任务余额快照覆盖并行任务的余额。 */
+export function shouldRefreshTaskBalance(previous:string|undefined,current:string){
+  return previous!==current&&['failed','cancelled','completed','success','succeeded','result_error'].includes(current)
+}

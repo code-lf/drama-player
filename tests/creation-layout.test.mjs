@@ -25,9 +25,12 @@ test('案例按用途切换，桌面五列且横向16:9', () => {
 })
 test('成片播放器只在点击案例后挂载，仅预读元数据', () => {
   assert.match(studio, /@click="openCase\(item\)"/)
-  assert.match(studio, /v-if="selectedCase"[\s\S]*<video v-if="selectedCase.media_type==='video'"[^>]*preload="metadata"/)
-  assert.match(studio, /<audio[^>]*preload="metadata"/)
-  assert.match(studio, /复刻同款/)
+  // 播放器已经抽到统一案例组件；仍约束有真实选中项才挂载媒体。
+  assert.match(studio, /<CreationCaseViewer :item="selectedCase"/)
+  const viewer=read('features/creation/components/CreationCaseViewer.vue')
+  assert.match(viewer, /v-if="item"[\s\S]*<video v-if="item.media_type==='video'"[^>]*preload="metadata"/)
+  assert.match(viewer, /<audio[^>]*preload="metadata"/)
+  assert.match(viewer, /复刻同款/)
 })
 test('侧栏每页十条，更多原地加载，会话切换可恢复', () => {
   assert.match(sidebar, /recentSessionLimit = ref\(SESSION_PAGE_SIZE\)/)
@@ -60,10 +63,12 @@ test('流程恢复等待目录，待回答状态也恢复输入和固定素材',
 
 test('重新预估沿用已保存未绑定任务消息的幂等编号', () => {
   const workspace = read('features/creation/useCreationWorkspace.ts')
-  // 游客草稿也监听 prompt；定位报价后的监听，不能误截成空字符串。
-  const start = workspace.indexOf('async function estimate')
-  const estimate = workspace.slice(start, workspace.indexOf('watch([prompt, parameters', start))
-  assert.match(estimate, /!pending.task_id && canonical\(pending.content\) === canonical\(value\) \? pending.request_id/)
+  // 报价已合并到prepare；先验证真实边界存在，避免旧函数名截空导致假失败。
+  const start = workspace.indexOf('async function prepare(')
+  const end = workspace.indexOf('\n  async function ', start+1)
+  assert.ok(start>=0&&end>start,'应能定位真实准备方法')
+  const prepare = workspace.slice(start,end)
+  assert.match(prepare, /!pending.task_id && canonical\(pending.content\) === canonical\(value\) \? pending.request_id/)
 })
 // 首页布局按容器而非整页宽度收缩，避免侧栏展开后工具按钮挤成多行。
 test('首页最大800px，窄容器图标化与快捷入口换行',()=>{

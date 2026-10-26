@@ -14,7 +14,12 @@ test('会话挂载后定位最新，发送回复和晚到内容均跟进滚动',
   assert.ok(studio.includes('historyResizeObserver.observe(historyContentElement.value)'))
   assert.ok(studio.includes('requestAnimationFrame'))
   assert.ok(studio.includes('await nextTick();scrollHistoryBottom()'))
-  for(const method of ['async function planDemand','async function answerPlanning'])assert.ok(studio.slice(studio.indexOf(method),studio.indexOf(method)+700).includes('scrollHistoryBottom(true)'))
+  // 前置校验增长后不能再截固定700字符；约束实际方法体内的主动发送跟随。
+  for(const method of ['async function planDemand','async function answerPlanning']){
+    const start=studio.indexOf(method),end=studio.indexOf('\nasync function ',start+method.length)
+    assert.ok(start>=0&&end>start)
+    assert.ok(studio.slice(start,end).includes('scrollHistoryBottom(true)'))
+  }
   assert.ok(studio.includes('historyResizeObserver?.disconnect();cancelAnimationFrame'))
   const skeleton=read('components/DashboardSkeleton.vue')
   assert.ok(skeleton.includes('width:100%;max-width:none;margin:0;padding:0'))
@@ -56,7 +61,8 @@ test('滚动隔离、圆箭头锚定及停靠编辑器只有一个实例',()=>{
   assert.ok(composer.includes('top:-44px;right:12px'))
   assert.ok(!studio.includes('>回到最新</UButton>'))
   assert.ok(composer.includes('aria-label="展开创作输入框"'))
-  assert.equal((studio.match(/<CreationComposer /g)||[]).length,1)
+  assert.equal((studio.match(/<CreationComposer ref="composerRef"/g)||[]).length,1)
+  assert.equal((studio.match(/<CreationComposer[^>]*canvas-editor/g)||[]).length,1)
   assert.ok(composer.includes('grid-template-columns:48px minmax(0,1fr) 16px'))
 })
 

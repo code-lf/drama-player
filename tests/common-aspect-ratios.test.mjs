@@ -13,6 +13,9 @@ const durationSource=readFileSync(new URL('../features/creation/durationOptions.
 const durationModule=ts.transpileModule(durationSource,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText
 const durationExports={}
 new Function('exports',durationModule)(durationExports)
+// 同生产代码运行清晰度联动比例解析，不在测试里伪造目录规则。
+const ratioExports={}
+new Function('exports',ts.transpileModule(readFileSync(new URL('../features/creation/imageRatioOptions.ts',import.meta.url),'utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText)(ratioExports)
 
 test('导演画幅不受空镜头目录影响，总时长使用导演契约，切回直接生成恢复限制',()=>{
   const workspace=readFileSync(new URL('../features/creation/useCreationWorkspace.ts',import.meta.url),'utf8')
@@ -21,7 +24,7 @@ test('导演画幅不受空镜头目录影响，总时长使用导演契约，�
   const selectedSkill=ref({base_code:'ad'}),skill=ref('ad'),parameters=ref({workflow:'director'}),target=ref('video')
   const modelSchema=ref({aspect_ratio:[],duration_sec:{min:4,max:15,step:1}})
   const compiled=ts.transpileModule(ratioCode+'\n'+durationCode,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText
-  const api=new Function('computed','selectedSkill','skill','parameters','target','modelSchema','allowedDurations',compiled+';return {ratios,durationRange}')(computed,selectedSkill,skill,parameters,target,modelSchema,durationExports.allowedDurations)
+  const api=new Function('computed','selectedSkill','skill','parameters','target','modelSchema','allowedDurations','imageRatioOptions','referenceDurationValues','references',compiled+';return {ratios,durationRange}')(computed,selectedSkill,skill,parameters,target,modelSchema,durationExports.allowedDurations,ratioExports.imageRatioOptions,durationExports.referenceDurationValues,ref([]))
   assert.deepEqual(api.ratios.value,standard)
   assert.deepEqual(api.durationRange.value,{min:4,max:120,step:1,values:[]})
   parameters.value.workflow='direct'

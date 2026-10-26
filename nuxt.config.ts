@@ -82,7 +82,7 @@ export default defineNuxtConfig({
   buildDir: nuxtBuildDir,
 
   // 全局样式：设计令牌、基础样式、Vue Flow 样式
-  css: ['~/assets/css/tokens.css', '~/assets/css/main.css', '~/assets/css/creation.css', '@vue-flow/core/dist/style.css', '@vue-flow/core/dist/theme-default.css'],
+  css: ['~/assets/css/tokens.css', '~/assets/css/main.css', '~/assets/css/creation.css', '@vue-flow/core/dist/style.css', '@vue-flow/core/dist/theme-default.css', '~/assets/css/creative-canvas.css'],
 
   // Nuxt UI 统一提供按钮、图标、下拉、徽章、弹窗、抽屉等基础交互；
   // 项目业务卡片仍保留 Livliv 自己的页面结构和视觉规范。

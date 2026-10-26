@@ -20,7 +20,7 @@ export const libraryService = {
   restore: (id: string) => request<LibraryItem>(`/library/${id}/restore`, { method: 'POST' }),
   /** 名称、用途可编辑；文件和固定版本引用不随分类改变。 */
   edit: (id: string, body: { name: string; category: string }) => request<LibraryItem>(`/library/${id}`, { method: 'PATCH', body }),
-  saveResult: (source_type: 'product_image' | 'product_video' | 'drama_asset' | 'music', source_id: string, result_id = '', category = 'other') => request<LibraryItem>('/library/save-result', { method: 'POST', body: { source_type, source_id, result_id, category } }),
+  saveResult: (source_type: 'product_image' | 'product_video' | 'drama_asset' | 'music' | 'video_composition', source_id: string, result_id = '', category = 'other') => request<LibraryItem>('/library/save-result', { method: 'POST', body: { source_type, source_id, result_id, category } }),
   async addVersion(id: string, file: File) {
     const body = new FormData()
     body.append('file', file)

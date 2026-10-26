@@ -1,4 +1,32 @@
 :root {
+  /* 创作画布统一尺寸：媒体节点按文件比例，输入区固定屏幕尺寸不随画布缩放。 */
+  --liv-graph-node-width: 280px;
+  --liv-graph-media-height: 420px;
+  --liv-graph-editor-width: 680px;
+  --liv-graph-editor-height: 160px;
+  /* 桌面普通节点长稿仅在正文内部滚动，避免输入框反向挤小媒体节点；展开态不受此上限约束。 */
+  --liv-graph-editor-max-height: 200px;
+  /* 工具编辑时共享输入正文仍可滚动，低高度窗口让出真实媒体预览空间。 */
+  --liv-graph-tool-editor-height: 96px;
+  --liv-graph-tool-editor-max-height: 128px;
+  /* 手机普通节点输入保留三行编辑空间，长稿内部滚动；展开模式仍可编辑长提示词。 */
+  --liv-graph-mobile-editor-height: 72px;
+  --liv-graph-mobile-editor-max-height: 112px;
+  /* 下半屏状态卡占位时，参考缩略图改紧凑尺寸，保留正文三行与完整发送工具。 */
+  --liv-graph-mobile-reference-size: 32px;
+  /* 悬浮聊天留出画布边缘，拖宽使用现有聊天宽度偏好，不另存业务状态。 */
+  --liv-graph-chat-inset: 16px;
+  --liv-graph-chat-radius: 24px;
+  /* 普通画布铺满顶栏下的工作区，不继承旧分栏四周12px的留白。 */
+  --liv-graph-workspace-height: calc(100dvh - 56px);
+  /* 手机低视口保留节点头部、状态入口与底部视图工具，提示词可独立滚动。 */
+  --liv-graph-mobile-dock-clearance: 128px;
+  --liv-graph-grid: 20px;
+  --liv-graph-grid-color: #77777725;
+  --liv-graph-edge: #8b8b95;
+  --liv-graph-glow: #818cf8;
+  /* 连线光影按用户要求使用白色渐变拖尾；品牌控件与真实活动底线仍保持靛紫。 */
+  --liv-graph-flow-head: #ffffff;
   /* 登录与首页展示统一规格：窄屏由容器收缩，不压低表单控件高度。 */
   --liv-login-dialog-width: 560px;
   --liv-login-form-width: 408px;
@@ -96,6 +124,16 @@
   --liv-onboarding-border: #2a2a2a;
   /* 工作台固定深色表面及助手正文，不随主题反转为浅色或蓝色小字。 */
   --liv-workspace-surface: #111111;
+  /* 普通短片媒体卡按真实比例收紧；源素材与结果仅区分预览高度，不拉满弹窗。 */
+  --liv-composition-preview-height: 192px;
+  --liv-composition-result-height: 320px;
+  --liv-composition-card-padding: 12px;
+  /* 主视频预览保持紧凑；短窗口仍按实际剩余空间进一步缩小。 */
+  --liv-workspace-video-max-height: 560px;
+  /* 普通视频工作台优先使用剩余空间，保持真实比例；编辑框只占底部必要高度。 */
+  --liv-workspace-video-expanded-max-height: 960px;
+  --liv-video-prompt-min-height: 144px;
+  --liv-video-prompt-max-height: 220px;
   /* 会话画布铺满可用宽度；聊天默认宽度、分隔条与恢复骨架共享布局规格。 */
   --liv-workspace-chat-width: 390px;
   /* 纯对话正文保持可读宽度，已有作品仍铺满画布。 */

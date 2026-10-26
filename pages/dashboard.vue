@@ -479,6 +479,8 @@ function toggleUserMenu(): void {
 // 游客悬停只展示既有头像，不触发登录；菜单和触发器之间保留 150ms 容错。
 let userMenuCloseTimer:ReturnType<typeof setTimeout>|undefined
 const userPointerOpening=ref<boolean>(false)
+/** 模板只调用本地方法；clearTimeout不是Vue模板白名单全局，直接调用会落到不存在的上下文属性。 */
+function keepUserMenuOpen(){clearTimeout(userMenuCloseTimer);userMenuCloseTimer=undefined}
 function hoverUserMenu(){clearTimeout(userMenuCloseTimer);if(authStore.session.loggedIn){userPointerOpening.value=true;isUserMenuOpen.value=true;isCreditPopoverOpen.value=false}}
 /** 菜单不传送到外部，触发器和菜单共用悬停边界；键盘操作不受鼠标离开影响。 */
 function leaveUserMenu(){clearTimeout(userMenuCloseTimer);if(userPointerOpening.value)userMenuCloseTimer=setTimeout(()=>{if(!document.querySelector('.dashboard-user-trigger:hover,.dashboard-credit-pill:hover,.liv-account-dropdown:hover'))isUserMenuOpen.value=false},150)}
@@ -1473,7 +1475,7 @@ watch(()=>authStore.session.user?.id,()=>{projectItems.value=[];accountStore.res
                   <img :src="userAvatarUrl" alt="" class="dashboard-user-avatar rounded-full object-cover"/>
                 </button>
                 <template #content-top>
-                  <section class="liv-account-summary" @pointerenter="clearTimeout(userMenuCloseTimer)">
+                  <section class="liv-account-summary" @pointerenter="keepUserMenuOpen">
                     <div class="liv-account-identity"><UAvatar :src="userAvatarUrl" :alt="userNickname" size="lg"/><div><strong>{{userNickname}}</strong><span>创作账号</span></div></div>
                     <!-- 余额卡保持中性底色，只有右侧购买按钮使用主题色，避免整卡变成主操作。 -->
                     <div class="liv-account-balance"><CreditAmount v-if="accountStore.profile" :value="currentCreditBalance" tone="inherit"/><span v-else>余额未读取</span><UButton class="liv-account-purchase" color="primary" variant="solid" @click="showBilling('recharge')">购买积分</UButton></div>

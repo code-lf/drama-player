@@ -224,7 +224,7 @@
 .creation-cases .creation-case-grid>button{min-width:0;overflow:hidden}
 .creation-cases .creation-case-grid>button>b{display:block;width:100%;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 /* 封面绝对铺入定高比例盒，避免原图内在尺寸将案例行撑高。 */
-.creation-cases .creation-case-cover{max-height:none;min-height:0;flex-shrink:0}
+.creation-cases .creation-case-cover{max-height:var(--liv-case-cover-max-height);min-height:0;flex-shrink:0}
 .creation-cases .creation-case-cover>img{position:absolute;inset:0;display:block;width:100%;height:100%;object-fit:cover}
 .creation-cases .dashboard-skeleton .skeleton-cover{max-height:var(--liv-case-cover-max-height)}
 @keyframes creation-browse-up{0%,100%{transform:translateY(2px);opacity:.55}50%{transform:translateY(-3px);opacity:1}}
@@ -409,7 +409,7 @@
 @media(min-width:1440px){.dashboard-shell.is-session-nav-open .dashboard-sidebar{width:232px}}
 @media(min-width:1024px){
 .dashboard-shell.is-session-immersive .creation-studio .creation-workspace.is-chat-collapsed{grid-template-columns:minmax(0,1fr)}
-.is-chat-collapsed>.creation-chat-column{display:none}
+.is-chat-collapsed:not(.is-floating-chat)>.creation-chat-column{display:none}
 }
 /* 从作品态返回纯对话时，不沿用移动端隐藏聊天的旧选择。 */
 .is-conversation-only>.creation-chat-column{display:flex!important}
@@ -794,3 +794,8 @@
 .creation-model-badge[data-tone=green]{color:var(--liv-badge-green)}.creation-model-badge[data-tone=amber]{color:var(--liv-badge-amber)}.creation-model-badge[data-tone=rose]{color:var(--liv-badge-rose)}.creation-model-badge[data-tone=cyan]{color:var(--liv-badge-cyan)}
 .creation-composer.is-drama,.creation-composer.is-drama:hover,.creation-composer.is-drama:focus-within{border:0!important;box-shadow:none!important}
 @media(hover:none){.creation-quick-skill-use{visibility:visible}}
+/* 短片合成的媒体卡保持原片比例，宽度随元数据变化；空白来自文件本身时不裁掉内容。 */
+.liv-composition-media-list{display:flex;flex-wrap:wrap;align-items:flex-start;gap:12px}
+.liv-composition-media-card{box-sizing:border-box;min-width:0;max-width:100%;width:calc(var(--liv-composition-preview-height) * var(--liv-media-ratio,1) + var(--liv-composition-card-padding) * 2);padding:var(--liv-composition-card-padding)}
+.liv-composition-media-card.is-result{width:calc(var(--liv-composition-result-height) * var(--liv-media-ratio,1) + var(--liv-composition-card-padding) * 2)}
+.liv-composition-video{display:block;width:100%;height:auto;aspect-ratio:var(--liv-media-ratio,auto);object-fit:contain;border-radius:8px}

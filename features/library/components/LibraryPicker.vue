@@ -3,6 +3,7 @@ import LivDialog from '~/components/liv-ui/LivDialog.vue'
 import type { LibraryItem, LibraryReference, LibraryVersion } from '~/entities/library/types'
 import { libraryService } from '~/shared/api/services/libraryService'
 import { request } from '~/shared/api/adapters/httpAdapter'
+import { readSelectedDocument } from '../documentFragment'
 
 const props = defineProps<{ open: boolean; kind: 'image' | 'video' | 'drama'; model?: string; remaining: number; mediaType?: string; analysisOnly?: boolean; documentRemaining?: number; initialCategory?: string; dark?: boolean }>()
 const emit = defineEmits<{ 'update:open': [value: boolean]; select: [values: Array<{ item: LibraryItem; version: LibraryVersion; reference: LibraryReference }>] }>()
@@ -17,7 +18,7 @@ const error = ref(''), loading = ref(false), total = ref(0)
 const documentDraft = ref<{ item: LibraryItem; version: LibraryVersion; reference: LibraryReference; total: number } | null>(null)
 const documentStart = ref(0), documentEnd = ref(0), documentPreview = ref(''), documentBusy = ref(false)
 const previewRange = ref('')
-let revision = 0
+let revision = 0, documentRevision = 0
 function version(item: LibraryItem) { return item.versions.find(value => value.id === versions[item.id]) || item.versions[0]! }
 function reason(item: LibraryItem & { incompatibilities: Record<string, string> }) { return item.incompatibilities[version(item).id] || '' }
 /** 后台统一给出兼容原因，页面只控制当前剩余槽位，不另建供应商限额。 */
@@ -41,6 +42,7 @@ async function load() {
   finally { if (current === revision) loading.value = false }
 }
 async function toggle(item: typeof entries.value[number]) {
+  if(documentBusy.value)return
   const currentVersion = version(item)
   const existing = selected.value.findIndex(value => value.version.id === currentVersion.id)
   if (existing >= 0) { selected.value.splice(existing, 1); return }
@@ -50,50 +52,58 @@ async function toggle(item: typeof entries.value[number]) {
   if (reason(item) || (item.media_type === 'document' ? documentCount >= documentLimit : selected.value.length - documentCount >= props.remaining)) return
   const reference: LibraryReference = { item_id: item.id, version_id: currentVersion.id, purpose: item.media_type === 'video' ? 'reference_video' : 'reference' }
   if (item.media_type === 'document') {
+    const current=++documentRevision
     documentBusy.value = true
     try {
       const excerpt = await libraryService.readDocument(reference, 0)
+      if(current!==documentRevision||!props.open)return
       if (excerpt.parse_status !== 'ready') { error.value = excerpt.parse_error || '文档尚未完成文字提取。'; return }
+      if(excerpt.total_chars<1){error.value='文档没有可引用的文字，请重新选择。';return}
       documentDraft.value = { item, version: currentVersion, reference, total: excerpt.total_chars }
       documentStart.value = 0; documentEnd.value = Math.min(1000, excerpt.total_chars)
-      documentPreview.value = excerpt.text.slice(0, documentEnd.value)
+      documentPreview.value = Array.from(excerpt.text).slice(0, documentEnd.value).join('')
       previewRange.value = `0:${documentEnd.value}`
-    } catch (exception) { error.value = (exception as Error).message }
-    finally { documentBusy.value = false }
+    } catch (exception) { if(current===documentRevision&&props.open)error.value = (exception as Error).message }
+    finally { if(current===documentRevision)documentBusy.value = false }
     return
   }
   selected.value.push({ item, version: currentVersion, reference })
 }
 /** 修改范围后必须重新预览，确认的是固定版本及原文偏移，不把文档转换为台词。 */
 async function previewDocument() {
+  if(documentBusy.value)return
   const draft = documentDraft.value, start = Number(documentStart.value), end = Number(documentEnd.value)
   if (!draft || !Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end <= start || end > draft.total || end - start > 8000) {
     error.value = '请选择文档范围内、最多八千字的有效原文区间。'; return
   }
-  documentBusy.value = true
+  const current=++documentRevision
+  documentBusy.value = true;previewRange.value=''
   try {
-    const excerpt = await libraryService.readDocument(draft.reference, start)
-    documentPreview.value = excerpt.text.slice(0, end - start)
+    const text = await readSelectedDocument(draft.reference,start,end,libraryService.readDocument)
+    if(current!==documentRevision||!props.open||draft!==documentDraft.value||start!==Number(documentStart.value)||end!==Number(documentEnd.value))return
+    documentPreview.value = text
     previewRange.value = `${start}:${end}`; error.value = ''
-  } catch (exception) { error.value = (exception as Error).message }
-  finally { documentBusy.value = false }
+  } catch (exception) { if(current===documentRevision&&props.open)error.value = (exception as Error).message }
+  finally { if(current===documentRevision)documentBusy.value = false }
 }
 function confirmDocument() {
   const draft = documentDraft.value
-  if (!draft || previewRange.value !== `${documentStart.value}:${documentEnd.value}`) return
+  if (documentBusy.value||!draft || documentEnd.value<=documentStart.value||previewRange.value !== `${documentStart.value}:${documentEnd.value}`) return
   const totalChars = selected.value.reduce((sum, value) => sum + (value.reference.end || 0) - (value.reference.start || 0), 0)
   if (totalChars + documentEnd.value - documentStart.value > 8000) { error.value = '已选文档片段合计不能超过八千字。'; return }
   selected.value.push({ item: draft.item, version: draft.version, reference: { ...draft.reference, start: documentStart.value, end: documentEnd.value } })
   documentDraft.value = null; error.value = ''
 }
 watch(() => props.open, async value => {
+  // 关闭或重新打开后，旧私有文档响应不回填新的选择器。
+  ++documentRevision;documentBusy.value=false
   if (!value) return
   // 每次打开按当前创作槽位预选用途；用户仍可切换分类，避免把商品图误当角色参考图。
   selected.value = []; page.value = 1; category.value = props.initialCategory || ''; documentDraft.value = null
   try { categories.value = (await libraryService.configuration()).categories; await load() }
   catch (exception) { error.value = (exception as Error).message }
 })
-watch([scope, category, mediaFilter], () => { page.value = 1; if (props.open) void load() })
+watch([scope, category, mediaFilter], () => { ++documentRevision;documentBusy.value=false;documentDraft.value=null;previewRange.value='';page.value = 1; if (props.open) void load() })
 </script>
 
 <template>

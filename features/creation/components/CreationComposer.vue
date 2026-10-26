@@ -32,6 +32,14 @@ const props = defineProps<{
   docked?:boolean; minimized?:boolean; dockStyle?:Record<string,string>
   /** 只对应目录读取，不把生成、发送等业务过程伪装为加载占位。 */
   loading?:boolean
+  /** 画布仅复用正文输入内核；节点引用、保存和发送由画布管理，不污染对话草稿。 */
+  canvasEditor?:boolean; canvasReadonly?:boolean
+  /** 节点直接使用完整输入框，仅限制引用和执行边界，不另拼一套工具栏。 */
+  nodeEditor?:boolean
+  /** 尚未具备执行能力时仍可编辑/保存，鼠标与回车都不可绕过真实发送门禁。 */
+  sendDisabledReason?:string
+  /** 节点工具栏只复用本媒体类型的真实控件，不展示上传、技能切换或第二个发送按钮。 */
+  controlsOnly?:boolean; controlsKind?:'text'|'image'|'video'
   /** 技能读取与校验状态，不冒充媒体生成进度。 */
   trialPending?:boolean
   /** 提示词替换历史由共用工作台持有，收起／展开不丢失。 */
@@ -122,7 +130,7 @@ const sliderDurations=computed(()=>allowedDurations(props.durationRange,props.du
 const styleCategory = ref('全部'), styleScope = ref('all'), templateDialogOpen=ref(false)
 const styleDialogOpen=ref(false)
 /** 空自由技能使用目录中的真实自由能力，不凭显示名称扩大素材权限。 */
-const styleReferenceAllowed=computed(()=>!!(selectedSkill.value||(!props.skill?props.catalog?.skills.find(row=>row.id==='free'):undefined))?.media_types.includes('image')&&props.references.length<12)
+const styleReferenceAllowed=computed(()=>!props.controlsOnly&&!props.nodeEditor&&!!(selectedSkill.value||(!props.skill?props.catalog?.skills.find(row=>row.id==='free'):undefined))?.media_types.includes('image')&&props.references.length<12)
 const recentStyles = ref<string[]>([]), recentTemplates = ref<string[]>([])
 const placeholder = computed(() => !props.skill?'可以先聊聊想法，或选择技能开始创作。':skillExamples[props.skill] || '描述你希望创作的内容，输入 @ 引用素材。')
 watch(placeholder,animatePlaceholder)
@@ -138,7 +146,8 @@ const skillCategories = computed(() => ['全部', ...new Set(skillList.value.map
 const visibleSkills = computed(() => skillList.value.filter(item => (skillScope.value !== 'mine' || item.kind === 'user') && (skillCategory.value === '全部' || item.category === skillCategory.value) && (!query.value || `${item.label}${item.description || ''}`.includes(query.value))))
 // 专用口播工具在全部技能中展示，不进入“我的配方”，也不把未配置状态当作可生成。
 const showDigitalHumanSkill = computed(() => !props.catalog?.skills.some(row=>row.home_showcase?.category==='presenter') && digitalHumanToolSkill.entries.includes(props.entry) && skillScope.value==='all' && (skillCategory.value==='全部'||skillCategory.value===digitalHumanToolSkill.category) && (!query.value||`${digitalHumanToolSkill.label}${digitalHumanToolSkill.description}`.includes(query.value)))
-const selectedSkill = computed(() => skillList.value.find(item => item.id === props.skill))
+// 画布节点固定原技能，不受当前聊天入口的菜单筛选影响；否则营销技能在free壳里会丢失类型与参数锁。
+const selectedSkill = computed(() => ((props.nodeEditor||props.controlsOnly)?props.catalog?.skills||[]:skillList.value).find(item => item.id === props.skill))
 // 仅实际技能变化触发，初次挂载不闪动；缩放使用transform，不推挤工具栏与发送按钮。
 const skillPulse=ref(0)
 watch(()=>props.skill,()=>{skillPulse.value++})
@@ -149,12 +158,12 @@ const isInstrumental=computed(()=>baseSkill.value==='instrumental' || (['free','
 function chooseMusicType(instrumental:boolean){if(['free','song'].includes(baseSkill.value))update({customLyrics:false,extra:{...props.parameters.extra,instrumental}});else {emit('skill','song');update({customLyrics:false,extra:{...props.parameters.extra,instrumental}})}}
 const fileAccept = computed(() => props.entry === 'drama' ? '.txt,.docx,.pdf' : isMusic.value?'audio/*': (selectedSkill.value?.media_types || ['image', 'video', 'audio']).map(type => type === 'document' ? '.txt,.docx,.pdf' : `${type}/*`).join(','))
 // 音乐入口也包含 MV；仅写歌使用曲风与音乐引擎，MV 必须沿用视觉风格目录。
-const isMusic = computed(() => !isMv.value && (selectedSkill.value?.target === 'music' || props.entry === 'music' || (baseSkill.value==='free' && props.parameters.output==='music')))
-const isMv = computed(() => (selectedSkill.value?.base_code || props.skill).startsWith('mv-'))
+const isMusic = computed(() => !props.nodeEditor&&!props.controlsOnly&&!isMv.value && (selectedSkill.value?.target === 'music' || props.entry === 'music' || (baseSkill.value==='free' && props.parameters.output==='music')))
+const isMv = computed(() => !props.nodeEditor&&!props.controlsOnly&&(selectedSkill.value?.base_code || props.skill).startsWith('mv-'))
 // 固定能力不暴露空模型菜单；自由创作仍保留跨图片、视频、音乐的切换入口。
 const showModelSelector = computed(() => !isMv.value && (baseSkill.value === 'free' || (selectedSkill.value?.model_strategy !== 'fixed' && !isMusic.value && props.entry !== 'drama' && props.models.length > 1)))
-// 显式输出只属于自由创作，切回图片技能后不能沿用上一视频的时长参数区。
-const isVideo = computed(() => selectedSkill.value?.target === 'video' || (baseSkill.value === 'free' && props.parameters.output === 'video'))
+// 节点类型由当前组件固定；普通聊天仍按技能判断，不能把上一次视频输出带到图片技能。
+const isVideo = computed(() => (props.nodeEditor||props.controlsOnly)?props.controlsKind==='video':selectedSkill.value?.target === 'video' || (baseSkill.value === 'free' && props.parameters.output === 'video'))
 // 导演模式时长为全片规划目标，不把单个生成镜头的秒数冒充整片长度。
 const isDirectorProduction = computed(() => ['ad','story'].includes(baseSkill.value) && props.parameters.workflow === 'director')
 const isImage = computed(() => !isMv.value && !isMusic.value && !isVideo.value && props.entry !== 'drama')
@@ -188,7 +197,7 @@ const styleItems = computed(() => allStyles.value.filter(item => (styleScope.val
 const styleCategories = computed(() => ['全部', ...new Set(allStyles.value.map(styleGroup))])
 // MV 只展示比例，不把暂时收起的制作范围继续拼在参数摘要里。
 // 质量名称只表达接口等级，不再用速度或“精细”替代，参数值与报价保持不变。
-const parameterLabel = computed(() => isMv.value || props.entry==='drama' ? props.parameters.aspectRatio : isMusic.value ? props.skill==='lyric-video' ? '歌词视频' : isInstrumental.value ? '纯音乐' : `歌词 · ${{ m: '男声', f: '女声' }[String(props.parameters.extra.vocal_gender)] || '自动'}` : `${props.parameters.aspectRatio} · ${isVideo.value ? `${props.parameters.durationSec}s · ` : ''}${props.parameters.resolution}${!isVideo.value ? ` · ${{low:'低',medium:'中',high:'高'}[props.parameters.quality]}` : ''}`)
+const parameterLabel = computed(() => props.nodeEditor&&props.canvasReadonly&&!props.parameters.model?'规格待核对':isMv.value || props.entry==='drama' ? props.parameters.aspectRatio : isMusic.value ? props.skill==='lyric-video' ? '歌词视频' : isInstrumental.value ? '纯音乐' : `歌词 · ${{ m: '男声', f: '女声' }[String(props.parameters.extra.vocal_gender)] || '自动'}` : `${props.parameters.aspectRatio} · ${isVideo.value ? `${props.parameters.durationSec}s · ` : ''}${props.parameters.resolution}${!isVideo.value ? ` · ${{low:'低',medium:'中',high:'高'}[props.parameters.quality]}` : ''}`)
 type ModelKind='image'|'video'|'music'
 type ModelOption={code:string;name:string;description?:string;input_schema?:Record<string,any>;sort_order?:number;badges?:Array<{text:string;tone:string}>;reference_pricing?:{credits:string;unit:string;note:string}|null}
 const modelKind=ref<ModelKind>('image'),modelListRoot=ref<HTMLElement|null>(null)
@@ -196,6 +205,7 @@ let modelScrollTarget:{top:number;kind:ModelKind}|null=null
 const modelSections: Array<{kind:ModelKind;label:string;icon:string}>=[{kind:'image',label:'图片',icon:'i-lucide-image'},{kind:'video',label:'视频',icon:'i-lucide-video'},{kind:'music',label:'音频',icon:'i-lucide-music'}]
 /** 分组浏览与已选模型完全分离，滚动和切 Tab 不发送参数更新。 */
 function modelsFor(kind:ModelKind):ModelOption[]{
+  if((props.controlsOnly||props.nodeEditor)&&kind!==props.controlsKind)return []
   if(baseSkill.value!=='free'&&kind!==(isMusic.value?'music':isVideo.value?'video':'image'))return []
   if(kind==='music')return (props.catalog?.capabilities?.platform.music.enabled??props.catalog?.music_operations.some(row=>row.operation==='generation'&&row.enabled))?[{code:'',name:'Suno · 音乐引擎',description:'文字生成歌曲或纯音乐，引擎版本由后台配置。'}]:[]
   if(baseSkill.value!=='free')return props.models
@@ -229,8 +239,8 @@ function chooseModel(code:string,kind:ModelKind=modelKind.value){
   update({model:code,...(baseSkill.value==='free'?{output:modelKind.value}:{})})
   popover.value=''
 }
-function open(name: string, event?: MouseEvent) { if(name==='style'&&!isMusic.value){popover.value='';mentionOpen.value=false;styleDialogOpen.value=true;return}if(event?.currentTarget instanceof HTMLElement)popoverAnchor.value=event.currentTarget; if(name==='skill'&&popover.value!=='skill')lockSkillPlacement();if(name==='model')modelKind.value=isMusic.value?'music':isVideo.value?'video':'image';popover.value = popover.value === name ? '' : name; query.value = ''; category.value = '全部'; skillCategory.value = '全部'; mentionOpen.value = false; if (['parameters', 'skill'].includes(popover.value)) void nextTick(positionParameters) }
-function isParameterLocked(key: string){return !!selectedSkill.value?.allowed_parameter_keys && !selectedSkill.value.allowed_parameter_keys.includes(key)}
+function open(name: string, event?: MouseEvent) { if(props.nodeEditor&&(props.canvasReadonly||props.busy))return;if(name==='style'&&!isMusic.value){popover.value='';mentionOpen.value=false;styleDialogOpen.value=true;return}if(event?.currentTarget instanceof HTMLElement)popoverAnchor.value=event.currentTarget; if(name==='skill'&&popover.value!=='skill')lockSkillPlacement();if(name==='model')modelKind.value=isMusic.value?'music':isVideo.value?'video':'image';popover.value = popover.value === name ? '' : name; query.value = ''; category.value = '全部'; skillCategory.value = '全部'; mentionOpen.value = false; if (['parameters', 'skill'].includes(popover.value)) void nextTick(positionParameters) }
+function isParameterLocked(key: string){if((props.controlsOnly||props.nodeEditor)&&(key==='count'||props.busy||props.canvasReadonly))return true;return !!selectedSkill.value?.allowed_parameter_keys && !selectedSkill.value.allowed_parameter_keys.includes(key)}
 function update(patch: Partial<CreationParameterState>) { emit('parameters', Object.fromEntries(Object.entries(patch).filter(([key])=>!['aspectRatio','durationSec','resolution','quality','count','style'].includes(key) || !isParameterLocked(key)))) }
 function chooseSkill(item: SystemSkill) { emit('skill', item.id); popover.value = '' }
 /** 最近使用只保存公开预设编号，不存提示词、账号信息或文件地址。 */
@@ -268,12 +278,14 @@ function readSegments(): ComposerSegment[] {
   return result
 }
 function changed() {
-  if (composing.value) return
+  if (composing.value || props.canvasReadonly || (props.nodeEditor&&props.busy)) return
   const segments = readSegments()
   // 删除已有标签也移除对应附件；未插入文字的普通附件不受影响。
   const removed=props.segments.filter(part=>part.type==='reference'&&!segments.some(value=>value.type==='reference'&&value.version_id===part.version_id))
   for(const part of removed){if(part.type==='reference'){const index=props.references.findIndex(value=>value.version_id===part.version_id);if(index>=0)emit('remove',index)}}
   emit('text', segments.map(part => part.type === 'text' ? part.text : part.label).join(''), segments)
+  // 画布引用由连线管理；不打开聊天专用的@候选，也不改变聊天附件。
+  if(props.canvasEditor||props.nodeEditor)return
   const selection = window.getSelection()
   let cursorNode=selection?.anchorNode||null,cursorOffset=selection?.anchorOffset||0
   // 粘贴或程序填入后光标可能落在元素边界，向前定位文字节点，但不跨过素材标签。
@@ -331,7 +343,9 @@ function mention(item: ComposerReference) {
   mentionOpen.value = false; editor.value.focus(); changed()
 }
 function keydown(event: KeyboardEvent) {
-  if (event.isComposing || composing.value) return
+  if (event.isComposing || composing.value || props.canvasReadonly) return
+  // 节点与聊天共享回车约定，但不从当前聊天技能取Tab示例覆盖节点草案。
+  if(props.canvasEditor||props.nodeEditor){if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();if(!props.busy&&!props.sendDisabledReason&&props.prompt.trim())emit('send')}return}
   // 只拦截当前技能填入的撤销；普通打字、Shift+Ctrl+Z和输入法仍遵循原生编辑行为。
   if((event.ctrlKey||event.metaKey)&&!event.shiftKey&&!event.altKey&&event.key.toLowerCase()==='z'&&props.skillPromptUndoReady&&!props.busy&&!props.working){event.preventDefault();emit('undoSkillPrompt');return}
   if (mentionOpen.value) {
@@ -341,7 +355,7 @@ function keydown(event: KeyboardEvent) {
   // 只有空输入、正向 Tab 且无运行任务时才接受公开技能示例；Shift+Tab 保持键盘导航。
   if(event.key==='Tab'&&!event.shiftKey&&!props.busy&&!props.working&&!props.prompt.trim()&&skillExample(selectedSkill.value)){event.preventDefault();const parts=skillExampleParts(selectedSkill.value);emit('text',parts.map(part=>part.text).join(''),parts);nextTick(renderText)}
   // 输入法与引用菜单已优先处理；普通回车发送，Shift+回车保留编辑器原生换行。
-  if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); if (!props.busy && !props.working && props.prompt.trim()) emit('send') }
+  if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); if (!props.busy && !props.working && !props.sendDisabledReason && props.prompt.trim()) emit('send') }
 }
 const dragDepth = ref(0)
 /** 三种入口复用现有权限、技能兼容和固定版本流程，拖入 URL 或网页 HTML 不当作文件。 */
@@ -351,19 +365,25 @@ function acceptFiles(files: File[]) {
   else emit('upload', files)
 }
 function dragEnter(event: DragEvent) {
+  if(props.nodeEditor)return
   if (!event.dataTransfer?.types.includes('Files')) return
   event.preventDefault(); dragDepth.value++
 }
 function dragOver(event: DragEvent) {
+  if(props.nodeEditor){event.preventDefault();return}
   if (!event.dataTransfer?.types.includes('Files')) return
   event.preventDefault(); if(event.dataTransfer)event.dataTransfer.dropEffect = props.busy ? 'none' : 'copy'
 }
 function dropFiles(event: DragEvent) {
+  if(props.nodeEditor){event.preventDefault();return}
   if (!event.dataTransfer?.types.includes('Files')) return
   event.preventDefault(); event.stopPropagation(); dragDepth.value = 0
   acceptFiles(Array.from(event.dataTransfer.files))
 }
 function paste(event: ClipboardEvent) {
+  // 节点只接受纯文字编辑；文件必须通过真实素材节点及引用线进入，不能误传到聊天附件。
+  if((props.canvasEditor||props.nodeEditor)&&event.clipboardData?.files.length){event.preventDefault();return}
+  if(props.canvasReadonly)return
   const files = Array.from(event.clipboardData?.files || [])
   if (files.length) { event.preventDefault(); acceptFiles(files); return }
   // 非编辑器的其他输入框继续使用原生文字粘贴，避免错误插入到创作正文。
@@ -401,8 +421,10 @@ onBeforeUnmount(() => { window.removeEventListener('scroll',positionMention,true
 </script>
 
 <template>
+  <!-- 与聊天共用分段、粘贴、输入法和回车逻辑，不再为画布维护第二个文字编辑器。 -->
+  <div v-if="canvasEditor" class="creation-canvas-composer" @paste="paste"><div ref="editor" class="creation-editor" :contenteditable="!canvasReadonly&&(!nodeEditor||!busy)" role="textbox" aria-multiline="true" :aria-readonly="!!canvasReadonly" aria-label="当前节点提示词" @input="changed" @keydown="keydown" @compositionstart="composing=true" @compositionend="composing=false;changed()"/></div>
   <!-- 报价和创建请求期间锁定输入，展示的费用始终对应这一份确认草稿。 -->
-  <section class="creation-composer" :style="docked ? dockStyle : undefined" :class="{ 'is-drama': entry === 'drama', 'is-mv': isMv, 'is-compact': compact, 'is-dragging': dragDepth > 0, 'is-docked':docked, 'is-minimized':docked && minimized }" @paste="paste" @dragenter="dragEnter" @dragover="dragOver" @dragleave="dragDepth=Math.max(0,dragDepth-1)" @drop="dropFiles" @keydown.esc="popover = ''; mentionOpen = false; dragDepth=0">
+  <section v-else class="creation-composer" :style="docked ? dockStyle : undefined" :class="{ 'is-node-editor':nodeEditor, 'is-drama': entry === 'drama', 'is-mv': isMv, 'is-compact': compact, 'is-dragging': dragDepth > 0, 'is-docked':docked, 'is-minimized':docked && minimized }" @paste="paste" @dragenter="dragEnter" @dragover="dragOver" @dragleave="dragDepth=Math.max(0,dragDepth-1)" @drop="dropFiles" @keydown.esc="popover = ''; mentionOpen = false; dragDepth=0">
     <!-- 首页只收起同一个编辑器的呈现，不复制输入框、清空草稿或自动发送。 -->
     <button v-if="docked && minimized" class="creation-dock-launcher" aria-label="展开创作输入框" aria-expanded="false" @click="emit('expand')"><UIcon name="i-lucide-plus"/><span v-if="selectedSkill" class="creation-dock-skill" :title="selectedSkill.label"><UIcon name="i-lucide-zap"/>{{selectedSkill.label}}</span><span class="creation-dock-hint">{{prompt.trim() || '描述你的创意…'}}</span><span class="creation-dock-arrow"><UIcon name="i-lucide-arrow-up"/></span></button>
     <UButton v-if="docked && !minimized" class="creation-dock-collapse" icon="i-lucide-chevron-down" aria-label="收起创作输入框" color="neutral" variant="ghost" square @click="emit('collapse')"/>
@@ -436,23 +458,23 @@ onBeforeUnmount(() => { window.removeEventListener('scroll',positionMention,true
       <slot v-if="isMv" name="audio-source" />
       <div v-if="(!compact && !isMv) || annotation || references.length || (!isMv && isMusic && templateExample && hiddenExample!==templateExample.id)" class="creation-attachments">
         <div v-if="annotation" class="creation-annotation-thumb" aria-label="批注预览"><img :src="annotation.preview" alt="批注"><span>批注</span></div>
-        <button v-if="!compact && !isMv && entry!=='drama'" class="creation-add" aria-label="添加素材" @click="open('add', $event)"><UIcon name="i-lucide-plus" /></button>
+        <button v-if="!nodeEditor && !compact && !isMv && entry!=='drama'" class="creation-add" aria-label="添加素材" @click="open('add', $event)"><UIcon name="i-lucide-plus" /></button>
         <div v-if="!isMv && isMusic && templateExample && hiddenExample!==templateExample.id" class="creation-attachment"><img :src="templateExample.example_image || templateExample.cover" :alt="templateExample.name" @click="previewImage={url:templateExample.example_image || templateExample.cover,name:templateExample.name}"><button class="remove" aria-label="移除示意封面" @click="hiddenExample=templateExample.id">×</button><small class="cover-only">封面预览</small></div>
         <div v-for="(reference, index) in references" v-show="!annotation||reference.media_type!=='image'" :key="reference.version_id" class="creation-attachment" :class="{'is-song-card':reference.media_type==='audio'}" :title="reference.name">
           <!-- 音频地址不能交给 img；歌曲使用独立封面，缺封面显示设计占位，不伪造图片。 -->
           <template v-if="reference.media_type==='audio'"><div class="creation-song-cover"><img v-if="reference.cover_url||musicSources.find(item=>item.id===parameters.sourceTask)?.cover" :src="reference.cover_url||musicSources.find(item=>item.id===parameters.sourceTask)?.cover" alt="歌曲封面" @error="($event.target as HTMLImageElement).style.display='none'"><UIcon name="i-lucide-disc-3"/></div><div class="creation-song-copy"><strong>{{reference.name}}</strong><small>{{isMv?'MV 歌曲来源':'音频素材'}} · 已引用</small></div><UButton icon="i-lucide-x" aria-label="移除歌曲" :disabled="busy" color="neutral" variant="ghost" square @click="emit('remove',index)"/></template>
           <template v-else>
           <img v-if="reference.media_type === 'image'" :src="reference.preview_url" :alt="reference.name" @mouseenter="showReferencePreview($event,reference)" @mouseleave="hoverPreview=null" @click="hoverPreview=null;previewImage={url:reference.preview_url,name:reference.name}"><UIcon v-else :name="reference.media_type === 'audio' ? 'i-lucide-audio-lines' : 'i-lucide-film'" />
-          <span>{{ index + 1 }}</span><button class="remove" :aria-label="`移除 ${reference.name}`" @click="emit('remove', index)">×</button>
-          <button class="attachment-replace" :aria-label="`替换 ${reference.name}`" @click="replacementIndex=index;fileInput?.click()"><UIcon name="i-lucide-refresh-cw"/></button>
+          <span>{{ index + 1 }}</span><button v-if="!nodeEditor" class="remove" :aria-label="`移除 ${reference.name}`" @click="emit('remove', index)">×</button>
+          <button v-if="!nodeEditor" class="attachment-replace" :aria-label="`替换 ${reference.name}`" @click="replacementIndex=index;fileInput?.click()"><UIcon name="i-lucide-refresh-cw"/></button>
           </template>
         </div>
       </div>
       <div class="creation-editor-wrap" :class="{'has-skill-prompt-undo':canUndoSkillPrompt}">
         <!-- 恢复卡片置于正文首行前，独立于可编辑内容，复制与发送不携带按钮文案。 -->
         <UButton v-if="canUndoSkillPrompt" class="creation-skill-prompt-undo" color="neutral" variant="soft" size="xs" :disabled="busy||working" aria-label="恢复原提示词" @click="emit('undoSkillPrompt')">Ctrl+Z 恢复原提示词</UButton>
-        <UTooltip v-if="showPlanner" text="整理需求" :delay-duration="0" :content="{ side: 'top', sideOffset: 6, avoidCollisions: false }"><button class="creation-plan-icon" aria-label="整理需求" :disabled="planningBusy||busy||!prompt.trim()" @click="emit('plan')"><UIcon :name="planningBusy?'i-lucide-loader-circle':'i-lucide-wand-sparkles'"/></button></UTooltip><div ref="editor" class="creation-editor" contenteditable="true" role="textbox" aria-multiline="true" aria-label="创作需求" @click="selectTemplateField" @input="changed" @keydown="keydown" @focus="editorFocused=true;stopPlaceholder()" @blur="editorFocused=false" @compositionstart="composing = true;stopPlaceholder()" @compositionend="composing = false; changed()" />
-        <p v-if="!prompt.trim()" class="creation-placeholder">{{skillExample(selectedSkill)?'按下 Tab 键填入以下参考示例：\n'+skillExampleParts(selectedSkill).map(part=>part.text).join(''):isMv?'描述 MV 创意，可直接粘贴歌词；纯音乐请在这里说明。':'说说想法，拖拽／粘贴素材，输入 @ 引用资料库。'}}</p>
+        <UTooltip v-if="showPlanner" text="整理需求" :delay-duration="0" :content="{ side: 'top', sideOffset: 6, avoidCollisions: false }"><button class="creation-plan-icon" aria-label="整理需求" :disabled="planningBusy||busy||!prompt.trim()" @click="emit('plan')"><UIcon :name="planningBusy?'i-lucide-loader-circle':'i-lucide-wand-sparkles'"/></button></UTooltip><div ref="editor" class="creation-editor" :contenteditable="!canvasReadonly&&(!nodeEditor||!busy)" role="textbox" aria-multiline="true" :aria-readonly="!!canvasReadonly" :aria-label="nodeEditor?'当前节点提示词':'创作需求'" @click="selectTemplateField" @input="changed" @keydown="keydown" @focus="editorFocused=true;stopPlaceholder()" @blur="editorFocused=false" @compositionstart="composing = true;stopPlaceholder()" @compositionend="composing = false; changed()" />
+        <p v-if="!prompt.trim()" class="creation-placeholder">{{nodeEditor?'描述你想创作的画面…':skillExample(selectedSkill)?'按下 Tab 键填入以下参考示例：\n'+skillExampleParts(selectedSkill).map(part=>part.text).join(''):isMv?'描述 MV 创意，可直接粘贴歌词；纯音乐请在这里说明。':'说说想法，拖拽／粘贴素材，输入 @ 引用资料库。'}}</p>
       </div>
       <Teleport to="body"><div v-if="mentionOpen" :style="mentionStyle"><ReferenceMentionMenu ref="mentionMenu" :query="mentionQuery" :kind="mentionKind" :model="parameters.model" :allowed-media-types="selectedSkill?.media_types||['image','document']" :existing="references" @select="selectMention" @browse="mentionOpen=false;emit('assets')" @close="mentionOpen=false"/></div></Teleport>
       <div v-if="baseSkill === 'story'" class="creation-workflow"><button v-if="selectedSkill?.workflows.includes('direct')" :class="{ active: parameters.workflow === 'direct' }" @click="update({ workflow: 'direct' })"><UIcon name="i-lucide-zap" />直接生成</button><button v-if="selectedSkill?.workflows.includes('director')" :class="{ active: parameters.workflow === 'director' }" @click="update({ workflow: 'director' })"><UIcon name="i-lucide-clapperboard" />故事导演制作</button></div>
@@ -463,25 +485,36 @@ onBeforeUnmount(() => { window.removeEventListener('scroll',positionMention,true
     <footer class="creation-toolbar">
       <!-- 工具提示零延迟显示在图标上方，禁用自动翻转；浮层挂到页面根部，避免窄栏裁切。 -->
       <!-- 大输入框保留上方上传入口，底栏不重复加号；紧凑输入框仍保留唯一素材入口。 -->
-      <UTooltip v-if="compact && !isMv && entry!=='drama'" :delay-duration="0" :content="{ side: 'top', align: 'center', sideOffset: 8, avoidCollisions: false }" text="添加素材：上传文件或从资料库选择"><button class="creation-tool creation-compact-add" aria-label="添加素材" :aria-expanded="popover==='add'" @click="open('add', $event)"><UIcon name="i-lucide-plus" /></button></UTooltip>
+      <!-- 节点引用由画布连线固定；紧凑排版不引入聊天素材菜单，也不借用聊天附件。 -->
+      <UTooltip v-if="compact && !nodeEditor && !isMv && entry!=='drama'" :delay-duration="0" :content="{ side: 'top', align: 'center', sideOffset: 8, avoidCollisions: false }" text="添加素材：上传文件或从资料库选择"><button class="creation-tool creation-compact-add" aria-label="添加素材" :aria-expanded="popover==='add'" @click="open('add', $event)"><UIcon name="i-lucide-plus" /></button></UTooltip>
       <!-- 使用现有闪电图标的 SVG 模式填充实心，不新增平行图标资源。 -->
+      <template v-if="!nodeEditor">
       <UTooltip v-if="entry!=='drama'" :delay-duration="0" :content="{ side: 'top', align: 'center', sideOffset: 8, avoidCollisions: false }" :text="`选择技能：${selectedSkill?.label || '技能'}`"><button ref="skillButton" class="creation-tool creation-skill" aria-label="选择创作技能" :aria-busy="trialPending" :disabled="trialPending" @click="open('skill', $event)"><span :key="skillPulse" class="creation-skill-feedback" :class="{'is-switched':skillPulse>0&&!trialPending}"><UIcon :name="trialPending?'i-lucide-loader-circle':'i-lucide-zap'" mode="svg" :class="trialPending?'animate-spin':'creation-solid-zap'" /><span class="creation-skill-label">{{ trialPending?'正在准备…':selectedSkill?.label || '自由创作' }}</span></span><UIcon name="i-lucide-chevron-down" /></button></UTooltip>
       <!-- 单引擎也保留可聚焦按钮，自由创作可切回其他媒体。 -->
+      </template>
       <!-- MV 使用服务端导演制作链，不把写歌引擎冒充其固定制作模型。 -->
-      <UTooltip v-if="showModelSelector" :delay-duration="0" :content="{ side: 'top', align: 'center', sideOffset: 8, avoidCollisions: false }" :text="`模型：${isMusic?'音乐引擎':models.find(item=>item.code===parameters.model)?.name||'模型'}`"><button class="creation-tool creation-icon-tool" aria-label="选择模型" @click="open('model',$event)"><UIcon name="i-lucide-boxes"/><span class="creation-tool-label">{{isMusic?'音乐引擎':models.find(item=>item.code===parameters.model)?.name||'模型'}}</span></button></UTooltip>
+      <span v-if="nodeEditor&&controlsKind==='text'" class="creation-tool-label">Agent 对话</span>
+      <template v-else>
+      <span v-if="(controlsOnly||nodeEditor)&&!showModelSelector" class="creation-tool-label" :title="parameters.model">{{models.find(item=>item.code===parameters.model)?.name||parameters.model||'模型待选择'}}</span>
+      <UTooltip v-if="showModelSelector" :delay-duration="0" :content="{ side: 'top', align: 'center', sideOffset: 8, avoidCollisions: false }" :text="`模型：${isMusic?'音乐引擎':models.find(item=>item.code===parameters.model)?.name||'模型'}`"><button class="creation-tool creation-icon-tool" aria-label="选择模型" @click="open('model',$event)"><UIcon name="i-lucide-boxes"/><span class="creation-tool-label">{{isMusic?'音乐引擎':models.find(item=>item.code===parameters.model)?.name||parameters.model||(nodeEditor?'模型待核对':'模型')}}</span></button></UTooltip>
       <div v-if="hasActiveStyle" class="creation-selected-style">
         <UTooltip :text="activeStyleLabel" :delay-duration="0" :content="{ side: 'top', align: 'center', sideOffset: 8, avoidCollisions: false }"><button type="button" class="creation-selected-style-open" :aria-label="`更换风格：${activeStyleLabel}`" :disabled="isParameterLocked('style')" @click="open('style',$event)"><img v-if="activeStyle?.cover_url" :src="activeStyle.cover_url" alt=""><UIcon v-else name="i-lucide-palette"/><span class="creation-selected-style-label">{{activeStyleLabel}}</span></button></UTooltip>
         <UTooltip text="清除风格" :delay-duration="0" :content="{ side: 'top', align: 'center', sideOffset: 8, avoidCollisions: false }"><UButton type="button" class="creation-selected-style-clear" icon="i-lucide-x" aria-label="清除风格" square color="neutral" variant="solid" :disabled="isParameterLocked('style')" @click.stop="clearStyle"/></UTooltip>
       </div>
       <UTooltip v-else :delay-duration="0" :content="{ side: 'top', align: 'center', sideOffset: 8, avoidCollisions: false }" text="选择风格"><button class="creation-tool creation-icon-tool" aria-label="选择风格" :disabled="isParameterLocked('style')" @click="open('style', $event)"><UIcon name="i-lucide-palette" /><span class="creation-tool-label">风格</span></button></UTooltip>
       <!-- 只隐藏短剧输入框模板入口，案例复刻及关联模板保留。 -->
-      <UTooltip v-if="entry!=='drama'" :delay-duration="0" :content="{ side: 'top', align: 'center', sideOffset: 8, avoidCollisions: false }" text="选择创作模板"><button class="creation-tool creation-icon-tool" aria-label="选择创作模板" @click="openTemplates"><UIcon name="i-lucide-lightbulb" /><span class="creation-tool-label">模板</span></button></UTooltip>
+      <UTooltip v-if="entry!=='drama'&&!nodeEditor" :delay-duration="0" :content="{ side: 'top', align: 'center', sideOffset: 8, avoidCollisions: false }" text="选择创作模板"><button class="creation-tool creation-icon-tool" aria-label="选择创作模板" @click="openTemplates"><UIcon name="i-lucide-lightbulb" /><span class="creation-tool-label">模板</span></button></UTooltip>
       <div class="creation-toolbar-spacer" />
+      </template>
+      <div v-if="nodeEditor&&controlsKind==='text'" class="creation-toolbar-spacer"/>
       <!-- 参数、积分和发送不可拆行；积分始终紧贴发送按钮左侧。 -->
       <div class="creation-submit-actions">
+      <slot name="toolbar-actions"/>
+      <template v-if="!nodeEditor||controlsKind!=='text'">
       <UTooltip :delay-duration="0" :content="{ side: 'top', align: 'center', sideOffset: 8, avoidCollisions: false }" :text="`创作参数：${parameterLabel}`"><button ref="parameterButton" class="creation-param creation-icon-tool" :aria-label="isMv?'调整 MV 比例':'调整创作参数'" :aria-expanded="popover === 'parameters'" @click="open('parameters', $event)"><UIcon :name="isMv?'i-lucide-rectangle-horizontal':'i-lucide-sliders-horizontal'" /><span class="creation-tool-label">{{ parameterLabel }}</span><UIcon v-if="!compact" name="i-lucide-chevron-down" /></button></UTooltip>
       <span class="creation-cost" v-if="creditNumber" role="status" :aria-label="creditLabel" :title="creditLabel"><CreditIcon size="xs" />{{ creditNumber }}</span>
-      <UTooltip :delay-duration="0" :content="{ side: 'top', align: 'center', sideOffset: 8, avoidCollisions: false }" :text="working||busy ? stopReason||'处理中，暂不能中断当前请求' : `预估费用并继续创作 · ${creditLabel}`"><button class="creation-send" :class="{'is-working':working||busy}" :disabled="working||busy ? !canStop : false" :aria-label="working||busy ? (canStop?'停止整理需求':'生成进行中，暂不支持暂停') : conversational ? '发送给 Liv 创作助手' : '预估费用并继续创作'" @click="working||busy ? (canStop&&emit('stop')) : emit('send')"><span v-if="working||busy" class="creation-stop-square" aria-hidden="true"/><UIcon v-else name="i-lucide-arrow-up" /></button></UTooltip>
+      </template>
+      <UTooltip :delay-duration="0" :content="{ side: 'top', align: 'center', sideOffset: 8, avoidCollisions: false }" :text="sendDisabledReason||(working||busy ? stopReason||'处理中，暂不能中断当前请求' : nodeEditor&&controlsKind==='text'?'交给 Agent，只回复文字':`预估费用并继续创作 · ${creditLabel}`)"><button class="creation-send" :class="{'is-working':working||busy}" :disabled="canvasReadonly||!!sendDisabledReason||(nodeEditor&&!prompt.trim())||(working||busy ? !canStop : false)" :aria-label="sendDisabledReason||(working||busy ? (canStop?'停止整理需求':stopReason||'请求处理中，暂不能中断') : nodeEditor&&controlsKind==='text'?'交给 Agent':conversational ? '发送给 Liv 创作助手' : '预估费用并继续创作')" @click="!canvasReadonly&&!sendDisabledReason&&(working||busy ? (canStop&&emit('stop')) : emit('send'))"><span v-if="working||busy" class="creation-stop-square" aria-hidden="true"/><UIcon v-else name="i-lucide-arrow-up" /></button></UTooltip>
       </div>
     </footer>
     </template>

@@ -6,7 +6,7 @@ import {parse,compileScript,compileTemplate} from 'vue/compiler-sfc'
 import ts from 'typescript'
 const read=path=>readFileSync(new URL('../'+path,import.meta.url),'utf8')
 test('短剧只隐藏输入框模板按钮，不删除案例复刻',()=>{
-  assert.match(read('features/creation/components/CreationComposer.vue'),/v-if="entry!=='drama'"[^>]*text="选择创作模板"/)
+  assert.match(read('features/creation/components/CreationComposer.vue'),/v-if="entry!=='drama'&&!nodeEditor"[^>]*text="选择创作模板"/)
   assert.match(read('features/creation/components/CreationStudio.vue'),/<CreationCaseViewer[^>]*@replica="makeSame"/)
 })
 test('按真实媒体尺寸排版，播放不裁切，操作为视频内图标',()=>{

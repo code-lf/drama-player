@@ -4,6 +4,14 @@ import {test} from 'node:test'
 import assert from 'node:assert/strict'
 const read=path=>readFileSync(new URL('../'+path,import.meta.url),'utf8')
 
+test('悬浮聊天使用紧凑助手标识及同色无分隔顶栏，保留非悬浮标题',()=>{
+  const studio=read('features/creation/components/CreationStudio.vue'),css=read('assets/css/creative-canvas.css')
+  assert.ok(studio.includes('v-if="floatingChat"><span class="creation-chat-agent-label">Liv Agent</span>'))
+  assert.ok(studio.includes('<template v-else><UIcon name="i-lucide-messages-square"/><h2>{{ session?.title }}</h2></template>'))
+  assert.ok(css.includes('user-select:none;border-bottom:0;background:transparent'))
+  assert.ok(studio.includes('@pointerdown="startChatGesture($event)"'))
+})
+
 test('单音乐引擎保留模型按钮，自由创作可从同一弹层切换媒体',()=>{
   const composer=read('features/creation/components/CreationComposer.vue')
   assert.ok(composer.includes('aria-label="选择模型" @click="open(\'model\',$event)"'))
@@ -31,7 +39,9 @@ test('已有播放器和编辑器不因收起聊天被重新创建，纯对话�
   assert.ok(studio.includes('is-conversation-only'))
   assert.ok(css.includes('max-width:var(--liv-workspace-conversation-width)'))
   assert.ok(css.includes('@media(min-width:1024px)'))
-  assert.ok(css.includes('.is-chat-collapsed>.creation-chat-column{display:none}'))
+  // 普通悬浮窗须由v-show过渡隐藏，旧即时display规则只保留给非悬浮短剧布局。
+  assert.ok(css.includes('.is-chat-collapsed:not(.is-floating-chat)>.creation-chat-column{display:none}'))
+  assert.ok(studio.includes('<Transition name="creation-chat-morph"><section v-show="!floatingChat||!chatCollapsed"'))
   const skeleton=read('components/DashboardSkeleton.vue')
   assert.ok(skeleton.includes("layout==='unknown'"))
   assert.ok(skeleton.includes("v-if=\"layout==='media'\""))

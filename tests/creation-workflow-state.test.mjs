@@ -5,9 +5,18 @@ import {readFileSync} from 'node:fs'
 import ts from 'typescript'
 import {ref,reactive,computed} from 'vue'
 async function load(file){const js=ts.transpileModule(readFileSync(new URL('../features/creation/'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ESNext}}).outputText;return import(`data:text/javascript;base64,${Buffer.from(js).toString('base64')}`)}
-const {canAcceptRun,sameRunScope,appendResultKeys,unreadResultKeys,resultReadState,assistantInteraction,sameSavedEdit}=await load('workflowState.ts')
+const {canAcceptRun,sameRunScope,appendResultKeys,unreadResultKeys,resultReadState,assistantInteraction,sameSavedEdit,shouldRefreshTaskBalance}=await load('workflowState.ts')
 const {sessionResults,hasRenderableResult,processingResults}=await load('resultCatalog.ts')
 const base={id:'run-a',session_id:'session-a',status:'planning',calls:2,awaiting_calls:2,question_revision:1,stream_seq:5}
+
+test('任务终态只触发一次真实账户读取，普通轮询与未知状态不能伪造退款余额',()=>{
+  assert.equal(shouldRefreshTaskBalance('running','failed'),true)
+  assert.equal(shouldRefreshTaskBalance(undefined,'failed'),true)
+  assert.equal(shouldRefreshTaskBalance('failed','failed'),false)
+  assert.equal(shouldRefreshTaskBalance('running','running'),false)
+  assert.equal(shouldRefreshTaskBalance('running','needs_review'),false)
+  assert.equal(shouldRefreshTaskBalance('result_pending','succeeded'),true)
+})
 test('断线恢复原流程可进入 waiting，旧流程、跨会话、旧调用及旧正文不回写',()=>{
   assert.equal(canAcceptRun(base,{...base,status:'waiting'}),true)
   assert.equal(canAcceptRun(base,{...base,id:'old-run'}),false)

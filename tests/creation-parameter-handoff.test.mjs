@@ -25,11 +25,13 @@ test('普通助手回复不再继承导演卡片，问题才有表面和独立�
 
 test('工具浮层使用同一 Nuxt UI 关闭行为，规格统一展示质量等级',()=>{
   const composer=read('features/creation/components/CreationComposer.vue')
+  // 禁止的是用户可见的旧标签，不应因中文方法注释提到同名概念而误报。
+  const template=composer.slice(composer.indexOf('<template>'),composer.lastIndexOf('</template>')).replace(/<!--[\s\S]*?-->/g,'')
   assert.ok(composer.includes('<UPopover'))
   assert.ok(composer.includes(':reference="popoverAnchor"'))
   assert.ok(!composer.includes('搜索技能'))
   assert.ok(!composer.includes('内置技能'))
-  assert.ok(!composer.includes('普通聊天'))
+  assert.ok(!template.includes('普通聊天'))
   assert.ok(!composer.includes('Enter 发送，Shift+Enter 换行'))
   assert.ok(composer.includes("low:'低',medium:'中',high:'高'"))
   const studio=read('features/creation/components/CreationStudio.vue')

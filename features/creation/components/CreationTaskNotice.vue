@@ -13,7 +13,7 @@ const fullReason=computed(()=>failure.value?taskStatusText(props.detail||''):tex
 </script>
 
 <template>
-  <UTooltip :text="fullReason" :content="{side:'top',sideOffset:8,collisionPadding:12}">
+  <UTooltip :text="fullReason" :content="{side:'top',sideOffset:8,collisionPadding:12}" :ui="{content:'liv-task-notice-tooltip',text:'liv-task-notice-reason'}">
     <div class="liv-task-notice" :class="{'is-submitted':submitted,'is-working':working}" role="status" :aria-busy="working" tabindex="0" @click.stop>
       <UIcon :name="working?'i-lucide-loader-circle':submitted?'i-lucide-circle-check':failure?'i-lucide-circle-alert':'i-lucide-info'" :class="{'liv-task-spinner':working}"/>
       <span>{{text}}</span>
@@ -23,6 +23,9 @@ const fullReason=computed(()=>failure.value?taskStatusText(props.detail||''):tex
 
 <style scoped>
 /* 通知在消息区水平居中，图标不收缩；避免继承助手正文的额外左缩进。 */
+/* 浮层传送至body：覆盖单行Tooltip高度与省略，长失败原因在视口内完整换行。 */
+:global(.liv-task-notice-tooltip){max-width:min(320px,calc(100vw - 24px));height:auto;white-space:normal;overflow-wrap:anywhere;line-height:1.6}
+:global(.liv-task-notice-reason){min-width:0;white-space:normal;overflow:visible;text-overflow:clip}
 .liv-task-notice{display:flex;align-items:center;justify-content:center;gap:8px;width:fit-content;max-width:100%;margin:12px auto;color:var(--liv-settings-muted);font-size:12px;line-height:1.6;text-align:center}
 .liv-task-notice>.iconify{flex:none;width:16px;height:16px}
 .liv-task-notice.is-submitted,.liv-task-notice.is-working{padding:8px 12px;border-radius:8px;background:var(--color-surface-hover)}

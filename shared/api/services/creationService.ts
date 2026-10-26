@@ -1,7 +1,10 @@
 import { request, buildProductImagePayload, buildProductVideoPayload, mapProductVideoTask } from '~/shared/api/adapters/httpAdapter'
 
 /** 合规候选经服务端校验后必须人工核对，不能被会话免确认设置跳过。 */
-export interface CreationRun { response_phase?:'queued'|'thinking'|'responding'; requires_manual_confirmation?: boolean; reference_previews?: Record<string, import('~/features/creation/types').WorkspacePreview> }
+export interface CreationRun { response_phase?:'queued'|'thinking'|'responding'; requires_manual_confirmation?: boolean; reference_previews?: Record<string, import('~/features/creation/types').WorkspacePreview>; /** 真实原文读取来源；不携带正文、签名地址或费用许可。 */ document_reads?:Array<{item_id:string;version_id:string;name:string;version_no:number;start:number;end:number;chars:number}> }
+/** 根图只公开阶段和待恢复命令身份，不将服务器执行参数或许可交给客户端重建。 */
+export type FlowAction='plan'|'edit'|'quote'|'prepare'|'confirm'|'materialize'|'compose'|'retry_composition'
+export interface CreationRun {flow_runtime?:{engine:'langgraph';version:string;skill_version:number;phase:string;sequence:number;pending_command?:{action:FlowAction;request_id:string}}}
 import type { ProductImageGeneratePayload } from '~/entities/product-image/types'
 import type { ProductVideoCreatePayload } from '~/entities/product-video/types'
 import type { MusicQuote, MusicTask } from '~/shared/api/services/musicService'
@@ -10,9 +13,36 @@ import type { CreationCatalog, CreationDraft, CreationEntryType, CreationMessage
 
 /** 会话只保存用户需求及任务编号，报价/扣点继续走现有业务服务。 */
 export const creationService = {
+  // 原技能重新整理只创建新文字轮次，服务端固定版本/素材并强制重新确认费用。
+  retryPlanning:(id:string,request_id:string,expected_calls:number)=>request<CreationRun>(`/creation/runs/${id}/retry-planning`,{method:'POST',body:{request_id,expected_calls}}),
+  // 恢复必须由明确点击触发，刷新、历史读取及订阅不得调用此写接口。
+  resumeFlow:(id:string,pending:{action:FlowAction;request_id:string})=>request<CreationRun>(`/creation/runs/${id}/flow/resume`,{method:'POST',body:pending}),
+  // 计划编辑/核价不授予费用许可，读取也不会自动提交任务。
+  videoPlan: (id:string) => request<VideoPlan>(`/creation/runs/${id}/video-plan`),
+  // 图片计划使用独立协议；保存只更新修订/选择，不能误走视频报价或单图生成入口。
+  imagePlan: (id:string) => request<ImageCreativePlan>(`/creation/runs/${id}/image-plan`),
+  saveImagePlan: (id:string,body:ImagePlanEditCommand) => request<ImageCreativePlan>(`/creation/runs/${id}/image-plan`,{method:'PATCH',body}),
+  // 逐张真实核价只接受已保存修订，不传客户端金额，也不授予生成许可。
+  quoteImagePlan: (id:string,body:{expected_revision:number;request_id:string}) => request<ImageCreativePlan>(`/creation/runs/${id}/image-plan/quote`,{method:'POST',body}),
+  // 一次人工确认先固定本批次输入，再提交同一修订及报价；读取不会调用这两个入口。
+  prepareImageBatch: (id:string,body:VideoBatchCommand) => request<ImageCreativePlan>(`/creation/runs/${id}/image-plan/prepare-execution`,{method:'POST',body}),
+  confirmImageBatch: (id:string,body:VideoBatchCommand) => request<ImageCreativePlan>(`/creation/runs/${id}/image-plan/confirm`,{method:'POST',body}),
+  // 正式准备不收费；只有独立确认点击才调用 confirm，不由恢复/轮询触发。
+  prepareVideoBatch:(id:string,body:VideoBatchCommand)=>request<VideoPlan>(`/creation/runs/${id}/video-plan/prepare-execution`,{method:'POST',body}),
+  confirmVideoBatch:(id:string,body:VideoBatchCommand)=>request<VideoPlan>(`/creation/runs/${id}/video-plan/confirm`,{method:'POST',body}),
+  // 重试只产生待核价草案，后续仍需重新展示合计并确认，不携带旧费用许可。
+  retryVideoBatch:(id:string,body:{expected_revision:number;request_id:string;item_ids:string[]})=>request<{run_id:string;plan:VideoPlan}>(`/creation/runs/${id}/video-plan/retry`,{method:'POST',body}),
+  /** 图片失败重试仅建立待核价计划，不能沿用原批次许可直接生成。 */
+  retryImageBatch:(id:string,body:{expected_revision:number;request_id:string;item_ids:string[]})=>request<{run_id:string;plan:ImageCreativePlan}>(`/creation/runs/${id}/image-plan/retry`,{method:'POST',body}),
+  // 工作台编辑成功作品只创建新草案；仍走原计划核价和费用确认。
+  reviseCompletedVideo:(id:string,body:{expected_revision:number;request_id:string;selected_ids:string[];items:Array<{id:string;title:string;prompt:string;parameters?:Partial<import('~/features/creation/agentCanvas').CreativeNodeParameters>}>})=>request<{run_id:string}>(`/creation/runs/${id}/video-plan/revise-completed`,{method:'POST',body}),
+  composeVideoBatch:(id:string,expected_revision:number)=>request<import('./videoCompositionService').CompositionJob>(`/creation/runs/${id}/video-plan/compose-all`,{method:'POST',body:{expected_revision}}),
+  saveVideoPlan: (id:string, body:{expected_revision:number;request_id:string;selected_ids:string[];items:Array<{id:string;title:string;prompt:string;parameters?:Partial<import('~/features/creation/agentCanvas').CreativeNodeParameters>}>}) => request<VideoPlan>(`/creation/runs/${id}/video-plan`,{method:'PATCH',body}),
+  quoteVideoPlan: (id:string, body:{expected_revision:number;request_id:string}) => request<VideoPlan>(`/creation/runs/${id}/video-plan/quote`,{method:'POST',body}),
   /** 阶段翻页只保存答案；提交后再由既有 advance 领取一次文字分析。 */
   beginStage: (id:string) => request<CollectionStage>(`/creation/runs/${id}/stage`,{method:'POST'}),
-  saveStage: (id:string, body:{expected_revision:number;request_id:string;answers:Record<string,unknown>},submit=false) => request<CollectionStage>(`/creation/runs/${id}/stage${submit?'/submit':''}`,{method:submit?'POST':'PATCH',body}),
+  stageText: (id:string,body:{expected_revision:number;request_id:string;answers:Record<string,unknown>;text:string;cursor?:number}) => request<CollectionStage>(`/creation/runs/${id}/stage/text`,{method:'POST',body}),
+  saveStage: (id:string, body:{expected_revision:number;request_id:string;answers:Record<string,unknown>;cursor?:number},submit=false) => request<CollectionStage>(`/creation/runs/${id}/stage${submit?'/submit':''}`,{method:submit?'POST':'PATCH',body}),
   /** 复用统一鉴权请求读取持久化事件流，不将认证令牌拼到 URL。 */
   async observeRun(id:string,signal:AbortSignal,onState:(state:CreationRun)=>void,minCalls=0){
     let attempt=0
@@ -74,7 +104,8 @@ export const creationService = {
   // 音乐工作台与图片、视频一样携带配方快照；旧音乐工具继续使用独立接口。
   musicTask: (operation:string, inputs:Record<string,unknown>, rights_confirmed:boolean, request_id:string, quote:MusicQuote, creation_context:string) => request<MusicTask>('/creation/tasks/music',{method:'POST',body:{operation,inputs,rights_confirmed,request_id,quote:quote.quote,signature:quote.signature,creation_context}}),
   // 文字规划只保存状态与问题，媒体收费仍需下一次显式点击生成。
-  startRun: (draft: CreationDraft, request_id: string, session_id?: string,current_source?:WorkspaceSource,parent_run_id?:string|null) => request<CreationRun>('/creation/runs', {method:'POST',body:{draft,request_id,session_id,current_source,parent_run_id,mode:draft.skill?'skill':'chat',deferred:true}}),
+  // 文本节点显式使用既有chat模式；不依赖上一次选中的媒体技能，也不获得媒体执行权限。
+  startRun: (draft: CreationDraft, request_id: string, session_id?: string,current_source?:WorkspaceSource,parent_run_id?:string|null,mode?:'chat'|'skill') => request<CreationRun>('/creation/runs', {method:'POST',body:{draft,request_id,session_id,current_source,parent_run_id,mode:mode??(draft.skill?'skill':'chat'),deferred:true}}),
   run: (id: string) => request<CreationRun>(`/creation/runs/${id}`),
   runByRequest: (id:string) => request<CreationRun>(`/creation/runs/by-request/${id}`),
   savePreview: (id:string,preview:DirectorPreview) => request<DirectorPreview>(`/creation/runs/${id}/preview`,{method:'PATCH',body:{title:preview.title,script:preview.script,expected_revision:preview.preview_revision||0}}),
@@ -113,7 +144,31 @@ export const creationService = {
 /** 对齐时间为原歌曲毫秒，片段偏移仅在创建制作快照时应用。 */
 export interface MvLyricCue {sort_index:number;start_ms:number;end_ms:number;text:string}
 /** 阶段定义仅描述表单，不包含工具地址或费用授权。 */
-export interface CollectionStage {definition:{id:string;title:string;fields:Array<{id:string;label:string;kind:'text'|'single'|'multiple'|'reference';required:boolean;options:string[]}>};answers:Record<string,unknown>;revision:number;status:'collecting'|'submitted'}
+export interface CollectionStage {definition:{id:string;title:string;fields:Array<{id:string;label:string;kind:'text'|'single'|'multiple'|'reference';required:boolean;options:string[]}>};answers:Record<string,unknown>;revision:number;cursor?:number;notes?:string[];feedback?:string;status:'collecting'|'submitted'}
 export interface CreationRun {collection_stage?:CollectionStage}
+/** 计划总量独立于所选条目；内部签名/工具入参不由客户端管理。 */
+export interface VideoPlanItem {id:string;title:string;prompt:string;parameters:Partial<CreationDraft['parameters']>;references:CreationDraft['references'];creative?:{hook_description?:string}|null}
+/** 图片计划与视频计划分开类型；每张固定count=1，总需求及所选条目独立保存。 */
+export type ImagePlanParameters=Partial<Pick<import('~/features/creation/agentCanvas').CreativeNodeParameters,'model'|'style'|'styleId'|'aspectRatio'|'resolution'|'quality'>>
+export interface ImagePlanItem {id:string;sort_index:number;title:string;prompt:string;parameters:ImagePlanParameters&{count:1};references:CreationDraft['references'];creative?:Record<string,unknown>|null;content_source?:string}
+export interface ImagePlanPrice {id:string;plan_revision:number;item_ids:string[];items:Array<{id:string;title:string;credits:number;model:string;aspect_ratio:string;resolution:string;quality:string}>;total_credits:number;current_balance:number;sufficient:boolean;expires_at:number;expired:boolean;execution_available:boolean}
+export interface ImageCreativePlan {schema_version:1;revision:number;target:'image';plan_type:'product_set'|'detail_page';total_count:number;selected_ids:string[];items:ImagePlanItem[];status:string;skill:string;skill_version:number;unverified_facts:string[];quote:ImagePlanPrice|null;execution_available:boolean;batch_supported?:boolean}
+/** 客户端不能传引用、价格、总需求数或执行许可；相同请求号用于同一保存的网络重试。 */
+export interface ImagePlanEditCommand {expected_revision:number;request_id:string;selected_ids:string[];items?:Array<{id:string;title:string;prompt:string;parameters?:ImagePlanParameters}>}
+export interface CreationRun {image_plan?:ImageCreativePlan}
+/** 图阶段来自统一服务端投影；前端保存图片计划时不能保留过期的根图阶段。 */
+export interface ImageCreativePlan {flow_runtime?:CreationRun['flow_runtime']}
+export interface ImageCreativePlan {retry_of?:string}
+export interface ImageBatchItem {retry_run_id?:string}
+/** 每张图片直接读取原图片任务，业务成功和文件可交付分别展示。 */
+export interface ImageBatchItem {item_id:string;task_id:string;status:string;delivery_status:string;progress?:number|null;detail?:string;error?:string;error_code?:string;results:Array<{id:string;status:string;image_url:string}>}
+export interface ImageCreativePlan {batch?:{request_id:string;quote_id:string;plan_revision:number;total_credits:number;items:ImageBatchItem[];completed?:number;generated_count?:number;failed?:number;unknown?:number;selected_count?:number}}
+export interface VideoPlan {schema_version:number;revision:number;total_count:number;selected_ids:string[];items:VideoPlanItem[];status:string;allocation_note:string;unverified_facts?:string[];quote?:{id:string;plan_revision:number;item_ids:string[];items:Array<{id:string;title:string;credits:number;model:string;duration_sec:number;aspect_ratio:string;resolution:string}>;total_credits:number;current_balance:number;sufficient:boolean;expires_at:number;expired:boolean;execution_available:boolean}|null}
+// 改稿来源仅用于同会话恢复已保存提示词，不是执行许可。
+export interface CreationRun {mode?:'chat'|'skill';creative_plan?:VideoPlan;superseded_by?:string;revision_parent?:string;retry_of?:string}
+/** 命令只绑定服务端修订和报价，不传客户端计算的金额或执行签名。 */
+export interface VideoBatchCommand {expected_revision:number;quote_id:string;request_id:string}
+export interface VideoBatchItem {item_id:string;task_id:string;status?:string;progress?:number|null;detail?:string;error?:string;retry_run_id?:string|null;results?:Array<{id:string;status:string;video_url:string;cover_url?:string}>}
+export interface VideoPlan {flow_runtime?:CreationRun['flow_runtime'];batch_supported?:boolean;batch?:{request_id:string;quote_id:string;plan_revision:number;items:VideoBatchItem[];completed?:number;failed?:number;selected_count?:number}}
 export interface MvAlignment {id:string;version_id:string;status:string;source:string;duration_ms:number;cues:MvLyricCue[];lyrics:string;input_revision:string;error:string;can_retry:boolean}
 export interface CreationRun { task_input?:{schema_version:1;revision:number;prompt:string;skill:string;skill_version:number;target:CreationTarget;parameters:Partial<CreationDraft['parameters']>;references:CreationDraft['references']}; response_started_at?:string|null;response_finished_at?:string|null;response_elapsed_ms?:number|null;response_first_text_at?:string|null; stream_seq?:number; parent_run_id?:string|null;generation_prompt?:string; discussion?:Array<{user:string;reply:string}>; awaiting_calls?:number; executed_request?:unknown; question_revision?:number; created_at?:string; stream_text?:string; id: string; session_id?:string|null; status: string; calls: number; skill: string; version: number; draft: CreationDraft; restored_answer?:string; question?: {text:string;options:string[];kind?:'text'|'single'|'multiple'|'reference';label?:string;field_id?:string}; answers: Array<{question:string;answer:string}>; error?: string; preview?: DirectorPreview; revision?:number; card?:{type:'reply'|'proposal';text:string;skill?:string;target?:string;model?:string} }

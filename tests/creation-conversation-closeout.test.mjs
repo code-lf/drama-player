@@ -32,6 +32,7 @@ test('播放器保留左右卡、白色高亮令牌和唯一音频节点',()=>{
 })
 test('尺寸浮层绑定触发器，普通聊天通过显式模式提交',()=>{
   assert.ok(read('features/creation/components/CreationResultCanvas.vue').includes('v-model:open="ratioOpen"'))
-  assert.ok(read('shared/api/services/creationService.ts').includes("mode:draft.skill?'skill':'chat'"))
-  assert.ok(read('features/creation/useCreationWorkspace.ts').includes("方案确认后报价"))
+  // 模式可由明确聊天命令覆盖，缺省才按技能判断；不能取消这一业务分离。
+  assert.ok(read('shared/api/services/creationService.ts').includes("mode:mode??(draft.skill?'skill':'chat')"))
+  assert.ok(read('features/creation/useCreationWorkspace.ts').includes("填写需求后预估"))
 })

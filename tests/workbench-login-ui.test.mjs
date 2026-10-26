@@ -12,9 +12,10 @@ test('私人菜单先弹登录并保留导航意图，取消清空意图', () =>
   assert.match(dialog, /loginDestination.value=''/)
   assert.match(dialog, /if\(destination\)void navigateTo\(destination\)/)
 })
-test('未取得报价显示动画，真实点数仍显示且状态可读', () => {
+test('输入框只展示真实数字点数，无报价不显示旧占位动画，状态可读', () => {
   const composer = read('features/creation/components/CreationComposer.vue')
-  assert.match(composer, /v-if="hasCreditQuote">\{\{ creditLabel \}\}/)
-  assert.match(composer, /v-else class="creation-estimate-dots"/)
+  // 最新统一输入框约定覆盖旧动画；不能为满足旧断言恢复多余占位。
+  assert.match(composer, /class="creation-cost" v-if="creditNumber"[^>]*>[\s\S]*?\{\{ creditNumber \}\}/)
+  assert.doesNotMatch(composer, /class="creation-estimate-dots"/)
   assert.match(composer, /:aria-label="creditLabel" :title="creditLabel"/)
 })

@@ -35,13 +35,15 @@ export const useAccountStore = defineStore('account', {
   },
   actions: {
     async refreshProfile() {
+      const authStore = useAuthStore(),owner=authStore.session.user?.id
       this.loadingProfile = true
       try {
         const profile = await accountService.getProfile()
+        // 任务完成触发的账户读取可能晚到；退出或换号后不能回填上一个账号的资料与余额。
+        if(owner!==authStore.session.user?.id||!authStore.session.loggedIn)return profile
         this.profile = profile
 
         // 登录态下顺手把昵称、头像、余额同步回会话缓存，保证页面刷新后展示一致。
-        const authStore = useAuthStore()
         authStore.syncUserProfile(profile)
         return profile
       } finally {

@@ -41,10 +41,14 @@ test('详情关闭完成后才试用，普通浏览不会选择',()=>{
   const row={id:'item',is_active:true};trySkill(row);assert.equal(detail.value,null);assert.deepEqual(events,[]);finishDetail();assert.deepEqual(events,[['try',row]])
   assert.doesNotMatch(part,/navigateTo|createRun|submit\(/)
 })
-test('首页、技能页使用同一个 CreationStudio 和唯一 CreationComposer',()=>{
+test('首页、技能页共用主输入框，节点仅复用同组件内核不复制主对话',()=>{
   const page=read('pages/dashboard.vue'),workspace=read('features/creation/useCreationWorkspace.ts'),tokens=read('assets/css/tokens.css')
   assert.match(page,/activeWorkspaceView === 'console' \|\| activeWorkspaceView === 'skills'/)
-  assert.equal((studio.match(/<CreationComposer\b/g)||[]).length,1)
+  // 节点正文插槽复用输入内核是新增合同；主对话实例仍唯一，不因收起聊天被替换。
+  const composers=studio.match(/<CreationComposer\b[^>]*>/g)||[]
+  assert.equal(composers.filter(value=>value.includes('ref="composerRef"')).length,1)
+  assert.equal(composers.filter(value=>value.includes('canvas-editor')).length,1)
+  assert.equal(composers.length,2)
   assert.match(studio,/<SkillCenterPanel v-if="skillsPage&&!active"/)
   assert.match(workspace,/path: options.entryPath\?\.\(\) \|\| '\/dashboard'/)
   assert.match(tokens,/--liv-skill-directory-tab-size: 18px/);assert.match(tokens,/--liv-skill-directory-tab-weight: 700/)
