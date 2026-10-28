@@ -22,7 +22,7 @@ test('只为真实可用图片自动展开原工具，重复选择不重建；�
 test('节点图片不显示重复版本选择，辅助操作并入原工具一排，原工作台/全屏仍保留',()=>{
   const canvas=readFileSync('features/creation/components/CreationResultCanvas.vue','utf8')
   assert.ok(canvas.includes('<header v-if="!compactImageTools"'))
-  assert.ok(canvas.includes('<div v-if="compactImageTools" class="canvas-node-utilities">'))
+  assert.ok(canvas.includes('<div v-if="compactImageTools&&!annotating" class="canvas-node-utilities">'))
   assert.ok(canvas.includes('.canvas-footer.is-node-image-tools{flex-direction:row;align-items:center'))
   assert.ok(canvas.includes('const compactImageTools=computed(()=>!!props.inlineNode&&!fullscreen.value'))
   assert.ok(canvas.includes('aria-label="下载作品"'))
@@ -37,7 +37,7 @@ test('作品工具为节点slot，不再挂全屏模态；下方输入复用共�
   const canvas=readFileSync('features/creation/components/CreationResultCanvas.vue','utf8')
   assert.ok(canvas.includes('if(props.inlineNode&&!fullscreen.value){topToolsStyle.value={};'))
   assert.ok(canvas.includes('.liv-canvas.is-inline-node>.canvas-footer{position:static!important;order:1'))
-  assert.match(canvas,/\.liv-canvas\.is-inline-node \.canvas-toolbar\{[^}]*flex-wrap:wrap!important;overflow:visible/)
+  assert.match(canvas,/\.liv-canvas\.is-inline-node\.is-image-result \.canvas-toolbar\{[^}]*flex-wrap:nowrap!important;overflow:visible/)
 })
 
 test('节点显式全屏传送同一编辑器，退出恢复节点而不复制或清空编辑状态',()=>{
@@ -50,17 +50,16 @@ test('节点显式全屏传送同一编辑器，退出恢复节点而不复制�
   assert.ok(!/operations\.value\s*=|cursor\.value\s*=|preview\.value\s*=/.test(code))
 })
 
-test('节点更多菜单保留原背景/风格/转视频与尺寸命令，忙碌时禁用且不直接生成',async()=>{
+test('节点图片主工具单排且无滚动，低频操作进入更多，比例仍在裁剪中',()=>{
   const canvas=readFileSync('features/creation/components/CreationResultCanvas.vue','utf8')
-  const code=compile(canvas.slice(canvas.indexOf('const nodeImageTools='),canvas.indexOf('const cropStyle=')))
-  const calls=[],working={value:false},ratioOptions=[{label:'方形',value:'1:1',ratio:1}]
-  const menu=new Function('computed','working','ratioOptions','ai','applyRatio',`${code};return nodeImageTools`)(getter=>({get value(){return getter()}}),working,ratioOptions,async action=>calls.push(action),async ratio=>calls.push(ratio))
-  assert.deepEqual(menu.value.map(item=>item.label),['背景','风格','尺寸','转视频'])
-  for(const item of menu.value)if(item.onSelect)await item.onSelect()
-  await menu.value[2].children[0].onSelect()
-  assert.deepEqual(calls,['background','style','image_to_video',1])
-  working.value=true;assert.ok(menu.value.every(item=>item.disabled))
-  assert.ok(canvas.includes('v-if="inlineNode&&!fullscreen" :items="nodeImageTools"'))
+  assert.match(canvas,/role="toolbar" aria-label="图片作品工具"/)
+  assert.ok(canvas.includes('const nodeImageTools=computed('))
+  assert.ok(canvas.includes('aria-label="更多图片工具"'))
+  for(const action of ['background','style','image_to_video'])assert.ok(canvas.includes(`run(()=>ai('${action}'))`))
+  assert.ok(canvas.includes('aria-label="裁剪比例"'))
+  assert.match(canvas,/\.canvas-footer\.is-node-image-tools \.canvas-toolbar\{[^}]*overflow:visible/)
+  assert.match(canvas,/\.liv-canvas\.is-inline-node\.is-image-result \.canvas-toolbar\{[^}]*overflow:visible/)
+  assert.ok(canvas.includes('.canvas-node-utilities :deep(button){min-height:32px}'))
 })
 test('节点内编辑没有遮罩保护时，切换节点先核对笔迹；取消不关闭、不切换批次',async()=>{
   const code=compile(studio.slice(studio.indexOf('async function beforeSelectGraphNode('),studio.indexOf('async function updateGraphToolsOpen(')))

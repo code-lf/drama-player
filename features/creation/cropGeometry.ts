@@ -2,6 +2,14 @@
 export interface CropBox {x:number;y:number;width:number;height:number}
 export const clampUnit=(value:number)=>Math.max(0,Math.min(1,value))
 export function cropFromPoints(a:{x:number;y:number},b:{x:number;y:number}):CropBox{return{x:Math.min(a.x,b.x),y:Math.min(a.y,b.y),width:Math.abs(a.x-b.x),height:Math.abs(a.y-b.y)}}
+/** 固定比例拖动使用真实像素比例，边界内等比收缩；不让拖角把9:16重新变成任意比例。 */
+export function ratioCropFromPoints(a:{x:number;y:number},b:{x:number;y:number},width:number,height:number,ratio:number):CropBox{
+  if(!Number.isFinite(ratio)||ratio<=0||width<=0||height<=0)return cropFromPoints(a,b)
+  const normalized=ratio*height/width,dx=b.x>=a.x?1:-1,dy=b.y>=a.y?1:-1
+  let w=Math.max(Math.abs(b.x-a.x),Math.abs(b.y-a.y)*normalized)
+  w=Math.min(w,dx>0?1-a.x:a.x,(dy>0?1-a.y:a.y)*normalized)
+  return cropFromPoints(a,{x:a.x+dx*w,y:a.y+dy*w/normalized})
+}
 /** 按比例居中裁切，不把人物或商品拉伸成另一种宽高比。 */
 export function centeredRatio(width:number,height:number,ratio:number):CropBox{
   if(!width||!height||!Number.isFinite(ratio)||ratio<=0)throw new Error('图片比例无效')

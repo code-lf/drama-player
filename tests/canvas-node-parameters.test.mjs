@@ -66,7 +66,7 @@ test('共用菜单限定节点媒体类型，提交使用节点规格而不是�
   for(const file of ['CreationNodeControls.vue','CreationComposer.vue','CreationAgentCanvas.vue','CreationStudio.vue'])assert.doesNotThrow(()=>compileScript(parse(readFileSync(`features/creation/components/${file}`,'utf8')).descriptor,{id:'node-parameters',inlineTemplate:true}))
   assert.ok(readFileSync('features/creation/components/CreationComposer.vue','utf8').includes('if((props.controlsOnly||props.nodeEditor)&&kind!==props.controlsKind)return []'))
   const studio=readFileSync('features/creation/components/CreationStudio.vue','utf8')
-  assert.ok(studio.includes('patchParameters({...node.data.parameters,count:1,output:'))
+  assert.ok(studio.includes('{...node.data.parameters,count:1,output:'))
   assert.ok(studio.includes('requirement_boundary:true,canvas_node_id:node.id'))
 })
 
@@ -76,11 +76,12 @@ test('节点控件真实白名单方法剥离费用许可和任意extra，忙碌
   const clean=new Function('value',body)
   const input={...parameters,count:4,rightsConfirmed:true,extra:{execution_permit:'not-allowed'},sourceUrl:'not-allowed'}
   assert.deepEqual(clean(input),parameters)
-  const update=text.match(/function update\(patch:Partial<CreationParameterState>\)\{([^\n]*)\}/)[1]
-  const run=new Function('props','parameters','emit','clean','patch',update),events=[]
-  run({busy:false},{value:parameters},(...args)=>events.push(args),clean,{durationSec:10,extra:{quote:'old'}})
+  const raw=text.match(/function update\(patch:Partial<CreationParameterState>\)\{([\s\S]*?)\n\}/)[0]
+  const update=ts.transpileModule(raw,{compilerOptions:{target:ts.ScriptTarget.ESNext}}).outputText
+  const run=new Function('props','parameters','emit','clean',`${update};return update`),events=[]
+  run({kind:'video',busy:false},{value:parameters},(...args)=>events.push(args),clean)({durationSec:10,extra:{quote:'old'}})
   assert.equal(events[0][1].durationSec,10);assert.equal(events[0][1].extra,undefined)
-  run({busy:true},{value:parameters},(...args)=>events.push(args),clean,{durationSec:6})
+  run({kind:'video',busy:true},{value:parameters},(...args)=>events.push(args),clean)({durationSec:6})
   assert.equal(events.length,1)
 })
 

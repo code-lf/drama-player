@@ -19,7 +19,7 @@ function mount(kind='video',selected=true){
   // 原生DOM不会被Vue代理；夹具同样标记为原始对象，确保target与模板ref身份比较真实。
   const element=(type,text='')=>vue.markRaw({type,text,children:[],props:{},parent:null,paused:false,pauseCount:0,pause(){this.paused=true;this.pauseCount++},videoWidth:480,videoHeight:854,duration:6,currentTime:0})
   const renderer=vue.createRenderer({createElement:element,createText:text=>element('text',text),createComment:text=>element('comment',text),setText:(el,text)=>el.text=text,setElementText:(el,text)=>{el.text=text;el.children=[]},patchProp:(el,key,_,value)=>el.props[key]=value,insert:(el,parent,anchor)=>{el.parent=parent;const index=anchor?parent.children.indexOf(anchor):-1;if(index<0)parent.children.push(el);else parent.children.splice(index,0,el)},remove:el=>{if(el.parent)el.parent.children=el.parent.children.filter(child=>child!==el)},parentNode:el=>el.parent,nextSibling:el=>el.parent?.children[el.parent.children.indexOf(el)+1]})
-  const root=element('root'),app=renderer.createApp({setup:()=>()=>vue.h(module.exports.default,{...props,onDerive:id=>events.push(['derive',id]),onTools:id=>events.push(['tools',id]),onRetry:id=>events.push(['retry',id])},{'media-editor':()=>vue.h('inline-editor','真实节点内编辑器')})})
+  const root=element('root'),app=renderer.createApp({setup:()=>()=>vue.h(module.exports.default,{...props,onDerive:id=>events.push(['derive',id]),onTools:id=>events.push(['tools',id]),onRetry:id=>events.push(['retry',id]),onRefreshFile:id=>events.push(['refreshFile',id])},{'media-editor':()=>vue.h('inline-editor','真实节点内编辑器')})})
   app.component('UIcon',{render:()=>null})
   app.component('UButton',{setup:(_,{attrs,slots})=>()=>vue.h('button',attrs,slots.default?.())})
   app.component('UTooltip',{setup:(_,{slots})=>()=>slots.default?.()})
@@ -29,6 +29,16 @@ function mount(kind='video',selected=true){
   const text=el=>el.text+el.children.map(text).join('')
   return {app,props,events,listeners,find,text}
 }
+
+test('空文本节点单独标记灰色提示，填写后恢复正文且不改变内容',async()=>{
+  const ui=mount('text')
+  assert.ok(ui.find(el=>el.type==='p'&&String(el.props.class).includes('is-placeholder')))
+  ui.props.data.prompt='第一行\n  第二行';await tick()
+  const body=ui.find(el=>el.type==='p'&&String(el.props.class).includes('creative-node-text'))
+  assert.ok(!String(body.props.class).includes('is-placeholder'))
+  assert.equal(ui.text(body),'第一行\n  第二行')
+  assert.equal(ui.events.length,0);ui.app.unmount()
+})
 
 test('工具打开后在原节点内渲染编辑器，不重复播放器和下方工具，退出恢复原节点',async()=>{
   const ui=mount('image');assert.ok(ui.find(el=>el.type==='img'))
@@ -112,7 +122,7 @@ test('工具弹层或短剧页签隐藏画布时暂停，普通悬浮窗不隐�
     assert.equal(ui.events.length,0);ui.app.unmount()
   }
   const canvas=readFileSync('features/creation/components/CreationAgentCanvas.vue','utf8'),studio=readFileSync('features/creation/components/CreationStudio.vue','utf8')
-  assert.ok(canvas.includes(':playback-enabled="playbackEnabled!==false&&!removeOpen"'))
+  assert.ok(canvas.includes(':playback-enabled="playbackEnabled!==false&&!removeOpen&&!previewNode"'))
   assert.ok(studio.includes(':playback-enabled="!graphToolsOpen&&!compositionOpen&&!rulesOpen&&(floatingChat||desktopWorkspace||mobilePane===\'canvas\')"'))
 })
 
@@ -135,7 +145,7 @@ test('图片、视频和音乐加载失败可重载同一文件，不发派生�
     assert.ok(ui.text(ui.find(el=>el.type==='article')).includes('文件暂不可用'))
     button.props.onClick({stopPropagation(){}});await tick()
     const renewed=ui.find(el=>el.type===tag);assert.ok(renewed);assert.notEqual(renewed,old);assert.equal(renewed.props.src,'/file-one')
-    assert.equal(renewed.props.autoplay,undefined);assert.equal(ui.events.length,0)
+    assert.equal(renewed.props.autoplay,undefined);assert.deepEqual(ui.events,[['refreshFile','task:real']])
     ui.app.unmount()
   }
 })

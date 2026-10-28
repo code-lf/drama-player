@@ -3,6 +3,8 @@
   --liv-graph-node-width: 280px;
   --liv-graph-media-height: 420px;
   --liv-graph-editor-width: 680px;
+  /* 图片节点“更多”统一紧凑菜单宽度，传送层与旋转子菜单复用。 */
+  --liv-graph-tool-menu-width: 216px;
   --liv-graph-editor-height: 160px;
   /* 桌面普通节点长稿仅在正文内部滚动，避免输入框反向挤小媒体节点；展开态不受此上限约束。 */
   --liv-graph-editor-max-height: 200px;
@@ -141,6 +143,9 @@
   --liv-workspace-divider-width: 8px;
   /* 技能菜单固定四行：64px 行高＋三处 4px 间距，筛选不改变外框与弹出方向。 */
   --liv-skill-menu-width: 480px;
+  /* 已选技能使用醒目暖黄色，长名称可多显示约四个字；空间不足时仍可收缩。 */
+  --liv-skill-accent: #f8bf32;
+  --liv-skill-label-max: 128px;
   --liv-skill-menu-row-height: 64px;
   --liv-skill-menu-list-height: 268px;
   --liv-skill-menu-height: 422px;
@@ -241,6 +246,8 @@
 }
 
 [data-theme='light'] {
+  /* 浅色界面降低亮度，保证技能文字在浅背景上仍可辨认。 */
+  --liv-skill-accent: #955300;
   --color-bg: #f4f7fb;
   --color-panel: rgba(255, 255, 255, 0.94);
   --color-panel-soft: rgba(245, 248, 255, 0.88);

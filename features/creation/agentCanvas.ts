@@ -7,7 +7,7 @@ import type {CompositionJob} from '~/shared/api/services/videoCompositionService
 /** 画布只保存布局和编辑草案；状态、文件及费用始终投影自原业务记录。 */
 export type CreativeNodeKind='text'|'image'|'video'|'audio'|'compose'
 /** 只保存可编辑创作规格；费用、素材地址与执行许可不能进入画布布局。 */
-export interface CreativeNodeParameters {model:string;style:string;styleId:string;aspectRatio:string;durationSec:number;resolution:string;quality:'low'|'medium'|'high'}
+export interface CreativeNodeParameters {model:string;style:string;styleId:string;aspectRatio:string;durationSec:number;resolution:string;quality:'low'|'medium'|'high';instrumental?:boolean;vocalGender?:''|'m'|'f'}
 export interface CreativeNodeData {
   kind:CreativeNodeKind; title:string; prompt:string; status:string; url?:string; cover?:string
   source?:WorkspaceSource; reference?:ComposerReference; resultKey?:string; runId?:string; itemId?:string
@@ -21,6 +21,8 @@ export interface CreativeNodeData {
 export interface CreativeNode {id:string;type:'creative';position:{x:number;y:number};data:CreativeNodeData}
 /** 节点展示与失败派生共用原业务规格，仅复制编辑白名单，不带价格、许可或任意extra。 */
 export function creativeRetryParameters(node:CreativeNode,runs:CreationRun[],messages:CreationMessage[],results:SessionResult[]=[],visited=new Set<string>()):CreativeNodeParameters|undefined{
+  // 手动音频使用后台固定音乐引擎，模型代码可以为空，但节点自己的参数必须恢复。
+  if(node.data.kind==='audio'&&node.data.parameters)return {...node.data.parameters}
   // 本地编辑版本沿真实来源回溯规格，历史异常环或过长链不能无限递归。
   if(visited.has(node.id)||visited.size>=32)return undefined
   visited.add(node.id)
@@ -233,6 +235,8 @@ export function creativeConnectionIssue(nodes:CreativeNode[],edges:Array<{source
   if(edges.some(edge=>edge.source===source&&edge.target===target))return '两个节点之间已经存在引用连线。'
   // 公开流式文字只供查看，不能在尚未整理完成时被另一个节点当作正式创作要求。
   if(from.data.kind==='text'&&from.data.phase==='planning'&&!['ready','replied','completed','succeeded'].includes(from.data.status))return '文字尚未整理完成，请等待原节点完成后再引用。'
+  // 音乐草案当前只接普通文字；媒体与文档授权流程未接入，不能先连上再在提交时静默丢弃。
+  if(to.data.kind==='audio'&&(from.data.kind!=='text'||!!from.data.reference))return '音乐草案目前只支持普通文字引用，不支持直接引用媒体或文档。'
   if(to.data.kind==='image'&&['video','audio','compose'].includes(from.data.kind))return '视频或音频不能直接作为图片参考，请先用作品工具保存视频截帧。'
   if(from.data.reference&&from.data.status==='unavailable')return '所选参考素材已失效或不可读取，请重新选择授权素材。'
   // 空手动草案仍可用于预先规划关系；真实业务产物必须已有可用文件，规划线不授予执行能力。

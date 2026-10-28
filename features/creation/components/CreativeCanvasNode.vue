@@ -3,7 +3,7 @@ import {Handle,Position} from '@vue-flow/core'
 import {computed,onBeforeUnmount,onMounted,ref,watch} from 'vue'
 import type {CreativeNodeData} from '../agentCanvas'
 const props=defineProps<{id:string;data:CreativeNodeData;selected?:boolean;playbackEnabled?:boolean;busy?:boolean;editing?:boolean;creationItems?:Array<{label:string;icon?:string;disabled?:boolean;description?:string;onSelect:()=>unknown}>}>()
-const emit=defineEmits<{tools:[id:string];focus:[id:string];retry:[id:string]}>()
+const emit=defineEmits<{tools:[id:string];focus:[id:string];toggleSelection:[id:string,event:MouseEvent];retry:[id:string];refreshFile:[id:string]}>()
 // 菜单展开后保持加号可见，鼠标移入传送层不会让触发入口消失；键盘/触屏使用同一菜单。
 const creationOpen=ref(false)
 const creationHovered=ref(false),creationAnchor=ref<{left:number;top:number}|null>(null)
@@ -36,7 +36,7 @@ onBeforeUnmount(()=>{clearTimeout(creationLeaveTimer);pauseMedia();document.remo
 function played(event:Event){const media=event.target as HTMLMediaElement;if(media!==mediaElement.value||!canPlay.value||document.hidden||failed.value)media.pause()}
 function fileFailed(event:Event){if(event.target!==imageElement.value&&event.target!==mediaElement.value)return;pauseMedia();failed.value=true}
 /** 重新加载只重建同一媒体文件的播放器，不发送需求、创建任务或扣点。 */
-function retryFile(){pauseMedia();failed.value=false;ratio.value=1;reload.value++}
+function retryFile(){pauseMedia();failed.value=false;ratio.value=1;reload.value++;emit('refreshFile',props.id)}
 const isDocument=computed(()=>props.data.reference?.media_type==='document')
 const icon=computed(()=>isDocument.value?'i-lucide-file-text':({text:'i-lucide-type',image:'i-lucide-image',video:'i-lucide-film',audio:'i-lucide-music',compose:'i-lucide-clapperboard'}[props.data.kind]))
 const pending=computed(()=>['planning','queued','pending','submitting','running','rendering','in_progress','processing','result_pending'].includes(props.data.status))
@@ -51,18 +51,26 @@ function metadata(event:Event){
 }
 /** 自定义节点直接接收双击，避免图形库的拖拽/选择转发吞掉事件；媒体控件不抢焦点。 */
 function doubleClick(event:MouseEvent){
-  if((event.target as HTMLElement).closest('button,input,textarea,audio,video,[role=button]'))return
+  // 批注、裁剪和媒体控件保留自身手势；普通图片与内联编辑器的图片可继续两级双击。
+  if((event.target as HTMLElement).closest('button,input,textarea,audio,video,[role=button],.annotation-surface,.crop-overlay'))return
   event.stopPropagation();emit('focus',props.id)
+}
+/** 修饰键选择在节点捕获阶段统一接收，避免内嵌工具吞掉Shift/Ctrl点击；实际编辑控件仍独立操作。 */
+function modifierClick(event:MouseEvent){
+  if(!(event.shiftKey||event.ctrlKey||event.metaKey))return
+  if((event.target as HTMLElement).closest('button,input,textarea,select,a,audio,video,[role=button],[contenteditable=true],.annotation-surface,.crop-overlay'))return
+  // 本次交由父画布的同一多选方法处理，停止冒泡以免Vue Flow再反选一次。
+  event.preventDefault();event.stopPropagation();emit('toggleSelection',props.id,event)
 }
 </script>
 <template>
-  <article class="creative-node" :class="{'is-selected':selected,'is-pending':pending,'is-creation-hovered':creationHovered,'is-editing':editing}" :aria-label="`${data.title} · ${status}`" @dblclick="doubleClick" @pointerenter="enterCreationRegion" @pointerleave="leaveCreationRegion" @pointermove="moveCreationEntry">
+  <article class="creative-node" :class="{'is-selected':selected,'is-pending':pending,'is-creation-hovered':creationHovered,'is-editing':editing}" :aria-label="`${data.title} · ${status}`" @click.capture="modifierClick" @dblclick="doubleClick" @pointerenter="enterCreationRegion" @pointerleave="leaveCreationRegion" @pointermove="moveCreationEntry">
     <header class="creative-node-heading"><UIcon :name="icon"/><span :title="data.title">{{data.title}}</span><span class="creative-node-state">{{status}}</span></header>
     <Handle type="target" :position="Position.Left" :is-connectable="!!data.manual"/>
     <div class="creative-node-body" :class="{'is-text':data.kind==='text'}">
-      <div v-if="editing" class="creative-node-inline-tools nodrag nopan nowheel" @pointerdown.stop @click.stop @dblclick.stop><slot name="media-editor"/></div>
+      <div v-if="editing" class="creative-node-inline-tools nodrag nopan nowheel" @pointerdown.stop @click.stop @dblclick.stop="doubleClick"><slot name="media-editor"/></div>
       <div v-else-if="isDocument" class="creative-node-placeholder"><UIcon :name="icon"/><span>{{data.status==='unavailable'?'文档不可用':data.detail}}</span><span v-if="data.reference?.start!=null&&data.reference?.end!=null">已选 {{data.reference.end-data.reference.start}} 字原文</span></div>
-      <p v-else-if="data.kind==='text'" class="creative-node-text">{{data.prompt||'选择节点，填写文本内容'}}</p>
+      <p v-else-if="data.kind==='text'" class="creative-node-text" :class="{'is-placeholder':!data.prompt?.trim()}">{{data.prompt?.trim()?data.prompt:'选择节点，填写文本内容'}}</p>
       <img v-else-if="data.kind==='image'&&data.url&&!failed" :key="reload" ref="imageElement" :src="data.url" :alt="data.title" draggable="false" @error="fileFailed"/>
       <video v-else-if="(data.kind==='video'||data.kind==='compose')&&data.url&&!failed" :key="reload" ref="mediaElement" :class="canPlay?'nodrag nopan nowheel':'creative-static-video'" :src="data.url" :poster="data.cover" :style="{aspectRatio:ratio}" :controls="canPlay" :muted="!canPlay" playsinline preload="metadata" @play="played" @loadedmetadata="metadata" @error="fileFailed"/>
       <div v-else-if="data.kind==='audio'&&data.url&&!failed" class="creative-node-audio"><UIcon :name="icon"/><span v-if="!canPlay">{{selected?'已暂停':'选中后播放'}}</span><audio :key="reload" ref="mediaElement" class="nodrag nopan nowheel" :src="data.url" :controls="canPlay" preload="none" @play="played" @error="fileFailed"/></div>

@@ -42,6 +42,8 @@ watch(()=>[route.fullPath,auth.session.user?.id,props.navigationOpen],()=>{clear
 </script>
 <template>
 <nav class="session-workspace-nav" aria-label="会话工作区导航">
+<!-- 手机收起品牌菜单与新建入口，返回创作首页；桌面原导航不变。 -->
+<UButton class="session-mobile-back" to="/dashboard?entry=free" icon="i-lucide-chevron-left" color="neutral" variant="ghost" square aria-label="返回创作首页"/>
 <!-- 复用既有品牌按钮和下拉样式，组件只负责外点、Esc、焦点与菜单键盘行为。 -->
 <UDropdownMenu v-model:open="brandOpen" :modal="false" :items="brandItems" :content="{side:'bottom',align:'start',sideOffset:0,onOpenAutoFocus:brandAutoFocus,onCloseAutoFocus:brandAutoFocus,onKeydown:()=>brandPointer=false}" :ui="{content:'session-nav-dropdown session-brand-dropdown',item:'session-brand-menu-item',itemLeadingIcon:'session-brand-menu-icon'}"><button class="session-brand-trigger" type="button" aria-label="Livliv 导航菜单" @pointerenter="$event.pointerType!=='touch' && enterBrand()" @pointerleave="leaveBrand" @pointerdown="brandPointer=false" @keydown="brandPointer=false"><span>Livliv</span><UIcon name="i-lucide-chevron-down"/></button></UDropdownMenu>
 <span class="session-nav-title" :title="title">{{title}}</span>

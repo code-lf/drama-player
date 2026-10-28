@@ -1,8 +1,11 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { musicService, type MusicOperation, type MusicQuote, type MusicTask } from '~/shared/api/services/musicService'
 import { libraryService } from '~/shared/api/services/libraryService'
 import type { LibraryItem } from '~/entities/library/types'
+// 显式导入统一弹窗及按钮，避免业务子目录被自动导入解析为普通标签而丢失确认操作。
+import LivDialog from '~/components/liv-ui/LivDialog.vue'
+import LivButton from '~/components/liv-ui/LivButton.vue'
 const props = defineProps<{ sourceTaskId?: string; initialOperation?:string; sourceAudioIndex?:number; compact?:boolean }>()
 const emit = defineEmits<{ created: [task: MusicTask] }>()
 
@@ -17,12 +20,15 @@ const rightsConfirmed = ref(false)
 const busy = ref(false)
 const error = ref('')
 const quote = ref<MusicQuote | null>(null)
+const quoteTrigger=ref<{ $el?:HTMLElement }|null>(null)
 const requestId = ref('')
 const focusedTaskId = ref('')
 const audioLibrary = ref<LibraryItem[]>([])
 const libraryReady = ref(false)
 const uploadingAudio = ref(false)
 let pollTimer: ReturnType<typeof setInterval> | null = null
+// 关闭或切换会话后丢弃迟到报价/初始化，不让已销毁面板重新启用确认或轮询。
+let alive = true, inputRevision = 0, previewEpoch = 0
 
 const groups = ['创作', '上传', '改造', '分轨', '剪辑', '分析导出', '声音资产']
 const current = computed(() => operations.value.find(item => item.operation === selectedOperation.value))
@@ -130,7 +136,7 @@ function handleVoiceSelection(kind: 'persona_id' | 'custom_model_id'): void {
 }
 
 /** 修改字段后必须重新报价；旧报价不可套用到不同素材、档位或歌词。 */
-watch([values, selectedOperation, rightsConfirmed], () => { quote.value = null; requestId.value = '' }, { deep: true })
+watch([values, selectedOperation, rightsConfirmed], () => { inputRevision++; quote.value = null; requestId.value = '' }, { deep: true, flush: 'sync' })
 
 function chooseOperation(item: MusicOperation): void {
   selectedOperation.value = item.operation
@@ -170,9 +176,13 @@ function selectAudioReferences(key: string, event: Event): void {
 async function refreshAudioLibrary(): Promise<void> {
   try {
     const capability = await libraryService.capabilities()
+    if (!alive) return
     libraryReady.value = capability.enabled
-    if (capability.enabled) audioLibrary.value = (await libraryService.list({ scope: 'personal', media_type: 'audio' })).items
-  } catch { libraryReady.value = false }
+    if (capability.enabled) {
+      const result = await libraryService.list({ scope: 'personal', media_type: 'audio' })
+      if (alive) audioLibrary.value = result.items
+    }
+  } catch { if (alive) libraryReady.value = false }
 }
 
 async function uploadAudio(event: Event, key: string): Promise<void> {
@@ -227,17 +237,29 @@ function message(errorValue: unknown): string {
 }
 
 async function refreshTasks(): Promise<void> {
-  try { tasks.value = await musicService.tasks() }
-  catch (cause) { if (!tasks.value.length) error.value = message(cause) }
+  try { const result = await musicService.tasks(); if (alive) tasks.value = result }
+  catch (cause) { if (alive && !tasks.value.length) error.value = message(cause) }
 }
 
 async function preview(): Promise<void> {
   if (!current.value || busy.value) return
   busy.value = true
   error.value = ''
-  try { quote.value = await musicService.quote(current.value.operation, normalizedInputs(), rightsConfirmed.value) }
-  catch (cause) { error.value = message(cause) }
-  finally { busy.value = false }
+  const revision = inputRevision, epoch = ++previewEpoch
+  try {
+    const result = await musicService.quote(current.value.operation, normalizedInputs(), rightsConfirmed.value)
+    if (alive && epoch === previewEpoch && revision === inputRevision) quote.value = result
+  }
+  catch (cause) { if (alive && epoch === previewEpoch && revision === inputRevision) error.value = message(cause) }
+  finally { if (alive && epoch === previewEpoch) busy.value = false }
+}
+
+/** 取消只收起本次报价并保留表单；焦点回到核价入口，不跳到背景或已关闭面板。 */
+async function dismissQuote():Promise<void>{
+  if(busy.value)return
+  quote.value=null
+  await nextTick()
+  if(alive&&!quote.value)quoteTrigger.value?.$el?.focus()
 }
 
 async function submit(): Promise<void> {
@@ -248,13 +270,15 @@ async function submit(): Promise<void> {
   if (!requestId.value) requestId.value = crypto.randomUUID()
   try {
     const task = await musicService.create(current.value.operation, normalizedInputs(), rightsConfirmed.value, requestId.value, quote.value)
+    // 已受理任务由服务端继续执行；关闭面板后不向另一会话回填，也不自动重提。
+    if (!alive) return
     tasks.value = [task, ...tasks.value.filter(item => item.id !== task.id)]
     focusedTaskId.value = task.id
     emit('created', task)
     quote.value = null
     requestId.value = ''
-  } catch (cause) { error.value = message(cause) }
-  finally { busy.value = false }
+  } catch (cause) { if (alive) error.value = message(cause) }
+  finally { if (alive) busy.value = false }
 }
 
 function useTaskAsSource(task: MusicTask): void {
@@ -304,22 +328,25 @@ function resultLinks(task: MusicTask): Array<{ label: string; url: string; kind:
 }
 
 onMounted(async () => {
-  try { operations.value = await musicService.catalog() }
-  catch (cause) { error.value = message(cause) }
+  try { const result = await musicService.catalog(); if (!alive) return; operations.value = result }
+  catch (cause) { if (!alive) return; error.value = message(cause) }
   await refreshTasks()
+  if (!alive) return
   const source = tasks.value.find(item => item.id === props.sourceTaskId)
   if (source) useTaskAsSource(source)
   await refreshAudioLibrary()
+  if (!alive) return
   // 仅查询本账号已有任务，不触发任何供应商收费调用。
   // 主歌曲完成后仍需等待内含歌词时间轴，持续刷新曲目状态供用户看到生成进度。
   pollTimer = setInterval(() => { if (tasks.value.some(item => ['queued', 'submitting', 'in_progress'].includes(item.status)
     || (Array.isArray(item.result?.music) && item.result.music.some((song: Record<string, unknown>) => ['queued', 'submitting', 'in_progress'].includes(String(song?.lyrics_status || '')))))) void refreshTasks() }, 5000)
 })
-onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
+onUnmounted(() => { alive = false; previewEpoch++; if (pollTimer) clearInterval(pollTimer) })
 </script>
 
 <template>
-  <div class="mx-auto max-w-[1560px] pb-16 text-[#14223b]" :class="{'music-workspace-compact':compact}">
+  <!-- 原生fieldset统一锁住异步请求期间的全部表单控件，避免切操作清掉正在提交的稳定请求号。 -->
+  <fieldset :disabled="busy" class="m-0 min-w-0 border-0 p-0 mx-auto max-w-[1560px] pb-16 text-[#14223b]" :class="{'music-workspace-compact':compact}">
     <div v-if="!compact" class="mb-7 flex flex-wrap items-end justify-between gap-5">
       <div>
         <p class="mb-2 text-xs font-bold tracking-[.2em] text-[#3a77fa]">LIVLIV · MUSIC STUDIO</p>
@@ -335,6 +362,7 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
 
     <div class="mb-6 flex flex-wrap gap-2 rounded-[18px] border border-[#e1eaf8] bg-white p-2 shadow-[0_16px_45px_rgba(32,72,145,.05)]">
       <button v-for="group in groups" :key="group" type="button" class="rounded-xl px-5 py-2.5 text-sm font-bold transition"
+        :data-selected="selectedGroup === group"
         :class="selectedGroup === group ? 'bg-[#075dff] text-white shadow-[0_8px_20px_rgba(0,95,254,.22)]' : 'text-[#536582] hover:bg-[#eff5ff]'"
         @click="chooseGroup(group)">{{ group }}</button>
     </div>
@@ -347,6 +375,7 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
         </div>
         <div class="mb-6 grid grid-cols-2 gap-2 sm:grid-cols-3">
           <button v-for="item in groupOperations" :key="item.operation" type="button" class="min-h-[68px] rounded-xl border px-3 py-2 text-left transition"
+            :data-selected="item.operation === selectedOperation"
             :class="item.operation === selectedOperation ? 'border-[#367bff] bg-[#eef5ff] text-[#005ffe]' : 'border-[#e2eaf5] hover:border-[#aacaff]'"
             @click="chooseOperation(item)">
             <span class="block text-sm font-bold">{{ item.label }}</span>
@@ -402,7 +431,7 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
           <label v-if="current.rights_required" class="flex items-start gap-2 rounded-xl bg-amber-50 p-3 text-xs leading-5 text-amber-900"><input v-model="rightsConfirmed" type="checkbox" class="mt-1 accent-[#cc7c00]">我确认拥有上传音频、声音及相关作品的合法使用授权，并知悉不得仿冒他人声音。</label>
           <div class="flex flex-wrap items-center justify-between gap-3 border-t border-[#edf1f7] pt-5">
             <div class="text-sm text-[#6d7d96]">{{ current.enabled ? `基础价 ${current.retail_credits} 点 / 次` : '管理员尚未开放此操作' }}</div>
-            <button type="button" :disabled="!current.enabled || busy" class="rounded-xl bg-[#075dff] px-6 py-3 text-sm font-black text-white disabled:cursor-not-allowed disabled:bg-[#b8c9e5]" @click="preview">{{ busy ? '处理中…' : '预估本次点数' }}</button>
+            <UButton ref="quoteTrigger" :disabled="!current.enabled || busy" :loading="busy" @click="preview">预估本次点数</UButton>
           </div>
         </div>
       </section>
@@ -445,8 +474,20 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
       </section>
     </div>
 
-    <div v-if="quote" class="fixed inset-0 z-[350] grid place-items-center bg-[#12213d]/50 px-4" role="dialog" aria-modal="true" aria-label="确认音乐费用">
-      <div class="w-full max-w-[450px] rounded-[22px] bg-white p-6 shadow-2xl"><h2 class="text-xl font-black">确认音乐创作</h2><p class="mt-2 text-sm leading-6 text-[#5c6d87]">{{ quote.label }}本次预计扣除 <b class="text-[#075dff]">{{ quote.retail_credits }} 点</b>。提交后将创建任务；若任务生成失败，会按任务账单退回点数。</p><p class="mt-3 text-xs text-[#8b99ad]">Max 模式按基础价格的 2 倍计算；实际扣点以本次确认的报价为准。</p><div class="mt-6 flex justify-end gap-2"><button type="button" class="rounded-xl border px-4 py-2 text-sm" @click="quote = null">返回修改</button><button type="button" :disabled="busy" class="rounded-xl bg-[#075dff] px-5 py-2 text-sm font-bold text-white disabled:opacity-50" @click="submit">{{ busy ? '提交中…' : '确认并生成' }}</button></div></div>
-    </div>
-  </div>
+    <!-- 二级费用确认沿用统一设置弹窗，只展示服务端本次报价，不自行推算倍数。 -->
+    <LivDialog v-if="quote" :open="true" settings dark title="确认音乐费用" :dismissible="!busy" @update:open="open=>{if(!open)void dismissQuote()}">
+      <p class="liv-settings-copy">{{ quote.label }}本次需 <CreditIcon class="inline-block"/> {{ quote.retail_credits }} 点数。确认后提交任务，失败时的点数处理以实际账单为准。</p>
+      <template #footer><LivButton settings variant="secondary" :disabled="busy" @click="dismissQuote">返回修改</LivButton><LivButton settings variant="primary" :loading="busy" :disabled="busy" @click="submit">确认并生成</LivButton></template>
+    </LivDialog>
+  </fieldset>
 </template>
+<style scoped>
+/* 紧凑工具嵌入工作区时沿用深色语义表面；独立音乐页的旧布局本轮不改。 */
+.music-workspace-compact{color:var(--liv-account-text);padding-bottom:0}
+.music-workspace-compact section,.music-workspace-compact [class*='bg-white']{background:var(--liv-account-surface)!important;border-color:var(--liv-account-border)!important}
+.music-workspace-compact [class*='text-[#']{color:var(--liv-account-muted)!important}
+/* 当前工作区选中态复用靛紫和灰色表面，禁止旧亮蓝底/浅色卡把文字冲淡。 */
+.music-workspace-compact button[data-selected='true']{background:var(--liv-account-selected)!important;border-color:var(--ui-primary)!important;color:var(--liv-account-text)!important;box-shadow:none}
+.music-workspace-compact button[data-selected='true'] span{color:inherit!important}
+.music-workspace-compact>div>button[data-selected='true']{background:var(--ui-primary)!important;color:var(--liv-control-on-primary)!important}
+</style>

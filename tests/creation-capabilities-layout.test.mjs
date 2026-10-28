@@ -6,7 +6,7 @@ const read=path=>readFileSync(new URL('../'+path,import.meta.url),'utf8')
 
 test('悬浮聊天使用紧凑助手标识及同色无分隔顶栏，保留非悬浮标题',()=>{
   const studio=read('features/creation/components/CreationStudio.vue'),css=read('assets/css/creative-canvas.css')
-  assert.ok(studio.includes('v-if="floatingChat"><span class="creation-chat-agent-label">Liv Agent</span>'))
+  assert.ok(studio.includes('v-if="floatingChat||mobileWorkspace"><span class="creation-chat-agent-label">Liv Agent</span>'))
   assert.ok(studio.includes('<template v-else><UIcon name="i-lucide-messages-square"/><h2>{{ session?.title }}</h2></template>'))
   assert.ok(css.includes('user-select:none;border-bottom:0;background:transparent'))
   assert.ok(studio.includes('@pointerdown="startChatGesture($event)"'))

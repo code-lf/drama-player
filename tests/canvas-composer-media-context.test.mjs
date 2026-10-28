@@ -47,3 +47,11 @@ test('普通聊天仍按当前入口技能判断，切回图片不能继承旧�
   assert.equal(ui.parameterLabel.value,'9:16 · 480p · 中')
   assert.equal(context({nodeEditor:false,skill:'mv-story'}).isMv.value,true)
 })
+
+test('音频节点使用音乐参数，不继承聊天的图片、视频或MV类型',()=>{
+  const ui=context({controlsKind:'music',skill:'free',parameters:{model:'',output:'music',aspectRatio:'1:1',durationSec:6,resolution:'',quality:'medium',extra:{instrumental:true}}})
+  assert.equal(ui.isMusic.value,true)
+  assert.equal(ui.isVideo.value,false)
+  assert.equal(ui.isMv.value,false)
+  assert.equal(ui.parameterLabel.value,'纯音乐')
+})

@@ -10,7 +10,7 @@ const sidebar = read('features/dashboard/components/DashboardSidebar.vue')
 test('首页启动使用专属骨架，侧栏恢复工作台且会话首页不变',()=>{
   const page=read('pages/dashboard.vue'),skeleton=read('components/DashboardSkeleton.vue')
   assert.match(page,/route.query.session\?'conversation':'home'/)
-  assert.match(skeleton,/v-if="variant==='home'"/)
+  assert.match(skeleton,/v-else-if="variant==='home'"/)
   assert.match(skeleton,/class="creation-home"/)
   assert.match(skeleton,/home-skeleton-composer\{height:clamp\(190px,30cqi,240px\)/)
   assert.match(sidebar,/<span>Liv 工作台<\/span>/)

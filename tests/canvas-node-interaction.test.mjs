@@ -19,6 +19,23 @@ test('媒体与操作按钮的双击不定位、不打断播放',()=>{
   assert.equal(calls.length,0)
   // 图形库外层不能再监听一遍，否则正文的媒体排除规则会被冒泡绕过。
   const canvas=readFileSync('features/creation/components/CreationAgentCanvas.vue','utf8')
-  assert.ok(canvas.includes('@focus="focusSelectedNode"'))
+  assert.ok(canvas.includes('@focus="doubleClickNode"'))
   assert.ok(!canvas.includes('@node-double-click='))
+})
+
+test('内嵌作品上的Shift/Ctrl/Meta点击交给统一选择路径，普通点击不重复转发',()=>{
+  const method=source.match(/function modifierClick\(event:MouseEvent\)\{[\s\S]*?\n\}/)?.[0]
+  assert.ok(method)
+  const code=ts.transpileModule(method,{compilerOptions:{target:ts.ScriptTarget.ESNext}}).outputText
+  for(const key of ['shiftKey','ctrlKey','metaKey']){
+    const calls=[];let stopped=0,prevented=0
+    const fn=new Function('props','emit',`${code};return modifierClick`)({id:'image:inline'},(...args)=>calls.push(args))
+    const event={[key]:true,target:{closest:()=>null},preventDefault:()=>prevented++,stopPropagation:()=>stopped++}
+    fn(event);assert.deepEqual(calls,[['toggleSelection','image:inline',event]])
+    assert.equal(stopped,1);assert.equal(prevented,1)
+    fn({...event,[key]:false});assert.equal(calls.length,1)
+    fn({...event,target:{closest:()=>({tagName:'BUTTON'})}});assert.equal(calls.length,1)
+  }
+  assert.ok(source.includes('@click.capture="modifierClick"'))
+  assert.match(source,/contenteditable=true.*annotation-surface.*crop-overlay/)
 })

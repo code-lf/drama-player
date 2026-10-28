@@ -16,7 +16,17 @@ test('深底高亮与实心主色分开，开关显式限制轨道与圆点尺�
   assert.ok(css.includes('--liv-ui-primary-foreground: #818CF8'))
   assert.ok(css.includes('--liv-switch-width: 40px'));assert.ok(css.includes('--liv-switch-height: 22px'));assert.ok(css.includes('--liv-switch-thumb: 18px'))
   assert.ok(css.includes('padding:0!important;gap:0!important;border:2px solid transparent!important'))
-  assert.ok(creation.includes('creation-tool.creation-skill{color:var(--liv-ui-primary-foreground)'))
+  assert.ok(creation.includes('creation-tool.creation-skill{color:var(--liv-skill-accent)'))
+})
+
+test('技能强调色独立于积分和主色，紧凑名称可收缩且保留完整提示',()=>{
+  const css=read('assets/css/creation.css'),tokens=read('assets/css/tokens.css'),composer=read('features/creation/components/CreationComposer.vue')
+  assert.ok(tokens.includes('--liv-skill-label-max: 128px'))
+  assert.ok(tokens.includes('--liv-skill-accent: #f8bf32'))
+  assert.ok(css.includes('max-width:var(--liv-skill-label-max)'))
+  assert.ok(css.includes('.creation-studio .creation-cost{color:var(--liv-ui-primary-foreground)'))
+  assert.ok(composer.includes('选择技能：${selectedSkill?.label'))
+  assert.ok(composer.includes('flex:0 1 auto;overflow:hidden'))
 })
 test('设置规格集中于令牌与现有封装，仓库说明要求后续复用',()=>{
   const css=read('assets/css/main.css'),instructions=read('AGENTS.md')

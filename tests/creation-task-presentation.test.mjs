@@ -13,11 +13,13 @@ test('系统任务文案不再泄露接入术语，包括历史返回说明',()=
   assert.equal(taskStatusText('ToAPIs 上游响应超时'),'生成服务 生成服务响应超时')
 })
 
-test('已知长错误使用短文案，真实重试保留次数，未知原因不截断',()=>{
+test('长错误使用短摘要与完整详情，真实重试保留次数，短原因不截断',()=>{
   assert.equal(compactTaskFailure('图片生成服务暂时异常，本次失败不会扣除积分，请稍后免费重试。'),'生成失败，请稍后重试')
   assert.equal(compactTaskFailure('图片未通过安全审核。请调整可能涉及敏感内容的描述或参考素材后免费重试。'),'未通过安全审核，请修改需求')
   assert.equal(compactTaskFailure('图片生成服务暂时异常。 正在尝试 3/3。'),'生成遇到问题，正在重试 3/3')
   assert.equal(compactTaskFailure('参考素材已失效，请重新选择'),'参考素材已失效，请重新选择')
+  assert.equal(compactTaskFailure('当前视频模型在所选时长、清晰度和参考图组合下暂无可用渠道。请调整生成设置或稍后重试。 再次生成需重新核价并确认；本次点数处理请以账单记录为准。'),'当前规格暂不可用，请调整后重试')
+  assert.equal(compactTaskFailure('尚未识别的业务错误说明'.repeat(10)),'生成未完成，请查看详情')
 })
 
 test('提交和进行态分开，失败、未知及结果读取不能标绿',()=>{

@@ -1433,7 +1433,7 @@ watch(()=>authStore.session.user?.id,()=>{projectItems.value=[];accountStore.res
           </SessionWorkspaceNav>
           <!-- 创作用途由工作台传送到顶部，保持原切换状态与费用确认逻辑。 -->
           <div v-if="activeWorkspaceView === 'console'" id="creation-topbar-nav" class="creation-topbar-nav"><USkeleton v-if="isBooting && !immersiveSession" class="home-nav-skeleton" aria-label="正在载入创作用途" /></div>
-          <div class="flex items-center gap-3">
+          <div class="dashboard-topbar-account-actions flex items-center gap-3">
             <!-- 游客只展示登录入口；账户余额、通知与个人菜单仅在登录后挂载。 -->
             <LivButton v-if="!authStore.session.loggedIn" settings variant="primary" @click="requireLogin()">免费注册/登录</LivButton>
             <template v-else>
@@ -1489,7 +1489,7 @@ watch(()=>authStore.session.user?.id,()=>{projectItems.value=[];accountStore.res
         </header>
 
         <div class="dashboard-main-content px-8 py-9">
-        <DashboardSkeleton v-if="isBooting" :variant="activeWorkspaceView==='console' ? (route.query.session?'conversation':'home') : 'workspace'" :rows="5" />
+        <DashboardSkeleton v-if="isBooting" :simple="activeWorkspaceView==='console'&&!!route.query.session" :variant="activeWorkspaceView==='console' ? (route.query.session?'conversation':'home') : 'workspace'" :rows="5" />
 
         <template v-else>
           <div v-if="errorMessage" class="mb-4 rounded-2xl border border-rose-400/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">

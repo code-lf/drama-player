@@ -55,7 +55,7 @@ test('图片和视频完整复用统一输入框，画布不拼正文加工具�
 })
 
 test('文本节点同样接入完整组件，文档参考保留原只读核对，不开放媒体规格',()=>{
-  assert.ok(canvas.includes("['text','image','video'].includes(selected.data.kind)&&selected.data.reference?.media_type!=='document'"))
+  assert.ok(canvas.includes("['text','image','video','audio'].includes(selected.data.kind)&&selected.data.reference?.media_type!=='document'"))
   assert.ok(studio.includes("nodeEditor.node.data.kind==='text'?'text'"))
   assert.ok(composer.includes("v-if=\"nodeEditor&&controlsKind==='text'\""))
   assert.ok(composer.includes("v-if=\"!nodeEditor||controlsKind!=='text'\""))

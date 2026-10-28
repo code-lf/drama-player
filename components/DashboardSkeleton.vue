@@ -1,12 +1,14 @@
 <script setup lang="ts">
 // 读取页面资料时展示布局占位；生成、上传和支付等业务进度仍使用真实任务状态。
-withDefaults(defineProps<{ layout?: 'unknown' | 'conversation' | 'media'; variant?: 'home' | 'workspace' | 'cards' | 'rows' | 'conversation' | 'toolbar'; rows?: number; heading?: boolean }>(), { layout: 'unknown', variant: 'rows', rows: 3, heading: true })
+withDefaults(defineProps<{ layout?: 'unknown' | 'conversation' | 'media'; variant?: 'home' | 'workspace' | 'cards' | 'rows' | 'conversation' | 'toolbar'; rows?: number; heading?: boolean; simple?:boolean }>(), { layout: 'unknown', variant: 'rows', rows: 3, heading: true, simple:false })
 </script>
 <template>
-  <div class="dashboard-skeleton" :class="[`dashboard-skeleton--${variant}`,{'creation-studio':variant==='home','is-conversation-only':variant==='conversation'&&layout==='conversation'}]" role="status" aria-label="正在载入页面" aria-busy="true">
+  <div class="dashboard-skeleton" :class="[`dashboard-skeleton--${variant}`,{'creation-studio':variant==='home','is-conversation-only':variant==='conversation'&&layout==='conversation','is-simple-loading':variant==='conversation'&&simple}]" role="status" aria-label="正在载入页面" aria-busy="true">
+    <!-- 普通画布恢复仅展示中性加载点，不再预设旧左右分栏、媒体大小或价格占位。 -->
+    <div v-if="variant==='conversation'&&simple" class="workspace-loading"><span class="sr-only">正在加载会话</span><span class="workspace-loading-dots" aria-hidden="true"><i/><i/></span></div>
     <!-- 占位均复用 Nuxt UI；会话恢复保持消息区、编辑器、工具栏和画布的位置。 -->
     <!-- 首页占位复用实际标题位置、800px输入区及案例区域，不能套项目列表布局。 -->
-    <template v-if="variant==='home'">
+    <template v-else-if="variant==='home'">
       <div class="creation-hero home-skeleton-hero"><USkeleton class="home-skeleton-title"/><USkeleton class="home-skeleton-subtitle"/></div>
       <div class="creation-home">
         <div class="home-skeleton-composer"><USkeleton class="home-skeleton-upload"/><USkeleton class="skeleton-line"/><div class="skeleton-tools"><USkeleton v-for="index in 4" :key="index" class="skeleton-tool"/><USkeleton class="skeleton-send"/></div></div>
@@ -33,6 +35,12 @@ withDefaults(defineProps<{ layout?: 'unknown' | 'conversation' | 'media'; varian
 </template>
 <style scoped>
 .dashboard-skeleton{width:100%;padding:20px 0;color-scheme:dark}
+/* 复用原工作区高度，双点只表达读取中，不显示伪进度；减少动态效果时保持静止。 */
+.dashboard-skeleton--conversation.is-simple-loading{height:var(--liv-workspace-height);display:grid;place-items:center}
+.workspace-loading-dots{display:flex;align-items:center;gap:4px}
+.workspace-loading-dots i{width:8px;height:8px;display:block;border-radius:50%;background:var(--ui-text-muted);animation:workspace-loading-dot 1s ease-in-out infinite}
+.workspace-loading-dots i+ i{animation-delay:.2s}
+@keyframes workspace-loading-dot{0%,100%{opacity:.4;transform:translateY(1px)}50%{opacity:.9;transform:translateY(-1px)}}
 /* 首页与真实内容共享外边距及容器令牌，移动端快捷入口同样换行。 */
 .dashboard-skeleton--home{padding:0}
 .home-skeleton-hero{flex-direction:column}

@@ -7,6 +7,15 @@ new Function('exports',ts.transpileModule(readFileSync('features/creation/canvas
 const {groupBounds,groupMembers,moveGroup,arrangeGroup}=module.exports
 const boxes=[{id:'a',x:10,y:20,width:280,height:300},{id:'b',x:450,y:100,width:480,height:240}]
 
+test('分组工具保持屏幕单排尺寸，不受缩远后的组框宽度挤压',()=>{
+  const css=readFileSync('assets/css/creative-canvas.css','utf8')
+  const header=css.match(/\.creative-group-frame>header\{([^}]+)\}/)?.[1]
+  assert.match(header,/width:max-content/)
+  assert.ok(!header.includes('max-width:calc(100%'))
+  assert.match(css,/\.creative-group-frame>header>button\{[^}]*flex:none;min-height:32px/)
+  assert.match(css,/\[aria-label="解组"\]\{width:32px;height:32px\}/)
+})
+
 test('组框包含真实节点边界与标题空间，不改变节点坐标',()=>{
   const before=structuredClone(boxes)
   assert.deepEqual(groupBounds(boxes),{x:-14,y:-36,width:968,height:400})

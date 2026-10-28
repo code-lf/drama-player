@@ -2,8 +2,10 @@
 // 积分不足仅打开全站充值弹窗，不丢失当前报价与草稿。
 const billingDialog=useBillingDialog()
 import {groupConversation} from '../conversationRows'
+import {userBubbleText} from '../userBubbleText'
 import {videoQuoteSummary} from '../videoQuoteSummary'
 import {canvasParentImage} from '../canvasToolLineage'
+import {resolveCanvasMusicTool} from '../musicCanvasTools'
 import {clampChatWindow,clampMiniChat,minimizeChatWindow,type ChatWindowRect} from '../floatingChatLayout'
 import {remainingReferences, mergeRoundReferences, submittedTextSegments,referenceSnapshot} from '../submittedReferences'
 import CreationRunAttachments from './CreationRunAttachments.vue'
@@ -299,8 +301,13 @@ const availableResults=computed(()=>sessionResults(messages.value,taskData,Objec
 watch(()=>availableResults.value.map(item=>item.key),keys=>{resultOrder.value=sessionLoading.value?keys:appendResultKeys(resultOrder.value,keys)},{flush:'sync'})
 // 没有作品或执行任务时只展示可读对话；布局切换不销毁编辑器与播放器。
 const chatCollapsed=ref(false)
+// 手机使用完整聊天/画布页签；桌面保留原浮窗坐标，不把手机布局写入桌面偏好。
+const desktopWorkspace=ref(false)
+const mobileWorkspace=computed(()=>active.value&&entry.value!=='drama'&&!desktopWorkspace.value)
 /** 收起仅切换展示；窄屏同步作品页签，避免聊天隐藏后留在空白页。 */
 function toggleChat(collapsed:boolean){
+  // 手机没有最小化状态，只通过顶部页签切换，不产生不可恢复的小卡。
+  if(mobileWorkspace.value){chatCollapsed.value=false;if(!collapsed)mobilePane.value='chat';return}
   const area=workspaceElement.value?.getBoundingClientRect()
   if(floatingChat.value&&area){
     if(collapsed&&!chatCollapsed.value)miniChatWindow.value=minimizeChatWindow(chatWindow.value,area)
@@ -312,6 +319,8 @@ function toggleChat(collapsed:boolean){
 const compositionOpen=ref(false)
 // 工作台属于当前会话右栏，不在消息组件内部挂弹窗或播放器。
 const videoWorkbench=ref<{runId:string;itemId:string}|null>(null)
+// 画布普通单击只同步编辑上下文；完成卡和外部深链接才请求重新定位，避免抢走多选或自动缩放。
+const videoWorkbenchNodeSelection=ref(false)
 const videoWorkbenchRef=ref<InstanceType<typeof CreationVideoWorkbench>|null>(null)
 const videoWorkbenchRun=computed(()=>{
   const id=videoWorkbench.value?.runId
@@ -327,22 +336,30 @@ async function canLeaveVideoWorkbench(){
   return !videoWorkbenchRef.value?.isDirty()||await confirmHomeAction('视频提示词还有未保存修改。是否放弃这些修改并切换？原视频不受影响。','切换视频工作台')
 }
 /** 点击对话封面只选中右侧视频，不播放、不生成，不清空对话草稿。 */
-async function openVideoWorkbench(runId:string,itemId:string){
+async function openVideoWorkbench(runId:string,itemId:string,requestFocus=true){
   const sid=session.value?.id,owner=draftOwner.value
   const run=planning.value?.id===runId?planning.value:assistantHistory.value.find(row=>row.id===runId)
   if(!run||run.session_id!==sid||!run.creative_plan?.items.some(item=>item.id===itemId))return
-  if(videoWorkbench.value?.runId!==runId&&!await canLeaveVideoWorkbench())return
+  // 同一批次的不同片段也有独立草稿，切换时必须确认未保存内容。
+  const previous=videoWorkbench.value
+  if(previous&&(previous.runId!==runId||previous.itemId!==itemId)&&!await canLeaveVideoWorkbench())return
   if(!videoWorkbench.value&&canvasRef.value&&!await canvasRef.value.confirmLeave())return
-  if(session.value?.id!==sid||draftOwner.value!==owner)return
+  if(session.value?.id!==sid||draftOwner.value!==owner||videoWorkbench.value!==previous)return
   if(videoWorkbench.value?.runId!==runId){videoComposition.value=null;videoCompositionBusy.value=false;videoCompositionError.value='';videoWorkbenchEpoch++;clearTimeout(videoCompositionTimer)}
+  videoWorkbenchNodeSelection.value=!requestFocus
   videoWorkbench.value={runId,itemId};mobilePane.value='canvas'
   await navigateTo({path:route.path,query:{...route.query,videoRun:runId,videoItem:itemId}})
 }
 async function closeVideoWorkbench(){
+  // 确认只属于当前工作台；弹窗期间若会话或选中片段改变，不能关闭后来打开的编辑器。
+  const current=videoWorkbench.value,sid=session.value?.id,owner=draftOwner.value
   if(!await canLeaveVideoWorkbench())return false
-  videoWorkbench.value=null;videoComposition.value=null;videoWorkbenchEpoch++;clearTimeout(videoCompositionTimer)
+  if(videoWorkbench.value!==current||session.value?.id!==sid||draftOwner.value!==owner)return false
   const query={...route.query};delete query.videoRun;delete query.videoItem
+  // 先移除深链再清编辑上下文，避免导航期间的历史轮询按旧地址重新打开已退出的视频。
   await navigateTo({path:route.path,query})
+  if(videoWorkbench.value!==current||session.value?.id!==sid||draftOwner.value!==owner)return false
+  videoWorkbench.value=null;videoWorkbenchNodeSelection.value=false;videoComposition.value=null;videoWorkbenchEpoch++;clearTimeout(videoCompositionTimer)
   return true
 }
 /** 退出节点编辑只收起停靠输入区，不销毁画布或恢复第二套播放器。 */
@@ -380,7 +397,7 @@ watch(()=>[route.query.videoRun,route.query.videoItem,assistantHistory.value,pla
   const id=route.query.videoRun,item=route.query.videoItem
   if(typeof id!=='string'||typeof item!=='string')return
   const run=planning.value?.id===id?planning.value:assistantHistory.value.find(row=>row.id===id)
-  if(run?.session_id===session.value?.id&&run?.creative_plan?.items.some(value=>value.id===item)&&!videoWorkbench.value){videoWorkbench.value={runId:id,itemId:item};mobilePane.value='canvas'}
+  if(run?.session_id===session.value?.id&&run?.creative_plan?.items.some(value=>value.id===item)&&!videoWorkbench.value){videoWorkbenchNodeSelection.value=false;videoWorkbench.value={runId:id,itemId:item};mobilePane.value='canvas'}
 })
 /** 合成只增加真实结果引用，不改变原聊天记录或启用旧画布。重复来源按任务及结果编号合并。 */
 const compositionSources=computed(()=>[...new Map([
@@ -389,8 +406,8 @@ const compositionSources=computed(()=>[...new Map([
 ].map(item=>[item.key,item])).values()])
 // 普通会话从参考素材及方案阶段就显示画布，不再等到媒体完成；短剧仍走原流程。
 const hasMedia=computed(()=>entry.value!=='drama'||!!videoWorkbenchRun.value||allResults.value.length>0||messages.value.some(item=>item.task_id&&!['failed','cancelled'].includes(taskData[item.id]?.status||'')))
-// 普通技能所有尺寸均为悬浮聊天；短剧继续保留既有分栏与页签。
-const floatingChat=computed(()=>active.value&&hasMedia.value&&entry.value!=='drama')
+// 仅桌面采用可拖动浮窗；手机聊天独占内容区，短剧继续保留原布局。
+const floatingChat=computed(()=>active.value&&hasMedia.value&&entry.value!=='drama'&&desktopWorkspace.value)
 const chatWindow=ref<ChatWindowRect>({x:16,y:16,width:390,height:720})
 const miniChatWindow=ref<ChatWindowRect>({x:16,y:16,width:280,height:88})
 const miniChatStyle=computed(()=>floatingChat.value?{left:`${miniChatWindow.value.x}px`,top:`${miniChatWindow.value.y}px`,width:`${miniChatWindow.value.width}px`,height:`${miniChatWindow.value.height}px`,bottom:'auto'}:{})
@@ -400,6 +417,8 @@ const canvasBottomInset=computed(()=>{
   return floatingChat.value&&chatCollapsed.value&&!desktopWorkspace.value&&miniChatWindow.value.y>height/2
     ?Math.max(0,height-miniChatWindow.value.y+12):0
 })
+/** 桌面缩小对话卡是画布内的真实遮挡，提供其可拖动坐标用于派生节点避让。 */
+const canvasObstructions=ref<Array<{x:number;y:number;width:number;height:number}>>([])
 let miniDragMoved=false
 /** 拖动后抑制同一次释放的click；轻点仍展开，不误触发导航或任务。 */
 function restoreMiniChat(){if(miniDragMoved){miniDragMoved=false;return}toggleChat(false)}
@@ -444,15 +463,18 @@ function moveChatGesture(event:PointerEvent){
   void nextTick(measureFloatingChat)
 }
 function finishChatGesture(){chatPointer=null;chatGesture.value=null}
-const chatPanelElement=ref<HTMLElement|null>(null),canvasLeftInset=ref(0),desktopWorkspace=ref(false)
+const chatPanelElement=ref<HTMLElement|null>(null),canvasLeftInset=ref(0)
+// 进入手机或打开另一会话时默认聊天；切页签不卸载编辑器与任务实例。
+watch([mobileWorkspace,()=>session.value?.id],()=>{if(mobileWorkspace.value){chatCollapsed.value=false;mobilePane.value='chat';finishChatGesture()}},{flush:'post'})
 let floatingChatObserver:ResizeObserver|undefined
 /** 以浮层真实边界告知画布遮挡，拖宽、收起与窗口变化不再把新节点放到聊天背后。 */
 function measureFloatingChat(){
   // 同一响应式断点既控制几何避让，也控制窄屏隐藏画布的播放；不销毁原节点。
-  desktopWorkspace.value=window.innerWidth>=1024
+  // 普通创作仅在真正手机宽度切换页签；短剧沿用原来的桌面边界。
+  desktopWorkspace.value=window.innerWidth>=(entry.value==='drama'?1024:768)
   const root=workspaceElement.value,panel=chatPanelElement.value
   if(floatingChat.value&&root){const area=root.getBoundingClientRect(),rect=clampChatWindow(chatWindow.value,area);if(JSON.stringify(rect)!==JSON.stringify(chatWindow.value))chatWindow.value=rect;miniChatWindow.value=clampMiniChat(miniChatWindow.value,area)}
-  canvasLeftInset.value=floatingChat.value&&!chatCollapsed.value&&window.innerWidth>=1024&&root&&panel?Math.max(0,panel.getBoundingClientRect().right-root.getBoundingClientRect().left+16):0
+  canvasLeftInset.value=floatingChat.value&&!chatCollapsed.value&&desktopWorkspace.value&&root&&panel?Math.max(0,panel.getBoundingClientRect().right-root.getBoundingClientRect().left+16):0
 }
 watch([workspaceElement,chatPanelElement,floatingChat,chatCollapsed,chatWidth],()=>{void nextTick().then(()=>{
   floatingChatObserver?.disconnect();measureFloatingChat()
@@ -461,6 +483,38 @@ watch([workspaceElement,chatPanelElement,floatingChat,chatCollapsed,chatWidth],(
 onMounted(()=>window.addEventListener('resize',measureFloatingChat))
 onBeforeUnmount(()=>{floatingChatObserver?.disconnect();window.removeEventListener('resize',measureFloatingChat)})
 const agentCanvasRef=ref<InstanceType<typeof CreationAgentCanvas>|null>(null),graphToolsOpen=ref(false),graphToolNode=ref<CreativeNode|null>(null)
+let canvasObstructionObserver:ResizeObserver|undefined
+let stopCanvasObstructionWatch:(()=>void)|undefined,canvasObstructionDisposed=false
+/** 用画布屏幕矩形为原点测量浮动控件，避免把工作区坐标误当成画布坐标。 */
+function measureCanvasObstructions(){
+  const root=workspaceElement.value,canvas=root?.querySelector<HTMLElement>('.creative-canvas')
+  if(!root||!canvas){canvasObstructions.value=[];return}
+  const canvasRect=canvas.getBoundingClientRect(),blocks:Array<{x:number;y:number;width:number;height:number}>=[]
+  const readRect=(selector:string)=>{
+    const element=root.querySelector<HTMLElement>(selector),rect=element?.getBoundingClientRect()
+    return rect&&rect.width>0&&rect.height>0?{x:rect.left-canvasRect.left,y:rect.top-canvasRect.top,width:rect.width,height:rect.height}:undefined
+  }
+  // 状态小卡的位置可拖动，读取当前DOM矩形，而不是假设工作区与画布原点始终重合。
+  if(floatingChat.value&&chatCollapsed.value){const mini=readRect('.creative-chat-minimized');if(mini)blocks.push(mini)}
+  // 合成入口在窄屏会下移，必须按实际按钮边界避让；否则比例裁剪的新图可能被入口压住。
+  if(compositionSources.value.length&&!graphToolsOpen.value){const compose=readRect('.creative-compose-entry');if(compose)blocks.push(compose)}
+  canvasObstructions.value=blocks
+}
+// watch注册时会立刻读取computed初值。必须等整个setup完成后再订阅，不能提前触发后面声明的allResults。
+onMounted(()=>{
+  stopCanvasObstructionWatch=watch([workspaceElement,floatingChat,chatCollapsed,miniChatWindow,compositionSources,graphToolsOpen],()=>{void nextTick().then(()=>{
+    // 卸载后忽略已排队的测量，避免旧会话重新挂回观察器。
+    if(canvasObstructionDisposed)return
+    canvasObstructionObserver?.disconnect();measureCanvasObstructions()
+    if(typeof ResizeObserver!=='undefined'){
+      canvasObstructionObserver=new ResizeObserver(measureCanvasObstructions)
+      const root=workspaceElement.value
+      for(const element of [root,root?.querySelector<HTMLElement>('.creative-canvas'),root?.querySelector<HTMLElement>('.creative-chat-minimized'),root?.querySelector<HTMLElement>('.creative-compose-entry')])if(element)canvasObstructionObserver.observe(element)
+    }
+  })},{flush:'post',immediate:true})
+  window.addEventListener('resize',measureCanvasObstructions)
+})
+onBeforeUnmount(()=>{canvasObstructionDisposed=true;stopCanvasObstructionWatch?.();canvasObstructionObserver?.disconnect();window.removeEventListener('resize',measureCanvasObstructions)})
 const imagePlanEditorRef=ref<InstanceType<typeof CreationImagePlanEditor>|null>(null),imagePlanEditorNodeId=ref('')
 // 节点批注和主聊天附件分离；画布画笔不污染主输入，也不能借用另一个节点的批注。
 const graphAnnotationDraft=ref<AnnotationDraft|null>(null)
@@ -499,13 +553,82 @@ onMounted(()=>document.addEventListener('visibilitychange',resumeGraphCompositio
 onBeforeUnmount(()=>{graphCompositionEpoch++;clearTimeout(graphCompositionTimer);document.removeEventListener('visibilitychange',resumeGraphCompositions)})
 const graphPreviews=computed(()=>Object.fromEntries(Object.entries({...session.value?.reference_previews,...Object.assign({},...graphRuns.value.map(run=>run.reference_previews||{}))}).map(([key,value])=>[key,{...(value as WorkspacePreview),preview_url:(value as WorkspacePreview).preview_url?libraryService.previewUrl((value as WorkspacePreview).preview_url!):''}])))
 const graphReferences=computed(()=>mergeRoundReferences(roundReferences.value,references.value))
+/** 按画布来源只读重取文件元数据；失效链接不重生成、不重报价，也不重复扣费。 */
+async function refreshGraphFile(node:CreativeNode){
+  const source=node.data.source
+  const sid=session.value?.id,owner=draftOwner.value
+  if(!sid||!owner||!source)return
+  const current=()=>sid===session.value?.id&&owner===draftOwner.value
+  try{
+    if(source.kind==='artifact'){
+      const artifact=session.value?.artifacts?.find(value=>value.id===source.id)
+      if(!artifact)throw new Error('编辑版本记录已失效，请从原作品重新打开。')
+      const item=await libraryService.detail(artifact.item_id)
+      if(!current())return
+      const version=item.versions.find(value=>value.id===artifact.version_id)
+      if(item.media_type!=='image'||!version?.preview_url)throw new Error('素材库未返回该编辑版本的可用图片地址。')
+      // 仅替换内存中的同一版本预览元数据；裁剪文件、来源链和已完成作品保持不变。
+      session.value.artifacts=[...(session.value.artifacts||[]).filter(value=>value.id!==artifact.id),{...artifact,preview_url:version.preview_url}]
+    }else if(source.kind==='image'||source.kind==='video'){
+      // 计划批次的子任务不一定对应聊天消息，先读取原运行的服务端权威快照。
+      const run=graphRuns.value.find(value=>value.image_plan?.batch?.items.some(item=>item.task_id===source.id)||value.creative_plan?.batch?.items.some(item=>item.task_id===source.id))
+      if(run){
+        const fresh=await creationService.run(run.id)
+        if(!current())return
+        updateRecoveredFlow(fresh)
+      }else{
+        const message=messages.value.find(value=>value.task_id===source.id)
+        if(!message)throw new Error('原任务记录暂不可用；没有创建新任务。')
+        // 旧式单任务直接刷新原任务记录，不能借“重载文件”入口再次提交生成。
+        if(source.kind==='image'){
+          const images=await productImageService.getHistory(source.id)
+          if(!current())return
+          taskData[message.id]={status:normalizeStatus(images.status),progress:images.progress||0,detail:images.errorMessage||images.currentStep||'',images}
+        }else{
+          const video=await productVideoService.getTask(source.id)
+          if(!current())return
+          taskData[message.id]={status:normalizeStatus(video.status),progress:video.progress,detail:video.errorMessage||video.currentStep,video}
+        }
+      }
+    }else if(source.kind==='music'){
+      const message=messages.value.find(value=>value.task_id===source.id)
+      if(!message)throw new Error('原音乐任务记录暂不可用；没有创建新任务。')
+      const music=await musicService.task(source.id)
+      if(!current())return
+      taskData[message.id]={status:music.status,progress:music.progress,detail:music.error_message,music}
+      musicTasks.value=[music,...musicTasks.value.filter(value=>value.id!==music.id)]
+    }else if(source.kind==='composition'){
+      // 合成结果按成片目录重新读取；目录恢复不会再次调用合成接口。
+      await readGraphCompositions(true)
+      if(!current())return
+    }else if(source.kind==='reference'&&source.item_id){
+      const item=await libraryService.detail(source.item_id)
+      if(!current())return
+      const version=item.versions.find(value=>value.id===source.id)
+      if(!version?.preview_url)throw new Error('素材库未返回该参考版本的可用文件地址。')
+      const preview={available:true,name:item.name,media_type:item.media_type,preview_url:version.preview_url}
+      const url=libraryService.previewUrl(version.preview_url)
+      references.value=references.value.map(value=>value.version_id===source.id?{...value,name:item.name,media_type:item.media_type,preview_url:url}:value)
+      roundReferences.value=roundReferences.value.map(value=>value.version_id===source.id?{...value,name:item.name,media_type:item.media_type,preview_url:url}:value)
+      if(session.value)session.value.reference_previews={...session.value.reference_previews,[source.id]:preview}
+      assistantHistory.value=assistantHistory.value.map(value=>value.reference_previews?.[source.id]?{...value,reference_previews:{...value.reference_previews,[source.id]:preview}}:value)
+      if(planning.value?.reference_previews?.[source.id])planning.value={...planning.value,reference_previews:{...planning.value.reference_previews,[source.id]:preview}}
+    }else{
+      throw new Error('此节点没有可重新读取的原始文件记录。')
+    }
+    if(!current())return
+    notice.value='已重新读取原任务/素材记录；未重新生成。若仍无法播放，原文件当前可能不可用。'
+  }catch(cause){
+    if(current())error.value=(cause as Error).message||'重新读取原文件失败，未创建新任务。'
+  }
+}
 const graphResults=computed(()=>{
   const values=[...allResults.value,...batchCompositionResults(graphRuns.value),...batchImageResults(graphRuns.value)]
   for(const artifact of session.value?.artifacts||[])values.push({key:`artifact:${artifact.id}`,messageId:'',versionKey:artifact.id,kind:'image',title:'图片编辑版本',summary:'',url:libraryService.previewUrl(artifact.preview_url),source:{kind:'artifact',id:artifact.id},parentSource:artifact.source})
   return [...new Map(values.map(value=>[value.key,value])).values()]
 })
 // 仅明确的视频深链接覆盖画布保存的选择；旧单作品工作台的默认结果不能在刷新时抢走文本/草案。
-const graphFocusId=computed(()=>videoWorkbench.value?`plan:${videoWorkbench.value.runId}:${videoWorkbench.value.itemId}`:'')
+const graphFocusId=computed(()=>videoWorkbench.value&&!videoWorkbenchNodeSelection.value?`plan:${videoWorkbench.value.runId}:${videoWorkbench.value.itemId}`:'')
 const graphToolVersions=computed<CanvasVersion[]>(()=>{
   const node=graphToolNode.value,source=node?.data.source
   if(!node||!source||node.data.kind==='text')return []
@@ -519,7 +642,7 @@ async function selectGraphNode(node:CreativeNode){
   if(node.data.kind==='image'&&node.data.source&&node.data.url&&['reference','succeeded','completed'].includes(node.data.status)){
     if(!graphToolsOpen.value||graphToolNode.value?.id!==node.id)await openGraphTools(node)
   }
-  if(node.data.planTarget!=='image'&&node.data.runId&&node.data.itemId)await openVideoWorkbench(node.data.runId,node.data.itemId)
+  if(node.data.planTarget!=='image'&&node.data.runId&&node.data.itemId)await openVideoWorkbench(node.data.runId,node.data.itemId,false)
 }
 /** 对话方案卡只定位同会话的真实图片条目，不打开旧视频工作台或发起采购。 */
 async function openImagePlan(runId:string,itemId:string){
@@ -567,7 +690,7 @@ async function beforeSelectGraphNode(node?:CreativeNode){
     if(epoch!==graphToolsEpoch||id!==graphToolNode.value?.id||sid!==session.value?.id||owner!==draftOwner.value)return false
     graphToolsEpoch++;graphToolsOpen.value=false
   }
-  if(!videoWorkbench.value||node?.data.runId===videoWorkbench.value.runId)return true
+  if(!videoWorkbench.value||(node?.data.runId===videoWorkbench.value.runId&&node?.data.itemId===videoWorkbench.value.itemId))return true
   return closeVideoWorkbench()
 }
 async function updateGraphToolsOpen(open:boolean){
@@ -650,15 +773,22 @@ function graphToolsCloseAutoFocus(event:Event){
   if(target.sessionId===session.value?.id&&target.owner===draftOwner.value)void nextTick().then(()=>composerRef.value?.focusInput())
 }
 /** 打开工具必须尊重来源切换的取消结果；引用/编辑版本也保留未保存保护。 */
-async function openGraphTools(node:CreativeNode){
+async function openGraphTools(node:CreativeNode,initialTool?:'crop'){
   if(!node.data.source||!node.data.url||busy.value)return
   const sid=session.value?.id,owner=draftOwner.value,epoch=++graphToolsEpoch
   if(canvasRef.value&&!await canvasRef.value.confirmLeave())return
   if(node.data.resultKey&&allResults.value.some(value=>value.key===node.data.resultKey)){
-    if(!await chooseSessionResult(node.data.resultKey))return
+    // 当前节点已由画布选中；只同步旧作品状态，不再次定位触发选中→工具→定位的递归。
+    if(!await chooseSessionResult(node.data.resultKey,false))return
   }
   if(epoch!==graphToolsEpoch||sid!==session.value?.id||owner!==draftOwner.value||busy.value)return
   graphToolNode.value=node;graphToolsOpen.value=true
+  if(initialTool==='crop'){
+    // 等内嵌画布工具挂载后再开启裁剪；迟到的上下文动作不能切到另一会话或节点。
+    await nextTick()
+    if(epoch!==graphToolsEpoch||sid!==session.value?.id||owner!==draftOwner.value||graphToolNode.value?.id!==node.id||!graphToolsOpen.value)return
+    await canvasRef.value?.openCrop()
+  }
 }
 /** 普通画布工具使用节点子任务输入；旧工作台的聊天交接保留给非画布流程。 */
 async function graphMediaTool(action:string,source:WorkspaceSource){
@@ -731,6 +861,10 @@ async function generateGraphNode(node:CreativeNode,inputs:CreativeNode[]){
   const prepared:ComposerReference[]=[]
   graphPreparing.value=true
   try{
+    // 已保存草案可能遇到后台停用或目录尚未加载；不能继续用旧能力或默认图片模型提交。
+    if(node.data.kind==='audio'&&!(catalog.value?.capabilities?.platform.music.enabled??catalog.value?.music_operations?.some(row=>row.operation==='generation'&&row.enabled)))throw new Error('音乐生成当前不可用，请稍后重试，草案已保留。')
+    // 当前音乐草案先支持文字创作；参考音频需要独立授权和来源选择，不继承聊天旧引用。
+    if(node.data.kind==='audio'&&inputs.some(input=>input.data.kind!=='text'||!!input.data.reference))throw new Error('音乐节点暂不支持直接引用媒体或文档，请使用文字描述。')
     for(const input of inputs){
       if(sid!==session.value?.id||owner!==draftOwner.value)return
       const source=input.data.source
@@ -774,9 +908,12 @@ async function generateGraphNode(node:CreativeNode,inputs:CreativeNode[]){
     setSkill('free')
     // 同一固定版本可能同时从作品节点和资料库节点连入；同用途同片段只提交一次。
     references.value=[...new Map(prepared.map(item=>[JSON.stringify([item.version_id,item.purpose,item.start,item.end]),item])).values()];roundReferences.value=[];explicitSkillBoundary.value=true
-    patchParameters({...node.data.parameters,count:1,output:node.data.kind==='video'?'video':node.data.kind==='image'?'image':'auto',workflow:'direct',extra:{...parameters.value.extra,requirement_boundary:true,canvas_node_id:node.id,canvas_node_kind:node.data.kind}})
+    const music=node.data.kind==='audio',musicOptions=node.data.parameters
+    patchParameters(music?{model:'',style:musicOptions?.style||'',styleId:'',count:1,output:'music',workflow:'direct',musicMode:'create',musicOperation:'',sourceTask:'',sourceUrl:'',customLyrics:false,rightsConfirmed:false,extra:{instrumental:!!musicOptions?.instrumental,vocal_gender:musicOptions?.vocalGender||'',requirement_boundary:true,canvas_node_id:node.id,canvas_node_kind:'audio'}}:{...node.data.parameters,count:1,output:node.data.kind==='video'?'video':node.data.kind==='image'?'image':'auto',workflow:'direct',extra:{...parameters.value.extra,requirement_boundary:true,canvas_node_id:node.id,canvas_node_kind:node.data.kind}})
+    // 平台目录可能变更：不能把失效的音乐能力降级为图片或沿用其他人声选项。
+    if(music&&(parameters.value.output!=='music'||!!parameters.value.extra.instrumental!==!!musicOptions?.instrumental||String(parameters.value.extra.vocal_gender||'')!==(musicOptions?.vocalGender||'')||parameters.value.style!==(musicOptions?.style||'')))throw new Error('音乐设置与当前平台能力不一致，请重新核对，未提交生成。')
     // 原共享输入器会收敛规格；若平台锁定值造成变化，必须阻止提交而非静默换模型/改时长。
-    if(node.data.parameters){
+    if(node.data.parameters&&!music){
       const expected=node.data.parameters
       const keys:Array<keyof CreativeNodeParameters>=['model','aspectRatio','resolution','style','styleId',...(node.data.kind==='video'?['durationSec' as const]:['quality' as const])]
       // 清晰度显示大小写归一不算改规格；其他字段仍严格比较，真正换模型/降档/改时长继续拒绝。
@@ -805,12 +942,13 @@ watch(()=>allResults.value.map(item=>item.key),keys=>{
 })
 watch(()=>session.value?.id,()=>{knownResults=new Set();resultOrder.value=availableResults.value.map(item=>item.key);unreadResults.value=[];viewedVersions.clear()})
 /** 先询问未保存编辑，再切换已有产物；不会改变下一轮输入或重新生成。 */
-async function chooseSessionResult(key:string){
+async function chooseSessionResult(key:string,focusCanvas=true){
   const item=allResults.value.find(value=>value.key===key),sid=session.value?.id,owner=draftOwner.value
   if(!item||busy.value)return false
   /** 完成卡每次显式点击都定位，包括旧工作台仍选中同一作品但画布已切到文本的情况。 */
   async function focusResult(){
-    if(!agentCanvasRef.value||entry.value==='drama')return true
+    // 用户点击完成卡仍显式定位；节点工具内部同步时不能重新进入选择回调。
+    if(!focusCanvas||!agentCanvasRef.value||entry.value==='drama')return true
     const accepted=await agentCanvasRef.value.focus(resultCanvasNodeId(item!,messages.value,graphResults.value))
     return accepted!==false&&session.value?.id===sid&&draftOwner.value===owner
   }
@@ -851,8 +989,24 @@ const canvasVersions=computed<CanvasVersion[]>(()=>{
   }
   return versions
 })
-const musicToolOptions=computed(()=>sourceTask.value?.provider_task_id&&songs.value.length?(catalog.value?.music_operations||[]).filter(v=>v.enabled&&!!v.fields.task_id&&!['sample','addStem','addVocals','addInstrumental'].includes(v.operation)).map(v=>({code:v.operation,name:v.label})):[])
+const musicToolOptions=computed(()=>{
+  const task=sourceTask.value
+  const completed=!!task&&['completed','succeeded','success'].includes(String(task.status||'').toLowerCase())
+  if(!task?.provider_task_id||!completed||!songs.value.some(playableMusicSong))return[]
+  return(catalog.value?.music_operations||[]).filter(v=>v.enabled&&!!v.fields.task_id&&!['sample','addStem','addVocals','addInstrumental'].includes(v.operation)).map(v=>({code:v.operation,name:v.label}))
+})
 const selectedMusicOperation=ref('')
+const musicToolSource=ref<{taskId:string;audioIndex:number}|null>(null)
+/** 只从当前成功原曲打开目录允许的改造操作，并冻结被点击节点的曲目序号。 */
+function openCanvasMusicTool(operation:string,source:WorkspaceSource){
+  const request=resolveCanvasMusicTool(operation,source,sourceTask.value,songs.value,musicToolOptions.value)
+  if(!request){notice.value='当前音乐曲目或可用操作已变化，请重新选择成品后重试。';return}
+  selectedMusicOperation.value=request.operation
+  musicToolSource.value={taskId:request.sourceTaskId,audioIndex:request.sourceAudioIndex}
+  showMusicTools.value=true
+}
+/** 关闭音频工具只清理临时来源，不提交草稿、生成任务或费用确认。 */
+function closeCanvasMusicTools(){showMusicTools.value=false;musicToolSource.value=null;selectedMusicOperation.value=''}
 /** 按工具按钮的真实作品身份固定MV来源，不借用聊天选择，不提交生成或继承费用许可。 */
 async function makeMusicMv(code:string,source:WorkspaceSource){
   if(code!=='make-mv'||busy.value||source?.kind!=='music'||!source.id||!Number.isInteger(source.audio_index)||(source.audio_index??-1)<0)return
@@ -876,21 +1030,61 @@ async function chooseHistory(id:string){
   canvasSelected.value='';await focusMessage(id)
 }
 function chooseCanvas(key:string){canvasSelected.value=key;const index=images.value.findIndex(v=>v.id===key),videoIndex=videos.value.findIndex(v=>v.id===key);if(index>=0)selectedResult.value=index;else if(videoIndex>=0){selectedResult.value=videoIndex;void chooseVideo(videoIndex)}}
+/** 读取裁剪后图片的实际比例，只用于画布避让，不把计划比例冒充为文件尺寸。 */
+async function imageBlobAspectRatio(file:Blob){
+  if(!file.type.startsWith('image/'))return undefined
+  let bitmap:ImageBitmap|undefined
+  try{
+    if(typeof createImageBitmap==='function'){
+      bitmap=await createImageBitmap(file)
+      const ratio=bitmap.width/bitmap.height
+      return Number.isFinite(ratio)&&ratio>0?ratio:undefined
+    }
+    const url=URL.createObjectURL(file)
+    try{return await new Promise<number|undefined>(resolve=>{const image=new Image();image.onload=()=>resolve(image.naturalWidth&&image.naturalHeight?image.naturalWidth/image.naturalHeight:undefined);image.onerror=()=>resolve(undefined);image.src=url})}
+    finally{URL.revokeObjectURL(url)}
+  }catch{return undefined}
+  finally{bitmap?.close()}
+}
 async function saveCanvas(value:{file:Blob;source:WorkspaceSource;operations:Record<string,unknown>[];requestId:string}){
-  if(!session.value||saveBusy.value)return;const sid=session.value.id;saveBusy.value=true
+  if(!session.value||saveBusy.value)return;const sid=session.value.id,owner=draftOwner.value,canvasAtSave=canvasRef.value,toolAtSaveId=graphToolsOpen.value?graphToolNode.value?.id:undefined;saveBusy.value=true
+  // 保存可以在后台完成，但切换作品后不能清空新编辑器，也不能由迟到的解码结果抢回节点。
+  const editorStillCurrent=()=>canvasRef.value===canvasAtSave&&(!toolAtSaveId||graphToolsOpen.value&&graphToolNode.value?.id===toolAtSaveId)
   try{
     const artifact=await creationService.saveArtifact(sid,value.file,value.source,value.operations,value.requestId)
-    if(session.value?.id!==sid)return
+    if(session.value?.id!==sid||draftOwner.value!==owner)return
+    const existingArtifact=session.value.artifacts?.some(value=>value.id===artifact.id)
+    const keepSourceInView=!existingArtifact&&graphToolsOpen.value&&!!graphToolNode.value
+    const sourceNodeId=graphToolNode.value?.id
+    let artifactAspectRatio:number|undefined
     session.value.artifacts=[...(session.value.artifacts||[]).filter(v=>v.id!==artifact.id),artifact]
-    const accepted=!!canvasRef.value?.markSaved(value.source,value.operations)
+    const accepted=editorStillCurrent()&&!!canvasAtSave?.markSaved(value.source,value.operations)
     if(accepted){
+      if(!existingArtifact&&agentCanvasRef.value){
+        artifactAspectRatio=await imageBlobAspectRatio(value.file)
+        if(session.value?.id!==sid||draftOwner.value!==owner||!editorStillCurrent())return
+        const result=graphResults.value.find(item=>item.source.kind==='artifact'&&item.source.id===artifact.id)
+        if(result&&!keepSourceInView){
+          const id=resultCanvasNodeId(result,messages.value,graphResults.value)
+          const placed=await agentCanvasRef.value.placeDerivedFromSource(id,value.source,artifactAspectRatio)
+          // 来源节点可能刚切换或已移出当前画布；内嵌作品工具仍按它固定的节点身份兜底定位。
+          if(!placed&&graphToolsOpen.value&&graphToolNode.value)await agentCanvasRef.value.placeDerived(id,graphToolNode.value.id,artifactAspectRatio)
+        }
+      }
+      if(!editorStillCurrent())return
       canvasSelected.value=artifact.id
       if(graphToolsOpen.value&&graphToolNode.value){
         const result=graphResults.value.find(item=>item.source.kind==='artifact'&&item.source.id===artifact.id)
         if(result){
           const id=resultCanvasNodeId(result,messages.value,graphResults.value)
           graphToolNode.value={...graphToolNode.value,id,data:{kind:'image',title:result.title,prompt:result.summary,status:'succeeded',url:result.url,source:result.source,resultKey:result.key}}
-          await nextTick();await agentCanvasRef.value?.focus(id)
+          await nextTick()
+          if(session.value?.id!==sid||draftOwner.value!==owner||!graphToolsOpen.value||graphToolNode.value?.id!==id)return
+          if(!existingArtifact&&agentCanvasRef.value){
+            // 新裁剪图需要继续与原图并排取景；只聚焦派生图会把来源挤出可视区。
+            const placed=await agentCanvasRef.value.placeDerivedFromSource(id,value.source,artifactAspectRatio)
+            if(!placed&&sourceNodeId)await agentCanvasRef.value.placeDerived(id,sourceNodeId,artifactAspectRatio)
+          }else await agentCanvasRef.value?.focus(id)
         }
       }
     }
@@ -942,6 +1136,8 @@ const pickerOpen = ref(false), audioPickerOpen = ref(false), audioItems = ref<Li
 const assetBrowserOpen=ref(false)
 const assetScope = ref('personal'), assetCategory = ref(''), assetMedia = ref(''), assetCategories = ref<Array<{ code: string; name: string }>>([])
 const showMusicTools = ref(false), selectedResult = ref(0), notice = ref('')
+// 切换账号或会话立即销毁音频面板，避免旧来源与迟到操作回流到新的对话。
+watch(()=>[draftOwner.value,session.value?.id],()=>closeCanvasMusicTools(),{flush:'sync'})
 const showDigitalHumanSkill=ref(false)
 /** 技能中心只打开口播工具，不自动报价、生成或改写当前创作草稿。 */
 watch(()=>route.query.tool,value=>{if(value==='digital-human')showDigitalHumanSkill.value=true},{immediate:true})
@@ -2094,25 +2290,31 @@ watch(()=>[route.query.run,catalog.value] as const,async ([id,directory])=>{
       <nav v-if="!active && !sessionLoading && !sessionError" class="creation-entry-tabs" aria-label="创作用途"><button v-for="item in visibleCreationEntries" :key="item.id" :class="{ active: entry === item.id }" :aria-pressed="entry === item.id" :disabled="busy" @click="chooseEntry(item.id)">{{ item.label }}</button></nav>
     </Teleport>
     <p v-if="error" class="creation-error" role="alert">{{ error }}<button @click="error = ''" aria-label="关闭错误">×</button></p>
-    <!-- 恢复会话期间按真实聊天区和画布布局占位，不用一行提示替代整片空白。 -->
-    <DashboardSkeleton v-if="sessionLoading" variant="conversation" :layout="session?.id===pendingSession?(hasMedia?'media':'conversation'):'unknown'" :style="{'--creation-chat-width':`${chatWidth}px`}" aria-label="正在加载会话"/>
+    <!-- 普通画布沿用中性双点加载，不再闪现旧双栏；短剧保留原占位。 -->
+    <DashboardSkeleton v-if="sessionLoading" variant="conversation" :simple="entry!=='drama'" :layout="session?.id===pendingSession?(hasMedia?'media':'conversation'):'unknown'" :style="{'--creation-chat-width':`${chatWidth}px`}" aria-label="正在加载会话"/>
     <div v-if="sessionError" class="creation-error" role="alert">{{sessionError}}<button @click="restore(pendingSession)">重试加载会话</button></div>
     <header v-if="!skillsPage && !active && !sessionLoading && !sessionError" class="creation-hero"><img class="creation-hero-mascot" src="/creation-presets/liv-creative-seed.png" alt="" aria-hidden="true"><h1>{{ entryInfo.title }}</h1><p>{{ entryInfo.description }}</p></header>
-    <div v-if="!sessionLoading && !sessionError" ref="workspaceElement" :class="[active ? 'creation-workspace' : 'creation-home',{'is-resizing':resizing||!!chatGesture,'is-conversation-only':active&&!hasMedia,'is-chat-collapsed':active&&hasMedia&&chatCollapsed,'is-floating-chat':floatingChat}]" :style="active ? chatWindowStyle : {}">
+    <div v-if="!sessionLoading && !sessionError" ref="workspaceElement" :class="[active ? 'creation-workspace' : 'creation-home',{'is-resizing':resizing||!!chatGesture,'is-conversation-only':active&&!hasMedia,'is-chat-collapsed':active&&hasMedia&&chatCollapsed,'is-floating-chat':floatingChat,'is-mobile-workspace':mobileWorkspace}]" :style="active ? chatWindowStyle : {}">
+      <!-- 手机页签置顶，聊天不可最小化；两个面板使用v-show保留草稿与画布状态。 -->
+      <Teleport v-if="mobileWorkspace" defer to="#creation-topbar-nav"><nav class="creation-mobile-view-tabs" :data-pane="mobilePane" aria-label="切换手机工作区">
+        <UButton icon="i-lucide-message-square" color="neutral" :variant="mobilePane==='chat'?'soft':'ghost'" :aria-pressed="mobilePane==='chat'" @click="toggleChat(false)">聊天</UButton>
+        <UButton icon="i-lucide-grid-2x2" color="neutral" :variant="mobilePane==='canvas'?'soft':'ghost'" :aria-pressed="mobilePane==='canvas'" @click="mobilePane='canvas'">画布</UButton>
+        <UButton icon="i-lucide-settings" color="neutral" variant="ghost" square aria-label="会话设置" @click="rulesOpen=true"/>
+      </nav></Teleport>
       <Transition name="creation-chat-morph"><section v-show="!floatingChat||!chatCollapsed" ref="chatPanelElement" :class="[active ? 'creation-chat-column' : 'creation-entry-column',{'mobile-pane-hidden':active&&!floatingChat&&mobilePane!=='chat'}]">
         <!-- 浮窗边缘仅负责尺寸；正文和原输入器始终复用同一实例。 -->
         <template v-if="floatingChat"><div v-for="edge in ['n','s','e','w','ne','nw','se','sw']" :key="edge" :class="['creation-chat-resize-handle',`edge-${edge}`]" aria-hidden="true" @pointerdown="startChatGesture($event,edge)" @pointermove="moveChatGesture" @pointerup="finishChatGesture" @pointercancel="finishChatGesture" @lostpointercapture="finishChatGesture"/></template>
         <SkillCenterPanel v-if="skillsPage&&!active" :trial-busy="directoryTrialBusy||loading||cloudDraft.restoring.value" @try="useDirectorySkill" @tool="showDigitalHumanSkill=true"/>
         <template v-if="active"><header class="creation-chat-heading" @pointerdown="startChatGesture($event)" @pointermove="moveChatGesture" @pointerup="finishChatGesture" @pointercancel="finishChatGesture" @lostpointercapture="finishChatGesture">
           <!-- 普通画布只保留紧凑助手标识；项目标题已在工作区顶栏展示，短剧原标题不变。 -->
-          <template v-if="floatingChat"><span class="creation-chat-agent-label">Liv Agent</span><span class="creation-chat-heading-spacer" aria-hidden="true"/></template>
+          <template v-if="floatingChat||mobileWorkspace"><span class="creation-chat-agent-label">Liv Agent</span><span class="creation-chat-heading-spacer" aria-hidden="true"/></template>
           <template v-else><UIcon name="i-lucide-messages-square"/><h2>{{ session?.title }}</h2></template>
-          <UTooltip v-if="hasMedia" text="最小化对话"><UButton icon="i-lucide-minimize-2" variant="ghost" square aria-label="收起对话" @click="toggleChat(true)"/></UTooltip><UButton icon="i-lucide-settings-2" variant="ghost" aria-label="本会话确认设置" @click="rulesOpen=true"/><button aria-label="刷新任务" @click="refreshResults(true)"><UIcon name="i-lucide-refresh-cw" /></button></header>
+          <UTooltip text="本会话二次确认设置"><UButton icon="i-lucide-settings-2" variant="ghost" square aria-label="本会话确认设置" @click="rulesOpen=true"/></UTooltip><UTooltip v-if="hasMedia&&!mobileWorkspace" text="最小化对话"><UButton icon="i-lucide-minimize-2" variant="ghost" square aria-label="收起对话" @click="toggleChat(true)"/></UTooltip></header>
           <div ref="historyElement" class="creation-chat-history liv-chat-v2" tabindex="0" @scroll.passive="trackHistory" @wheel.passive="historyWheel" @keydown="historyKey" @touchstart.passive="historyTouchStart" @touchmove.passive="historyTouchMove" @pointerdown="historyScrollbar">
             <div ref="historyContentElement" class="creation-chat-content">
             <template v-for="row in conversationRows" :key="row.key">
 <article v-if="row.run && !row.active" class="liv-conversation-turn">
-  <div class="liv-user-message"><CreationRunAttachments :run="row.run" @preview="attachmentPreview=$event"/><p>{{row.run.draft.original_prompt || row.run.draft.prompt}}</p></div>
+  <div class="liv-user-message"><CreationRunAttachments :run="row.run" @preview="attachmentPreview=$event"/><p>{{userBubbleText(row.run.draft.original_prompt || row.run.draft.prompt)}}</p></div>
   <section class="liv-assistant-message">
     <header><img src="/creation-presets/liv-creative-seed.png" alt=""><strong>Liv 创作助手</strong><CreationRunTime :run="row.run"/></header>
     <CreationFlowRecovery :key="`${row.run.id}:${auth.session.user?.id}`" :run="row.run" :busy="planningBusy||busy" @updated="updateRecoveredFlow"/>
@@ -2124,12 +2326,12 @@ watch(()=>[route.query.run,catalog.value] as const,async ([id,directory])=>{
     <p v-else-if="row.run.status==='failed'" role="alert">{{row.run.error || '本轮整理失败，未提交生成。'}}</p>
     <template v-else>
       <AssistantReply :text="row.run.card?.text || row.run.question?.text || row.run.stream_text || row.run.error || '已停止'"/>
-      <template v-for="(turn,index) in row.run.discussion" :key="`discussion:${index}`"><div class="liv-user-message"><p>{{turn.user}}</p></div><AssistantReply :text="turn.reply"/></template>
+      <template v-for="(turn,index) in row.run.discussion" :key="`discussion:${index}`"><div class="liv-user-message"><p>{{userBubbleText(turn.user)}}</p></div><AssistantReply :text="turn.reply"/></template>
       <div v-for="(answer,index) in row.run.answers" :key="index" class="liv-answer-summary"><span>{{answer.question}}</span><p>{{answer.answer}}</p></div>
     </template>
   </section>
 </article>
-<section v-if="row.active && planning" class="creation-assistant-card" aria-label="Liv 创作助手"><div class="liv-user-message"><CreationRunAttachments :run="planning" @preview="attachmentPreview=$event"/><p>{{planning.draft.original_prompt || planning.draft.prompt}}</p></div><header><img class="liv-assistant-avatar" src="/creation-presets/liv-creative-seed.png" alt=""><b>Liv 创作助手</b><CreationRunTime :run="planning"/></header>
+<section v-if="row.active && planning" class="creation-assistant-card" aria-label="Liv 创作助手"><div class="liv-user-message"><CreationRunAttachments :run="planning" @preview="attachmentPreview=$event"/><p>{{userBubbleText(planning.draft.original_prompt || planning.draft.prompt)}}</p></div><header><img class="liv-assistant-avatar" src="/creation-presets/liv-creative-seed.png" alt=""><b>Liv 创作助手</b><CreationRunTime :run="planning"/></header>
   <CreationFlowRecovery :key="`${planning.id}:${auth.session.user?.id}`" :run="planning" :busy="planningBusy||busy" @updated="updateRecoveredFlow"/>
   <!-- 只有服务端已取消才显示停止反馈；历史草稿与已有媒体任务均保留。 -->
   <p v-if="planning.status==='cancelled'" class="liv-proposal-stopped" role="status">已为你停止本次待确认的生成任务，请问是否还有其他需求。</p>
@@ -2138,12 +2340,12 @@ watch(()=>[route.query.run,catalog.value] as const,async ([id,directory])=>{
   <UButton v-else-if="planning.collection_stage?.status==='submitted' && planning.calls===0" :loading="planningBusy" :disabled="planningBusy" @click="continueCollectedStage">信息已收齐，继续分析</UButton>
   <CreationImagePlanCard v-else-if="planning.image_plan" :key="planning.id" :run-id="planning.id" :plan="planning.image_plan" :reference-previews="graphPreviews" :busy="planningBusy||busy" :draft-dirty="imagePlanDraftDirty(planning.id)" :readonly="planning.status!=='replied'||!!planning.superseded_by||!!planning.executed_request" :before-command="beforeImagePlanCommand" @updated="updateImagePlan" @open="openImagePlan(planning!.id,$event)" @retry="openRetryVideoPlan"/>
   <CreationVideoPlanCard v-else-if="planning.creative_plan && planning.creative_plan.total_count>1" :key="planning.id" :run-id="planning.id" :plan="planning.creative_plan" :busy="planningBusy||busy" :readonly="planning.status!=='replied'||!!planning.superseded_by||!!planning.executed_request" @updated="updateVideoPlan" @compose="compositionOpen=true" @compose-all="composeVideoWorkbench" @workbench="openVideoWorkbench" @retry="openRetryVideoPlan"/>
-  <template v-else><div v-if="pendingUserAnswer" class="liv-user-message"><p>{{pendingUserAnswer}}</p></div><CreationThinkingIndicator :run="planning"/><AssistantReply v-if="planning.stream_text && ['planning','cancelled'].includes(planning.status)" :text="planning.stream_text"/><p v-if="planning.status==='waiting' && !knownFormatQuestion">{{planning.question?.text}}</p><div v-if="planning.status==='waiting' && knownFormatQuestion" class="liv-question-card"><strong>已沿用入口参数</strong><p>{{selectedParameterSummary}}</p><UButton :disabled="planningBusy" @click="answerPlanning(`沿用已选参数：${selectedParameterSummary}。请直接整理方案，不再重复询问画幅和用途。`)">继续整理方案</UButton></div><div v-if="planning.status==='waiting' && !knownFormatQuestion" class="liv-question-options"><template v-if="questionNeedsReference(planning.question)"><UFileUpload accept="image/*" icon="i-lucide-plus" label="上传参考图" :disabled="planningBusy || busy" @update:model-value="uploadQuestionReference"/><UButton variant="soft" @click="openAssets">从资料库选择</UButton></template><UButton v-for="option in planning.question?.options?.filter(item=>!/^自由补充/.test(item))" :key="option" :variant="prompt===option || selectedAnswers.includes(option)?'solid':'soft'" :disabled="planningBusy" @click="chooseAnswer(option)">{{option}}</UButton><UButton v-if="!questionNeedsInput" variant="soft" :disabled="planningBusy" @click="questionInputExpanded=true;answerText=''">其他／自行输入</UButton><form v-if="questionNeedsInput || planning.question?.kind==='multiple'" class="liv-custom-answer" @submit.prevent="answerPlanning(answerText)"><UTextarea v-if="questionNeedsInput" v-model="answerText" aria-label="自由补充" placeholder="自由补充…" :rows="2" autoresize /><UButton type="submit" :disabled="planningBusy || !answerText.trim()">发送</UButton></form></div><template v-for="(turn,index) in planning.discussion" :key="`discussion:${index}`"><div class="liv-user-message"><p>{{turn.user}}</p></div><AssistantReply :text="turn.reply"/></template><div v-for="(answer,index) in (pendingUserAnswer ? planning.answers.slice(0,-1) : planning.answers)" :key="index" class="liv-answer-summary"><span>{{answer.question}}</span><p>{{answer.answer}}</p></div><AssistantReply v-if="planning.card" :text="planning.card.text"/><LivButton v-if="canReviseQuestion" variant="secondary" class="liv-question-back" @click="previousQuestion">修改上一答案</LivButton><CreationConfirmationCard v-if="singleConfirmationProposal" :skip-confirmation="confirmationRuleChecked" :rules-ready="rulesLoaded" :rules-busy="rulesBusy" :rules-error="rulesError" @rule="changeConfirmationRule" :model="proposalModelLabel" :spec="proposalSpec" :target="confirmation?.target || planning.card?.target || target" :credits="confirmation?.credits" :has-quote="!!confirmation && confirmation.draft.parameters.extra.creation_run_id===planning.id" :sufficient="!!confirmation?.sufficient" :quoting="proposalQuoteBusy || sessionLoading || loading || cloudDraft.state.value==='loading'" :busy="busy || rulesBusy" :cancelling="proposalCancelBusy" :error="proposalQuoteError || error" @confirm="submit" @cancel="cancelProposal" @retry="quoteAssistantPlan()" @settings="rulesOpen=true"/><template v-else-if="planning.status==='ready' && planning.card?.type==='proposal' && !proposalSubmitted"><UButton class="liv-proposal-adopt" color="primary" :disabled="busy" @click="acceptAssistantPlan">继续整理生成任务</UButton></template><p v-if="countdown!==null" role="status">{{countdown}} 秒后生成 · {{confirmation?.credits}} 点 <UButton variant="soft" @click="stopCountdown">停止</UButton></p><p v-if="planning.status==='failed'" role="alert">{{planning.error}}</p></template>
+  <template v-else><div v-if="pendingUserAnswer" class="liv-user-message"><p>{{userBubbleText(pendingUserAnswer)}}</p></div><CreationThinkingIndicator :run="planning"/><AssistantReply v-if="planning.stream_text && ['planning','cancelled'].includes(planning.status)" :text="planning.stream_text"/><p v-if="planning.status==='waiting' && !knownFormatQuestion">{{planning.question?.text}}</p><div v-if="planning.status==='waiting' && knownFormatQuestion" class="liv-question-card"><strong>已沿用入口参数</strong><p>{{selectedParameterSummary}}</p><UButton :disabled="planningBusy" @click="answerPlanning(`沿用已选参数：${selectedParameterSummary}。请直接整理方案，不再重复询问画幅和用途。`)">继续整理方案</UButton></div><div v-if="planning.status==='waiting' && !knownFormatQuestion" class="liv-question-options"><template v-if="questionNeedsReference(planning.question)"><UFileUpload accept="image/*" icon="i-lucide-plus" label="上传参考图" :disabled="planningBusy || busy" @update:model-value="uploadQuestionReference"/><UButton variant="soft" @click="openAssets">从资料库选择</UButton></template><UButton v-for="option in planning.question?.options?.filter(item=>!/^自由补充/.test(item))" :key="option" :variant="prompt===option || selectedAnswers.includes(option)?'solid':'soft'" :disabled="planningBusy" @click="chooseAnswer(option)">{{option}}</UButton><UButton v-if="!questionNeedsInput" variant="soft" :disabled="planningBusy" @click="questionInputExpanded=true;answerText=''">其他／自行输入</UButton><form v-if="questionNeedsInput || planning.question?.kind==='multiple'" class="liv-custom-answer" @submit.prevent="answerPlanning(answerText)"><UTextarea v-if="questionNeedsInput" v-model="answerText" aria-label="自由补充" placeholder="自由补充…" :rows="2" autoresize /><UButton type="submit" :disabled="planningBusy || !answerText.trim()">发送</UButton></form></div><template v-for="(turn,index) in planning.discussion" :key="`discussion:${index}`"><div class="liv-user-message"><p>{{userBubbleText(turn.user)}}</p></div><AssistantReply :text="turn.reply"/></template><div v-for="(answer,index) in (pendingUserAnswer ? planning.answers.slice(0,-1) : planning.answers)" :key="index" class="liv-answer-summary"><span>{{answer.question}}</span><p>{{answer.answer}}</p></div><AssistantReply v-if="planning.card" :text="planning.card.text"/><LivButton v-if="canReviseQuestion" variant="secondary" class="liv-question-back" @click="previousQuestion">修改上一答案</LivButton><CreationConfirmationCard v-if="singleConfirmationProposal" :skip-confirmation="confirmationRuleChecked" :rules-ready="rulesLoaded" :rules-busy="rulesBusy" :rules-error="rulesError" @rule="changeConfirmationRule" :model="proposalModelLabel" :spec="proposalSpec" :target="confirmation?.target || planning.card?.target || target" :credits="confirmation?.credits" :has-quote="!!confirmation && confirmation.draft.parameters.extra.creation_run_id===planning.id" :sufficient="!!confirmation?.sufficient" :quoting="proposalQuoteBusy || sessionLoading || loading || cloudDraft.state.value==='loading'" :busy="busy || rulesBusy" :cancelling="proposalCancelBusy" :error="proposalQuoteError || error" @confirm="submit" @cancel="cancelProposal" @retry="quoteAssistantPlan()" @settings="rulesOpen=true"/><template v-else-if="planning.status==='ready' && planning.card?.type==='proposal' && !proposalSubmitted"><UButton class="liv-proposal-adopt" color="primary" :disabled="busy" @click="acceptAssistantPlan">继续整理生成任务</UButton></template><p v-if="countdown!==null" role="status">{{countdown}} 秒后生成 · {{confirmation?.credits}} 点 <UButton variant="soft" @click="stopCountdown">停止</UButton></p><p v-if="planning.status==='failed'" role="alert">{{planning.error}}</p></template>
 </section>
               <article v-for="item in row.media" :key="item.id" :class="{ active: item.id === focused?.id }" @click="chooseHistory(item.id)">
             <div v-if="!row.linked" class="liv-user-message" aria-label="用户消息">
               <CreationRunAttachments :draft="item.content" :previews="session?.reference_previews" @preview="attachmentPreview=$event"/>
-              <p>{{ (item.content.original_prompt ?? item.content.prompt) || (item.content.entry === 'drama' ? '上传剧本，开始导演流程' : '制作歌词视频') }}</p>
+              <p>{{ userBubbleText((item.content.original_prompt ?? item.content.prompt) || (item.content.entry === 'drama' ? '上传剧本，开始导演流程' : '制作歌词视频')) }}</p>
             </div>
             <section class="liv-assistant-message"><header v-if="!row.linked"><img src="/creation-presets/liv-creative-seed.png" alt=""><strong>Liv 创作助手</strong></header><CreationTaskNotice v-if="showTaskNotice(taskData[item.id]?.status||'',allResults.some(result=>result.messageId===item.id))" :status="taskData[item.id]?.status||''" :detail="taskData[item.id]?.detail" :progress="taskActivity[item.id]?.progress" :has-task="!!item.task_id" :has-retry-notice="!!taskData[item.id]?.images?.errorMessage"/>
               <CreationSafetyRepair v-if="safetyFailure(item)" :media-kind="item.task_type==='video'?'video':'image'" :batch-id="item.task_id" :saved="taskData[item.id]?.images?.safetyRepair||taskData[item.id]?.video?.safetyRepair" :automatic="autoSafetyRepairMessageIds.includes(item.id)||latestSafetyMessageId===item.id" :disabled="busy || workInProgress" @adopt="(value,restore)=>adoptSafetyRepair(item,value,restore)"/>
@@ -2169,19 +2371,21 @@ watch(()=>[route.query.run,catalog.value] as const,async ([id,directory])=>{
       </section></Transition>
       <div v-if="active" v-show="hasMedia && !chatCollapsed" class="creation-workspace-resizer" role="separator" aria-label="调整聊天区宽度" aria-orientation="vertical" tabindex="0" :aria-valuenow="chatWidth" :aria-valuemin="320" :aria-valuemax="560" @pointerdown="startResize" @pointermove="moveResize" @pointerup="finishResize" @pointercancel="finishResize" @lostpointercapture="resizing=false" @keydown="resizeKey" @dblclick="setChatWidth(340);finishResize()" />
       <section v-if="active" v-show="hasMedia" class="creation-results-column creation-canvas-column" :class="{'mobile-pane-hidden':!floatingChat&&mobilePane!=='canvas'}">
+        <!-- 仅提示移动端编辑体验，不阻止查看或操作，不伪造系统执行状态。 -->
+        <p v-if="mobileWorkspace&&mobilePane==='canvas'" class="creation-mobile-canvas-tip" role="note">画布编辑建议在桌面端体验</p>
         <!-- 图片编辑时先收起无关成片入口，避免窄屏盖住工具；退出节点工具后原入口恢复。 -->
         <UButton v-if="compositionSources.length&&!graphToolsOpen" class="creative-compose-entry" color="neutral" variant="outline" @click="compositionOpen=true">片段列表与短片合成</UButton>
         <Transition name="creation-chat-mini"><div v-if="chatCollapsed" class="creative-chat-minimized" :style="miniChatStyle" aria-label="创作助手状态卡" @pointerdown="startChatGesture($event,'mini')" @pointermove="moveChatGesture" @pointerup="finishChatGesture" @pointercancel="finishChatGesture" @lostpointercapture="finishChatGesture" @click.self="restoreMiniChat"><div class="creative-chat-mini-heading"><span>Liv 创作助手</span><UButton icon="i-lucide-maximize-2" class="creative-chat-mini-expand" square color="neutral" variant="ghost" aria-label="恢复对话" @click.stop="toggleChat(false)"/></div><div class="creative-chat-mini-status"><span role="status" @click="restoreMiniChat">{{miniChatStatus}}</span><UButton class="creative-chat-mini-action" :icon="workInProgress||graphActivity.running?'i-lucide-square':'i-lucide-arrow-up'" square color="neutral" variant="soft" :disabled="(workInProgress||!!graphActivity.running)&&!canStopWork" :aria-label="canStopWork?'停止整理需求':graphActivity.running?'生成任务已提交，无法停止':workInProgress?'当前请求暂不能停止':'展开对话'" @click.stop="miniChatAction"/></div></div></Transition>
         <!-- 普通技能统一投影到画布；短剧的既有工作台和业务链路保持不变。 -->
         <ClientOnly v-if="entry!=='drama'&&session?.id&&draftOwner">
-          <CreationAgentCanvas :key="`${draftOwner}:${session.id}`" ref="agentCanvasRef" :session-id="session.id" :owner-id="draftOwner" :runs="graphRuns" :messages="messages" :results="graphResults" :references="graphReferences" :previews="graphPreviews" :tasks="taskData" :activity="taskActivity" :compositions="graphCompositions" :focus-id="graphFocusId" :tool-node-id="graphToolsOpen?graphToolNode?.id:undefined" :left-inset="canvasLeftInset" :bottom-inset="canvasBottomInset" :playback-enabled="!graphToolsOpen&&!compositionOpen&&!rulesOpen&&(floatingChat||desktopWorkspace||mobilePane==='canvas')" :before-select="beforeSelectGraphNode" :busy="busy||planningBusy||graphPreparing" @select="selectGraphNode" @tools="openGraphTools" @generate="generateGraphNode" @retry="retryGraphPlanning" @compose="compositionOpen=true" @compositions-changed="readGraphCompositions" @upload="openAssets" @activity="graphActivity=$event">
+          <CreationAgentCanvas :key="`${draftOwner}:${session.id}`" ref="agentCanvasRef" :session-id="session.id" :owner-id="draftOwner" :runs="graphRuns" :messages="messages" :results="graphResults" :references="graphReferences" :previews="graphPreviews" :tasks="taskData" :activity="taskActivity" :compositions="graphCompositions" :audio-enabled="catalog?.capabilities?.platform.music.enabled??catalog?.music_operations.some(row=>row.operation==='generation'&&row.enabled)??false" :focus-id="graphFocusId" :tool-node-id="graphToolsOpen?graphToolNode?.id:undefined" :left-inset="canvasLeftInset" :bottom-inset="canvasBottomInset" :obstructions="canvasObstructions" :playback-enabled="!graphToolsOpen&&!compositionOpen&&!rulesOpen&&(floatingChat||desktopWorkspace||mobilePane==='canvas')" :before-select="beforeSelectGraphNode" :busy="busy||planningBusy||graphPreparing" @select="selectGraphNode" @tools="openGraphTools" @generate="generateGraphNode" @retry="retryGraphPlanning" @refresh-file="refreshGraphFile" @compose="compositionOpen=true" @compositions-changed="readGraphCompositions" @upload="openAssets" @activity="graphActivity=$event">
             <!-- 原作品工具作为当前节点内部编辑子任务，无UModal遮罩；保留下方同一提示词输入框。 -->
             <template #media-editor="{node,toolTarget}">
-              <CreationResultCanvas v-if="graphToolsOpen&&graphToolNode?.id===node.id" ref="canvasRef" inline-node :toolbar-target="toolTarget" :versions="graphToolVersions" :selected="graphToolVersions[0]?.key||''" :save-busy="saveBusy" :favorite="graphFavorite" :can-favorite="graphToolNode?.data.source?.kind==='image'" :music-tools="musicToolOptions" @favorite="favoriteGraphNode" @music="makeMusicMv" @save="saveCanvas" @annotation="updateGraphAnnotation" @ai="graphMediaTool"><template #top-actions><UButton icon="i-lucide-x" square color="neutral" variant="ghost" aria-label="退出节点工具" @click="updateGraphToolsOpen(false)"/></template></CreationResultCanvas>
+              <CreationResultCanvas v-if="graphToolsOpen&&graphToolNode?.id===node.id" ref="canvasRef" inline-node :playback-enabled="!compositionOpen&&!rulesOpen&&!showMusicTools&&(floatingChat||desktopWorkspace||mobilePane==='canvas')" :toolbar-target="toolTarget" :versions="graphToolVersions" :selected="graphToolVersions[0]?.key||''" :save-busy="saveBusy" :favorite="graphFavorite" :can-favorite="graphToolNode?.data.source?.kind==='image'" :music-tools="musicToolOptions" :music-task-id="sourceTask?.id" @favorite="favoriteGraphNode" @music="makeMusicMv" @audio-tool="openCanvasMusicTool" @save="saveCanvas" @annotation="updateGraphAnnotation" @ai="graphMediaTool"><template #top-actions><UButton icon="i-lucide-x" square color="neutral" variant="ghost" aria-label="退出节点工具" @click="updateGraphToolsOpen(false)"/></template></CreationResultCanvas>
             </template>
             <!-- 完整共享输入组件；画布仅提供节点上下文和独立业务命令，不再拼装第二套底栏。 -->
             <template #node-editor="nodeEditor">
-              <CreationNodeControls :key="nodeEditor.node.id" full-editor :kind="nodeEditor.node.data.kind==='text'?'text':nodeEditor.node.data.kind==='video'?'video':'image'" :value="nodeEditor.value" :initial="graphNodeInitial(nodeEditor.node)" :prompt="nodeEditor.prompt" :readonly="nodeEditor.readonly" :annotation="graphToolsOpen&&graphToolNode?.id===nodeEditor.node.id?graphAnnotationDraft:null" :references="nodeEditor.references" :reference-types="nodeEditor.inputs.filter(value=>value.data.reference||value.data.source).map(value=>({media_type:value.data.reference?.media_type||value.data.kind}))" :catalog="catalog" :busy="nodeEditor.busy||annotationSubmitting" @text="nodeEditor.update($event)" @update="nodeEditor.parameters($event)" @send="submitGraphEditor(nodeEditor.node,nodeEditor.prompt,nodeEditor.submit)">
+              <CreationNodeControls :key="nodeEditor.node.id" full-editor :kind="nodeEditor.node.data.kind==='text'?'text':nodeEditor.node.data.kind==='video'?'video':nodeEditor.node.data.kind==='audio'?'music':'image'" :value="nodeEditor.value" :initial="graphNodeInitial(nodeEditor.node)" :prompt="nodeEditor.prompt" :readonly="nodeEditor.readonly" :annotation="graphToolsOpen&&graphToolNode?.id===nodeEditor.node.id?graphAnnotationDraft:null" :references="nodeEditor.references" :reference-types="nodeEditor.inputs.filter(value=>value.data.reference||value.data.source).map(value=>({media_type:value.data.reference?.media_type||value.data.kind}))" :catalog="catalog" :busy="nodeEditor.busy||annotationSubmitting" @text="nodeEditor.update($event)" @update="nodeEditor.parameters($event)" @send="submitGraphEditor(nodeEditor.node,nodeEditor.prompt,nodeEditor.submit)">
                 <template #toolbar-actions><UButton v-if="!nodeEditor.readonly" icon="i-lucide-save" color="neutral" variant="ghost" square aria-label="保存节点提示词" :disabled="nodeEditor.busy" @click="nodeEditor.save()"/></template>
               </CreationNodeControls>
             </template>
@@ -2193,15 +2397,16 @@ watch(()=>[route.query.run,catalog.value] as const,async ([id,directory])=>{
               </CreationVideoWorkbench>
             </template>
           </CreationAgentCanvas>
-          <template #fallback><DashboardSkeleton variant="conversation" layout="media"/></template>
+          <!-- 客户端画布挂载前也使用普通会话加载态，避免恢复后再次闪出旧左右分栏。 -->
+          <template #fallback><DashboardSkeleton variant="conversation" :simple="entry!=='drama'" layout="media"/></template>
         </ClientOnly>
         <CreationVideoWorkbench v-else-if="videoWorkbenchRun?.creative_plan && videoWorkbench" ref="videoWorkbenchRef" :key="videoWorkbench.runId" :run-id="videoWorkbench.runId" :plan="videoWorkbenchRun.creative_plan" :initial-item-id="videoWorkbench.itemId" :saved-runs="assistantHistory" :composition="videoComposition" :composing="videoCompositionBusy" :composition-error="videoCompositionError" :save-busy="saveBusy" @save="saveCanvas" @ai="canvasAI" @saved="savedVideoWorkbench" @updated="updateVideoPlan" @revise="revisedVideoWorkbench" @compose="composeVideoWorkbench(videoWorkbench.runId)" @close="closeVideoWorkbench"/>
         <template v-else-if="audition"><UButton variant="ghost" @click="clearAudition">结束试听</UButton><MusicPlayer :url="audition.url" :title="audition.title"/></template>
-<CreationResultCanvas v-else ref="canvasRef" :results="allResults" :selected-result="selectedResultKey" :unread-results="unreadResults" :selection-disabled="busy" @result="chooseSessionResult" @annotation="updateAnnotation" :favorite="chosenImage?.isFavorite" @favorite="favorite" :versions="canvasVersions" :selected="canvasSelected" :status="activeResult?.status" :progress="taskActivity[focused?.id||'']?.progress" :progress-updated-at="taskActivity[focused?.id||'']?.progress_updated_at" :detail="['failed','needs_review','result_pending','result_error'].includes(activeResult?.status||'')?activeResult?.detail:taskActivity[focused?.id||'']?.label" :save-busy="saveBusy" :music-tools="musicToolOptions" @select="chooseCanvas" @save="saveCanvas" @ai="canvasAI" @music="makeMusicMv" @refresh="refreshResults(true)" />
+<CreationResultCanvas v-else ref="canvasRef" :results="allResults" :selected-result="selectedResultKey" :unread-results="unreadResults" :selection-disabled="busy" @result="chooseSessionResult" @annotation="updateAnnotation" :favorite="chosenImage?.isFavorite" @favorite="favorite" :versions="canvasVersions" :selected="canvasSelected" :status="activeResult?.status" :progress="taskActivity[focused?.id||'']?.progress" :progress-updated-at="taskActivity[focused?.id||'']?.progress_updated_at" :detail="['failed','needs_review','result_pending','result_error'].includes(activeResult?.status||'')?activeResult?.detail:taskActivity[focused?.id||'']?.label" :save-busy="saveBusy" :music-tools="musicToolOptions" :music-task-id="sourceTask?.id" @select="chooseCanvas" @save="saveCanvas" @ai="canvasAI" @music="makeMusicMv" @audio-tool="openCanvasMusicTool" @refresh="refreshResults(true)" />
       </section>
     </div>
     <!-- 页签必须同时恢复聊天可见性，不能只改mobilePane却保留收起状态造成空白。 -->
-    <div v-if="active && hasMedia && !floatingChat" class="liv-mobile-workspace-tabs"><button :class="{active:mobilePane==='chat'}" @click="toggleChat(false)">对话</button><button :class="{active:mobilePane==='canvas'}" @click="mobilePane='canvas'">作品</button></div>
+    <div v-if="active && hasMedia && !floatingChat && !mobileWorkspace" class="liv-mobile-workspace-tabs"><button :class="{active:mobilePane==='chat'}" @click="toggleChat(false)">对话</button><button :class="{active:mobilePane==='canvas'}" @click="mobilePane='canvas'">作品</button></div>
 <section v-if="!skillsPage && !active && !sessionLoading && !sessionError" class="creation-recommendations creation-cases" :style="{minHeight:`${homeCasesMinHeight}px`}">
   <div v-if="['commerce','marketing'].includes(entry)" ref="caseGrid" class="creation-commerce-skills">
     <CreationSkillShowcase :entry="entry==='marketing'?'marketing':'commerce'" :key="entry" :skills="catalog?.skills||[]" :loading="loading||!catalog" @select="useHomeSkill" @preview="openSkillPreview" @tool="showDigitalHumanSkill=true">
@@ -2239,7 +2444,10 @@ watch(()=>[route.query.run,catalog.value] as const,async ([id,directory])=>{
     <div v-if="audioPickerOpen" class="creation-modal-backdrop" @click.self="audioPickerOpen = false"><section class="creation-asset-panel"><header><h2>资料库资产引用</h2><button aria-label="关闭" @click="audioPickerOpen = false"><UIcon name="i-lucide-x" /></button></header><div class="creation-filter"><button :class="{ active: assetScope === 'personal' }" @click="assetScope = 'personal'">个人资料</button><button :class="{ active: assetScope === 'public' }" @click="assetScope = 'public'">平台素材</button></div><div class="creation-asset-filters"><LivSelect v-model="assetCategory" aria-label="素材用途"><option value="">全部用途</option><option v-for="item in assetCategories" :key="item.code" :value="item.code">{{ item.name }}</option></LivSelect><LivSelect v-if="target !== 'music'" v-model="assetMedia" aria-label="素材类型"><option value="">全部类型</option><option value="image">图片</option><option value="video">视频</option><option value="audio">音频</option></LivSelect></div><input v-model="audioQuery" placeholder="搜索素材" @keyup.enter="searchAssets"><button @click="searchAssets">搜索</button><p v-if="!audioItems.length" class="creation-muted">暂时没有符合条件的素材，可以使用 ＋ 上传。</p><div class="creation-asset-grid"><button v-for="item in audioItems" :key="item.id" @click="selectAudio(item)"><img v-if="item.media_type === 'image' && item.versions[0]?.preview_url" :src="libraryService.previewUrl(item.versions[0].preview_url)" :alt="item.name"><UIcon v-else :name="item.media_type === 'audio' ? 'i-lucide-music' : 'i-lucide-file'" /><b>{{ item.name }}</b><small>{{ item.media_type }} · 固定版本 {{ item.versions[0]?.version_no }}</small></button></div></section></div>
     <!-- 口播作为内置工具技能使用专用接口，旧视频首页不再挂入创作工作台。 -->
     <LivDialog :open="showDigitalHumanSkill" title="数字人口播" width="xl" dark @update:open="showDigitalHumanSkill=$event"><ProductVideoWorkspacePanel v-if="showDigitalHumanSkill" digital-only :current-credit-balance="account.currentBalance" :default-video-model="parameters.model" @created="recordToolTask($event,'video');showDigitalHumanSkill=false"/></LivDialog>
-    <div v-if="showMusicTools" class="creation-modal-backdrop" @click.self="showMusicTools=false"><section class="creation-existing-tools"><header><h2>音频工具</h2><button @click="showMusicTools=false" aria-label="关闭"><UIcon name="i-lucide-x"/></button></header><MusicWorkspacePanel compact :source-task-id="sourceTask?.id" :initial-operation="selectedMusicOperation" :source-audio-index="Number(canvasSelected.split(':')[1]||0)" @created="recordToolTask($event,'music');showMusicTools=false"/></section></div>
+    <!-- 音频工具复用统一弹窗的焦点锁定、Esc关闭与正文滚动，不再用手写遮罩覆盖画布。 -->
+    <LivDialog :open="showMusicTools" title="音频工具" width="xl" dark close-label="关闭音频工具" @update:open="open=>{if(!open)closeCanvasMusicTools()}">
+      <MusicWorkspacePanel v-if="showMusicTools" compact :source-task-id="musicToolSource?.taskId" :initial-operation="selectedMusicOperation" :source-audio-index="musicToolSource?.audioIndex" @created="task=>{closeCanvasMusicTools();void recordToolTask(task,'music')}"/>
+    </LivDialog>
   </section>
     <Teleport to="body"><div v-if="attachmentPreview" ref="attachmentDialog" class="liv-reference-preview" role="dialog" aria-modal="true" :aria-label="attachmentPreview.name" tabindex="-1" @click.self="attachmentPreview=null" @keydown.esc="attachmentPreview=null"><button aria-label="关闭素材预览" @click="attachmentPreview=null">×</button><figure><img v-if="attachmentPreview.media_type==='image'" :src="attachmentPreview.preview_url" :alt="attachmentPreview.name"><video v-else-if="attachmentPreview.media_type==='video'" :src="attachmentPreview.preview_url" controls playsinline/><audio v-else-if="attachmentPreview.media_type==='audio'" :src="attachmentPreview.preview_url" controls/><a v-else :href="attachmentPreview.preview_url" target="_blank">打开文件</a><figcaption>{{attachmentPreview.name}}</figcaption></figure></div></Teleport>
     <CreationCaseViewer :item="selectedCase" :items="cases" :busy="replicaBusy" :error="replicaError" @close="selectedCase=null" @replica="makeSame" @select="openCase"/>

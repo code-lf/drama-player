@@ -12,13 +12,20 @@ import {Star as StarIcon} from '@lucide/vue'
 import WorkspaceSelect from './WorkspaceSelect.vue'
 import MusicPlayer from '~/features/music/components/MusicPlayer.vue'
 import {creationService} from '~/shared/api/services/creationService'
-import {centeredRatio,cropFromPoints,pixelCrop,clampUnit,type CropBox} from '../cropGeometry'
+import {listCanvasMusicTools} from '../musicCanvasTools'
+import {centeredRatio,cropFromPoints,ratioCropFromPoints,pixelCrop,clampUnit,type CropBox} from '../cropGeometry'
 export interface CanvasVersion {key:string;title:string;kind:'image'|'video'|'audio';url:string;cover?:string;lyrics?:string;alignment?:unknown;source:WorkspaceSource;parentUrl?:string;downloadable?:boolean}
 // 视频提示词编辑仅替换底栏内容，继续复用原播放器、尺寸测量和作品操作。
-const props=defineProps<{versions:CanvasVersion[];results?:SessionResult[];selectedResult?:string;unreadResults?:string[];selectionDisabled?:boolean;selected:string;status?:string;detail?:string;progress?:number|null;progressUpdatedAt?:string;saveBusy?:boolean;musicTools?:Array<{code:string;name:string}>;favorite?:boolean;canFavorite?:boolean;videoEditing?:boolean;annotationHandoff?:boolean;inlineNode?:boolean;toolbarTarget?:string}>()
+const props=defineProps<{versions:CanvasVersion[];results?:SessionResult[];selectedResult?:string;unreadResults?:string[];selectionDisabled?:boolean;selected:string;status?:string;detail?:string;progress?:number|null;progressUpdatedAt?:string;saveBusy?:boolean;musicTools?:Array<{code:string;name:string}>;musicTaskId?:string;favorite?:boolean;canFavorite?:boolean;videoEditing?:boolean;annotationHandoff?:boolean;inlineNode?:boolean;toolbarTarget?:string;playbackEnabled?:boolean}>()
 export interface AnnotationDraft {file:Blob;source:WorkspaceSource;operations:Record<string,unknown>[];requestId:string;preview:string}
-const emit=defineEmits<{select:[key:string];result:[key:string];save:[value:{file:Blob;source:WorkspaceSource;operations:Record<string,unknown>[];requestId:string}];annotation:[value:AnnotationDraft|null];useAnnotation:[value:AnnotationDraft];ai:[action:string,source:WorkspaceSource];music:[code:string,source:WorkspaceSource];video:[];refresh:[];favorite:[]}>()
+const emit=defineEmits<{select:[key:string];result:[key:string];save:[value:{file:Blob;source:WorkspaceSource;operations:Record<string,unknown>[];requestId:string}];annotation:[value:AnnotationDraft|null];useAnnotation:[value:AnnotationDraft];ai:[action:string,source:WorkspaceSource];music:[code:string,source:WorkspaceSource];audioTool:[operation:string,source:WorkspaceSource];video:[];refresh:[];favorite:[]}>()
 const version=computed(()=>props.versions.find(v=>v.key===props.selected)||props.versions[0])
+/** 菜单项固定住打开时的原曲目来源，防止切换歌曲后沿用另一个下标。 */
+const audioToolItems=computed(()=>{
+  const current=version.value
+  if(!current)return[]
+  return listCanvasMusicTools(current.kind,current.source,props.musicTaskId,props.musicTools||[]).map(option=>({label:option.name,icon:'i-lucide-audio-lines',onSelect:()=>emit('audioTool',option.code,{...current.source})}))
+})
 // 图片节点本身就是明确版本，不重复显示版本选择；辅助操作并入同一排工具。
 const compactImageTools=computed(()=>!!props.inlineNode&&!fullscreen.value&&version.value?.kind==='image')
 /** MV只接受带明确曲目序号的真实音乐结果，不能把上传音频或处理文件冒充第0首歌。 */
@@ -97,14 +104,15 @@ watch(()=>version.value?.key,()=>{fitCanvas();hand.value=false;releaseSpace()})
 watch(discardOpen,async value=>{if(value){await nextTick();continueButton.value?.focus()}})
 let discardResolution:((value:boolean)=>void)|null=null,thumbnailTimer:ReturnType<typeof setTimeout>|undefined
 let cropDrag:{mode:string;start:{x:number;y:number};box:CropBox}|null=null
-const ratioOptions=[{label:'正方形',value:'1:1',ratio:1},{label:'竖向',value:'3:4',ratio:3/4},{label:'故事模式',value:'9:16',ratio:9/16},{label:'横向',value:'4:3',ratio:4/3},{label:'宽屏',value:'16:9',ratio:16/9}]
-/** 节点工具只收纳次要操作，继续调用原编辑/来源保护方法，不新增生成或费用路径。 */
-const nodeImageTools=computed(()=>[
-  {label:'背景',icon:'i-lucide-image',disabled:working.value,onSelect:()=>ai('background')},
-  {label:'风格',icon:'i-lucide-palette',disabled:working.value,onSelect:()=>ai('style')},
-  {label:'尺寸',icon:'i-lucide-scaling',disabled:working.value,children:ratioOptions.map(option=>({label:`${option.label} · ${option.value}`,onSelect:()=>applyRatio(option.ratio)}))},
-  {label:'转视频',icon:'i-lucide-film',disabled:working.value,onSelect:()=>ai('image_to_video')},
-])
+const ratioOptions=[{label:'正方形',value:'1:1',ratio:1},{label:'竖向',value:'2:3',ratio:2/3},{label:'竖向',value:'3:4',ratio:3/4},{label:'故事模式',value:'9:16',ratio:9/16},{label:'横向',value:'3:2',ratio:3/2},{label:'横向',value:'4:3',ratio:4/3},{label:'宽屏',value:'16:9',ratio:16/9}]
+const cropRatio=ref('original')
+/** 比例只调整当前选区，确认后才处理像素；不拉伸图片、不采购模型。 */
+function selectCropRatio(value:string){
+  cropRatio.value=value;ratioOpen.value=false
+  if(value==='free')return
+  const ratio=value==='original'?width.value/height.value:ratioOptions.find(option=>option.value===value)?.ratio
+  if(ratio&&width.value&&height.value)cropBox.value=centeredRatio(width.value,height.value,ratio)
+}
 const cropStyle=computed(()=>cropBox.value?{left:`${cropBox.value.x*100}%`,top:`${cropBox.value.y*100}%`,width:`${cropBox.value.width*100}%`,height:`${cropBox.value.height*100}%`}:{})
 const canvasImage=ref<HTMLImageElement|null>(null),video=ref<HTMLVideoElement|null>(null)
 // 主播放器按文件真实宽高适配；切换作品立即清空，避免上一条横竖比例污染新视频。
@@ -202,7 +210,7 @@ function markSaved(source?:WorkspaceSource,savedOperations?:Record<string,unknow
   if(source&&!sameSavedEdit(source,version.value?.kind==='image'?savedOperations:[],version.value?.source,operations.value.slice(0,cursor.value)))return false
   cursor.value=0;operations.value=[];annotating.value=false;tool.value='';emit('annotation',null);return true
 }
-defineExpose({confirmLeave,markSaved,refreshLayout:positionTools,isDirty:()=>dirty.value||drawing.value||!!textPosition.value,finishAnnotation:async()=>{await commitText();if(drawing.value)await pointerUp();await redraw()}})
+defineExpose({confirmLeave,markSaved,refreshLayout:positionTools,openCrop,isDirty:()=>dirty.value||drawing.value||!!textPosition.value,finishAnnotation:async()=>{await commitText();if(drawing.value)await pointerUp();await redraw()}})
 async function select(key:string){if(key===version.value?.key||!await confirmLeave())return;emit('select',key)}
 /** 同源受权字节仅用于本地编辑，防止跨域画布污染；版本切换后丢弃迟到读取。 */
 async function loadImage(){
@@ -220,10 +228,16 @@ async function imageLoadFailed(event:Event){
 async function chooseTool(value:string){
   if(annotating.value&&!await confirmLeave())return
   hand.value=false;error.value='';compare.value=false;tool.value=tool.value===value?'':value
-  if(['crop','resize'].includes(value)){await loadImage();if(tool.value==='crop'&&image)cropBox.value={x:.1,y:.1,width:.8,height:.8}}
+  if(['crop','resize'].includes(value)){await loadImage();if(tool.value==='crop'&&image){cropRatio.value='original';cropBox.value={x:.1,y:.1,width:.8,height:.8}}}
+}
+/** 右键快捷入口直接进入裁剪，不重复点击工具栏；输出仍走原免费另存链。 */
+async function openCrop(){
+  if(version.value?.kind!=='image'||working.value||props.saveBusy)return false
+  if(tool.value!=='crop')await chooseTool('crop')
+  return tool.value==='crop'&&!!image
 }
 /** 批注与几何/生成工具分开，进入后默认画笔即可直接落笔，不再弹参数大面板。 */
-async function enterAnnotation(){if(dirty.value&&!await confirmLeave())return;if(!(await loadImage()))return;hand.value=false;annotating.value=true;compare.value=false;tool.value='draw';await nextTick()}
+async function enterAnnotation(){const current=version.value;if(!current||dirty.value&&!await confirmLeave()||version.value!==current)return;if(!(await loadImage())||version.value!==current)return;hand.value=false;annotating.value=true;compare.value=false;tool.value='draw';await nextTick()}
 async function annotationTool(value:string){await commitText();hand.value=false;tool.value=value}
 async function exitAnnotation(){if(await confirmLeave())clean()}
 /** 保存版本也读取真实宽高；不同画幅使用并排比较，不拉伸或错误叠合。 */
@@ -243,12 +257,20 @@ function scheduleThumbnail(){if(thumbnailTimer)return;const current=revision;thu
 /** 实时橡皮操作透明批注层，再与原图合成，保持画布和附件预览一致。 */
 function paintLive(points:Array<{x:number;y:number}>){if(!liveLayers||!liveCanvas.value)return;const ink=liveLayers.annotations.getContext('2d')!;ink.save();ink.globalCompositeOperation=tool.value==='erase'?'destination-out':'source-over';paintStroke(ink,points,brush.value,color.value);ink.restore();const ctx=liveCanvas.value.getContext('2d')!;ctx.clearRect(0,0,width.value,height.value);ctx.drawImage(liveLayers.base,0,0);ctx.drawImage(liveLayers.annotations,0,0)}
 async function add(edit:ImageEdit){error.value='';if(!(await loadImage()))return;const previous=operations.value.slice(),oldCursor=cursor.value;operations.value=[...operations.value.slice(0,cursor.value),edit];cursor.value++;await redraw();if(error.value){operations.value=previous;cursor.value=oldCursor}}
-async function applyCrop(){if(!cropBox.value)return;await add(pixelCrop(cropBox.value,width.value,height.value));if(!error.value){cropBox.value=null;tool.value=''}}
-async function applyRatio(ratio:number){if(!(await loadImage()))return;await add(pixelCrop(centeredRatio(width.value,height.value,ratio),width.value,height.value));if(!error.value)tool.value=''}
+async function applyCrop(){if(!cropBox.value)return;await add(pixelCrop(cropBox.value,width.value,height.value));if(!error.value){cropBox.value=null;tool.value='';ratioOpen.value=false;if(props.inlineNode)await save()}}
+/** 比例裁切只写入新版本；节点内直接沿现有免费保存链生成邻近派生节点。 */
+async function applyRatio(ratio:number){if(!(await loadImage()))return;await add(pixelCrop(centeredRatio(width.value,height.value,ratio),width.value,height.value));if(!error.value){tool.value='';if(props.inlineNode)await save()}}
 function cropPoint(event:PointerEvent){const bounds=canvasImage.value!.getBoundingClientRect();return{x:clampUnit((event.clientX-bounds.left)/bounds.width),y:clampUnit((event.clientY-bounds.top)/bounds.height)}}
 /** 可直接新建选区、拖动选区及拉四角；真实像素仅在确认时换算。 */
 function startCrop(event:PointerEvent,mode='new'){if(!image||working.value||event.button!==0)return;event.preventDefault();event.stopPropagation();const start=cropPoint(event),box=cropBox.value||{x:start.x,y:start.y,width:0,height:0};cropDrag={mode,start,box:{...box}};if(mode==='new')cropBox.value={x:start.x,y:start.y,width:0,height:0};(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)}
-function moveCrop(event:PointerEvent){if(!cropDrag)return;const p=cropPoint(event),{mode,start,box}=cropDrag;if(mode==='move'){cropBox.value={...box,x:Math.max(0,Math.min(1-box.width,box.x+p.x-start.x)),y:Math.max(0,Math.min(1-box.height,box.y+p.y-start.y))}}else if(mode==='new')cropBox.value=cropFromPoints(start,p);else{const anchor={x:mode.includes('w')?box.x+box.width:box.x,y:mode.includes('n')?box.y+box.height:box.y};cropBox.value=cropFromPoints(anchor,p)}}
+function moveCrop(event:PointerEvent){
+  if(!cropDrag)return
+  const p=cropPoint(event),{mode,start,box}=cropDrag
+  if(mode==='move'){cropBox.value={...box,x:Math.max(0,Math.min(1-box.width,box.x+p.x-start.x)),y:Math.max(0,Math.min(1-box.height,box.y+p.y-start.y))};return}
+  const anchor=mode==='new'?start:{x:mode.includes('w')?box.x+box.width:box.x,y:mode.includes('n')?box.y+box.height:box.y}
+  const ratio=cropRatio.value==='original'?width.value/height.value:ratioOptions.find(option=>option.value===cropRatio.value)?.ratio
+  cropBox.value=ratio?ratioCropFromPoints(anchor,p,width.value,height.value,ratio):cropFromPoints(anchor,p)
+}
 function endCrop(){cropDrag=null}
 function cropKey(event:KeyboardEvent){if(event.key==='Enter'){event.preventDefault();void applyCrop();return}if(event.key==='Escape'){tool.value='';return}if(!cropBox.value||!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key))return;event.preventDefault();const box=cropBox.value,delta=event.shiftKey?.05:.005;cropBox.value={...box,x:Math.max(0,Math.min(1-box.width,box.x+(event.key==='ArrowLeft'?-delta:event.key==='ArrowRight'?delta:0))),y:Math.max(0,Math.min(1-box.height,box.y+(event.key==='ArrowUp'?-delta:event.key==='ArrowDown'?delta:0)))}}
 function point(event:PointerEvent){const bounds=canvasImage.value!.getBoundingClientRect();return{x:Math.max(0,Math.min(width.value,(event.clientX-bounds.left)/bounds.width*width.value)),y:Math.max(0,Math.min(height.value,(event.clientY-bounds.top)/bounds.height*height.value))}}
@@ -293,7 +315,35 @@ async function capture(){
     if(current===revision)working.value=false
   }
 }
-async function ai(action:string){if(!version.value||!await confirmLeave())return;emit('ai',action,version.value.source)}
+/** 工具确认固定点击时的作品；等待放弃确认期间切换版本不能把动作发送到新作品。 */
+async function ai(action:string){const current=version.value;if(!current||!await confirmLeave()||version.value!==current)return;emit('ai',action,{...current.source})}
+/** “更多”只收纳已有真实能力；菜单打开时固定版本，旧菜单不能作用到后来选中的作品。 */
+const nodeImageTools=computed(()=>{
+  const current=version.value;if(!current)return[]
+  const locked=working.value||!!props.saveBusy
+  const run=(action:()=>unknown)=>()=>{if(version.value===current&&!working.value&&!props.saveBusy)return action()}
+  return [
+    [{label:'调整背景',icon:'i-lucide-image',disabled:locked,onSelect:run(()=>ai('background'))},
+      {label:'调整风格',icon:'i-lucide-palette',disabled:locked,onSelect:run(()=>ai('style'))},
+      {label:'转为视频',icon:'i-lucide-film',disabled:locked,onSelect:run(()=>ai('image_to_video'))}],
+    [{label:'旋转',icon:'i-lucide-rotate-cw',disabled:locked,content:{collisionPadding:12,sideOffset:8},children:[90,180,270].map(degrees=>({label:`顺时针 ${degrees}°`,onSelect:run(()=>add({type:'rotate',degrees}))}))},
+      {label:compare.value?'关闭前后对比':'前后对比',icon:'i-lucide-columns-2',disabled:locked||!dirty.value&&!current.parentUrl,onSelect:run(()=>toggleCompare())},
+      {label:'撤销修改',icon:'i-lucide-undo-2',disabled:locked||!dirty.value,onSelect:run(()=>undoEdit())},
+      {label:'重做修改',icon:'i-lucide-redo-2',disabled:locked||!canRedo.value,onSelect:run(()=>undoEdit(true))}],
+    [...(current.source.kind==='image'&&props.canFavorite!==false?[{label:props.favorite?'取消收藏':'收藏作品',icon:'i-lucide-star',disabled:locked,onSelect:run(()=>emit('favorite'))}]:[]),
+      {label:'全屏查看',icon:'i-lucide-maximize',onSelect:run(()=>toggleFullscreen())}],
+  ]
+})
+/** 批注态同样使用单排主控件；低频文字/拖动与历史动作进入同一Nuxt菜单。 */
+const annotationMoreItems=computed(()=>{
+  const current=version.value,locked=working.value||!!props.saveBusy
+  const run=(action:()=>unknown)=>()=>{if(version.value===current&&annotating.value&&!working.value&&!props.saveBusy)return action()}
+  return [
+    [{label:'拖动图片',icon:'i-lucide-hand',disabled:locked,onSelect:run(()=>annotationTool('pointer'))},{label:'文字批注',icon:'i-lucide-type',disabled:locked,onSelect:run(()=>annotationTool('text'))}],
+    [{label:'撤销批注',icon:'i-lucide-undo-2',disabled:!dirty.value||locked,onSelect:run(()=>undoEdit())},{label:'重做批注',icon:'i-lucide-redo-2',disabled:!canRedo.value||locked,onSelect:run(()=>undoEdit(true))}],
+    ...(props.annotationHandoff?[[{label:'保存并用于创作',icon:'i-lucide-send',disabled:!dirty.value||locked,onSelect:run(()=>useAnnotation())}]]:[]),
+  ]
+})
 </script>
 
 <template>
@@ -311,6 +361,8 @@ async function ai(action:string){if(!version.value||!await confirmLeave())return
         <!-- 收藏仅对拥有真实作品收藏接口的图片开放；本地编辑版本不能显示无效操作。 -->
         <UTooltip v-if="version.source.kind==='image'&&canFavorite!==false" :text="favorite?'取消收藏作品':'收藏作品'" :delay-duration="0" :content="{side:'bottom'}"><button :aria-label="favorite?'取消收藏作品':'收藏作品'" :class="{'is-favorite':favorite}" @click="emit('favorite')"><StarIcon :fill="favorite?'currentColor':'none'"/></button></UTooltip>
         <UTooltip v-if="version.downloadable!==false" text="下载作品" :delay-duration="0" :content="{side:'bottom'}"><button aria-label="下载作品" :disabled="downloading" @click="download"><UIcon :name="downloading?'i-lucide-loader-circle':'i-lucide-download'" :class="{'animate-spin':downloading}"/></button></UTooltip>
+        <!-- 音频操作目录与其他节点工具同处屏幕坐标层，不能留在缩小的封面里。 -->
+        <UDropdownMenu v-if="version.kind==='audio'&&audioToolItems.length" :items="audioToolItems" :modal="false"><UButton icon="i-lucide-audio-lines" square color="neutral" variant="ghost" aria-label="更多音频工具"/></UDropdownMenu>
         <slot name="top-actions"/>
       </div>
     </header>
@@ -328,32 +380,49 @@ async function ai(action:string){if(!version.value||!await confirmLeave())return
           <div v-else class="canvas-image-wrap"><img ref="canvasImage" @load="positionTools" class="canvas-image" :class="{'is-painting':['text','draw'].includes(tool)}" :src="shownUrl" alt="当前作品" draggable="false" @pointerdown="pointerDown" @pointermove="pointerMove" @pointerup="pointerUp" @pointercancel="stroke=[]"><canvas v-if="annotating" ref="liveCanvas" class="annotation-surface" :class="{'is-drawing':drawing,'is-text':tool==='text','is-pointer':tool==='pointer'}" aria-label="图片批注画布" @pointerdown="pointerDown" @pointermove="pointerMove" @pointerup="pointerUp" @pointercancel="pointerUp"/><textarea v-if="annotating&&textPosition" ref="textInput" v-model="text" class="annotation-text-input" aria-label="批注文字" placeholder="输入文字" :style="{left:`${textPosition.x/width*100}%`,top:`${textPosition.y/height*100}%`,color,fontSize:`${Math.max(16,brush*4)*(canvasImage?.clientWidth||width)/width}px`}" @input="previewText" @keydown="textKey" @blur="commitText" @pointerdown.stop/><div v-if="tool==='crop'&&!working" class="crop-overlay" role="group" aria-label="图片裁剪选区" tabindex="0" @pointerdown="startCrop($event)" @pointermove="moveCrop" @pointerup="endCrop" @pointercancel="endCrop" @lostpointercapture="endCrop" @keydown="cropKey"><div v-if="cropBox" class="crop-box" :style="cropStyle" @pointerdown.stop="startCrop($event,'move')"><span class="crop-grid"/><span v-for="corner in ['nw','ne','sw','se']" :key="corner" :class="['crop-handle',corner]" @pointerdown.stop="startCrop($event,corner)"/></div></div><template v-if="compare"><img class="canvas-before" :src="beforeUrl" alt="修改前" :style="{clipPath:`inset(0 ${100-split}% 0 0)`}"><div class="compare-line" :style="{left:`${split}%`}"><span>↔</span></div><div class="compare-labels"><span>修改前</span><span>修改后</span></div><input v-model="split" type="range" min="0" max="100" aria-label="修改前后对比滑块" class="compare-slider"></template></div>
         </div>
         <template v-else-if="version.kind==='video'"><video v-if="version.url" ref="video" :key="version.key" class="canvas-video" :style="videoStyle" :src="version.url" :poster="version.cover" controls playsinline preload="metadata" @loadedmetadata="videoMetadata"/><p v-else-if="!videoEditing" class="text-muted">此方案尚未生成，可编辑当前提示词后核价。</p></template>
-        <MusicPlayer v-else :url="version.url" :title="version.title" :cover="version.cover" :lyrics="version.lyrics" :alignment="version.alignment" :task-id="canMakeMv?version.source.id:undefined" :track-number="version.source.audio_index" downloadable @download="download" :tracks="versions.filter(item=>item.kind==='audio').map(item=>({key:item.key,title:item.title,cover:item.cover}))" :selected="version.key" @select="select"><template #actions><UButton v-if="canMakeMv" icon="i-lucide-film" color="neutral" variant="outline" @click="makeMv">生成视频 MV</UButton></template></MusicPlayer>
+        <MusicPlayer v-else :playback-enabled="playbackEnabled" :compact="inlineNode&&!fullscreen" :controls-target="toolbarTarget" :url="version.url" :title="version.title" :cover="version.cover" :lyrics="version.lyrics" :alignment="version.alignment" :task-id="canMakeMv?version.source.id:undefined" :track-number="version.source.audio_index" downloadable @download="download" :tracks="versions.filter(item=>item.kind==='audio').map(item=>({key:item.key,title:item.title,cover:item.cover}))" :selected="version.key" @select="select"><template #actions><UButton v-if="canMakeMv" icon="i-lucide-film" color="neutral" variant="outline" @click="makeMv">生成视频 MV</UButton></template></MusicPlayer>
       </template>
       <div v-else class="canvas-state"><img src="/creation-presets/liv-creative-seed.png" alt="Liv 创作助手"/><h3>让想法在这里成形</h3><p>选择左侧历史消息查看作品，或继续描述你的想法。</p></div>
     </main>
-    <div v-if="tool==='crop'&&version?.kind==='image'" class="crop-actions"><span>拖动框选，拉动四角调整</span><button @click="tool='';cropBox=null">取消</button><button class="canvas-primary" :disabled="working||!cropBox||cropBox.width<.005||cropBox.height<.005" @click="applyCrop">确认裁剪</button></div>
+    <!-- 裁剪控制位于图片下方；比例弹层由Nuxt UI传送并避让视口，不被媒体或画布裁掉。 -->
+    <div v-if="tool==='crop'&&version?.kind==='image'" class="crop-actions" aria-label="裁剪操作">
+      <UButton icon="i-lucide-x" color="neutral" variant="ghost" aria-label="取消裁剪" @click="tool='';cropBox=null;ratioOpen=false">裁剪</UButton>
+      <UPopover v-model:open="ratioOpen" :content="{side:'bottom',align:'center',sideOffset:8}" :ui="{content:'z-[550] rounded-2xl p-2'}">
+        <UButton icon="i-lucide-scan" trailing-icon="i-lucide-chevron-down" color="neutral" variant="soft" aria-label="裁剪比例">{{cropRatio==='original'?'原始比例':cropRatio==='free'?'自定义':cropRatio}}</UButton>
+        <template #content><div class="crop-ratio-grid"><UButton v-for="option in [{value:'original',label:'原始比例'},{value:'free',label:'自定义'},...ratioOptions.map(v=>({value:v.value,label:v.value}))]" :key="option.value" color="neutral" :variant="cropRatio===option.value?'soft':'ghost'" @click="selectCropRatio(option.value)">{{option.label}}</UButton></div></template>
+      </UPopover>
+      <UButton :disabled="working||saveBusy||!cropBox||cropBox.width<.005||cropBox.height<.005" aria-label="确认裁剪" @click="applyCrop">确认</UButton>
+    </div>
 
     <Teleport :to="toolbarTarget||'body'" :disabled="!toolbarTarget||fullscreen">
-    <footer v-if="version&&!pending&&!failed" ref="canvasFooter" class="canvas-footer" :class="{'is-detached-tool':toolbarTarget&&!fullscreen,'is-node-image-tools':inlineNode&&!fullscreen&&version.kind==='image'}" :style="bottomToolsStyle">
+    <footer v-if="version&&!pending&&!failed&&!(tool==='crop'&&version.kind==='image')" ref="canvasFooter" class="canvas-footer" :class="{'is-detached-tool':toolbarTarget&&!fullscreen,'is-node-image-tools':inlineNode&&!fullscreen&&version.kind==='image'}" :style="bottomToolsStyle">
       <slot v-if="version.kind==='video'&&videoEditing" name="video-editor"/>
       <div v-else-if="version.kind==='image'&&annotating" class="canvas-toolbar annotation-toolbar" aria-label="批注工具栏">
-        <UTooltip v-for="item in [{id:'pointer',icon:'hand',label:'拖动图片',shortcut:'H / 空格'},{id:'draw',icon:'pencil',label:'画笔',shortcut:'B'},{id:'text',icon:'type',label:'文字',shortcut:'T'},{id:'erase',icon:'eraser',label:'橡皮擦',shortcut:'E'}]" :key="item.id" :text="`${item.label}（${item.shortcut}）`" :delay-duration="0" :content="{side:'top'}"><button :class="{active:tool===item.id}" :aria-label="item.label" @click="annotationTool(item.id)"><UIcon :name="`i-lucide-${item.icon}`"/></button></UTooltip>
+        <UTooltip v-for="item in [{id:'draw',icon:'pencil',label:'画笔',shortcut:'B'},{id:'erase',icon:'eraser',label:'橡皮擦',shortcut:'E'}]" :key="item.id" :text="`${item.label}（${item.shortcut}）`" :delay-duration="0" :content="{side:'top'}"><button :class="{active:tool===item.id}" :aria-label="item.label" @click="annotationTool(item.id)"><UIcon :name="`i-lucide-${item.icon}`"/></button></UTooltip>
         <UPopover v-model:open="colorOpen" :content="{side:'top',align:'center',sideOffset:12}" :ui="{content:'rounded-2xl shadow-xl z-[550]'}">
           <button class="palette-trigger" aria-label="批注色板"><span :style="{background:color}"/></button>
           <template #content><div class="palette-panel" aria-label="批注颜色选择"><UColorPicker v-model="color" format="hex" size="sm"/><div class="palette-rgb"><label v-for="(value,index) in rgb" :key="index"><input type="number" min="0" max="255" :aria-label="['红色 R','绿色 G','蓝色 B'][index]" :value="value" @change="setRgb(index,$event)"><span>{{['R','G','B'][index]}}</span></label></div><div class="palette-swatches"><button v-for="swatch in swatches" :key="swatch" :style="{background:swatch}" :class="{selected:color.toLowerCase()===swatch}" :aria-label="`选择颜色 ${swatch}`" @click="color=swatch"/></div></div></template>
         </UPopover>
-        <input v-model.number="brush" class="annotation-width" type="range" min="2" max="60" aria-label="批注粗细"><i/>
-        <button aria-label="撤销批注" title="撤销" :disabled="!dirty||working" @click="cursor--;redraw()"><UIcon name="i-lucide-undo-2"/></button><button aria-label="重做批注" title="重做" :disabled="!canRedo||working" @click="cursor++;redraw()"><UIcon name="i-lucide-redo-2"/></button><i/><button aria-label="保存批注版本" :disabled="!dirty||working||saveBusy" @click="save"><UIcon v-if="inlineNode" name="i-lucide-save"/>保存批注版本</button><button v-if="annotationHandoff" aria-label="保存并用于创作" :disabled="!dirty||working||saveBusy" @click="useAnnotation"><UIcon v-if="inlineNode" name="i-lucide-send"/>保存并用于创作</button><button aria-label="退出批注" title="退出批注" @click="exitAnnotation"><UIcon name="i-lucide-x"/></button>
+        <input v-model.number="brush" class="annotation-width" type="range" min="2" max="60" aria-label="批注粗细">
+        <UDropdownMenu :items="annotationMoreItems" :modal="false" :ui="{content:'creative-image-tools-menu'}"><UButton icon="i-lucide-grid-2x2" color="neutral" variant="ghost" aria-label="更多批注工具" :disabled="working"><span class="canvas-tool-label">更多</span></UButton></UDropdownMenu>
+        <UTooltip text="保存批注版本"><UButton icon="i-lucide-save" square color="neutral" variant="ghost" aria-label="保存批注版本" :disabled="!dirty||working||saveBusy" @click="save"/></UTooltip><UTooltip text="退出批注"><UButton icon="i-lucide-x" square color="neutral" variant="ghost" aria-label="退出批注" @click="exitAnnotation"/></UTooltip>
       </div>
-      <div v-else-if="version.kind==='image'" class="canvas-toolbar">
+      <div v-else-if="version.kind==='image'" class="canvas-toolbar" role="toolbar" aria-label="图片作品工具">
+        <template v-if="compactImageTools">
+          <UTooltip text="创建引用当前图片的编辑草案，核价确认后才生成"><UButton icon="i-lucide-sparkles" color="neutral" variant="ghost" aria-label="编辑图片" :disabled="working||saveBusy" @click="ai('edit')"><span class="canvas-tool-label">图片编辑</span></UButton></UTooltip>
+          <UButton icon="i-lucide-pencil-line" color="neutral" variant="ghost" aria-label="批注" :disabled="working" @click="enterAnnotation"><span class="canvas-tool-label">画笔标注</span></UButton>
+          <UDropdownMenu :items="nodeImageTools" :modal="false" :content="{side:'bottom',align:'start'}" :ui="{content:'creative-image-tools-menu'}"><UButton icon="i-lucide-grid-2x2" trailing-icon="i-lucide-chevron-down" color="neutral" variant="ghost" aria-label="更多图片工具" :disabled="working||saveBusy"><span class="canvas-tool-label">更多</span></UButton></UDropdownMenu>
+          <UTooltip text="裁剪 / 改比例"><UButton icon="i-lucide-crop" square color="neutral" variant="ghost" aria-label="裁剪" :disabled="working||saveBusy" @click="chooseTool('crop')"/></UTooltip>
+          <UTooltip v-if="dirty" text="保存新版本"><UButton icon="i-lucide-save" square color="neutral" variant="ghost" aria-label="保存版本" :loading="saveBusy" :disabled="working||saveBusy" @click="save"/></UTooltip>
+        </template>
+        <template v-else>
         <UTooltip v-if="!compactImageTools" text="拖动图片（H / 按住空格）；0 复位" :delay-duration="0" :content="{side:'top'}"><button aria-label="拖动图片" :class="{active:hand}" @click="hand=!hand"><UIcon name="i-lucide-hand"/></button></UTooltip>
         <button aria-label="批注" :disabled="working" @click="enterAnnotation"><UIcon name="i-lucide-pencil-line"/>画笔标注</button>
         <button aria-label="裁剪" title="裁剪" :class="{active:tool==='crop'}" :disabled="working" @click="chooseTool('crop')"><UIcon name="i-lucide-crop"/></button>
         <button aria-label="旋转90度" title="旋转90度" :disabled="working" @click="add({type:'rotate',degrees:90})"><UIcon name="i-lucide-rotate-cw"/></button><i/>
         <button aria-label="撤销" title="撤销" :disabled="!dirty||working" @click="cursor--;redraw()"><UIcon name="i-lucide-undo-2"/></button><button aria-label="重做" title="重做" :disabled="!canRedo||working" @click="cursor++;redraw()"><UIcon name="i-lucide-redo-2"/></button><button v-if="dirty||version.parentUrl" :class="{active:compare}" @click="toggleCompare()"><UIcon name="i-lucide-columns-2"/>对比</button><i/>
-        <UDropdownMenu v-if="inlineNode&&!fullscreen" :items="nodeImageTools" :content="{side:'bottom',align:'center'}"><UButton color="neutral" variant="ghost" icon="i-lucide-ellipsis" trailing-icon="i-lucide-chevron-down" aria-label="更多图片工具" :disabled="working">更多</UButton></UDropdownMenu>
-        <template v-else><button @click="ai('background')">背景</button><button @click="ai('style')">风格</button><UPopover v-model:open="ratioOpen" :content="{side:'top',align:'center',sideOffset:12}" :ui="{content:'z-[550] rounded-2xl'}"><button aria-label="尺寸" :class="{active:ratioOpen}" :disabled="working"><UIcon name="i-lucide-scaling"/>尺寸</button><template #content><div class="canvas-ratio-options" aria-label="图片尺寸"><UButton v-for="option in ratioOptions" :key="option.value" variant="ghost" color="neutral" @click="applyRatio(option.ratio);ratioOpen=false"><span class="ratio-shape" :style="{aspectRatio:String(option.ratio)}"/><span>{{option.label}}</span><small>{{option.value}}</small></UButton></div></template></UPopover><button @click="ai('image_to_video')"><UIcon name="i-lucide-film"/>转视频</button></template><button :disabled="!dirty||saveBusy||working" class="canvas-primary" :aria-label="saveBusy?'保存中…':'保存版本'" @click="save"><UIcon v-if="inlineNode" name="i-lucide-save"/>{{saveBusy?'保存中…':'保存版本'}}</button>
+        <button @click="ai('background')">背景</button><button @click="ai('style')">风格</button><UPopover v-model:open="ratioOpen" :content="{side:'top',align:'center',sideOffset:12}" :ui="{content:'z-[550] rounded-2xl'}"><button aria-label="尺寸" :class="{active:ratioOpen}" :disabled="working"><UIcon name="i-lucide-scaling"/>尺寸</button><template #content><div class="canvas-ratio-options" aria-label="图片尺寸"><UButton v-for="option in ratioOptions" :key="option.value" variant="ghost" color="neutral" @click="applyRatio(option.ratio);ratioOpen=false"><span class="ratio-shape" :style="{aspectRatio:String(option.ratio)}"/><span>{{option.label}}</span><small>{{option.value}}</small></UButton></div></template></UPopover><button @click="ai('image_to_video')"><UIcon name="i-lucide-film"/>转视频</button><button :disabled="!dirty||saveBusy||working" class="canvas-primary" :aria-label="saveBusy?'保存中…':'保存版本'" @click="save"><UIcon v-if="inlineNode" name="i-lucide-save"/>{{saveBusy?'保存中…':'保存版本'}}</button>
+        </template>
       </div>
       <div v-else-if="version.kind==='video'" class="canvas-toolbar" role="toolbar" aria-label="视频作品工具">
         <UTooltip v-if="version.url&&version.source.id" text="将当前播放位置保存为图片，不生成新视频"><UButton variant="ghost" color="neutral" :disabled="working||saveBusy||!canCapture" icon="i-lucide-camera" @click="capture">{{working?'正在截帧…':'保存截帧'}}</UButton></UTooltip>
@@ -362,9 +431,7 @@ async function ai(action:string){if(!version.value||!await confirmLeave())return
         <i aria-hidden="true"/>
       </div>
       <!-- 与Oii一样在节点上方合成一条；保留真实接口操作，不增加不可用的图层/抠图假按钮。 -->
-      <div v-if="compactImageTools" class="canvas-node-utilities">
-        <UTooltip v-if="version.source.kind==='image'&&canFavorite!==false" :text="favorite?'取消收藏作品':'收藏作品'"><UButton icon="i-lucide-star" square color="neutral" variant="ghost" :aria-label="favorite?'取消收藏作品':'收藏作品'" @click="emit('favorite')"/></UTooltip>
-        <UTooltip text="全屏查看"><UButton icon="i-lucide-maximize" square color="neutral" variant="ghost" aria-label="全屏画布" @click="toggleFullscreen"/></UTooltip>
+      <div v-if="compactImageTools&&!annotating" class="canvas-node-utilities">
         <UTooltip v-if="version.downloadable!==false" text="下载作品"><UButton icon="i-lucide-download" square color="neutral" variant="ghost" aria-label="下载作品" :loading="downloading" @click="download"/></UTooltip>
         <slot name="top-actions"/>
       </div>
@@ -387,18 +454,23 @@ async function ai(action:string){if(!version.value||!await confirmLeave())return
 .is-detached-tool button{display:inline-flex;align-items:center;justify-content:center;gap:5px;cursor:pointer;white-space:nowrap;color:inherit;min-height:32px}
 .is-detached-tool button:disabled{opacity:.35;cursor:default}
 .is-detached-tool .canvas-controls{flex-wrap:wrap;gap:8px}
-/* 桌面为单行胶囊，合并原上方辅助控件；手机保留32px命中并允许必要换行。 */
+/* 主操作固定单排；低频动作进入更多菜单，不能用横向滚动把下载/退出推到屏幕外。 */
 .canvas-footer.is-node-image-tools{flex-direction:row;align-items:center;gap:2px}
-.canvas-footer.is-node-image-tools .canvas-toolbar{flex:0 1 auto;min-width:0;width:auto;flex-wrap:nowrap!important;justify-content:flex-start!important;gap:2px;padding:0}
+.canvas-footer.is-node-image-tools .canvas-toolbar{flex:0 1 auto;min-width:0;width:auto;max-width:100%;flex-wrap:nowrap!important;overflow:visible;justify-content:flex-start!important;gap:2px;padding:0}
 .is-node-image-tools .canvas-toolbar button{min-height:36px!important;padding:6px 8px!important;font-size:13px!important}
 .is-node-image-tools .canvas-toolbar :deep(.iconify){width:18px!important;height:18px!important}
 .canvas-node-utilities{display:flex;flex:none;align-items:center;gap:2px}
 .canvas-node-utilities :deep(button){width:32px;min-width:32px;min-height:36px;padding:6px}
+.is-node-image-tools .annotation-width{flex:1 1 80px;width:80px;min-width:48px;max-width:144px}
+/* 菜单传送至body后仍复用画布深灰令牌，子菜单由Nuxt UI负责碰撞与键盘焦点。 */
+:global(.creative-image-tools-menu){width:var(--liv-graph-tool-menu-width);max-width:calc(100vw - 24px);border-radius:16px;background:var(--liv-account-raised);color:var(--liv-account-text);--ui-bg:var(--liv-account-raised);--ui-bg-elevated:var(--liv-account-raised);--ui-text:var(--liv-account-text);--ui-text-highlighted:var(--liv-account-text);--ui-text-muted:var(--liv-account-muted);--ui-border:var(--liv-account-border)}
+:global(.creative-image-tools-menu [role=menuitem]){min-height:36px;font-size:14px}
 .canvas-footer.is-node-image-tools .canvas-primary{font-size:0!important;gap:0;padding:6px!important;width:32px}
 /* 手机只收起文字和装饰分隔，版本/缩放仍可点开原菜单，工具不删减、不另建平行组件。 */
 @media(max-width:600px){
-  .canvas-footer.is-node-image-tools{flex-wrap:wrap}
-  .canvas-footer.is-node-image-tools .canvas-toolbar{flex-wrap:wrap!important}
+  .canvas-footer.is-node-image-tools{flex-wrap:nowrap}
+  .canvas-footer.is-node-image-tools .canvas-toolbar{flex-wrap:nowrap!important}
+  .canvas-node-utilities :deep(button){min-height:32px}
   .canvas-top.is-node-image-tools{flex-wrap:nowrap;gap:4px}
   .is-node-image-tools .canvas-version{flex:none;max-width:64px;gap:0;padding:2px 4px}
   .is-node-image-tools .canvas-version :deep(.workspace-select){max-width:32px;min-width:32px;min-height:32px!important;font-size:0;gap:0}
@@ -410,25 +482,40 @@ async function ai(action:string){if(!version.value||!await confirmLeave())return
   .is-node-image-tools .canvas-toolbar button{min-width:32px;min-height:32px!important;padding:6px!important;font-size:0!important;gap:0}
   .is-node-image-tools .canvas-toolbar :deep(.iconify){width:20px!important;height:20px!important}
   .is-node-image-tools .canvas-toolbar i{display:none}
-  /* 粗细滑杆独占第二行，第一行保留全部图标，避免退出按钮被挤成孤零零一行。 */
-  .is-node-image-tools .annotation-width{order:1;flex:1 0 100%;width:100%;max-width:none;height:24px}
+  .is-node-image-tools .canvas-tool-label{display:none}
+  /* 手机保持单行和原点击尺寸；文字/拖动/历史操作已进入更多，滑杆仅占剩余空间。 */
+  .is-node-image-tools .annotation-width{flex:1 1 64px;width:64px;min-width:48px;max-width:80px;height:24px}
 }
 /* 画布节点内复用原编辑能力，不另起遮罩工作台；顶部工具独立行，下方只显示当前真实媒体。 */
 .liv-canvas.is-inline-node{width:100%;height:auto;min-height:0;overflow:visible;border-radius:0;background:transparent;display:flex;flex-direction:column}
 .liv-canvas.is-inline-node>.canvas-top{position:static!important;order:0;width:100%!important;padding:4px 0!important;flex-wrap:wrap;gap:4px}
 .liv-canvas.is-inline-node>.canvas-footer{position:static!important;order:1;width:100%;margin:0!important;padding:4px 0 8px!important;gap:0}
 .liv-canvas.is-inline-node>.canvas-footer>p{display:none}
-/* 节点空间较窄时换行展示工具，保存/退出不能藏在横向滚动末尾。 */
-.liv-canvas.is-inline-node .canvas-toolbar{width:100%;max-width:100%;flex-wrap:wrap!important;overflow:visible;justify-content:center!important;border-radius:16px;box-shadow:none;backdrop-filter:none}
+/* 内联承载与Teleport工具宿主使用同一无滚动规则，不维护第二套溢出布局。 */
+.liv-canvas.is-inline-node.is-image-result .canvas-toolbar{width:auto;max-width:100%;flex:0 1 auto;min-width:0;flex-wrap:nowrap!important;overflow:visible;justify-content:flex-start!important;border-radius:16px;box-shadow:none;backdrop-filter:none}
 .liv-canvas.is-inline-node>.canvas-stage{position:relative;order:3;flex:none;container-type:normal;width:100%;height:auto;margin:0!important;padding:0!important;overflow:hidden;background:none;border-radius:12px}
 .liv-canvas.is-inline-node .canvas-image-stage{width:100%;height:auto;max-height:none}
 .liv-canvas.is-inline-node .canvas-image-wrap{width:100%;height:auto;box-shadow:none;max-height:none}
 .liv-canvas.is-inline-node .canvas-image{width:100%;height:auto;max-height:none;max-width:100%;object-fit:contain}
 .liv-canvas.is-inline-node .canvas-video{width:100%!important;height:auto!important;max-height:560px}
-.liv-canvas.is-inline-node>.crop-actions{position:static;order:2;transform:none;margin-bottom:8px;white-space:normal;flex-wrap:wrap;font-size:12px;background:var(--liv-account-surface)}
+.liv-canvas.is-inline-node>.crop-actions{position:static;order:4;align-self:center;transform:none;margin:12px 0 0;white-space:normal;flex-wrap:wrap;font-size:12px;background:var(--liv-account-surface);border-radius:999px}
+.crop-ratio-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;min-width:280px;max-width:calc(100vw - 32px)}
+.crop-ratio-grid button{min-height:40px;justify-content:center}
+/* 裁剪操作仍参与节点高度测量，但抵消媒体缩放，保留真实按钮字号与命中区域。 */
+.liv-canvas.is-inline-node>.crop-actions{zoom:calc(1 / var(--liv-graph-camera-zoom,1));width:max-content;max-width:none;flex-wrap:nowrap}
+.crop-actions button{min-height:36px;font-size:12px}
 .liv-canvas.is-inline-node>.canvas-error{order:2;margin:4px 0;font-size:12px}
 /* 音乐舞台独立纵向滚动，面板撑满可用宽度，不沿用图片居中点阵与大边距。 */
 .canvas-stage.is-music-stage{display:block;padding:8px 12px;background-image:none}.canvas-stage.is-music-stage :deep(.liv-music-player){margin:0;min-height:100%}
+/* 节点内歌曲内容较长，只滚动播放器，避免上千像素的歌词布局把整个画布取景压成缩略图。 */
+.liv-canvas.is-inline-node>.canvas-stage.is-music-stage{max-height:280px;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain}
+/* 280px节点仍保留正常控件尺寸；沉浸播放器传送到body后不继承此紧凑规则。 */
+.liv-canvas.is-inline-node .is-music-stage :deep(.liv-music-player:not(.is-immersive)){padding:12px}
+.liv-canvas.is-inline-node .is-music-stage :deep(.music-player-controls){gap:4px}
+/* 音频顶栏图标不能被窄屏flex压成20px；与播放控件共用至少32px真实命中。 */
+.liv-canvas .canvas-controls :deep(button),.canvas-top.is-detached-tool .canvas-controls :deep(button){min-width:32px;min-height:32px;flex-shrink:0}
+/* 低高度窗口优先留下真实播放控制，长内容继续内部滚动，不把整段歌词纳入取景。 */
+@media(max-height:650px){.liv-canvas.is-inline-node>.canvas-stage.is-music-stage{max-height:200px}}
 .canvas-provider-progress{width:min(300px,70vw);font-size:12px;color:var(--liv-ui-primary-foreground);display:flex;flex-direction:column;gap:12px}.canvas-stage:has(.liv-music-player){align-items:flex-start}
 .liv-canvas.is-fullscreen{position:fixed;inset:0;z-index:500;width:100vw;height:100dvh;border-radius:0}
 .liv-canvas:fullscreen{width:100vw;height:100dvh;border-radius:0}.canvas-controls button.is-favorite{color:#fbbf24}.palette-trigger{padding:5px!important}.palette-trigger>span{display:block;width:23px;height:23px;border-radius:50%;border:1px solid #ffffff50}.palette-panel{padding:14px;background:#292a30;border:1px solid #484a53;border-radius:16px;width:248px;color:#eef0f6}.palette-rgb{display:flex;gap:8px;margin:12px 0}.palette-rgb label{flex:1;min-width:0;text-align:center;font-size:10px;color:#b7bac4}.palette-rgb input{width:100%;background:#191a20;border:1px solid #53555e;border-radius:7px;color:white;text-align:center;padding:5px 0;margin-bottom:4px;font-size:12px}.palette-swatches{display:grid;grid-template-columns:repeat(7,1fr);gap:7px}.palette-swatches button{width:24px;height:24px;border-radius:50%;border:1px solid #ffffff40;cursor:pointer}.palette-swatches button.selected{outline:2px solid #A5B4FC;outline-offset:2px}

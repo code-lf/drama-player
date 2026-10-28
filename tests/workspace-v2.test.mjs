@@ -29,7 +29,8 @@ test('画布与聊天仅带真实来源，重复进度条已移除且不虚构�
   assert.ok(!canvas.includes('<progress'))
   assert.ok(canvas.includes('toggleCompare'))
   assert.ok(canvas.includes('confirmLeave'))
-  assert.ok(canvas.includes("emit('ai',action,version.value.source)"))
+  assert.ok(canvas.includes("emit('ai',action,{...current.source})"))
+  assert.ok(canvas.includes('version.value!==current'))
 })
 test('草稿修订防冲突，发送冻结修订后清空，旧响应不回填素材',()=>{
   const code=read('features/creation/useWorkspaceDraft.ts')

@@ -45,6 +45,29 @@ test('文本、图片和视频节点独立固定意图，不继承上一项广�
   }
 })
 
+test('音乐节点使用自身纯音乐选项进入原整理链，拒绝旧授权及不支持的媒体引用',async()=>{
+  for(const invalid of [false,true]){
+    const state={busy:{value:false},planningBusy:{value:false},graphPreparing:{value:false},session:{value:{id:'same'}},draftOwner:{value:'owner'},prompt:{value:''},references:{value:[]},roundReferences:{value:[]},explicitSkillBoundary:{value:false},parameters:{value:{output:'video',extra:{execution_permit:'old',instrumental:false}}},error:{value:''},requests:[]}
+    const fixture={...state,catalog:{value:{capabilities:{platform:{music:{enabled:true}}}}},draft:()=>({prompt:''}),setSkill:()=>{},setText:()=>{},confirmHomeAction:async()=>true,patchParameters:patch=>{state.parameters.value={...state.parameters.value,...patch}},planDemand:async value=>state.requests.push(value)}
+    const fn=new Function('fixture',`const {${Object.keys(fixture).join(',')}}=fixture;${submit};return generateGraphNode`)(fixture)
+    await fn({id:'draft:music',data:{kind:'audio',prompt:'温暖的钢琴纯音乐',parameters:{style:'钢琴',instrumental:true,vocalGender:''}}},invalid?[{data:{kind:'image'}}]:[])
+    if(invalid){assert.equal(state.requests.length,0);assert.match(state.error.value,/暂不支持/);continue}
+    assert.deepEqual(state.requests,[{mode:'skill'}]);assert.equal(state.parameters.value.output,'music')
+    assert.equal(state.parameters.value.extra.instrumental,true);assert.equal(state.parameters.value.extra.execution_permit,undefined)
+    assert.equal(state.parameters.value.style,'钢琴');assert.equal(state.parameters.value.rightsConfirmed,false)
+  }
+})
+
+test('音乐能力关闭或目录未加载时，不替换原输入、不发起整理',async()=>{
+  for(const catalog of [null,{capabilities:{platform:{music:{enabled:false}}}}]){
+    const state={busy:{value:false},planningBusy:{value:false},graphPreparing:{value:false},session:{value:{id:'same'}},draftOwner:{value:'owner'},prompt:{value:'原稿'},catalog:{value:catalog},parameters:{value:{extra:{}}},error:{value:''},requests:[]}
+    const fixture={...state,draft:()=>({prompt:state.prompt.value}),planDemand:async value=>state.requests.push(value)}
+    const fn=new Function('fixture',`const {${Object.keys(fixture).join(',')}}=fixture;${submit};return generateGraphNode`)(fixture)
+    await fn({id:'draft:music',data:{kind:'audio',prompt:'钢琴纯音乐'}},[])
+    assert.equal(state.prompt.value,'原稿');assert.deepEqual(state.requests,[]);assert.match(state.error.value,/音乐生成当前不可用/)
+  }
+})
+
 test('引用准备期间禁止重复提交，改稿/换会话/取消确认不会覆盖新输入或创建运行',async()=>{
   for(const outcome of ['success','draft','session','owner','cancel','confirmation','failed']){
     const state={busy:{value:false},planningBusy:{value:false},graphPreparing:{value:false},session:{value:{id:'same'}},draftOwner:{value:'owner'},prompt:{value:'用户原草稿'},references:{value:[{version_id:'old'}]},roundReferences:{value:[]},explicitSkillBoundary:{value:false},parameters:{value:{extra:{}}},error:{value:''},reads:0,patches:[],requests:[],texts:[]}

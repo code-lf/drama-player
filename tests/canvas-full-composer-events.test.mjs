@@ -67,6 +67,18 @@ test('已保存规格不会被目录刷新或解锁默认值覆盖，更新新�
   ui.app.unmount()
 })
 
+test('音频节点独立保存音乐选项，不能继承旧视频模型、授权或额外字段',async()=>{
+  const ui=mount({kind:'music',initial:original,value:{...original,model:'',style:'钢琴',instrumental:true,vocalGender:''}});await vue.nextTick()
+  assert.equal(ui.composerProps.parameters.output,'music')
+  assert.equal(ui.composerProps.parameters.model,'')
+  assert.deepEqual(ui.composerProps.parameters.extra,{instrumental:true,vocal_gender:''})
+  ui.emit('parameters',{extra:{instrumental:false,vocal_gender:'f',execution_permit:'forbidden'}});await vue.nextTick()
+  const saved=ui.events.at(-1)[1]
+  assert.equal(saved.instrumental,false);assert.equal(saved.vocalGender,'f')
+  assert.equal(saved.model,'');assert.equal(saved.extra,undefined)
+  ui.app.unmount()
+})
+
 test('只读旧任务缺少原模型时不使用目录首选项冒充历史执行规格',async()=>{
   const ui=mount({readonly:true,initial:{}});await vue.nextTick()
   assert.equal(ui.composerProps.parameters.model,'')

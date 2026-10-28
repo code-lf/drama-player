@@ -6,6 +6,19 @@ import ts from 'typescript'
 async function load(file){const js=ts.transpileModule(readFileSync(`features/creation/${file}`,'utf8'),{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;return import(`data:text/javascript;base64,${Buffer.from(js).toString('base64')}`)}
 const results=await load('resultCatalog.ts'),policy=await load('workflowState.ts')
 
+test('旧音乐complete曲目按原序号展示，缺文件和失败仍不能冒充完成',()=>{
+  const music={id:'music-old',status:'completed',result:{music:[{status:'complete',audio_url:'/first'},{status:'complete',audio_url:'/second'}]}}
+  assert.equal(results.hasRenderableResult({music}),true)
+  assert.equal(results.hasCompleteResults({music}),true)
+  const messages=[{id:'message',task_type:'music',task_id:music.id,content:{prompt:'旧歌曲'}}]
+  assert.deepEqual(results.sessionResults(messages,{message:{music}}).map(v=>v.source.audio_index),[0,1])
+  music.result.music[0].audio_url=''
+  assert.equal(results.hasCompleteResults({music}),false)
+  music.result.music[1].status='failed'
+  assert.equal(results.playableMusicSong(music.result.music[1]),false)
+  assert.equal(results.readyResult({status:'complete'}),false)
+})
+
 test('部分文件可展示但不能结束整个任务的文件续查；不猜测音乐返回数量',()=>{
   for(const kind of ['images','video']){
     const url=kind==='images'?'imageUrl':'videoUrl'

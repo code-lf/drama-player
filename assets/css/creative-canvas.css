@@ -1,4 +1,32 @@
 /* 创作工作区使用已有主题表面；光效只表示真实执行中的来源关系，不伪造进度。 */
+/* 手机独占面板而非桌面浮窗：顶部切页签，内容区撑满剩余高度；v-show保持草稿。 */
+.creation-mobile-view-tabs{display:flex;flex:none;align-items:center;justify-content:flex-end;gap:4px;padding:0;background:var(--liv-workspace-surface)}
+.creation-mobile-view-tabs button{min-height:32px;font-size:12px;border-radius:8px}
+/* 工作区通用按钮重置会清空Nuxt soft表面；选中页签须保留明确的中性分层。 */
+.dashboard-topbar .creation-mobile-view-tabs button[aria-pressed="true"]{background:var(--liv-account-raised)!important;color:var(--liv-account-text)!important}
+.session-mobile-back{display:none!important}
+@media(max-width:767.98px){
+  /* 页签传送到项目顶栏，账户只在画布第二行出现，不占用手机聊天高度。 */
+  .dashboard-shell.is-session-immersive .dashboard-topbar:has(.creation-mobile-view-tabs){display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-rows:56px;height:56px!important;gap:0 8px!important;padding:0 8px!important}
+  .dashboard-shell.is-session-immersive .dashboard-topbar:has(.creation-mobile-view-tabs)>.creation-topbar-nav{display:flex!important;grid-column:2;grid-row:1;min-width:0}
+  .dashboard-topbar:has(.creation-mobile-view-tabs) .session-workspace-nav{grid-column:1;grid-row:1;max-width:100%;width:100%;gap:4px;padding:0;border:0;border-radius:0;background:transparent}
+  .dashboard-topbar:has(.creation-mobile-view-tabs) .session-mobile-back{display:inline-flex!important}
+  .dashboard-topbar:has(.creation-mobile-view-tabs) .session-brand-trigger,.dashboard-topbar:has(.creation-mobile-view-tabs) [aria-label="新建创作"],.dashboard-topbar:has(.creation-mobile-view-tabs) [aria-label="最近项目"]{display:none!important}
+  .dashboard-topbar:has(.creation-mobile-view-tabs) .session-nav-title{flex:1;max-width:none}
+  .dashboard-topbar:has(.creation-mobile-view-tabs)>.dashboard-topbar-account-actions{display:none}
+  .dashboard-shell.is-session-immersive .dashboard-topbar:has(.creation-mobile-view-tabs[data-pane="canvas"]){height:96px!important;grid-template-rows:56px 40px}
+  .dashboard-topbar:has(.creation-mobile-view-tabs[data-pane="canvas"])>.dashboard-topbar-account-actions{display:flex;grid-column:1/-1;grid-row:2;justify-self:end;align-self:center}
+  /* 第二行账户高度从画布可用区扣除，不能让底部工具溢出视口。 */
+  .dashboard-shell.is-session-immersive:has(.creation-mobile-view-tabs[data-pane="canvas"]){--liv-graph-workspace-height:calc(100dvh - 96px)}
+  .dashboard-shell.is-session-immersive .dashboard-main-content:has(.is-mobile-workspace){padding:0!important;overflow:hidden}
+  .dashboard-shell.is-session-immersive .creation-studio .creation-workspace.is-mobile-workspace{display:flex!important;flex-direction:column;height:var(--liv-graph-workspace-height)!important;gap:0;margin:0;max-width:none}
+  .creation-studio .is-mobile-workspace>.creation-chat-column,.creation-studio .is-mobile-workspace>.creation-canvas-column{position:relative;flex:1;min-height:0;width:100%;height:auto;max-height:none;border:0;border-radius:0;box-shadow:none;margin:0}
+  .is-mobile-workspace .creation-chat-heading{cursor:default;touch-action:auto;border-bottom:0;background:transparent}
+  .is-mobile-workspace .creation-chat-agent-label{font-size:12px;font-weight:600}
+  .is-mobile-workspace .creation-chat-heading-spacer{flex:1}
+  .is-mobile-workspace .creative-chat-minimized,.is-mobile-workspace .creation-chat-resize-handle{display:none!important}
+  .creation-studio .is-mobile-workspace .creation-canvas-column>.creation-mobile-canvas-tip{position:absolute;z-index:12;left:50%;top:12px;transform:translateX(-50%);width:max-content;max-width:calc(100% - 24px);margin:0;padding:8px 16px;border:1px solid var(--liv-account-border);border-radius:999px;background:var(--liv-account-raised);color:var(--liv-account-text);font-size:12px;line-height:20px;pointer-events:none}
+}
 .creative-canvas,.creative-tools-dialog{color-scheme:dark;--ui-bg:var(--liv-workspace-surface);--ui-bg-elevated:var(--liv-account-surface);--ui-bg-muted:var(--liv-account-raised);--ui-text:var(--liv-account-text);--ui-text-highlighted:var(--liv-account-text);--ui-text-muted:var(--liv-account-muted);--ui-border:var(--liv-account-border)}
 .creative-canvas{position:relative;isolation:isolate;flex:1;width:100%;height:100%;min-height:0;overflow:hidden;border-radius:var(--ui-radius);background-color:var(--liv-workspace-surface);background-image:radial-gradient(var(--liv-graph-grid-color) 1px,transparent 1px);background-size:var(--liv-graph-grid) var(--liv-graph-grid);color:var(--ui-text)}
 .creative-canvas .vue-flow{position:absolute;inset:0}
@@ -7,7 +35,10 @@
 .creative-group-layer{position:absolute;inset:0;pointer-events:none;z-index:3}
 .creative-group-frame{position:absolute;border:1px solid var(--ui-border);border-radius:20px;pointer-events:none}
 .creative-group-frame.is-selected{border-color:var(--liv-ui-primary-foreground)}
-.creative-group-frame>header{position:absolute;left:8px;top:8px;display:flex;align-items:center;gap:2px;pointer-events:auto;max-width:calc(100% - 16px);border-radius:14px;background:var(--ui-bg-elevated);border:1px solid var(--ui-border);padding:2px;font-size:12px;white-space:nowrap}
+.creative-group-frame>header{position:absolute;left:8px;top:8px;display:flex;align-items:center;gap:2px;pointer-events:auto;width:max-content;max-width:calc(100vw - 32px);border-radius:24px;background:var(--ui-bg-elevated);border:1px solid var(--ui-border);padding:2px;font-size:12px;white-space:nowrap}
+/* 工具保持屏幕尺寸，不能随缩远后的组框宽度挤成一团；图标沿用原Nuxt按钮。 */
+.creative-group-frame>header>button{flex:none;min-height:32px}
+.creative-group-frame>header>button[aria-label="水平排列分组"],.creative-group-frame>header>button[aria-label="垂直排列分组"],.creative-group-frame>header>button[aria-label="解组"]{width:32px;height:32px}
 .creative-group-frame>header>button:first-child{touch-action:none;cursor:grab;min-height:32px}
 .creative-group-frame>header>button:first-child:active{cursor:grabbing}
 .creative-group-frame small{color:var(--ui-text-muted)}
@@ -19,7 +50,8 @@
 .creative-canvas .vue-flow__minimap{background:var(--liv-account-raised);border:1px solid var(--ui-border);border-radius:12px}
 .creative-node{position:relative;width:var(--liv-graph-node-width);color:var(--ui-text)}
 /* 编辑仍在原节点内，增大到可操作宽度；图形库测量后同步连线及下方输入框锚点。 */
-.creative-node.is-editing{width:480px}
+/* 选中仅挂载原工具，不改变节点宽度；放大由显式双击的镜头操作承担。 */
+.creative-node.is-editing{width:var(--liv-graph-node-width)}
 .creative-node.is-editing .creative-node-body{overflow:visible;border:0;background:transparent}
 .creative-node-inline-tools{width:100%;min-width:0}
 .creative-canvas .vue-flow__node:has(.creative-node.is-editing){z-index:20!important}
@@ -38,6 +70,8 @@
 .creative-node-audio>audio{width:100%;max-width:100%}
 .creative-static-video{pointer-events:none}
 .creative-node-text{padding:16px;font-size:14px;line-height:1.7;white-space:pre-wrap;overflow-wrap:anywhere;max-height:320px;overflow:auto;width:100%}
+/* 空节点只是填写提示，不用正文的字号、亮度和字重，输入后自动恢复原正文样式。 */
+.creative-node-text.is-placeholder{font-size:12px;font-weight:400;color:var(--ui-text-muted)}
 .creative-node-placeholder{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;min-height:240px;font-size:14px;color:var(--ui-text-muted)}
 .creative-node-placeholder>.iconify{width:28px;height:28px}
 .creative-node-actions{position:absolute;bottom:calc(100% + 8px);left:50%;transform:translateX(-50%);display:flex;background:var(--ui-bg-elevated);border:1px solid var(--ui-border);border-radius:999px;padding:4px;white-space:nowrap;box-shadow:0 8px 24px #0002;z-index:7}
@@ -66,6 +100,8 @@
 .creative-canvas-top{position:absolute;top:12px;left:16px;display:flex;align-items:center;gap:12px;font-size:14px;pointer-events:none}
 .creative-canvas-top>button{pointer-events:auto}
 .creative-save-state{font-size:12px;color:var(--ui-text-muted)}
+/* 复制反馈与画布保存状态同一行轻提示，不阻挡节点选择或键盘操作。 */
+.creative-copy-status{max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:var(--ui-text-muted)}
 .creative-canvas-error{position:absolute;top:52px;left:max(16px,var(--liv-graph-left-inset,0px));right:64px;background:var(--ui-bg-elevated);border:1px solid var(--ui-border);border-radius:8px;padding:8px 12px;font-size:12px}
 .creative-create-tools{position:absolute;right:12px;top:40%;display:flex;flex-direction:column;gap:8px;background:var(--ui-bg-elevated);border:1px solid var(--ui-border);border-radius:999px;padding:6px}
 .creative-view-tools{position:absolute;right:12px;bottom:12px;display:flex;align-items:center;gap:4px;border:1px solid var(--ui-border);border-radius:999px;padding:4px;background:var(--ui-bg-elevated);font-size:12px}
@@ -104,6 +140,8 @@
 /* 提示词是创作输入表面，不是套在卡片内的第二层灰色表单。 */
 .creative-prompt-dock .creative-prompt-input{border:0!important;background:transparent!important;box-shadow:none!important;outline:none!important;padding:8px 0!important;resize:none;color:var(--ui-text)}
 .creative-prompt-dock .creative-prompt-input:focus-visible{outline:1px solid var(--liv-ui-primary-foreground)!important;outline-offset:4px}
+/* 音频沿用原草案编辑器；低高度收紧同一正文，避免挤走播放器并把按钮缩到不可点击。 */
+@media(max-height:650px){.creative-prompt-dock.has-node-tools:not(.is-expanded)>.creation-canvas-composer>.creation-editor{min-height:var(--liv-graph-mobile-editor-height)!important;max-height:var(--liv-graph-mobile-editor-max-height)!important;overflow-y:auto}}
 .creative-prompt-dock .creation-canvas-composer .creation-editor{min-height:var(--liv-graph-editor-height);max-height:40dvh;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;padding:8px 0;font-size:14px;line-height:1.7;background:transparent;border:0;outline:none}
 .creative-prompt-dock .creation-canvas-composer .creation-editor:empty:before{content:'描述你想创作的画面…';color:var(--ui-text-muted);pointer-events:none}
 .creative-prompt-dock .creation-canvas-composer .creation-editor:focus-visible{outline:1px solid var(--liv-ui-primary-foreground);outline-offset:4px;border-radius:8px}
@@ -158,7 +196,7 @@
 .creative-chat-minimized small{display:block;font-size:12px;color:var(--ui-text-muted);margin-top:4px}
 .creation-canvas-column{position:relative}
 /* 桌面普通技能是整屏底图+聊天浮层，不再通过grid列挤窄画布；短剧与窄屏页签不受影响。 */
-@media(min-width:1024px){
+@media(min-width:768px){
   /* 只释放普通技能外壳；首页、窄屏页签、短剧继续使用原有边距和高度。 */
   .dashboard-shell.is-session-immersive .dashboard-main-content:has(.creation-workspace.is-floating-chat){padding:0!important;overflow:hidden}
   /* 统一浮层有效宽度；单独解析min，避免嵌套算式被构建期calc插件误解析。 */
@@ -174,7 +212,7 @@
   .is-floating-chat:not(.is-chat-collapsed) .creative-prompt-dock.is-expanded{width:calc(100% - var(--liv-graph-chat-effective-width) - 64px)}
 }
 .creative-tools-dialog{width:min(1160px,calc(100vw - 32px));max-width:1160px;height:min(900px,calc(100dvh - 48px))}
-/* 普通画布所有断点都使用同一浮窗：位置和尺寸来自受边界约束的几何，不切换聊天实例。 */
+/* 普通画布桌面使用浮窗；手机页签规则在末尾覆盖，仍不重建聊天实例。 */
 .dashboard-shell.is-session-immersive .dashboard-main-content:has(.creation-workspace.is-floating-chat){padding:0!important;overflow:hidden}
 .dashboard-shell.is-session-immersive .creation-studio .creation-workspace.is-floating-chat{display:block!important;position:relative;isolation:isolate;height:var(--liv-graph-workspace-height)!important;max-width:none;margin:0}
 .creation-studio .creation-workspace.is-floating-chat>.creation-canvas-column{position:absolute;inset:0;width:100%;height:100%;z-index:0;border-radius:0}
@@ -205,7 +243,7 @@
 @media(prefers-reduced-motion:reduce){.creative-edge-flow{display:none}.creative-edge-comet,.creative-spin{animation:none}.creative-edge{transition:none}}
 @media(max-width:600px){.creative-prompt-dock{right:8px;bottom:64px;width:calc(100% - 16px);padding:12px}.creative-view-tools{right:8px;bottom:8px;gap:0}.creative-canvas-top{font-size:12px;left:12px}.creative-compose-entry{font-size:12px;right:12px;top:44px}.creative-prompt-dock textarea{min-height:120px;max-height:30dvh}.creative-task-list{bottom:auto;top:88px}}
 /* 手机不把恢复入口叠在底部提示词/缩放工具上；桌面继续使用左下状态卡。 */
-@media(max-width:1023.98px){
+@media(max-width:767.98px){
   .creative-prompt-dock{max-height:calc(100% - var(--liv-graph-mobile-dock-clearance));overflow-y:auto;overscroll-behavior:contain}
   .creative-chat-minimized{left:8px;top:8px;bottom:auto;gap:8px;max-width:calc(100% - 80px);min-height:36px;padding:6px 10px;border-radius:999px}
   .creative-chat-minimized span{display:flex;align-items:center;gap:8px}
@@ -250,3 +288,20 @@
   .creative-prompt-dock.is-space-constrained .creative-node-composer .creation-attachments{min-height:var(--liv-graph-mobile-reference-size);gap:8px}
   .creative-prompt-dock.is-space-constrained .creative-node-composer .creation-attachment:not(.is-song-card){width:var(--liv-graph-mobile-reference-size);height:var(--liv-graph-mobile-reference-size)}
 }
+.creative-context-surface{position:absolute;inset:0}
+/* 对照参考的单列菜单：主/子菜单共用深色圆角表面，保留组件库碰撞避让和键盘导航。 */
+.creative-context-menu{color-scheme:dark;--ui-bg:var(--liv-workspace-surface);--ui-bg-elevated:var(--liv-workspace-surface);--ui-bg-muted:var(--liv-account-raised);--ui-text:var(--liv-account-text);--ui-text-highlighted:var(--liv-account-text);--ui-text-muted:var(--liv-account-muted);--ui-border:var(--liv-account-border);width:min(220px,calc(100vw - 24px));max-width:calc(100vw - 24px);max-height:min(72dvh,560px);overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;background:var(--liv-workspace-surface)!important;border:1px solid var(--liv-account-border);border-radius:18px!important;color:var(--liv-account-text);box-shadow:0 12px 36px #0008}
+.creative-context-menu [data-slot="viewport"]{padding:6px}
+.creative-context-menu [data-slot="item"]{min-height:36px;padding:8px 10px;gap:10px;border-radius:10px;font-size:13px;line-height:20px;font-weight:500;color:var(--liv-account-text)}
+.creative-context-menu [data-slot="item"]:before{border-radius:10px}
+.creative-context-menu [data-slot="item"][data-highlighted]{background:var(--liv-account-raised)}
+.creative-context-menu [data-slot="item"][data-disabled]{opacity:.4}
+.creative-context-menu [data-slot="itemLeadingIcon"]{width:16px;height:16px;flex:none;color:inherit}
+.creative-context-menu [data-slot="itemTrailingIcon"]{width:14px;height:14px;color:var(--liv-account-muted)}
+.creative-context-menu [data-slot="separator"]{margin:6px 8px;background:var(--liv-account-border)}
+/* 快捷键只作辅助文字，不再绘制两个独立键帽抢占菜单空间。 */
+.creative-context-menu [data-slot="itemTrailingKbds"]{gap:0;color:var(--liv-account-muted)}
+.creative-context-menu [data-slot="itemTrailingKbds"] kbd{height:auto;min-width:0;padding:0;border:0;background:transparent;box-shadow:none;font-family:inherit;font-size:12px;font-weight:400;color:inherit}
+.creative-context-menu [data-slot="itemTrailingKbds"] kbd+ kbd:before{content:'+'}
+.creative-context-menu [data-slot="itemWrapper"]{min-width:0;flex:1}
+.creative-context-menu-description{display:block;max-width:100%;white-space:normal;overflow-wrap:anywhere;line-height:1.45}

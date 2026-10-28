@@ -39,7 +39,7 @@ const props = defineProps<{
   /** 尚未具备执行能力时仍可编辑/保存，鼠标与回车都不可绕过真实发送门禁。 */
   sendDisabledReason?:string
   /** 节点工具栏只复用本媒体类型的真实控件，不展示上传、技能切换或第二个发送按钮。 */
-  controlsOnly?:boolean; controlsKind?:'text'|'image'|'video'
+  controlsOnly?:boolean; controlsKind?:'text'|'image'|'video'|'music'
   /** 技能读取与校验状态，不冒充媒体生成进度。 */
   trialPending?:boolean
   /** 提示词替换历史由共用工作台持有，收起／展开不丢失。 */
@@ -158,7 +158,7 @@ const isInstrumental=computed(()=>baseSkill.value==='instrumental' || (['free','
 function chooseMusicType(instrumental:boolean){if(['free','song'].includes(baseSkill.value))update({customLyrics:false,extra:{...props.parameters.extra,instrumental}});else {emit('skill','song');update({customLyrics:false,extra:{...props.parameters.extra,instrumental}})}}
 const fileAccept = computed(() => props.entry === 'drama' ? '.txt,.docx,.pdf' : isMusic.value?'audio/*': (selectedSkill.value?.media_types || ['image', 'video', 'audio']).map(type => type === 'document' ? '.txt,.docx,.pdf' : `${type}/*`).join(','))
 // 音乐入口也包含 MV；仅写歌使用曲风与音乐引擎，MV 必须沿用视觉风格目录。
-const isMusic = computed(() => !props.nodeEditor&&!props.controlsOnly&&!isMv.value && (selectedSkill.value?.target === 'music' || props.entry === 'music' || (baseSkill.value==='free' && props.parameters.output==='music')))
+const isMusic = computed(() => (props.nodeEditor||props.controlsOnly)?props.controlsKind==='music':!isMv.value && (selectedSkill.value?.target === 'music' || props.entry === 'music' || (baseSkill.value==='free' && props.parameters.output==='music')))
 const isMv = computed(() => !props.nodeEditor&&!props.controlsOnly&&(selectedSkill.value?.base_code || props.skill).startsWith('mv-'))
 // 固定能力不暴露空模型菜单；自由创作仍保留跨图片、视频、音乐的切换入口。
 const showModelSelector = computed(() => !isMv.value && (baseSkill.value === 'free' || (selectedSkill.value?.model_strategy !== 'fixed' && !isMusic.value && props.entry !== 'drama' && props.models.length > 1)))
@@ -460,9 +460,16 @@ onBeforeUnmount(() => { window.removeEventListener('scroll',positionMention,true
         <div v-if="annotation" class="creation-annotation-thumb" aria-label="批注预览"><img :src="annotation.preview" alt="批注"><span>批注</span></div>
         <button v-if="!nodeEditor && !compact && !isMv && entry!=='drama'" class="creation-add" aria-label="添加素材" @click="open('add', $event)"><UIcon name="i-lucide-plus" /></button>
         <div v-if="!isMv && isMusic && templateExample && hiddenExample!==templateExample.id" class="creation-attachment"><img :src="templateExample.example_image || templateExample.cover" :alt="templateExample.name" @click="previewImage={url:templateExample.example_image || templateExample.cover,name:templateExample.name}"><button class="remove" aria-label="移除示意封面" @click="hiddenExample=templateExample.id">×</button><small class="cover-only">封面预览</small></div>
-        <div v-for="(reference, index) in references" v-show="!annotation||reference.media_type!=='image'" :key="reference.version_id" class="creation-attachment" :class="{'is-song-card':reference.media_type==='audio'}" :title="reference.name">
+        <div v-for="(reference, index) in references" v-show="!annotation||reference.media_type!=='image'" :key="reference.version_id" class="creation-attachment" :class="{'is-song-card':reference.media_type==='audio','is-document-card':reference.media_type==='document'}" :title="reference.name" :aria-label="reference.media_type==='document'?`文本引用 ${index+1}：${reference.name||'文本来源'}`:undefined">
           <!-- 音频地址不能交给 img；歌曲使用独立封面，缺封面显示设计占位，不伪造图片。 -->
           <template v-if="reference.media_type==='audio'"><div class="creation-song-cover"><img v-if="reference.cover_url||musicSources.find(item=>item.id===parameters.sourceTask)?.cover" :src="reference.cover_url||musicSources.find(item=>item.id===parameters.sourceTask)?.cover" alt="歌曲封面" @error="($event.target as HTMLImageElement).style.display='none'"><UIcon name="i-lucide-disc-3"/></div><div class="creation-song-copy"><strong>{{reference.name}}</strong><small>{{isMv?'MV 歌曲来源':'音频素材'}} · 已引用</small></div><UButton icon="i-lucide-x" aria-label="移除歌曲" :disabled="busy" color="neutral" variant="ghost" square @click="emit('remove',index)"/></template>
+          <!-- 文本/文档没有图片缩略图；明确来源名称和引用顺序，不把序号画成孤立黑点。 -->
+          <template v-else-if="reference.media_type==='document'">
+            <UIcon name="i-lucide-file-text"/>
+            <div class="creation-document-copy"><strong>{{reference.name||'文本来源'}}</strong><small>文本引用 · {{index+1}}</small></div>
+            <UButton v-if="!nodeEditor" icon="i-lucide-refresh-cw" square color="neutral" variant="ghost" :aria-label="`替换 ${reference.name}`" :disabled="busy" @click="replacementIndex=index;fileInput?.click()"/>
+            <UButton v-if="!nodeEditor" icon="i-lucide-x" square color="neutral" variant="ghost" :aria-label="`移除 ${reference.name}`" :disabled="busy" @click="emit('remove',index)"/>
+          </template>
           <template v-else>
           <img v-if="reference.media_type === 'image'" :src="reference.preview_url" :alt="reference.name" @mouseenter="showReferencePreview($event,reference)" @mouseleave="hoverPreview=null" @click="hoverPreview=null;previewImage={url:reference.preview_url,name:reference.name}"><UIcon v-else :name="reference.media_type === 'audio' ? 'i-lucide-audio-lines' : 'i-lucide-film'" />
           <span>{{ index + 1 }}</span><button v-if="!nodeEditor" class="remove" :aria-label="`移除 ${reference.name}`" @click="emit('remove', index)">×</button>
@@ -474,7 +481,7 @@ onBeforeUnmount(() => { window.removeEventListener('scroll',positionMention,true
         <!-- 恢复卡片置于正文首行前，独立于可编辑内容，复制与发送不携带按钮文案。 -->
         <UButton v-if="canUndoSkillPrompt" class="creation-skill-prompt-undo" color="neutral" variant="soft" size="xs" :disabled="busy||working" aria-label="恢复原提示词" @click="emit('undoSkillPrompt')">Ctrl+Z 恢复原提示词</UButton>
         <UTooltip v-if="showPlanner" text="整理需求" :delay-duration="0" :content="{ side: 'top', sideOffset: 6, avoidCollisions: false }"><button class="creation-plan-icon" aria-label="整理需求" :disabled="planningBusy||busy||!prompt.trim()" @click="emit('plan')"><UIcon :name="planningBusy?'i-lucide-loader-circle':'i-lucide-wand-sparkles'"/></button></UTooltip><div ref="editor" class="creation-editor" :contenteditable="!canvasReadonly&&(!nodeEditor||!busy)" role="textbox" aria-multiline="true" :aria-readonly="!!canvasReadonly" :aria-label="nodeEditor?'当前节点提示词':'创作需求'" @click="selectTemplateField" @input="changed" @keydown="keydown" @focus="editorFocused=true;stopPlaceholder()" @blur="editorFocused=false" @compositionstart="composing = true;stopPlaceholder()" @compositionend="composing = false; changed()" />
-        <p v-if="!prompt.trim()" class="creation-placeholder">{{nodeEditor?'描述你想创作的画面…':skillExample(selectedSkill)?'按下 Tab 键填入以下参考示例：\n'+skillExampleParts(selectedSkill).map(part=>part.text).join(''):isMv?'描述 MV 创意，可直接粘贴歌词；纯音乐请在这里说明。':'说说想法，拖拽／粘贴素材，输入 @ 引用资料库。'}}</p>
+        <p v-if="!prompt.trim()" class="creation-placeholder">{{nodeEditor?(isMusic?'描述你想创作的音乐、氛围和乐器…':'描述你想创作的画面…'):skillExample(selectedSkill)?'按下 Tab 键填入以下参考示例：\n'+skillExampleParts(selectedSkill).map(part=>part.text).join(''):isMv?'描述 MV 创意，可直接粘贴歌词；纯音乐请在这里说明。':'说说想法，拖拽／粘贴素材，输入 @ 引用资料库。'}}</p>
       </div>
       <Teleport to="body"><div v-if="mentionOpen" :style="mentionStyle"><ReferenceMentionMenu ref="mentionMenu" :query="mentionQuery" :kind="mentionKind" :model="parameters.model" :allowed-media-types="selectedSkill?.media_types||['image','document']" :existing="references" @select="selectMention" @browse="mentionOpen=false;emit('assets')" @close="mentionOpen=false"/></div></Teleport>
       <div v-if="baseSkill === 'story'" class="creation-workflow"><button v-if="selectedSkill?.workflows.includes('direct')" :class="{ active: parameters.workflow === 'direct' }" @click="update({ workflow: 'direct' })"><UIcon name="i-lucide-zap" />直接生成</button><button v-if="selectedSkill?.workflows.includes('director')" :class="{ active: parameters.workflow === 'director' }" @click="update({ workflow: 'director' })"><UIcon name="i-lucide-clapperboard" />故事导演制作</button></div>
@@ -560,6 +567,13 @@ onBeforeUnmount(() => { window.removeEventListener('scroll',positionMention,true
 </template>
 
 <style scoped>
+/* 共享输入器的文本引用沿用现有附件容器；宽度受容器约束，节点和聊天不另建一套卡片。 */
+.creation-attachment.is-document-card{display:flex!important;align-items:center;gap:8px;width:min(240px,100%)!important;max-width:100%;height:auto!important;min-height:48px;padding:8px!important;background:var(--liv-account-raised);border-color:var(--ui-border);color:var(--ui-text)}
+.creation-attachment.is-document-card>.iconify{width:20px;height:20px;flex:none;color:var(--ui-text-muted)}
+.creation-document-copy{display:flex;flex:1;min-width:0;flex-direction:column;gap:4px}
+.creation-document-copy strong{font-size:14px;font-weight:500;line-height:1.5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.creation-document-copy small{font-size:12px;line-height:1.5;color:var(--ui-text-muted)}
+.creation-attachment.is-document-card>button{position:static;flex:none;width:32px;height:32px;min-height:32px;padding:0}
 /* 歌曲引用为完整横向媒体卡，不再把音频压成无封面的方形图片附件。 */
 .creation-attachment.is-song-card{display:flex!important;align-items:center;gap:12px;width:100%!important;max-width:100%;height:auto!important;min-height:88px;padding:12px!important;border:1px solid var(--color-border-soft);border-radius:16px;background:var(--color-panel);overflow:hidden}.creation-song-cover{position:relative;display:grid;place-items:center;flex:0 0 64px;width:64px;height:64px;border-radius:12px;overflow:hidden;background:linear-gradient(135deg,var(--liv-ui-primary-deep),var(--liv-music-stage));color:var(--liv-music-highlight)}.creation-song-cover img{position:absolute;inset:0;width:100%!important;height:100%!important;object-fit:cover;z-index:1}.creation-song-cover>.iconify{width:28px;height:28px}.creation-song-copy{flex:1;min-width:0;display:grid;gap:4px}.creation-song-copy strong{font-size:14px;font-weight:500;line-height:1.5;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.creation-song-copy small{font-size:12px;line-height:1.6;color:var(--liv-settings-muted)}.creation-attachment.is-song-card>button{position:static!important;flex:none;width:32px!important;height:32px!important;padding:0!important;min-height:32px;display:grid;place-items:center;border-radius:50%}
 /* 数字输入复用组件自带加减与键盘边界逻辑，清除页面通用 input/button 对步进器的挤压。 */
@@ -610,7 +624,7 @@ onBeforeUnmount(() => { window.removeEventListener('scroll',positionMention,true
 @container creation-composer (min-width:640px){
   .creation-composer.is-compact .creation-toolbar .creation-icon-tool{width:auto!important;max-width:156px;flex:0 1 auto;padding:5px 8px!important;gap:6px;min-width:32px}
   .creation-composer.is-compact .creation-toolbar .creation-tool-label{display:block!important;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
-  .creation-composer.is-compact .creation-toolbar .creation-skill-label{max-width:112px}
+  .creation-composer.is-compact .creation-toolbar .creation-skill-label{max-width:var(--liv-skill-label-max)}
   .creation-composer.is-compact .creation-toolbar .creation-selected-style{flex:0 1 auto;width:auto;max-width:120px}
   .creation-composer.is-compact .creation-toolbar .creation-selected-style-open{justify-content:flex-start;gap:6px;padding:4px 8px!important}
   .creation-composer.is-compact .creation-toolbar .creation-selected-style-label{display:block}
@@ -627,7 +641,7 @@ onBeforeUnmount(() => { window.removeEventListener('scroll',positionMention,true
 /* 底部停靠输入区留出案例阅读空间，展开仍复用原编辑器与工具栏。 */
 .creation-composer.is-docked{position:fixed;z-index:40;background:var(--liv-workspace-surface)!important;box-shadow:0 8px 32px #0005;max-height:70dvh;overflow:visible}
 /* 收起栏复用当前技能与草稿，仅改变同一输入框的显示，不再创建第二个简版编辑器。 */
-.creation-dock-skill{display:flex;align-items:center;gap:4px;max-width:42%;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font-size:13px;font-weight:600;color:var(--liv-ui-primary-foreground)}
+.creation-dock-skill{display:flex;align-items:center;gap:4px;max-width:42%;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font-size:13px;font-weight:600;color:var(--liv-skill-accent)}
 .creation-dock-skill .iconify{width:14px;height:14px;flex:none}
 .creation-composer.is-minimized{padding:0!important;min-height:0;height:var(--liv-home-dock-height);box-sizing:border-box;border-radius:999px!important;background:var(--liv-home-dock-surface)!important;border-color:transparent!important;overflow:hidden;transition:background-color .2s,border-color .2s}
 /* 整个胶囊只用一层低不透明度白膜与背景模糊；去掉渐变、提亮和内高光，避免上沿出现色带。滤镜保持稳定，悬停只切换底色。 */
@@ -658,7 +672,7 @@ onBeforeUnmount(() => { window.removeEventListener('scroll',positionMention,true
 .creation-model-copy{min-width:0;display:grid;gap:0;line-height:16px}.creation-model-copy b,.creation-model-copy small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin:0!important}
 .creation-model-copy b{display:flex;align-items:center;gap:4px}
 /* 只缩放闪电和技能名；不改变真实字号或布局，减少动态效果偏好下不播放。 */
-.creation-skill-feedback{display:inline-flex;align-items:center;gap:6px;min-width:0;transform-origin:left center}
+.creation-skill-feedback{display:inline-flex;align-items:center;gap:6px;min-width:0;flex:0 1 auto;overflow:hidden;transform-origin:left center}
 .creation-skill-feedback.is-switched{animation:liv-skill-switch-pop 320ms ease-out}
 @keyframes liv-skill-switch-pop{0%,100%{transform:scale(1)}40%{transform:scale(1.12)}}
 @media(prefers-reduced-motion:reduce){.creation-skill-feedback.is-switched{animation:none}}

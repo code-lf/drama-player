@@ -45,7 +45,7 @@ test('窄屏低窗口仍保留整个浮窗，不出现越界和不可达的关�
     assert.deepEqual(clampChatWindow(rect,area),rect)
   }
 })
-test('普通聊天和画布不再按页签隐藏，最小化不卸载正文',()=>{
+test('桌面保留浮窗和最小化，手机按页签隐藏但不卸载正文',()=>{
   const source=readFileSync('features/creation/components/CreationStudio.vue','utf8')
   assert.ok(source.includes('active && hasMedia && !floatingChat'))
   assert.ok(source.includes("'mobile-pane-hidden':active&&!floatingChat&&mobilePane!=='chat'"))

@@ -43,22 +43,24 @@ export function batchCompositionResults(runs:Array<{id:string;creative_plan?:Vid
 /** 旧快照缺状态仍兼容；已有明确状态时必须成功，失败/排队残留文件不能冒充已完成。 */
 export function readyResult(value:any){return !value?.status||['success','completed','succeeded'].includes(value.status)}
 /** 音乐版本共用就绪检查，保留原数组序号给歌词、引用和授权，不将失败残留URL暴露为完成作品。 */
-export function playableMusicSong(value:any){return !!value&&readyResult(value)&&!!(value.audio_url||value.url||value.audio)}
+// 历史音乐曲目使用complete；仅兼容歌曲槽位，不扩大图片/视频任务的成功状态。
+function readyMusicSong(value:any){return readyResult(value)||value?.status==='complete'}
+export function playableMusicSong(value:any){return !!value&&readyMusicSong(value)&&!!(value.audio_url||value.url||value.audio)}
 /** 终态与文件可能分两次到达，不能只看 completed 就停止读取。 */
-export function hasRenderableResult(task:any){const songs=task?.music?.result?.music;return !!(readyResult(task?.images)&&task?.images?.results?.some((v:any)=>readyResult(v)&&v?.imageUrl)||readyResult(task?.video)&&task?.video?.results?.some((v:any)=>readyResult(v)&&v?.videoUrl)||readyResult(task?.music)&&((Array.isArray(songs)&&songs.some((v:any)=>readyResult(v)&&(v?.audio_url||v?.url||v?.audio)))||processingResults(task?.music?.result).length))}
+export function hasRenderableResult(task:any){const songs=task?.music?.result?.music;return !!(readyResult(task?.images)&&task?.images?.results?.some((v:any)=>readyResult(v)&&v?.imageUrl)||readyResult(task?.video)&&task?.video?.results?.some((v:any)=>readyResult(v)&&v?.videoUrl)||readyResult(task?.music)&&((Array.isArray(songs)&&songs.some(playableMusicSong))||processingResults(task?.music?.result).length))}
 /** 有一份可展示作品不代表文件已齐；仅依业务数量/原提交数量及已知槽位判断是否结束只读续查。 */
 export function hasCompleteResults(task:any,expectedCount?:number){
   if(!hasRenderableResult(task))return false
   const failed=(value:any)=>!!value&&['failed','error','cancelled'].includes(value.status)
-  const complete=(values:any[],count:unknown,url:(value:any)=>unknown)=>{
+  const complete=(values:any[],count:unknown,url:(value:any)=>unknown,ready=readyResult)=>{
     const expected=Number.isInteger(count)&&Number(count)>0?Number(count):values.length
-    return expected>0&&values.length>=expected&&Array.from({length:values.length},(_,index)=>values[index]).every(value=>failed(value)||!!value&&readyResult(value)&&!!url(value))
+    return expected>0&&values.length>=expected&&Array.from({length:values.length},(_,index)=>values[index]).every(value=>failed(value)||!!value&&ready(value)&&!!url(value))
   }
   if(task?.images)return readyResult(task.images)&&complete(task.images.results||[],task.images.count||expectedCount,value=>value.imageUrl)
   if(task?.video)return readyResult(task.video)&&complete(task.video.results||[],expectedCount,value=>value.videoUrl)
   const songs=task?.music?.result?.music
   // 音乐不根据图片/视频数量猜测返回首数，只核对供应接口实际声明的歌曲槽位。
-  if(Array.isArray(songs)&&songs.length)return readyResult(task.music)&&complete(songs,songs.length,value=>value.audio_url||value.url||value.audio)
+  if(Array.isArray(songs)&&songs.length)return readyResult(task.music)&&complete(songs,songs.length,value=>value.audio_url||value.url||value.audio,readyMusicSong)
   return true
 }
 /** 分轨与歌词视频可能嵌套返回；两个展示入口共用遍历顺序，不将封面冒充可播放结果。 */

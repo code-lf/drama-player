@@ -7,6 +7,16 @@ const media=ts.transpileModule(readFileSync('features/creation/videoWorkbenchMed
 const mediaUrl=`data:text/javascript;base64,${Buffer.from(media).toString('base64')}`
 const code=ts.transpileModule(readFileSync('features/creation/agentCanvas.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ESNext}}).outputText.replace("'./videoWorkbenchMedia'",JSON.stringify(mediaUrl))
 const {projectCreativeGraph,emptyCreativeLayout,canConnectCreative,creativeConnectionIssue,creativeInputs,creativeActivity,resultCanvasNodeId}=await import(`data:text/javascript;base64,${Buffer.from(code).toString('base64')}`)
+
+test('音乐草案只允许普通文本连线，不把媒体和文档误作可用音乐参考',()=>{
+  const target={id:'music',data:{kind:'audio',manual:true,status:'draft'}}
+  const text={id:'text',data:{kind:'text',manual:true,status:'draft',prompt:'钢琴'}}
+  assert.equal(canConnectCreative([text,target],[],'text','music'),true)
+  for(const data of [{kind:'image',status:'completed',url:'/image',source:{kind:'image',id:'i'}},{kind:'audio',status:'completed',url:'/song',source:{kind:'audio',id:'a'}},{kind:'text',status:'reference',reference:{item_id:'doc'}}]){
+    const source={id:'source',data}
+    assert.match(creativeConnectionIssue([source,target],[],'source','music'),/只支持普通文字/)
+  }
+})
 const resultCode=ts.transpileModule(readFileSync('features/creation/resultCatalog.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ESNext}}).outputText
 const {batchImageResults}=await import(`data:text/javascript;base64,${Buffer.from(resultCode).toString('base64')}`)
 const base=()=>({messages:[],runs:[],results:[],references:[],previews:{},tasks:{}})

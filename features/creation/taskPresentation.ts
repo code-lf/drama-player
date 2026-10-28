@@ -13,8 +13,9 @@ export function compactTaskFailure(value:string){
   if(/生成服务当前任务较多/.test(text))return '任务较多，请稍后重试'
   if(/生成服务响应超时/.test(text))return '响应超时，请稍后查看状态'
   if(/生成参数或参考素材暂不受支持/.test(text))return '参数或素材不支持，请调整后重试'
-  // 未知业务原因不能简单截断，避免隐去必要的用户操作。
-  return text||'生成失败，请稍后重试'
+  if(/当前视频模型.*暂无可用渠道/.test(text))return '当前规格暂不可用，请调整后重试'
+  // 长原因在可展开详情中完整保留；摘要不能让一条失败通知占满消息区。
+  return text.length>48?'生成未完成，请查看详情':text||'生成失败，请稍后重试'
 }
 
 /** 只有真实排队或运行状态可以宣告提交成功，尚未读到状态不能伪装成成功。 */
