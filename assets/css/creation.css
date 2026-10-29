@@ -101,6 +101,7 @@
 .creation-popover.is-parameters label small,.creation-popover.is-parameters .creation-duration small{font-size:14px;line-height:1.7;color:var(--liv-settings-muted)}
 .creation-studio .creation-popover.is-parameters .creation-ratio-options button{min-height:52px;padding:6px 2px}
 /* 技能名称与图标使用统一暖黄色；积分、发送按钮仍保留原品牌色。 */
+.creation-studio{--liv-skill-accent:var(--liv-skill-accent-on-dark)}
 .creation-studio .creation-composer .creation-tool.creation-skill{color:var(--liv-skill-accent)!important;font-weight:500}
 /* 工具栏可见文字统一正文规格；保持按钮、弹层与紧凑模式原有行为。 */
 .creation-studio .creation-composer .creation-toolbar .creation-tool,.creation-studio .creation-composer .creation-toolbar .creation-param,.creation-studio .creation-composer .creation-toolbar .creation-selected-style-open{font-size:14px!important;font-weight:500!important}
@@ -182,18 +183,40 @@
 .creation-skill-list{display:flex;flex-direction:column;gap:7px}
 .creation-skill-card{display:flex;align-items:center;gap:12px;width:100%;padding:12px;border-radius:14px;text-align:left;background:transparent}
 .creation-skill-card:hover{background:#2c2c32}
-.creation-skill-card.active{background:#273445}
+.creation-skill-card.active{background:var(--liv-skill-card-selected)}
 .creation-skill-card>img{width:54px;height:54px;object-fit:cover;border-radius:10px;flex:none}
 .creation-skill-card>span{display:flex;flex-direction:column;gap:5px;min-width:0;flex:1}
 .creation-skill-card b{font-size:15px;color:#fff}
 .creation-skill-card.active b,.creation-skill-card.active>.iconify{color:var(--liv-skill-accent)}
 .creation-skill-card span span{font-size:13px;line-height:1.5;color:#b2b2bc}
 .creation-skill-card small{font-size:12px;color:#92929e}
+/* 技能分类保持单行横向滚动；左右按钮只在内容确有溢出时出现。 */
+.creation-skill-category-control{position:relative;display:flex;align-items:center;flex:none;min-width:0;height:28px;margin:0}
+.creation-filter.creation-skill-categories{display:flex;align-items:center;flex:1;flex-wrap:nowrap;gap:6px;min-width:0;height:100%;overflow-x:auto;overflow-y:hidden;margin:0;padding:0;white-space:nowrap;scrollbar-width:none;overscroll-behavior-x:contain;touch-action:pan-x}
+.creation-skill-categories::-webkit-scrollbar{display:none}
+.creation-skill-categories>button{flex:0 0 auto}
+/* 分类选中态只作用技能分类，其他筛选器保留原主题。 */
+.creation-filter.creation-skill-categories>button.active{background:var(--liv-skill-category-selected)}
+.creation-skill-category-control.has-left .creation-skill-categories{padding-left:30px}
+.creation-skill-category-control.has-right .creation-skill-categories{padding-right:30px}
+.creation-skill-category-control::before,.creation-skill-category-control::after{content:'';position:absolute;top:0;bottom:0;z-index:1;width:42px;pointer-events:none}
+.creation-skill-category-control.has-left::before{left:0;border-radius:14px 0 0 14px;background:linear-gradient(to right,var(--liv-workspace-surface) 55%,transparent)}
+.creation-skill-category-control.has-right::after{right:0;border-radius:0 14px 14px 0;background:linear-gradient(to left,var(--liv-workspace-surface) 55%,transparent)}
+.creation-skill-category-arrow{position:absolute;top:50%;z-index:2;display:grid;width:28px;height:28px;place-items:center;transform:translateY(-50%);border:1px solid transparent;border-radius:50%;background:var(--liv-workspace-surface);color:var(--liv-account-muted);transition:background-color .16s,color .16s,border-color .16s}
+.creation-skill-category-arrow:hover{border-color:var(--liv-account-hover);background:var(--liv-account-hover);color:var(--liv-account-text)}
+.creation-skill-category-arrow:focus-visible{outline:2px solid var(--liv-accent);outline-offset:2px}
+.creation-skill-category-arrow.is-left{left:0}
+.creation-skill-category-arrow.is-right{right:0}
+/* 分类箭头的渐隐遮罩与弹层使用同一表面色，悬停仍保留可点击反馈。 */
+.creation-popover{background:var(--liv-workspace-surface)!important}
 /* 统一使用 Nuxt UI 的可访问下拉组件，浮层传送至 body 后仍保留深色圆角。 */
-.liv-select.liv-select-trigger{width:100%;min-height:38px;border:1px solid #44444d;border-radius:12px;padding:8px 12px;background:#27272c;color:#f4f4f5;font-size:14px;text-align:left;box-shadow:none}
-.liv-select-content{z-index:350!important;border:1px solid #45454e!important;border-radius:14px!important;background:#242429!important;color:#f4f4f5!important;padding:5px!important;box-shadow:0 12px 36px #0006}
-.liv-select-item{min-height:36px!important;border-radius:9px!important;color:#f4f4f5!important;font-size:14px!important}
-.liv-select-item[data-highlighted],.liv-select-item[data-state=checked]{background:#36455c!important;color:#E0E7FF!important}
+.liv-select.liv-select-trigger{width:100%;min-height:40px;border:1px solid var(--liv-account-border);border-radius:12px;padding:8px 12px;background:var(--liv-workspace-surface);color:var(--liv-account-text);font-size:14px;text-align:left;box-shadow:none}
+.liv-select-content{z-index:550!important;max-height:var(--reka-select-content-available-height,320px);border:1px solid var(--liv-account-border)!important;border-radius:16px!important;background:var(--liv-workspace-surface)!important;color:var(--liv-account-text)!important;padding:6px!important;box-shadow:0 12px 36px #0006}
+.liv-select-viewport{padding:0!important;max-height:300px;overflow-y:auto}
+.liv-select-item{min-height:36px!important;border-radius:10px!important;color:var(--liv-account-text)!important;font-size:14px!important}
+.liv-select-item[data-highlighted],.liv-select-item[data-state=checked]{background:var(--liv-skill-category-selected)!important;color:var(--liv-account-text)!important}
+.liv-select-item[data-disabled]{opacity:.45;cursor:not-allowed}
+.liv-select-trigger:focus-visible{outline:2px solid var(--liv-accent);outline-offset:2px}
 .creation-popover label>.liv-select{margin-top:7px}
 .creation-execution-preview{padding:12px;border:1px solid #3b3b43;border-radius:12px;margin:14px 0;font-size:13px}
 .creation-execution-preview ol{padding-left:22px;line-height:1.8;margin:8px 0}.creation-execution-preview pre{white-space:pre-wrap;max-height:180px;overflow:auto;font-size:12px;line-height:1.7}.creation-execution-preview summary{cursor:pointer;color:#83b7ff}
@@ -799,3 +822,5 @@
 .liv-composition-media-card{box-sizing:border-box;min-width:0;max-width:100%;width:calc(var(--liv-composition-preview-height) * var(--liv-media-ratio,1) + var(--liv-composition-card-padding) * 2);padding:var(--liv-composition-card-padding)}
 .liv-composition-media-card.is-result{width:calc(var(--liv-composition-result-height) * var(--liv-media-ratio,1) + var(--liv-composition-card-padding) * 2)}
 .liv-composition-video{display:block;width:100%;height:auto;aspect-ratio:var(--liv-media-ratio,auto);object-fit:contain;border-radius:8px}
+/* 深色创作弹窗覆盖旧表面色；保留引导等有专门规格的高优先级例外。 */
+.creation-dark-dialog{background:var(--liv-settings-panel)!important;--ui-bg:var(--liv-settings-panel)}

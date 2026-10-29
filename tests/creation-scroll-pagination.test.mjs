@@ -38,16 +38,16 @@ test('AI 增长不能误判为用户上翻，暂停后新回复不抢滚动',asy
   assert.ok(studio.includes('display:flow-root;min-width:0;flex:none'))
 })
 
-test('每次十条并以第十一条探测下一页，不重复显示页边界',()=>{
-  assert.equal(SESSION_PAGE_SIZE,10)
-  const first=appendSessionPage([],rows(0,11))
-  assert.equal(first.sessions.length,10);assert.equal(first.hasMore,true)
-  const second=appendSessionPage(first.sessions,rows(10,11))
-  assert.equal(second.sessions.length,20);assert.equal(second.hasMore,true)
-  const final=appendSessionPage(second.sessions,rows(20,3))
-  assert.equal(final.sessions.length,23);assert.equal(final.hasMore,false)
-  assert.equal(appendSessionPage(first.sessions,rows(9,11)).sessions.length,19)
-  assert.equal(appendSessionPage(final.sessions,[]).sessions.length,23)
+test('每次八条并以第九条探测下一页，不重复显示页边界',()=>{
+  assert.equal(SESSION_PAGE_SIZE,8)
+  const first=appendSessionPage([],rows(0,9))
+  assert.equal(first.sessions.length,8);assert.equal(first.hasMore,true)
+  const second=appendSessionPage(first.sessions,rows(8,9))
+  assert.equal(second.sessions.length,16);assert.equal(second.hasMore,true)
+  const final=appendSessionPage(second.sessions,rows(16,3))
+  assert.equal(final.sessions.length,19);assert.equal(final.hasMore,false)
+  assert.equal(appendSessionPage(first.sessions,rows(7,9)).sessions.length,15)
+  assert.equal(appendSessionPage(final.sessions,[]).sessions.length,19)
 })
 
 test('滚动隔离、圆箭头锚定及停靠编辑器只有一个实例',()=>{

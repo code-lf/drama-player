@@ -15,7 +15,8 @@ async function setup(){
   assert.deepEqual(compileTemplate({source:descriptor.template.content,filename,id:'style-dialog-test',compilerOptions:{bindingMetadata:script.bindings}}).errors,[])
   const calls=[],auth=vue.reactive({session:{loggedIn:true,user:{id:'one'}}}),item={id:'own',name:'自定义风格',category:'style',media_type:'image',versions:[{id:'v1',preview_url:'/test.png'}]}
   const service={list:async filters=>{calls.push(['list',filters]);return {items:[item],total:1}},configuration:async()=>({max_upload_bytes:1000,categories:[{code:'style'}]}),upload:async(file,category)=>{calls.push(['upload',file.name,category]);return item},favorite:async(...args)=>calls.push(['favorite',...args]),previewUrl:p=>p}
-  new Function('require','module','exports','useWorkbenchAuth',transpile(script.content))(name=>name==='vue'?vue:{libraryService:service},module,module.exports,()=>({auth,requireLogin:()=>auth.session.loggedIn}))
+  const stylesModule={};new Function('exports',transpile(read('shared/constants/dramaVisualStyles.ts')))(stylesModule)
+  new Function('require','module','exports','useWorkbenchAuth',transpile(script.content))(name=>name==='vue'?vue:name.includes('dramaVisualStyles')?stylesModule:{libraryService:service},module,module.exports,()=>({auth,requireLogin:()=>auth.session.loggedIn}))
   let b;const component=module.exports.default,original=component.setup
   component.setup=(p,c)=>{b=original(p,c);return b};component.render=()=>vue.h('div')
   const events=[],props={open:true,styles:[{style_id:'a',display_name:'3D喜剧',render_medium:'3D',cover_url:'/public.png'},{style_id:'b',display_name:'电影写实',render_medium:'写实'}],recent:['b'],selected:'',referenceAllowed:true,onReference:item=>events.push(item)}

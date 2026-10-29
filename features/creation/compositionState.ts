@@ -38,6 +38,16 @@ export function compositionErrors(plan:CompositionPlan):string[]{
     total+=clip.trim_end_ms-clip.trim_start_ms
   }
   if(total>180000)errors.push('轻量合成最长三分钟，请调整计划，不会自动截短。')
+  // 声音与画面分别校验，改短成片后不会偷偷裁切或挪动用户选定的音轨。
+  const tracks=plan.audio_tracks||[]
+  if(tracks.length>2||new Set(tracks.map(track=>track.id)).size!==tracks.length||new Set(tracks.map(track=>track.role)).size!==tracks.length)errors.push('旁白与背景音乐各限一条，音轨编号不能重复。')
+  for(const track of tracks){
+    const label=track.role==='narration'?'旁白':'背景音乐'
+    if(!['narration','bgm'].includes(track.role)||![track.trim_start_ms,track.trim_end_ms,track.start_ms].every(Number.isInteger)||track.trim_start_ms<0||track.start_ms<0||track.trim_end_ms<=track.trim_start_ms||track.trim_end_ms>180000)errors.push(`${label}的入点和切点需为有效的递增毫秒数。`)
+    if(!Number.isFinite(track.volume)||track.volume<0||track.volume>1)errors.push(`${label}音量需为 0～100%。`)
+    if(track.start_ms+track.trim_end_ms-track.trim_start_ms>total)errors.push(`${label}超出成片时长，请调整音轨切点或入点。`)
+    if(!track.reference?.item_id||!track.reference?.version_id)errors.push(`${label}缺少固定版本，请重新选择。`)
+  }
   const {width,height}=plan.output
   if(![width,height].every(value=>Number.isInteger(value)&&value>=64&&value<=1920&&value%2===0))errors.push('输出宽高须为 64～1920 范围内的偶数。')
   if(plan.output.fps!==25||plan.output.fit!=='contain'||plan.output.transition!=='cut')errors.push('当前仅支持 25fps 留边直切合成。')

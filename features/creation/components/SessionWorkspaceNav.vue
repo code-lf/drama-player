@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type {CreationSession} from '../types'
 import {hoverMenuBoundary} from '~/features/dashboard/hoverMenuBoundary'
+import {workspaceNavigationItems} from '../workspaceNavigation'
 // 业务 store 不在 Nuxt 默认自动导入目录，必须显式导入，避免进入会话时触发运行时 500。
 import {useAuthStore} from '~/features/auth/store/useAuthStore'
 const props=defineProps<{navigationOpen?:boolean}>()
@@ -32,10 +33,7 @@ onBeforeUnmount(()=>{clearTimeout(openTimer);clearTimeout(closeTimer);clearBrand
 const title=computed(()=>current.value?.id===route.query.session?current.value.title:sessions.value.find(item=>item.id===route.query.session)?.title||'创作会话')
 // 左上角只保留四个创作导航；账单入口继续放在右上角个人中心，不删除底层能力。
 const brandItems=computed(()=>[
-  [{label:'首页',icon:'i-lucide-house',to:'/dashboard?entry=free'},
-   {label:'我的项目',icon:'i-lucide-folder',to:'/dashboard-projects'},
-   {label:'资料库',icon:'i-lucide-library',to:'/dashboard-library'},
-   {label:'技能',icon:'i-lucide-zap',to:'/dashboard-skills'}].map(item=>{const active=route.path.replace(/\/+$/,'')===item.to.split('?')[0];return {...item,active,class:active?'is-current-page':undefined}})
+  workspaceNavigationItems.map(item=>{const active=route.path.replace(/\/+$/,'')===item.to.split('?')[0];return {...item,active,class:active?'is-current-page':undefined}})
 ])
 // 触发器由 UPopover 管理点击、外点及 Esc，悬停延迟和业务菜单保持状态在此统一协调。
 watch(()=>[route.fullPath,auth.session.user?.id,props.navigationOpen],()=>{clearTimeout(openTimer);clearTimeout(closeTimer);interaction.value=false;historyOpen.value=false;clearBrand()})
@@ -54,3 +52,7 @@ watch(()=>[route.fullPath,auth.session.user?.id,props.navigationOpen],()=>{clear
 <UTooltip text="新建创作"><UButton to="/dashboard?entry=free&new=1" icon="i-lucide-square-pen" variant="ghost" color="neutral" square aria-label="新建创作"/></UTooltip>
 </nav>
 </template>
+<style scoped>
+/* 桌面标题缩短显示，完整项目名仍可通过原 title 查看；手机继续占满可用空间。 */
+@media(min-width:768px){.session-nav-title{max-width:200px}}
+</style>

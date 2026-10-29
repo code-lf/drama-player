@@ -22,6 +22,8 @@ test('悬停从触发器进入菜单与子节点保持打开，离开和空目�
 test('左上角只保留四个创作导航，账单与展开导航不混入',()=>{
   const nav=readFileSync(new URL('../features/creation/components/SessionWorkspaceNav.vue',import.meta.url),'utf8')
   const items=nav.slice(nav.indexOf('const brandItems='),nav.indexOf('// 触发器由'))
-  assert.deepEqual([...items.matchAll(/label:'([^']+)'/g)].map(x=>x[1]),['首页','我的项目','资料库','技能'])
+  assert.match(items,/workspaceNavigationItems.map/)
+  const destinations=readFileSync(new URL('../features/creation/workspaceNavigation.ts',import.meta.url),'utf8')
+  assert.deepEqual([...destinations.matchAll(/label:'([^']+)'/g)].map(x=>x[1]),['首页','我的项目','资料库','技能'])
   assert.ok(!items.includes('accountBillingLinks'))
 })

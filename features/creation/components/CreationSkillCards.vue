@@ -1,9 +1,12 @@
 <script setup lang="ts">
 import type {SystemSkill} from '../types'
 import CreationPreviewMedia from './CreationPreviewMedia.vue'
+import {libraryService} from '~/shared/api/services/libraryService'
 defineProps<{skills:SystemSkill[];busy?:boolean}>()
 const emit=defineEmits<{preview:[row:SystemSkill];try:[row:SystemSkill]}>()
 const focused=ref('')
+/** 私有封面优先使用服务端临时签名，缺失时沿用原目录封面。 */
+function skillCover(row:SystemSkill){return row.cover_preview_url?libraryService.previewUrl(row.cover_preview_url):(row.home_showcase?.cover||row.cover)}
 </script>
 <template>
   <!-- 同一套自然比例卡片用于首页和技能中心；详情与试用是两个独立动作。 -->
@@ -11,7 +14,7 @@ const focused=ref('')
     <article v-for="row in skills" :key="row.id" class="liv-skill-card" :class="{'is-focused':focused===row.id}">
       <button class="liv-skill-card-preview" :aria-label="`查看技能：${row.label}`" @focus="focused=row.id" @blur="focused=''" @click="emit('preview',row)">
         <!-- 比例是公开展示数据，不写入创作规格；原模型与报价能力仍独立校验。 -->
-        <CreationPreviewMedia :cover="row.home_showcase?.cover||row.cover" :video="row.home_showcase?.preview_clip" :alt="row.label" :focused="focused===row.id" :style="row.home_showcase?.media_aspect_ratio?{'--skill-media-ratio':row.home_showcase.media_aspect_ratio}:undefined" :class="{'has-display-ratio':!!row.home_showcase?.media_aspect_ratio}" hover-only/>
+        <CreationPreviewMedia :cover="skillCover(row)" :video="row.home_showcase?.preview_clip" :alt="row.label" :focused="focused===row.id" :style="row.home_showcase?.media_aspect_ratio?{'--skill-media-ratio':row.home_showcase.media_aspect_ratio}:undefined" :class="{'has-display-ratio':!!row.home_showcase?.media_aspect_ratio}" hover-only/>
       </button>
       <div class="liv-skill-card-caption"><strong>{{row.label}}</strong><div class="liv-skill-card-extra"><p>{{row.public_guide?.introduction||row.description}}</p><UButton color="neutral" variant="solid" :disabled="busy||row.is_active===false" @click="emit('try',row)">{{row.is_active===false?'已停用':'试一试'}}</UButton></div></div>
     </article>

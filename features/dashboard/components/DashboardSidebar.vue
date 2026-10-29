@@ -51,18 +51,7 @@ const recentSessionLimit = ref(SESSION_PAGE_SIZE), sessionOffset=ref(0), moreSes
 const sessionsBusy=ref(false),sessionsError=ref('')
 let sidebarRevision=0
 const recentSessions = computed(() => recentProjects.value.slice(0, recentSessionLimit.value))
-const recentScroll=ref<HTMLElement|null>(null),recentRows=ref<HTMLElement|null>(null),listFilled=ref(false)
-let capacityObserver:ResizeObserver|undefined
-/** 高屏先补足可见空间，更多按钮位于列表尾部，不固定在空白区域底端。 */
-async function updateSessionCapacity(){
-  await nextTick()
-  if(!recentScroll.value||!recentRows.value)return
-  listFilled.value=recentRows.value.scrollHeight>=recentScroll.value.clientHeight-40
-  if(!listFilled.value&&hasMoreSessions.value&&!sessionsBusy.value&&!sessionsError.value)void loadMoreSessions()
-}
-watch(()=>[recentSessions.value.length,sessionsBusy.value,moreSessionsAvailable.value],updateSessionCapacity,{flush:'post'})
-onMounted(()=>{capacityObserver=new ResizeObserver(()=>void updateSessionCapacity());if(recentScroll.value)capacityObserver.observe(recentScroll.value)})
-onBeforeUnmount(()=>capacityObserver?.disconnect())
+// 首屏只加载一页，后续由用户主动点击“显示更多”，不按窗口高度自动追加。
 const hasMoreSessions = computed(() => moreSessionsAvailable.value || recentProjects.value.length>recentSessionLimit.value)
 const openSessionMenu=ref(''),renameTarget=ref<CreationProjectCard|null>(null),renameTitle=ref(''),renameBusy=ref(false),renameError=ref('')
 const deleteTarget=ref<CreationProjectCard|null>(null),deleteBusy=ref(false),deleteError=ref('')
@@ -185,12 +174,12 @@ const isWorkbench = computed(() => props.activeWorkspaceView === 'console' && !r
     <NuxtLink v-if="sessionsOnly" class="liv-sidebar-item" to="/dashboard?entry=free&new=1"><SidebarIcon name="i-lucide-plus"/>新建创作</NuxtLink>
     <nav class="liv-sidebar-projects" aria-label="项目导航">
       <NuxtLink to="/dashboard-projects" class="liv-sidebar-item" :class="{ 'is-active': activeWorkspaceView === 'projects' }"><SidebarIcon name="i-lucide-folder" /><span>我的项目</span><SidebarIcon class="liv-sidebar-project-arrow" name="i-lucide-chevron-right" /></NuxtLink>
-      <div ref="recentScroll" class="creation-sidebar-recent" aria-label="最近项目" :aria-busy="sessionsBusy">
+      <div class="creation-sidebar-recent" aria-label="最近项目" :aria-busy="sessionsBusy">
         <!-- 会话区域占剩余高度并独立滚动，不推动品牌、菜单和底部工具。 -->
         <DashboardSkeleton v-if="sessionsBusy && !recentSessions.length" variant="rows" :rows="3" :heading="false"/>
         <!-- 游客没有私人项目目录，不展示登录后的空列表提示。 -->
         <p v-if="loggedIn && !sessionsBusy && !sessionsError && !recentSessions.length" class="liv-sidebar-session-error">暂无最近项目。</p>
-        <div ref="recentRows"><div v-for="item in recentSessions" :key="item.id" class="liv-session-row" :class="{'is-active':item.sessions.some(session=>session.id===route.query.session)||route.params.projectId===item.projectId,'is-menu-open':openSessionMenu===item.id}">
+        <div><div v-for="item in recentSessions" :key="item.id" class="liv-session-row" :class="{'is-active':item.sessions.some(session=>session.id===route.query.session)||route.params.projectId===item.projectId,'is-menu-open':openSessionMenu===item.id}">
           <NuxtLink :title="sessionLabel(item.title)" :to="projectDestination(item)">
             <!-- 复用目录真实作品封面；UAvatar 自带图片错误回退，缺图不额外读取私人任务。 -->
             <UAvatar as="div" class="liv-session-cover" :src="item.coverImageUrl || undefined" :icon="item.kind==='drama'?'i-lucide-clapperboard':'i-lucide-messages-square'" alt="" size="xs" :ui="{root:'rounded-lg',icon:'size-4'}" loading="lazy" decoding="async" aria-hidden="true"/>
@@ -204,7 +193,7 @@ const isWorkbench = computed(() => props.activeWorkspaceView === 'console' && !r
           </UPopover>
         </div>
         </div>
-        <UButton v-if="hasMoreSessions && listFilled" class="creation-sidebar-more" color="neutral" variant="ghost" :loading="sessionsBusy" :disabled="sessionsBusy" @click="loadMoreSessions">更多</UButton>
+        <UButton v-if="hasMoreSessions" class="creation-sidebar-more" color="neutral" variant="ghost" :loading="sessionsBusy" :disabled="sessionsBusy" @click="loadMoreSessions">显示更多</UButton>
       </div>
       <p v-if="sessionsError" class="liv-sidebar-session-error" role="alert">{{sessionsError}}</p>
       <UButton v-if="sessionsError" class="creation-sidebar-more" color="neutral" variant="ghost" :loading="sessionsBusy" :disabled="sessionsBusy" @click="loadMoreSessions">重试加载</UButton>
@@ -258,7 +247,7 @@ const isWorkbench = computed(() => props.activeWorkspaceView === 'console' && !r
 .liv-sidebar-item.is-active,.creation-sidebar-recent .is-active{background:#29292e!important;color:#fff!important}
 .creation-sidebar-divider{margin:26px 0 16px;border:0;border-top:1px solid #ffffff26}
 .creation-sidebar-recent{margin:8px 0 20px!important}
-.creation-sidebar-recent a{display:flex;flex:1;min-width:0;padding:10px 8px;gap:8px;font-size:13px;line-height:20px}
+.creation-sidebar-recent a{display:flex;align-items:center;flex:1;min-width:0;height:40px;padding:0 8px;gap:8px;font-size:13px;line-height:20px}
 /* 三点始终保留命中位置，仅切换透明度，避免鼠标进入时重新排版造成漏触发。 */
 .liv-session-row{display:flex;align-items:center;min-width:0;border-radius:9px}
 .liv-session-row:hover,.liv-session-row:focus-within,.liv-session-row.is-menu-open{background:var(--liv-session-hover)}

@@ -42,6 +42,8 @@ const props = defineProps<{
   controlsOnly?:boolean; controlsKind?:'text'|'image'|'video'|'music'
   /** 技能读取与校验状态，不冒充媒体生成进度。 */
   trialPending?:boolean
+  /** 业务文字创作可覆盖提示语，仍复用同一编辑器及输入法处理。 */
+  editorPlaceholder?:string
   /** 提示词替换历史由共用工作台持有，收起／展开不丢失。 */
   canUndoSkillPrompt?:boolean; skillPromptUndoReady?:boolean
 }>()
@@ -132,7 +134,7 @@ const styleDialogOpen=ref(false)
 /** 空自由技能使用目录中的真实自由能力，不凭显示名称扩大素材权限。 */
 const styleReferenceAllowed=computed(()=>!props.controlsOnly&&!props.nodeEditor&&!!(selectedSkill.value||(!props.skill?props.catalog?.skills.find(row=>row.id==='free'):undefined))?.media_types.includes('image')&&props.references.length<12)
 const recentStyles = ref<string[]>([]), recentTemplates = ref<string[]>([])
-const placeholder = computed(() => !props.skill?'可以先聊聊想法，或选择技能开始创作。':skillExamples[props.skill] || '描述你希望创作的内容，输入 @ 引用素材。')
+const placeholder = computed(() => props.editorPlaceholder || (!props.skill?'可以先聊聊想法，或选择技能开始创作。':skillExamples[props.skill] || '描述你希望创作的内容，输入 @ 引用素材。'))
 watch(placeholder,animatePlaceholder)
 onMounted(animatePlaceholder)
 onBeforeUnmount(stopPlaceholder)
@@ -142,8 +144,44 @@ const skillList = computed(() => (props.catalog?.skills || []).filter(item => it
 const skillPresentation = computed(() => Object.fromEntries(skillList.value.map(item => [item.id, item])))
 const skillCategory = ref('全部')
 const skillScope = ref('all')
-const skillCategories = computed(() => ['全部', ...new Set(skillList.value.map(item => item.category || '通用'))])
-const visibleSkills = computed(() => skillList.value.filter(item => (skillScope.value !== 'mine' || item.kind === 'user') && (skillCategory.value === '全部' || item.category === skillCategory.value) && (!query.value || `${item.label}${item.description || ''}`.includes(query.value))))
+// 分类目录与卡片共用当前范围内的真实技能，避免“我的”标签还露出整个平台分类。
+const scopedSkillList = computed(() => skillList.value.filter(item => skillScope.value !== 'mine' || item.kind === 'user'))
+const skillCategories = computed(() => ['全部', ...new Set(scopedSkillList.value.map(item => item.category || '通用'))])
+const skillCategoryRail=ref<HTMLDivElement|null>(null)
+const skillCategoryCanScrollLeft=ref(false),skillCategoryCanScrollRight=ref(false)
+/** 按入口真实分类条目的溢出尺寸决定左右导航，不根据分类名称数量猜测。 */
+function updateSkillCategoryOverflow(){
+  const rail=skillCategoryRail.value
+  if(!rail){skillCategoryCanScrollLeft.value=false;skillCategoryCanScrollRight.value=false;return}
+  skillCategoryCanScrollLeft.value=rail.scrollLeft>1
+  skillCategoryCanScrollRight.value=rail.scrollWidth-rail.clientWidth-rail.scrollLeft>1
+}
+/** 每次横向滚动一段可视宽度；左右按钮和触屏滚动共用同一分类列表。 */
+function scrollSkillCategories(direction:'left'|'right'){
+  const rail=skillCategoryRail.value;if(!rail)return
+  const distance=Math.max(144,Math.round(rail.clientWidth*.7))
+  rail.scrollBy({left:direction==='right'?distance:-distance,behavior:'smooth'})
+}
+/** 切换“全部／我的”时清除旧分类和滚动位置，避免新范围沿用失效筛选。 */
+function setSkillScope(scope:'all'|'mine'){
+  if(skillScope.value===scope)return
+  skillScope.value=scope
+  skillCategory.value='全部'
+  void nextTick(()=>{
+    if(skillCategoryRail.value)skillCategoryRail.value.scrollLeft=0
+    updateSkillCategoryOverflow()
+  })
+}
+/** 入口目录异步更新时保留真实分类；旧分类消失后回到“全部”避免空目录。 */
+watch(skillCategories,async categories=>{
+  if(!categories.includes(skillCategory.value)){
+    skillCategory.value='全部'
+    if(skillCategoryRail.value)skillCategoryRail.value.scrollLeft=0
+  }
+  if(popover.value==='skill'){await nextTick();updateSkillCategoryOverflow()}
+},{flush:'post'})
+// 无分类技能在分类栏归为“通用”，筛选时采用同一兜底，避免点选后误显示空列表。
+const visibleSkills = computed(() => scopedSkillList.value.filter(item => (skillCategory.value === '全部' || (item.category || '通用') === skillCategory.value) && (!query.value || `${item.label}${item.description || ''}`.includes(query.value))))
 // 专用口播工具在全部技能中展示，不进入“我的配方”，也不把未配置状态当作可生成。
 const showDigitalHumanSkill = computed(() => !props.catalog?.skills.some(row=>row.home_showcase?.category==='presenter') && digitalHumanToolSkill.entries.includes(props.entry) && skillScope.value==='all' && (skillCategory.value==='全部'||skillCategory.value===digitalHumanToolSkill.category) && (!query.value||`${digitalHumanToolSkill.label}${digitalHumanToolSkill.description}`.includes(query.value)))
 // 画布节点固定原技能，不受当前聊天入口的菜单筛选影响；否则营销技能在free壳里会丢失类型与参数锁。
@@ -239,7 +277,7 @@ function chooseModel(code:string,kind:ModelKind=modelKind.value){
   update({model:code,...(baseSkill.value==='free'?{output:modelKind.value}:{})})
   popover.value=''
 }
-function open(name: string, event?: MouseEvent) { if(props.nodeEditor&&(props.canvasReadonly||props.busy))return;if(name==='style'&&!isMusic.value){popover.value='';mentionOpen.value=false;styleDialogOpen.value=true;return}if(event?.currentTarget instanceof HTMLElement)popoverAnchor.value=event.currentTarget; if(name==='skill'&&popover.value!=='skill')lockSkillPlacement();if(name==='model')modelKind.value=isMusic.value?'music':isVideo.value?'video':'image';popover.value = popover.value === name ? '' : name; query.value = ''; category.value = '全部'; skillCategory.value = '全部'; mentionOpen.value = false; if (['parameters', 'skill'].includes(popover.value)) void nextTick(positionParameters) }
+function open(name: string, event?: MouseEvent) { if(props.nodeEditor&&(props.canvasReadonly||props.busy))return;if(name==='style'&&!isMusic.value){popover.value='';mentionOpen.value=false;styleDialogOpen.value=true;return}if(event?.currentTarget instanceof HTMLElement)popoverAnchor.value=event.currentTarget; if(name==='skill'&&popover.value!=='skill')lockSkillPlacement();if(name==='model')modelKind.value=isMusic.value?'music':isVideo.value?'video':'image';popover.value = popover.value === name ? '' : name; query.value = ''; category.value = '全部'; skillCategory.value = '全部'; mentionOpen.value = false; if (['parameters', 'skill'].includes(popover.value)) void nextTick(()=>{positionParameters();if(popover.value==='skill')updateSkillCategoryOverflow()}) }
 function isParameterLocked(key: string){if((props.controlsOnly||props.nodeEditor)&&(key==='count'||props.busy||props.canvasReadonly))return true;return !!selectedSkill.value?.allowed_parameter_keys && !selectedSkill.value.allowed_parameter_keys.includes(key)}
 function update(patch: Partial<CreationParameterState>) { emit('parameters', Object.fromEntries(Object.entries(patch).filter(([key])=>!['aspectRatio','durationSec','resolution','quality','count','style'].includes(key) || !isParameterLocked(key)))) }
 function chooseSkill(item: SystemSkill) { emit('skill', item.id); popover.value = '' }
@@ -410,6 +448,8 @@ watch(() => [props.prompt, props.segments], () => nextTick(renderText), { deep: 
 onMounted(() => {
   window.addEventListener('keydown', closeOnEscape)
   window.addEventListener('resize', positionParameters)
+  // 窗口尺寸变化后重测技能分类栏溢出，及时同步左右导航状态。
+  window.addEventListener('resize', updateSkillCategoryOverflow)
   window.addEventListener('scroll', positionParameters, true)
   window.addEventListener('scroll',positionMention,true)
   window.addEventListener('resize',positionMention)
@@ -417,7 +457,7 @@ onMounted(() => {
   try { recentStyles.value = JSON.parse(localStorage.getItem('creation-recent-styles') || '[]'); recentTemplates.value = JSON.parse(localStorage.getItem('creation-recent-templates') || '[]') } catch { /* 损坏的预设缓存直接忽略。 */ }
 })
 watch(() => props.templateExample?.id, () => { exampleVideoOpen.value = false })
-onBeforeUnmount(() => { window.removeEventListener('scroll',positionMention,true);window.removeEventListener('resize',positionMention);window.removeEventListener('keydown', closeOnEscape); window.removeEventListener('resize', positionParameters); window.removeEventListener('scroll', positionParameters, true) })
+onBeforeUnmount(() => { window.removeEventListener('scroll',positionMention,true);window.removeEventListener('resize',positionMention);window.removeEventListener('keydown', closeOnEscape); window.removeEventListener('resize', positionParameters);window.removeEventListener('resize',updateSkillCategoryOverflow); window.removeEventListener('scroll', positionParameters, true) })
 </script>
 
 <template>
@@ -456,7 +496,7 @@ onBeforeUnmount(() => { window.removeEventListener('scroll',positionMention,true
     <template v-else>
       <!-- MV 先选择歌曲，空素材区不再占位；音频来源由同一个选歌弹窗管理。 -->
       <slot v-if="isMv" name="audio-source" />
-      <div v-if="(!compact && !isMv) || annotation || references.length || (!isMv && isMusic && templateExample && hiddenExample!==templateExample.id)" class="creation-attachments">
+      <div v-if="(!compact && !isMv && !nodeEditor) || annotation || references.length || (!isMv && isMusic && templateExample && hiddenExample!==templateExample.id)" class="creation-attachments">
         <div v-if="annotation" class="creation-annotation-thumb" aria-label="批注预览"><img :src="annotation.preview" alt="批注"><span>批注</span></div>
         <button v-if="!nodeEditor && !compact && !isMv && entry!=='drama'" class="creation-add" aria-label="添加素材" @click="open('add', $event)"><UIcon name="i-lucide-plus" /></button>
         <div v-if="!isMv && isMusic && templateExample && hiddenExample!==templateExample.id" class="creation-attachment"><img :src="templateExample.example_image || templateExample.cover" :alt="templateExample.name" @click="previewImage={url:templateExample.example_image || templateExample.cover,name:templateExample.name}"><button class="remove" aria-label="移除示意封面" @click="hiddenExample=templateExample.id">×</button><small class="cover-only">封面预览</small></div>
@@ -481,7 +521,7 @@ onBeforeUnmount(() => { window.removeEventListener('scroll',positionMention,true
         <!-- 恢复卡片置于正文首行前，独立于可编辑内容，复制与发送不携带按钮文案。 -->
         <UButton v-if="canUndoSkillPrompt" class="creation-skill-prompt-undo" color="neutral" variant="soft" size="xs" :disabled="busy||working" aria-label="恢复原提示词" @click="emit('undoSkillPrompt')">Ctrl+Z 恢复原提示词</UButton>
         <UTooltip v-if="showPlanner" text="整理需求" :delay-duration="0" :content="{ side: 'top', sideOffset: 6, avoidCollisions: false }"><button class="creation-plan-icon" aria-label="整理需求" :disabled="planningBusy||busy||!prompt.trim()" @click="emit('plan')"><UIcon :name="planningBusy?'i-lucide-loader-circle':'i-lucide-wand-sparkles'"/></button></UTooltip><div ref="editor" class="creation-editor" :contenteditable="!canvasReadonly&&(!nodeEditor||!busy)" role="textbox" aria-multiline="true" :aria-readonly="!!canvasReadonly" :aria-label="nodeEditor?'当前节点提示词':'创作需求'" @click="selectTemplateField" @input="changed" @keydown="keydown" @focus="editorFocused=true;stopPlaceholder()" @blur="editorFocused=false" @compositionstart="composing = true;stopPlaceholder()" @compositionend="composing = false; changed()" />
-        <p v-if="!prompt.trim()" class="creation-placeholder">{{nodeEditor?(isMusic?'描述你想创作的音乐、氛围和乐器…':'描述你想创作的画面…'):skillExample(selectedSkill)?'按下 Tab 键填入以下参考示例：\n'+skillExampleParts(selectedSkill).map(part=>part.text).join(''):isMv?'描述 MV 创意，可直接粘贴歌词；纯音乐请在这里说明。':'说说想法，拖拽／粘贴素材，输入 @ 引用资料库。'}}</p>
+        <p v-if="!prompt.trim()" class="creation-placeholder">{{editorPlaceholder || (nodeEditor?(isMusic?'描述你想创作的音乐、氛围和乐器…':'描述你想创作的画面…'):skillExample(selectedSkill)?'按下 Tab 键填入以下参考示例：\n'+skillExampleParts(selectedSkill).map(part=>part.text).join(''):isMv?'描述 MV 创意，可直接粘贴歌词；纯音乐请在这里说明。':'说说想法，拖拽／粘贴素材，输入 @ 引用资料库。')}}</p>
       </div>
       <Teleport to="body"><div v-if="mentionOpen" :style="mentionStyle"><ReferenceMentionMenu ref="mentionMenu" :query="mentionQuery" :kind="mentionKind" :model="parameters.model" :allowed-media-types="selectedSkill?.media_types||['image','document']" :existing="references" @select="selectMention" @browse="mentionOpen=false;emit('assets')" @close="mentionOpen=false"/></div></Teleport>
       <div v-if="baseSkill === 'story'" class="creation-workflow"><button v-if="selectedSkill?.workflows.includes('direct')" :class="{ active: parameters.workflow === 'direct' }" @click="update({ workflow: 'direct' })"><UIcon name="i-lucide-zap" />直接生成</button><button v-if="selectedSkill?.workflows.includes('director')" :class="{ active: parameters.workflow === 'director' }" @click="update({ workflow: 'director' })"><UIcon name="i-lucide-clapperboard" />故事导演制作</button></div>
@@ -500,7 +540,7 @@ onBeforeUnmount(() => { window.removeEventListener('scroll',positionMention,true
       <!-- 单引擎也保留可聚焦按钮，自由创作可切回其他媒体。 -->
       </template>
       <!-- MV 使用服务端导演制作链，不把写歌引擎冒充其固定制作模型。 -->
-      <span v-if="nodeEditor&&controlsKind==='text'" class="creation-tool-label">Agent 对话</span>
+      <slot v-if="nodeEditor&&controlsKind==='text'" name="text-tools"><span class="creation-tool-label">Agent 对话</span></slot>
       <template v-else>
       <span v-if="(controlsOnly||nodeEditor)&&!showModelSelector" class="creation-tool-label" :title="parameters.model">{{models.find(item=>item.code===parameters.model)?.name||parameters.model||'模型待选择'}}</span>
       <UTooltip v-if="showModelSelector" :delay-duration="0" :content="{ side: 'top', align: 'center', sideOffset: 8, avoidCollisions: false }" :text="`模型：${isMusic?'音乐引擎':models.find(item=>item.code===parameters.model)?.name||'模型'}`"><button class="creation-tool creation-icon-tool" aria-label="选择模型" @click="open('model',$event)"><UIcon name="i-lucide-boxes"/><span class="creation-tool-label">{{isMusic?'音乐引擎':models.find(item=>item.code===parameters.model)?.name||parameters.model||(nodeEditor?'模型待核对':'模型')}}</span></button></UTooltip>
@@ -526,12 +566,38 @@ onBeforeUnmount(() => { window.removeEventListener('scroll',positionMention,true
     </footer>
     </template>
     <!-- 工具浮层统一复用 Nuxt UI 的锚定与外部点击关闭行为。 -->
-    <UPopover :open="!!popover" :reference="popoverAnchor" :content="{side:popover==='skill'?skillPopoverSide:'top',align:'start',sideOffset:8,collisionPadding:12,avoidCollisions:popover!=='skill'}" :ui="{content:'bg-transparent shadow-none ring-0 z-[200]'}" @update:open="value=>{if(!value)popover=''}"><template #content>
+    <UPopover :open="!!popover" :reference="popoverAnchor" :content="{side:popover==='skill'?skillPopoverSide:'top',align:'start',sideOffset:8,collisionPadding:12,avoidCollisions:true}" :ui="{content:'bg-transparent shadow-none ring-0 z-[200]'}" @update:open="value=>{if(!value)popover=''}"><template #content>
     <div v-if="popover" class="creation-popover" :class="{ 'is-wide': ['style', 'templates'].includes(popover), 'is-skills': popover === 'skill', 'is-mv-ratios': popover === 'parameters' && isMv, 'is-music-parameters': popover === 'parameters' && isMusic && !isMv, 'is-parameters': popover === 'parameters', 'is-models': popover === 'model', 'is-add-menu': popover === 'add' }" :style="{position:'relative',inset:'auto',width:popover==='parameters'?'min(var(--liv-creation-parameters-width), calc(100vw - 24px))':popover==='skill'?'min(var(--liv-skill-menu-width), calc(100vw - 24px))':popover==='model'?'min(320px, calc(100vw - 24px))':popover==='add'?'min(260px, calc(100vw - 24px))':['style','templates'].includes(popover)?'min(460px, calc(100vw - 24px))':'min(500px, calc(100vw - 24px))',height:popover==='skill'?`${skillPopoverHeight}px`:undefined,maxHeight:popover==='skill'?`${skillPopoverHeight}px`:'min(560px, 75dvh)',overflowY:popover==='skill'?'hidden':'auto',display:'flex',flexDirection:'column'}">
       <header v-if="!['parameters','skill'].includes(popover)"><b>{{ ({ add: '添加素材', model: '选择模型', style: '选择风格', templates: '创作模板' } as Record<string, string>)[popover] }}</b><button aria-label="关闭选项" @click="popover = ''"><UIcon name="i-lucide-x" /></button></header>
       <button v-else-if="popover==='parameters'" class="creation-parameter-close" aria-label="关闭创作参数" @click="popover = ''"><UIcon name="i-lucide-x" /></button>
       <template v-if="popover === 'add'"><button class="creation-menu-row" @click="fileInput?.click(); popover = ''"><UIcon name="i-lucide-upload" />上传文件</button><button class="creation-menu-row" @click="emit('assets'); popover = ''"><UIcon name="i-lucide-folder-open" />从资料库选择</button></template>
-<template v-else-if="popover === 'skill'"><div class="creation-filter creation-skill-tabs"><button :class="{active:skillScope==='all'}" @click="skillScope='all'">全部技能</button><button :class="{active:skillScope==='mine'}" @click="skillScope='mine'">我的</button></div><div class="creation-filter creation-skill-categories"><button v-for="name in skillCategories" :key="name" :class="{active:skillCategory===name}" @click="skillCategory=name">{{ name }}</button></div><div class="creation-skill-list" style="overflow-y:auto;min-height:0;flex:1"><button class="creation-skill-card" :class="{active:!skill || skill==='free'}" @click="emit('skill',catalog?.skills.some(item=>item.id==='free')?'free':'');popover=''"><img :src="catalog?.skills.find(item=>item.id==='free')?.cover || '/creation-presets/liv-creative-seed.png'" alt="自由创作"><span><b>自由创作</b><span>不限定技能，先聊聊你的想法</span></span></button><button v-if="showDigitalHumanSkill" class="creation-skill-card" @click="emit('tool','digital-human');popover=''"><img :src="digitalHumanToolSkill.cover" :alt="digitalHumanToolSkill.label"><span><b>{{digitalHumanToolSkill.label}}</b><span>{{digitalHumanToolSkill.description}}</span></span></button><button v-for="item in visibleSkills.filter(item=>item.id!=='free')" :key="item.id" class="creation-skill-card" :class="{active:item.id===skill}" @click="chooseSkill(item)"><img v-if="item.cover" :src="item.cover" :alt="item.label"><span><b>{{ item.label }}</b><span>{{ item.description }}</span></span><UIcon v-if="item.id===skill" name="i-lucide-check" /></button><p v-if="!visibleSkills.length&&!showDigitalHumanSkill">没有符合条件的技能。</p></div><NuxtLink to="/dashboard-skills" class="creation-pill" style="flex-shrink:0;margin:12px 0 0 auto;width:fit-content">＋ 创建技能</NuxtLink></template>
+<template v-else-if="popover === 'skill'">
+  <div class="creation-filter creation-skill-tabs">
+    <button :class="{active:skillScope==='all'}" @click="setSkillScope('all')">全部技能</button>
+    <button :class="{active:skillScope==='mine'}" @click="setSkillScope('mine')">我的</button>
+  </div>
+  <div class="creation-skill-category-control" :class="{'has-left':skillCategoryCanScrollLeft,'has-right':skillCategoryCanScrollRight}">
+    <button v-if="skillCategoryCanScrollLeft" type="button" class="creation-skill-category-arrow is-left" aria-label="向左查看技能分类" @click="scrollSkillCategories('left')"><UIcon name="i-lucide-chevron-left"/></button>
+    <div ref="skillCategoryRail" role="tablist" aria-label="技能分类" class="creation-filter creation-skill-categories" @scroll.passive="updateSkillCategoryOverflow">
+      <button v-for="name in skillCategories" :key="name" type="button" role="tab" :aria-selected="skillCategory===name" :class="{active:skillCategory===name}" @click="skillCategory=name">{{ name }}</button>
+    </div>
+    <button v-if="skillCategoryCanScrollRight" type="button" class="creation-skill-category-arrow is-right" aria-label="向右查看技能分类" @click="scrollSkillCategories('right')"><UIcon name="i-lucide-chevron-right"/></button>
+  </div>
+  <div class="creation-skill-list" style="overflow-y:auto;min-height:0;flex:1">
+    <!-- 勾选标志只反映当前技能，菜单打开或切换分类不会修改选择。 -->
+    <button class="creation-skill-card" :class="{active:!skill || skill==='free'}" :aria-pressed="!skill || skill==='free'" @click="emit('skill',catalog?.skills.some(item=>item.id==='free')?'free':'');popover=''">
+      <img :src="catalog?.skills.find(item=>item.id==='free')?.cover || '/creation-presets/liv-creative-seed.png'" alt="自由创作"><span><b>自由创作</b><span>不限定技能，先聊聊你的想法</span></span><UIcon v-if="!skill || skill==='free'" name="i-lucide-check" aria-hidden="true" />
+    </button>
+    <button v-if="showDigitalHumanSkill" class="creation-skill-card" @click="emit('tool','digital-human');popover=''">
+      <img :src="digitalHumanToolSkill.cover" :alt="digitalHumanToolSkill.label"><span><b>{{digitalHumanToolSkill.label}}</b><span>{{digitalHumanToolSkill.description}}</span></span>
+    </button>
+    <button v-for="item in visibleSkills.filter(item=>item.id!=='free')" :key="item.id" class="creation-skill-card" :class="{active:item.id===skill}" :aria-pressed="item.id===skill" @click="chooseSkill(item)">
+      <img v-if="item.cover" :src="item.cover" :alt="item.label"><span><b>{{ item.label }}</b><span>{{ item.description }}</span></span><UIcon v-if="item.id===skill" name="i-lucide-check" aria-hidden="true" />
+    </button>
+    <p v-if="!visibleSkills.length&&!showDigitalHumanSkill">没有符合条件的技能。</p>
+  </div>
+  <NuxtLink to="/dashboard-skills" class="creation-pill" style="flex-shrink:0;margin:12px 0 0 auto;width:fit-content">＋ 创建技能</NuxtLink>
+</template>
       <template v-else-if="popover === 'model'">
         <div class="creation-filter creation-model-tabs" role="tablist" aria-label="模型分类"><button v-for="section in modelSections" :key="section.kind" role="tab" :class="{active:modelKind===section.kind}" :aria-selected="modelKind===section.kind" :disabled="!modelGroups.some(group=>group.kind===section.kind)" @click="scrollModelGroup(section.kind)"><UIcon :name="section.icon"/>{{section.label}}</button></div>
         <div ref="modelListRoot" class="creation-model-list" @scroll.passive="syncModelGroup">
@@ -588,16 +654,16 @@ onBeforeUnmount(() => { window.removeEventListener('scroll',positionMention,true
 .creation-popover.is-skills .creation-skill-tabs button{font-size:16px!important;font-weight:600!important;line-height:24px;min-height:28px;padding:0!important;border:0!important;border-radius:0!important;background:transparent!important;color:var(--liv-settings-muted)}
 .creation-popover.is-skills .creation-skill-tabs button.active{color:var(--liv-chat-assistant-text)}
 .creation-popover.is-skills .creation-skill-categories{gap:8px;margin:0!important}
-.creation-popover.is-skills .creation-skill-categories button{min-height:28px;padding:4px 8px!important;font-size:12px!important}
+.creation-popover.is-skills .creation-skill-categories button{display:flex;align-items:center;height:28px;min-height:28px;padding:4px 8px!important;font-size:12px!important;line-height:18px}
 .creation-popover.is-skills .creation-skill-list{margin:0;display:flex;flex-direction:column;gap:4px}
 .creation-popover.is-skills .creation-skill-card{display:grid!important;grid-template-columns:48px minmax(0,1fr) 16px;column-gap:12px;padding:8px 10px!important;min-height:64px;text-align:left}
 .creation-popover.is-skills .creation-skill-card>img{width:48px;height:48px;border-radius:8px;object-fit:cover}
-.creation-popover.is-skills .creation-skill-card>span{gap:4px}
+.creation-popover.is-skills .creation-skill-card>span{grid-column:2;gap:4px}
 .creation-popover.is-skills .creation-skill-card>.iconify{grid-column:3;justify-self:center;width:16px;height:16px}
 .creation-skill-card>span{display:flex;flex-direction:column;gap:8px;min-width:0}
 .creation-skill-card>span>b{font-size:14px;font-weight:600}
 .creation-skill-card>span>span{font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--liv-settings-muted)}
-.creation-popover.is-skills{box-sizing:border-box;display:grid!important;grid-template-rows:28px 28px minmax(0,1fr) 40px;gap:8px;padding:16px;overflow:hidden!important}
+.creation-popover.is-skills{box-sizing:border-box;display:grid!important;grid-template-rows:28px 28px minmax(0,1fr) 40px;gap:8px;padding:16px;border-radius:var(--liv-skill-menu-radius);overflow:hidden!important}
 .creation-popover.is-skills .creation-skill-list{height:100%;overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable}
 .creation-popover.is-skills .creation-skill-card{height:var(--liv-skill-menu-row-height);min-height:var(--liv-skill-menu-row-height);flex-shrink:0}
 .creation-popover.is-skills>.creation-pill{margin:0!important;align-self:end;justify-self:end;height:40px;display:flex;align-items:center}

@@ -40,8 +40,11 @@ export default defineComponent({
         class: ['liv-select', attrs.class],
         items,
         multiple: props.multiple,
+        // 浮层沿用 Reka 的键盘与避让能力；传送到 body 后仍应用同一主题。
+        color: 'neutral',
+        content: { sideOffset: 6, collisionPadding: 12, ...((attrs.content as Record<string, unknown>) || {}) },
         modelValue: props.multiple ? (Array.isArray(current) ? current.map(value => String(value) || emptyKey) : []) : String(current) || emptyKey,
-        ui: { base: 'liv-select-trigger', content: 'liv-select-content', item: 'liv-select-item' },
+        ui: { base: 'liv-select-trigger', content: 'liv-select-content', viewport: 'liv-select-viewport', item: 'liv-select-item', itemLabel: 'truncate' },
         'onUpdate:modelValue': (key: unknown) => {
           if (props.multiple) {
             const keys = Array.isArray(key) ? key : []

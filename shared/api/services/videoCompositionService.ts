@@ -1,4 +1,11 @@
 import {request} from '~/shared/api/adapters/httpAdapter'
+import type {LibraryReference} from '~/entities/library/types'
+
+/** 用户明确选择的独立旁白/BGM；不携带URL，不触发音频生成。 */
+export interface CompositionAudioTrack {
+  id:string;role:'narration'|'bgm';reference:LibraryReference
+  trim_start_ms:number;trim_end_ms:number;start_ms:number;volume:number
+}
 
 /** 一个成片的片段清单，不把片段数量当独立成片数量。 */
 export interface CompositionClip {
@@ -8,6 +15,7 @@ export interface CompositionClip {
 export interface CompositionPlan {
   schema_version:1;revision:number;clips:CompositionClip[]
   output:{width:number;height:number;fps:25;fit:'contain';transition:'cut'}
+  audio_tracks?:CompositionAudioTrack[]
 }
 export interface CompositionJob {
   id:string;status:'queued'|'rendering'|'succeeded'|'failed';attempt:number;plan:CompositionPlan

@@ -2,6 +2,7 @@
 // 积分不足仅打开全站充值弹窗，不丢失当前报价与草稿。
 const billingDialog=useBillingDialog()
 import {groupConversation} from '../conversationRows'
+import CreationProcessEvents from './CreationProcessEvents.vue'
 import {userBubbleText} from '../userBubbleText'
 import {videoQuoteSummary} from '../videoQuoteSummary'
 import {canvasParentImage} from '../canvasToolLineage'
@@ -806,9 +807,11 @@ async function favoriteGraphNode(){const source=graphToolNode.value?.data.source
 async function retryGraphPlanning(node:CreativeNode){
   if(busy.value||planningBusy.value||graphPreparing.value||stoppingAssistant.value||planning.value?.status==='planning'||!requireLogin())return
   if(node.data.phase!=='planning'||node.data.itemId||!node.data.runId||!['failed','cancelled'].includes(node.data.status)||uploads.value.length)return
-  const sid=session.value?.id,owner=draftOwner.value,scope=assistantEpoch,stamp=JSON.stringify(draft())
+  // 本轮沿用的素材与技能边界不包含在 draft() 内，重整准备和确认期间同样需要防止被覆盖。
+  const retryDraftStamp=()=>JSON.stringify([draft(),roundReferences.value,explicitSkillBoundary.value])
+  const sid=session.value?.id,owner=draftOwner.value,scope=assistantEpoch,stamp=retryDraftStamp()
   const current=()=>sid===session.value?.id&&owner===draftOwner.value&&scope===assistantEpoch
-  const unchanged=()=>current()&&stamp===JSON.stringify(draft())
+  const unchanged=()=>current()&&stamp===retryDraftStamp()
   const requestId=crypto.randomUUID()
   graphPreparing.value=true
   let started:CreationRun|undefined,adopted=false
@@ -828,7 +831,7 @@ async function retryGraphPlanning(node:CreativeNode){
       prepared.push({...reference,name:item.name,media_type:item.media_type,preview_url:libraryService.previewUrl(version.preview_url)})
     }
     if(!unchanged())throw new Error('准备期间输入已变化，未覆盖当前草稿。')
-    if((prompt.value.trim()||references.value.length)&&!await confirmHomeAction('将恢复原节点的技能、规格与素材继续整理，并替换当前未发送的输入。已有作品不受影响，生成仍需重新确认。是否继续？','按原技能重新整理'))return
+    if((prompt.value.trim()||references.value.length||roundReferences.value.length)&&!await confirmHomeAction('将恢复原节点的技能、规格与素材继续整理，并替换当前未发送的输入。已有作品不受影响，生成仍需重新确认。是否继续？','按原技能重新整理'))return
     if(!unchanged()){if(current())error.value='确认期间输入已变化，未覆盖当前草稿。';return}
     // 创建响应未知时只GET原请求，不自动重发POST，也不回退到自由技能执行器。
     try{started=await creationService.retryPlanning(source.id,requestId,source.calls)}
@@ -857,7 +860,9 @@ async function retryGraphPlanning(node:CreativeNode){
 }
 async function generateGraphNode(node:CreativeNode,inputs:CreativeNode[]){
   if(busy.value||planningBusy.value||graphPreparing.value)return
-  const sid=session.value?.id,owner=draftOwner.value,stamp=JSON.stringify(draft())
+  // 草稿之外的本轮引用与边界也参与防覆盖，异步准备期间变化时不能替换新状态。
+  const currentGraphDraft=()=>JSON.stringify([draft(),roundReferences.value,explicitSkillBoundary.value])
+  const sid=session.value?.id,owner=draftOwner.value,stamp=currentGraphDraft()
   const prepared:ComposerReference[]=[]
   graphPreparing.value=true
   try{
@@ -895,15 +900,19 @@ async function generateGraphNode(node:CreativeNode,inputs:CreativeNode[]){
       }else throw new Error('此来源尚未支持直接引用，请从资料库添加固定素材。')
     }
     if(sid!==session.value?.id||owner!==draftOwner.value)return
-    if(stamp!==JSON.stringify(draft()))throw new Error('准备素材期间创作草稿已变化，未替换当前输入，请重新提交。')
+    if(stamp!==currentGraphDraft())throw new Error('准备素材期间创作草稿已变化，未替换当前输入，请重新提交。')
     if(node.data.parameters&&['image','video'].includes(node.data.kind)){
       const problem=nodeParameterError(node.data.parameters,node.data.kind==='video'?'video':'image',catalog.value,prepared)
       if(problem)throw new Error(problem+'，未提交生成。')
     }
-    if(prompt.value.trim()&&!await confirmHomeAction('将用当前节点内容替换未发送的输入框草稿，是否继续？','从画布整理需求'))return
+    // 空正文也可能有待发送素材；替换前须确认，取消时保留原引用。
+    if((prompt.value.trim()||references.value.length||roundReferences.value.length)&&!await confirmHomeAction('将用当前节点内容替换未发送的输入框草稿和素材，是否继续？','从画布整理需求'))return
     if(sid!==session.value?.id||owner!==draftOwner.value)return
-    if(stamp!==JSON.stringify(draft()))throw new Error('确认期间创作草稿已变化，未替换当前输入，请重新提交。')
+    if(stamp!==currentGraphDraft())throw new Error('确认期间创作草稿已变化，未替换当前输入，请重新提交。')
     const text=[...inputs.filter(value=>value.data.kind==='text'&&!value.data.reference).map(value=>value.data.prompt),node.data.prompt].filter(Boolean).join('\n\n')
+    // 此段只同步收敛参数；失败时恢复原稿，绝不恢复可能已经失效的费用确认。
+    const previousGraphDraft={skill:skill.value,parameters:parameters.value,references:references.value,roundReferences:roundReferences.value,boundary:explicitSkillBoundary.value}
+    try{
     // 手动节点不沿用上一轮多条数量、技能边界和费用授权，规格仍遵守当前真实模型能力。
     setSkill('free')
     // 同一固定版本可能同时从作品节点和资料库节点连入；同用途同片段只提交一次。
@@ -918,6 +927,12 @@ async function generateGraphNode(node:CreativeNode,inputs:CreativeNode[]){
       const keys:Array<keyof CreativeNodeParameters>=['model','aspectRatio','resolution','style','styleId',...(node.data.kind==='video'?['durationSec' as const]:['quality' as const])]
       // 清晰度显示大小写归一不算改规格；其他字段仍严格比较，真正换模型/降档/改时长继续拒绝。
       if(keys.some(key=>key==='resolution'?String(expected[key]||'').toLowerCase()!==String(parameters.value[key]||'').toLowerCase():expected[key]!==parameters.value[key]))throw new Error('节点规格与平台当前配置冲突，未提交生成，请重新核对。')
+    }
+    }catch(cause){
+      skill.value=previousGraphDraft.skill;parameters.value=previousGraphDraft.parameters;references.value=previousGraphDraft.references;roundReferences.value=previousGraphDraft.roundReferences;explicitSkillBoundary.value=previousGraphDraft.boundary
+      // 原报价可能已被能力收敛影响，要求重新核价，避免回滚时重新授权。
+      confirmation.value=null
+      throw cause
     }
     // 文本交给只回复链路；图片/视频仍需完整策划、真实核价和显式确认。
     setText(text,[{type:'text',text}]);await planDemand({mode:node.data.kind==='text'?'chat':'skill'})
@@ -2317,6 +2332,7 @@ watch(()=>[route.query.run,catalog.value] as const,async ([id,directory])=>{
   <div class="liv-user-message"><CreationRunAttachments :run="row.run" @preview="attachmentPreview=$event"/><p>{{userBubbleText(row.run.draft.original_prompt || row.run.draft.prompt)}}</p></div>
   <section class="liv-assistant-message">
     <header><img src="/creation-presets/liv-creative-seed.png" alt=""><strong>Liv 创作助手</strong><CreationRunTime :run="row.run"/></header>
+    <CreationProcessEvents :events="row.run.flow_runtime?.events||[]"/>
     <CreationFlowRecovery :key="`${row.run.id}:${auth.session.user?.id}`" :run="row.run" :busy="planningBusy||busy" @updated="updateRecoveredFlow"/>
     <p v-if="row.run.status==='cancelled'" class="liv-proposal-stopped" role="status">已为你停止本次待确认的生成任务，请问是否还有其他需求。</p>
     <!-- 历史批次仍读取真实结果并保留局部重试/合成入口，但不能改写已提交快照。 -->
@@ -2332,6 +2348,7 @@ watch(()=>[route.query.run,catalog.value] as const,async ([id,directory])=>{
   </section>
 </article>
 <section v-if="row.active && planning" class="creation-assistant-card" aria-label="Liv 创作助手"><div class="liv-user-message"><CreationRunAttachments :run="planning" @preview="attachmentPreview=$event"/><p>{{userBubbleText(planning.draft.original_prompt || planning.draft.prompt)}}</p></div><header><img class="liv-assistant-avatar" src="/creation-presets/liv-creative-seed.png" alt=""><b>Liv 创作助手</b><CreationRunTime :run="planning"/></header>
+  <CreationProcessEvents :events="planning.flow_runtime?.events||[]"/>
   <CreationFlowRecovery :key="`${planning.id}:${auth.session.user?.id}`" :run="planning" :busy="planningBusy||busy" @updated="updateRecoveredFlow"/>
   <!-- 只有服务端已取消才显示停止反馈；历史草稿与已有媒体任务均保留。 -->
   <p v-if="planning.status==='cancelled'" class="liv-proposal-stopped" role="status">已为你停止本次待确认的生成任务，请问是否还有其他需求。</p>
@@ -2506,6 +2523,8 @@ watch(()=>[route.query.run,catalog.value] as const,async ([id,directory])=>{
 
 /* 聊天元素不再继承导演表单的布局和颜色。 */
 .creation-studio .creation-chat-column{background:var(--liv-workspace-surface)}
+/* 对话输入区与悬浮对话使用同一背景，避免桌面和手机出现拼色。 */
+.creation-studio .creation-chat-column .creation-composer.is-compact{background:var(--liv-workspace-surface)}
 .creation-studio .creation-chat-history .liv-user-message{display:block;flex:none;height:auto;min-height:0;align-self:flex-end;color:var(--liv-chat-assistant-text)}
 /* 追问中的用户消息可能嵌在助手容器内，清除助手正文缩进，短气泡按文字自然收紧。 */
 .creation-studio .creation-chat-history .liv-user-message p{padding:0;text-indent:0;text-align:left;color:inherit;line-height:1.7;white-space:pre-wrap}

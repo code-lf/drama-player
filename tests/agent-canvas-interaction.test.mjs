@@ -539,6 +539,37 @@ test('请求已被服务端接收但响应丢失时，刷新采用相同布局�
   ui.app.unmount()
 })
 
+test('保存响应丢失后读取已提交修订，其他页面再修改则保留本地并提示冲突',async()=>{
+  for(const otherPageChanged of [false,true]){
+    storage.clear();let revision=0,remote=null,puts=0
+    const requestHandler=async(_url,options)=>{
+      if(options?.method==='PUT'){
+        puts++;assert.equal(options.body.revision,0)
+        remote=structuredClone(options.body.content);revision=1
+        throw new Error('模拟保存响应丢失')
+      }
+      return {revision,content:remote}
+    }
+    const first=mount({requestHandler});await tick();await first.create('文本')
+    first.find(el=>el.type==='textarea').props.onInput('本机草稿');await tick();await first.click('保存节点提示词')
+    await new Promise(resolve=>setTimeout(resolve,700));await tick()
+    assert.equal(puts,1);assert.ok(first.find(el=>el.props.role==='alert'))
+    first.app.unmount()
+    if(otherPageChanged){remote.drafts[0].prompt='另一页面已保存';revision=2}
+    const restored=mount({requestHandler});await tick()
+    assert.equal(puts,1);assert.equal(restored.events.length,0)
+    if(otherPageChanged){
+      assert.ok(restored.find(el=>el.type==='button'&&restored.text(el)==='保留本机画布'))
+      const backup=JSON.parse(storage.get('liv-creative-canvas-v1:owner-test:session-test'))
+      assert.equal(backup.layout.drafts[0].prompt,'本机草稿')
+    }else{
+      assert.ok(!restored.find(el=>el.type==='button'&&restored.text(el)==='保留本机画布'))
+      assert.equal(restored.flow.getNodes.value[0].data.prompt,'本机草稿')
+    }
+    restored.app.unmount();storage.clear()
+  }
+})
+
 test('恢复只读，创建文本节点可编辑保存，刷新恢复同一草案',async()=>{
   storage.clear();const ui=mount();await tick()
   assert.equal(ui.calls.length,1);assert.equal(ui.calls[0].options,undefined)

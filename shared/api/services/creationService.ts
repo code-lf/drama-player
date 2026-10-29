@@ -4,7 +4,7 @@ import { request, buildProductImagePayload, buildProductVideoPayload, mapProduct
 export interface CreationRun { response_phase?:'queued'|'thinking'|'responding'; requires_manual_confirmation?: boolean; reference_previews?: Record<string, import('~/features/creation/types').WorkspacePreview>; /** 真实原文读取来源；不携带正文、签名地址或费用许可。 */ document_reads?:Array<{item_id:string;version_id:string;name:string;version_no:number;start:number;end:number;chars:number}> }
 /** 根图只公开阶段和待恢复命令身份，不将服务器执行参数或许可交给客户端重建。 */
 export type FlowAction='plan'|'edit'|'quote'|'prepare'|'confirm'|'materialize'|'compose'|'retry_composition'
-export interface CreationRun {flow_runtime?:{engine:'langgraph';version:string;skill_version:number;phase:string;sequence:number;pending_command?:{action:FlowAction;request_id:string}}}
+export interface CreationRun {flow_runtime?:{engine:'langgraph';version:string;skill_version:number;phase:string;sequence:number;events?:import('~/features/creation/processEvents').ProcessEvent[];pending_command?:{action:FlowAction;request_id:string}}}
 import type { ProductImageGeneratePayload } from '~/entities/product-image/types'
 import type { ProductVideoCreatePayload } from '~/entities/product-video/types'
 import type { MusicQuote, MusicTask } from '~/shared/api/services/musicService'
@@ -122,7 +122,8 @@ export const creationService = {
   attachMv: (project: string, run_id: string) => request(`/creation/mv/projects/${project}/attach`,{method:'POST',body:{run_id}}),
   // MV 来源导入只接收音频地址，不伪造用户授权勾选；服务端仍验证下载安全与真实媒体。
   importAudio: (url: string) => request<import('~/entities/library/types').LibraryItem>('/creation/mv/audio-import',{method:'POST',body:{url}}),
-  catalog: (entry: CreationEntryType) => request<CreationCatalog>('/creation/catalog', { query: { entry } }),
+  // 本人试用会话需要载入冻结技能；普通目录不携带或公开试用配置。
+  catalog: (entry: CreationEntryType, session_id?:string) => request<CreationCatalog>('/creation/catalog', { query: { entry, ...(session_id?{session_id}:{}) } }),
   publicCatalog: (entry: CreationEntryType) => request<CreationCatalog>('/creation/public-catalog', {query:{entry}}),
   // 免费编译配方，返回真实素材校验后的提示词和固定版本；不创建生成任务。
   directorFile: (draft:CreationDraft,file:File) => {

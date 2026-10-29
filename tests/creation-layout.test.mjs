@@ -14,7 +14,8 @@ test('首页启动使用专属骨架，侧栏恢复工作台且会话首页不�
   assert.match(skeleton,/class="creation-home"/)
   assert.match(skeleton,/home-skeleton-composer\{height:clamp\(190px,30cqi,240px\)/)
   assert.match(sidebar,/<span>Liv 工作台<\/span>/)
-  assert.match(read('features/creation/components/SessionWorkspaceNav.vue'),/label:'首页'/)
+  assert.match(read('features/creation/components/SessionWorkspaceNav.vue'),/workspaceNavigationItems.map/)
+  assert.match(read('features/creation/workspaceNavigation.ts'),/label:'首页'/)
 })
 test('案例按用途切换，桌面五列且横向16:9', () => {
   assert.match(studio, /creationCaseService.list\(entry.value\)/)
@@ -32,11 +33,11 @@ test('成片播放器只在点击案例后挂载，仅预读元数据', () => {
   assert.match(viewer, /<audio[^>]*preload="metadata"/)
   assert.match(viewer, /复刻同款/)
 })
-test('侧栏每页十条，更多原地加载，会话切换可恢复', () => {
+test('侧栏每页八条，更多原地加载，会话切换可恢复', () => {
   assert.match(sidebar, /recentSessionLimit = ref\(SESSION_PAGE_SIZE\)/)
   assert.match(sidebar, /recentProjects\.value\.slice\(0, recentSessionLimit.value\)/)
-  assert.match(sidebar, /v-if="hasMoreSessions && listFilled"/)
-  assert.match(sidebar, /@click="loadMoreSessions">更多/)
+  assert.match(sidebar, /v-if="hasMoreSessions"/)
+  assert.match(sidebar, /@click="loadMoreSessions">显示更多/)
   assert.doesNotMatch(sidebar, /to="\/dashboard-projects" class="creation-sidebar-more"/)
   assert.match(sidebar, /creation-sidebar-divider/)
   assert.match(read('features/creation/useCreationWorkspace.ts'), /watch\(\(\) => route.query.session/)

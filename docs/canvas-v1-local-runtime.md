@@ -1,6 +1,21 @@
 # 第一版普通创作画布：本地启动与恢复边界
 
-## 2026-10-27 当前临时验收状态
+## 2026-10-29 当前启动修正
+
+- 实查发现仅通用、storyboard、render在线，普通创作的composition、batch-video、batch-image没有消费者。旧文中的健康快照不能沿用。
+- 已在本机统一启动脚本 `.codex-runtime/start-local-services.ps1` 加入现有 `run_creation_worker.ps1` 的三个专用消费者，保留短剧原队列，不启动整套Beat。启动前按Kombu全部优先级物理队列核对：三个队列积压均为0。
+- 加载音轨代码后重启API；重新执行后端 `scripts/check_creation_runtime.py`：API、checkpoint、Redis均正常，四个普通创作队列各1个完整注册的消费者，整体退出0。仍需登录真实页面验证，不等同链路验收通过。
+- 手动启动需分别运行 `pwsh -NoProfile -File scripts/run_creation_worker.ps1 -Queue composition`、`-Queue batch-video`、`-Queue batch-image`（后端目录）。不得用 `render` 的ping代替合成队列检查；已有进程由脚本去重。
+- 周期恢复仍未启用，后续应以专用白名单恢复调度验证，不能为收尾开启包含其他周期业务的整套Beat。
+
+## 2026-10-28 本次只读健康快照
+
+- 后续复核通过模块方式运行 `python -m scripts.inspect_local_image_queue`，`batch-image` 待消费及未确认均为0；随后启动该专用消费者并重新运行健康检查，四个队列均有1个注册完整的消费者，整体退出0。该结果仅为当次快照；未启用Beat，未验证周期恢复。
+- 最新更正：检查补上真实 `batch-image` 消费队列及 `batch-video` 生成任务注册后，本次 API、checkpoint、Redis、其他三个队列正常，但 `batch-image` 为0个消费者，整体检查退出1。之前仅三个队列的快照不能证明图片批次就绪。没有启动该消费者，也没有补投真实任务。
+- 本次运行 `check_creation_runtime.py` 退出0：API、PostgreSQL checkpoint、Redis 正常，`celery`、`composition`、`batch-video` 各有1个注册所需任务的消费者。检查不启动服务或消费任务；此结果是当次快照，不能证明周期调度已启用或真实业务恢复完成。
+- 下列2026-10-27记录为历史过程，不作为当前启动状态；最终验收时需重新运行只读检查，并核对实际页面。
+
+## 2026-10-27 历史临时验收记录
 
 - 本轮再次按实时监听确认3000/8000缺失后补启：用户端当前为`preview-local.mjs`本机构建包，API沿用`run_api.ps1`。三个Kombu实际优先级队列积压均为0后补启原三个Worker；最新`check_creation_runtime.py`退出0，API/checkpoint/Redis正常，每队列各1个注册完整的消费者。未运行Beat、未创建采购。构建包后续源码更新仍需重新构建并重启，不能把它当热更新。
 
@@ -37,11 +52,13 @@ pwsh -NoProfile -File scripts/run_api.ps1
 pwsh -NoProfile -File scripts/run_worker.ps1
 pwsh -NoProfile -File scripts/run_creation_worker.ps1 -Queue composition
 pwsh -NoProfile -File scripts/run_creation_worker.ps1 -Queue batch-video
+pwsh -NoProfile -File scripts/run_creation_worker.ps1 -Queue batch-image
 ```
 
 - `celery`：原通用生成与图片恢复任务，使用原授权和执行锁。
 - `composition`：普通短片免费后期，与短剧render隔离，单并发。
 - `batch-video`：已有视频批次补派发/结果对账，单并发；不接受新的采购许可。
+- `batch-image`：仅消费已授权图片计划子任务；启动前必须检查实际队列和未确认消息，启动会执行已有积压，不能当作纯健康检查。
 - 短剧storyboard/render不因本画布验收改变；管理端5666也保留原启动方式。
 
 ## 只读验收
@@ -52,14 +69,16 @@ API仓执行：
 .venv/Scripts/python.exe scripts/check_creation_runtime.py
 ```
 
-退出0要求API业务健康、PostgreSQL checkpoint、Redis和三个队列均正常；消费者必须同时监听队列并注册任务，不以ping或进程存在代替。输出不含数据库/Redis连接、用户身份或消息内容。该命令不调用模型，不恢复图，不派发任务。
+退出0要求API业务健康、PostgreSQL checkpoint、Redis和四个队列均正常；消费者必须同时监听队列并注册所需实际任务，不以ping或进程存在代替。输出不含数据库/Redis连接、用户身份或消息内容。该命令不调用模型，不恢复图，不派发任务。
 
 仍须另做浏览器验证：打开已有会话，恢复真实消息和节点，旧作品能播放，刷新不产生新任务。健康报告不是UI验收。
 
 ## 恢复与安全限制
 
 - 单纯启动Worker只消费已存在队列消息，**不等于已经启用周期恢复**。队列外的事务待派发记录仍依赖已有恢复任务被显式调度。
-- 本地没有为本验收启动整套Beat；其中还包含其他周期业务，不得为恢复合成而一并启动。要验周期恢复，须单独核定只包含普通创作恢复任务的调度配置及其授权边界，当前仍是交付待验项。
+- 本地没有为本验收启动整套Beat；其中还包含其他周期业务，不得为恢复合成而一并启动。新增 `app.tasks.creation_recovery_beat.celery_app` 白名单入口，只含短片合成、图片批次、视频批次恢复；专用调度器禁止追加框架默认任务，隔离临时调度文件验证旧非白名单条目会移除。隔离测试3项通过，但**尚未启动或完成真实周期恢复验收**。
+- 只有在明确需要恢复已有任务、检查相关队列及待派发记录，并确认同一环境没有任何完整Beat或其他创作Beat运行后，才可在API项目目录单独启动：`.venv/Scripts/celery.exe -A app.tasks.creation_recovery_beat.celery_app beat -l info -s logs/beat/creation-recovery-schedule`。确保 `logs/beat` 已存在；同环境仅允许一个调度器，跨主机也要检查，不能只看本机进程。停止调度器不会取消已派发任务。
+- 图片/视频恢复可能补派已获得授权但尚未执行的真实任务，并非无副作用的只读检查；状态未知仍须对账，不可重购。不得用健康检查或页面刷新替代上述启动前核对。
 - 已受理未知任务只核对原任务与费用，不因查询404、超时或Worker重启重新采购；不得手工改成成功/失败以通过验收。
 - 关闭新入口不删除旧运行；引擎、图与技能版本保持固定。网页读取、保存、重新连接均不恢复采购授权。
 - 当前`.env`和进程临时开关不作为公开发布配置；开启收费批次或技能白名单须完成对应验收并另行批准发布。

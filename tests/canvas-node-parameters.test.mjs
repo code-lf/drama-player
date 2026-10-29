@@ -100,12 +100,38 @@ test('真实目录预检与提交复核阻止非法时长和共享输入器暗�
   assert.match(nodeParameterError({...parameters,resolution:'1080p'},'video',catalog),/清晰度/)
   for(const outcome of ['valid','invalid','normalized','case-normalized']){
     const state={busy:{value:false},planningBusy:{value:false},graphPreparing:{value:false},session:{value:{id:'session'}},draftOwner:{value:'owner'},prompt:{value:''},references:{value:[]},roundReferences:{value:[]},explicitSkillBoundary:{value:false},parameters:{value:{extra:{}}},error:{value:''},requests:[]}
-    const fixture={...state,catalog:{value:catalog},nodeParameterError,draft:()=>({prompt:''}),libraryService:{},setSkill:()=>{},setText:()=>{},confirmHomeAction:async()=>true,patchParameters:patch=>{state.parameters.value={...state.parameters.value,...patch};if(outcome==='normalized')state.parameters.value.durationSec=10;if(outcome==='case-normalized')state.parameters.value.resolution='480p'},planDemand:async options=>state.requests.push(options)}
+    const oldReference={version_id:'old'},oldParameters=state.parameters.value
+    state.references.value=[oldReference];state.roundReferences.value=[oldReference]
+    const fixture={...state,catalog:{value:catalog},nodeParameterError,skill:{value:'old-skill'},confirmation:{value:{id:'old-quote'}},draft:()=>({prompt:''}),libraryService:{},setText:()=>{},confirmHomeAction:async()=>true,patchParameters:patch=>{state.parameters.value={...state.parameters.value,...patch};if(outcome==='normalized')state.parameters.value.durationSec=10;if(outcome==='case-normalized')state.parameters.value.resolution='480p'},planDemand:async options=>state.requests.push(options)}
+    fixture.setSkill=()=>{fixture.skill.value='free';fixture.confirmation.value=null}
     const fn=new Function('fixture',`const {${Object.keys(fixture).join(',')}}=fixture;${submit};return generateGraphNode`)(fixture)
     await fn({id:'draft:video',data:{kind:'video',prompt:'真实商品广告需求',parameters:{...parameters,resolution:outcome==='case-normalized'?'480P':'480p',durationSec:outcome==='invalid'?8:6}}},[])
     assert.equal(state.requests.length,['valid','case-normalized'].includes(outcome)?1:0)
     if(outcome==='invalid')assert.ok(state.error.value.includes('时长'))
-    if(outcome==='normalized')assert.ok(state.error.value.includes('配置冲突'))
+    if(outcome==='normalized'){
+      assert.ok(state.error.value.includes('配置冲突'))
+      assert.equal(fixture.skill.value,'old-skill');assert.equal(state.parameters.value,oldParameters)
+      assert.deepEqual(state.references.value,[oldReference]);assert.deepEqual(state.roundReferences.value,[oldReference])
+      assert.equal(state.explicitSkillBoundary.value,false);assert.equal(fixture.confirmation.value,null)
+    }
     assert.equal(state.graphPreparing.value,false)
   }
+})
+
+test('图片质量被共享输入器更改时回滚原草稿且不恢复报价',async()=>{
+  const studio=readFileSync('features/creation/components/CreationStudio.vue','utf8')
+  const raw=studio.match(/async function generateGraphNode\([\s\S]*?(?=\n\/\*\*|\nasync function |\nfunction |\nconst )/)[0]
+  const submit=ts.transpileModule(raw,{compilerOptions:{target:ts.ScriptTarget.ESNext}}).outputText
+  const oldReference={version_id:'old'},oldParameters={model:'old-model',extra:{original:true}}
+  const state={busy:{value:false},planningBusy:{value:false},graphPreparing:{value:false},session:{value:{id:'s'}},draftOwner:{value:'owner'},prompt:{value:'原稿'},references:{value:[oldReference]},roundReferences:{value:[oldReference]},explicitSkillBoundary:{value:false},parameters:{value:oldParameters},error:{value:''},requests:[],texts:[]}
+  // 仅模拟预检已通过之后的能力收敛；不把本测试当成真实图片模型目录验收。
+  const fixture={...state,catalog:{value:{}},nodeParameterError:()=>'',skill:{value:'old-skill'},confirmation:{value:{id:'old-quote'}},draft:()=>({prompt:state.prompt.value}),confirmHomeAction:async()=>true,setText:text=>state.texts.push(text),patchParameters:patch=>{state.parameters.value={...state.parameters.value,...patch,quality:'high'}},planDemand:async value=>state.requests.push(value)}
+  fixture.setSkill=()=>{fixture.skill.value='free';fixture.confirmation.value=null}
+  const fn=new Function('fixture',`const {${Object.keys(fixture).join(',')}}=fixture;${submit};return generateGraphNode`)(fixture)
+  await fn({id:'image',data:{kind:'image',prompt:'商品图',parameters:{...parameters,model:'image-model',quality:'low'}}},[])
+  assert.match(state.error.value,/规格与平台当前配置冲突/)
+  assert.equal(fixture.skill.value,'old-skill');assert.equal(state.parameters.value,oldParameters)
+  assert.deepEqual(state.references.value,[oldReference]);assert.deepEqual(state.roundReferences.value,[oldReference])
+  assert.equal(state.explicitSkillBoundary.value,false);assert.equal(state.prompt.value,'原稿')
+  assert.equal(fixture.confirmation.value,null);assert.deepEqual(state.texts,[]);assert.deepEqual(state.requests,[])
 })

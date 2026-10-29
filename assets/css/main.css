@@ -92,7 +92,8 @@
   --liv-settings-checkbox-size: 16px;
   --liv-settings-checkbox-radius: 4px;
   --liv-settings-radius: 24px;
-  --liv-settings-panel: #1b1b20;
+  /* 设置及普通弹窗统一深色背景，内部操作仍保留原有层次。 */
+  --liv-settings-panel: #151515;
   --liv-settings-text: #f4f4f5;
   --liv-settings-muted: #a1a1aa;
   /* 收银台突出金额并统一分区间距，按钮尺寸仍沿用设置组件。 */
@@ -310,6 +311,31 @@ body {
 }
 
 ::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* 制造机多栏沿用原生滚动行为，仅统一细窄圆角外观；稳定留槽避免标题左右跳动。 */
+.skill-builder, .skill-builder * {
+  scrollbar-width: thin;
+  scrollbar-color: var(--liv-builder-scroll-thumb) transparent;
+}
+.skill-builder :is(.builder-messages,.builder-content,.flow-step-list,.flow-detail) {
+  scrollbar-gutter: stable;
+}
+.skill-builder ::-webkit-scrollbar {
+  width: var(--liv-builder-scroll-width);
+  height: var(--liv-builder-scroll-width);
+}
+.skill-builder ::-webkit-scrollbar-thumb {
+  background: var(--liv-builder-scroll-thumb);
+  border: 0;
+  border-radius: 100px;
+  min-height: 36px;
+}
+.skill-builder ::-webkit-scrollbar-thumb:hover {
+  background: var(--liv-builder-scroll-thumb-hover);
+}
+.skill-builder ::-webkit-scrollbar-track, .skill-builder ::-webkit-scrollbar-corner {
   background: transparent;
 }
 

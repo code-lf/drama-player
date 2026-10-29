@@ -5,7 +5,7 @@ import { libraryService } from '~/shared/api/services/libraryService'
 import { request } from '~/shared/api/adapters/httpAdapter'
 import { readSelectedDocument } from '../documentFragment'
 
-const props = defineProps<{ open: boolean; kind: 'image' | 'video' | 'drama'; model?: string; remaining: number; mediaType?: string; analysisOnly?: boolean; documentRemaining?: number; initialCategory?: string; dark?: boolean }>()
+const props = defineProps<{ open: boolean; kind: 'image' | 'video' | 'drama' | 'composition'; model?: string; remaining: number; mediaType?: string; analysisOnly?: boolean; documentRemaining?: number; initialCategory?: string; dark?: boolean }>()
 const emit = defineEmits<{ 'update:open': [value: boolean]; select: [values: Array<{ item: LibraryItem; version: LibraryVersion; reference: LibraryReference }>] }>()
 const scope = ref('personal'), category = ref(''), query = ref(''), page = ref(1)
 const mediaFilter = ref('')
@@ -19,6 +19,11 @@ const documentDraft = ref<{ item: LibraryItem; version: LibraryVersion; referenc
 const documentStart = ref(0), documentEnd = ref(0), documentPreview = ref(''), documentBusy = ref(false)
 const previewRange = ref('')
 let revision = 0, documentRevision = 0
+/** 试听互斥只作用于当前选择器，不停止页面上其他用户主动播放的作品。 */
+function previewMedia(event:Event){
+  const media=event.target as HTMLMediaElement
+  media.closest('[data-library-media-grid]')?.querySelectorAll('audio,video').forEach(value=>{if(value!==media)(value as HTMLMediaElement).pause()})
+}
 function version(item: LibraryItem) { return item.versions.find(value => value.id === versions[item.id]) || item.versions[0]! }
 function reason(item: LibraryItem & { incompatibilities: Record<string, string> }) { return item.incompatibilities[version(item).id] || '' }
 /** 后台统一给出兼容原因，页面只控制当前剩余槽位，不另建供应商限额。 */
@@ -109,12 +114,12 @@ watch([scope, category, mediaFilter], () => { ++documentRevision;documentBusy.va
 <template>
   <LivDialog :open="open" :dark="dark" title="从资料库选择" description="固定使用所选版本；更新资料不会改变已生成作品。" width="xl" @update:open="emit('update:open', $event)">
     <!-- 常用用途直接提供图标入口，完整类别筛选仍保留，避免隐藏现有资料类型。 -->
-    <div v-if="dark && !documentDraft" class="creation-library-categories">
+    <div v-if="dark && !documentDraft && kind!=='composition'" class="creation-library-categories">
       <button :class="{ active: !category }" @click="category = ''"><UIcon name="i-lucide-layout-grid" />全部</button>
       <button v-for="item in categories.filter(item => ['角色', '场景', '道具', '商品'].includes(item.name))" :key="item.code" :class="{ active: category === item.code }" @click="category = item.code"><UIcon :name="item.name === '角色' ? 'i-lucide-user-round' : item.name === '场景' ? 'i-lucide-mountain' : 'i-lucide-box'" />{{ item.name }}</button>
     </div>
     <div v-if="!documentDraft" class="flex flex-wrap gap-2 mb-4">
-      <button v-for="tab in [{ code: 'personal', name: '个人资料' }, { code: 'public', name: '平台素材' }]" :key="tab.code" class="border rounded px-3 py-2" :class="scope === tab.code ? 'text-blue-600 bg-blue-50' : ''" @click="scope = tab.code">{{ tab.name }}</button>
+      <button v-for="tab in (kind==='composition'?[{ code: 'personal', name: '个人音频' }]:[{ code: 'personal', name: '个人资料' }, { code: 'public', name: '平台素材' }])" :key="tab.code" class="border rounded px-3 py-2" :class="scope === tab.code ? 'text-blue-600 bg-blue-50' : ''" @click="scope = tab.code">{{ tab.name }}</button>
       <LivSelect v-model="category" class="border rounded p-2"><option value="">全部用途</option><option v-for="entry in categories" :key="entry.code" :value="entry.code">{{ entry.name }}</option></LivSelect>
       <LivSelect v-if="!mediaType" v-model="mediaFilter" aria-label="文件类型" class="border rounded p-2"><option value="">全部类型</option><option value="image">图片</option><option value="video">视频</option><option value="audio">音频</option><option value="document">文档</option></LivSelect>
       <input v-model="query" class="border rounded p-2" placeholder="搜索名称或文档" @keyup.enter="load"><button @click="load">搜索</button>
@@ -122,10 +127,11 @@ watch([scope, category, mediaFilter], () => { ++documentRevision;documentBusy.va
     <p v-if="error" role="alert" class="text-red-600">{{ error }}</p>
     <DashboardSkeleton v-if="loading" variant="cards" :rows="3" />
     <p v-else-if="!documentDraft && !entries.length" class="rounded-lg bg-slate-50 p-8 text-center text-sm text-slate-500">{{ scope === 'personal' ? '当前筛选下没有个人资料，可先上传或更换筛选条件。' : '当前筛选下没有可用的平台素材。' }}</p>
-    <div v-else-if="!documentDraft" class="grid grid-cols-3 gap-3 max-h-[55vh] overflow-auto">
+    <div v-else-if="!documentDraft" data-library-media-grid class="grid gap-3 max-h-[55vh] overflow-auto" :class="kind==='composition'?'grid-cols-1 sm:grid-cols-2':'grid-cols-3'">
       <article v-for="item in entries" :key="item.id" class="border rounded-lg p-3">
         <img v-if="item.media_type === 'image'" class="w-full h-28 object-contain" :src="libraryService.previewUrl(version(item).preview_url)" :alt="item.name">
         <video v-else-if="item.media_type === 'video'" class="w-full h-28" controls preload="metadata" :src="libraryService.previewUrl(version(item).preview_url)" />
+        <audio v-else-if="item.media_type === 'audio'" class="w-full" controls preload="none" :src="libraryService.previewUrl(version(item).preview_url)" @play="previewMedia" />
         <p class="text-sm my-2">{{ item.name }}</p>
         <LivSelect v-model="versions[item.id]" class="border rounded w-full"><option v-for="value in item.versions" :key="value.id" :value="value.id">版本 {{ value.version_no }}</option></LivSelect>
         <p v-if="reason(item)" class="text-xs text-amber-700 mt-2">{{ reason(item) }}</p>

@@ -208,7 +208,7 @@ export function useCreationWorkspace(options:{beforeSubmit?:()=>Promise<()=>Prom
     const current = ++revision
     loading.value = true
     try {
-      const value = await (auth.session.loggedIn ? creationService.catalog(entry.value) : creationService.publicCatalog(entry.value))
+      const value = await (auth.session.loggedIn ? creationService.catalog(entry.value,session.value?.id) : creationService.publicCatalog(entry.value))
       if (disposed || current !== revision) return
       catalog.value = catalogWithCovers(value); applyCapabilities()
       // 仅音乐入口或需要音频来源的技能读取曲目，避免普通聊天反复请求音乐目录。

@@ -20,6 +20,12 @@ async function mountSetup(source){
   let storeReads=0
   const scopedRequire=name=>{
     if(name==='vue')return vue
+    // 导航目的地已抽为画布/制造机共享模块，测试加载真实模块而非复制假菜单。
+    if(name==='../workspaceNavigation'){
+      const shared={}
+      new Function('exports',ts.transpileModule(readFileSync(new URL('../features/creation/workspaceNavigation.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS}}).outputText)(shared)
+      return shared
+    }
     if(name==='~/features/dashboard/hoverMenuBoundary')return {hoverMenuBoundary:()=>()=>{}}
     if(name==='~/features/billing/accountNavigation'){
       const module={exports:{}}
@@ -30,7 +36,7 @@ async function mountSetup(source){
     if(name==='~/features/auth/store/useAuthStore')return {useAuthStore(){storeReads++;return vue.reactive({session:{user:{id:'isolated-test'}}})}}
     throw new Error(`测试中不允许的依赖：${name}`)
   }
-  const route=vue.reactive({fullPath:'/dashboard?session=isolated',query:{session:'isolated'}})
+  const route=vue.reactive({path:'/dashboard',fullPath:'/dashboard?session=isolated',query:{session:'isolated'}})
   const states=new Map()
   new Function('require','module','exports','useRoute','useState','ref','computed','watch','onBeforeUnmount','onMounted',code)(
     scopedRequire,exported,exported.exports,()=>route,(key,init)=>{if(!states.has(key))states.set(key,vue.ref(init()));return states.get(key)},

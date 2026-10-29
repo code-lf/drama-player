@@ -12,8 +12,10 @@ test('音频序号独立于可省略标题，两个同名候选仍保留独立�
 })
 test('品牌下拉复用原入口、历史和新建，不新增另一套侧栏状态',()=>{
   const source=read('features/creation/components/SessionWorkspaceNav.vue')
-  for(const value of ['Livliv 导航菜单','/dashboard-projects','/dashboard-library','/dashboard-skills']){
-    assert.ok(source.includes(value))
+  assert.ok(source.includes('Livliv 导航菜单'))
+  assert.match(source,/workspaceNavigationItems.map/)
+  for(const value of ['/dashboard-projects','/dashboard-library','/dashboard-skills']){
+    assert.ok(read('features/creation/workspaceNavigation.ts').includes(value))
   }
   assert.ok(!source.includes("onSelect:()=>emit('navigation')"))
   assert.match(source,/aria-label="最近项目"/)

@@ -3,6 +3,7 @@ import {computed,ref,watch,onBeforeUnmount} from 'vue'
 import type {CreationCatalog} from '../types'
 import type {LibraryItem} from '~/entities/library/types'
 import {libraryService} from '~/shared/api/services/libraryService'
+import {fallbackDramaVisualStyleOptions} from '~/shared/constants/dramaVisualStyles'
 type VisualStyle=CreationCatalog['styles'][number]
 const props=defineProps<{open:boolean;styles:VisualStyle[];recent:string[];selected:string;busy?:boolean;referenceAllowed:boolean}>()
 const emit=defineEmits<{'update:open':[value:boolean];select:[value:VisualStyle];reference:[value:LibraryItem]}>()
@@ -15,11 +16,13 @@ let revision=0,disposed=false
 const owner=()=>auth.session.user?.id
 /** 分类只根据真实目录描述派生，不展示没有内容的第三方分类。 */
 function group(item:VisualStyle){const text=`${item.display_name} ${item.render_medium}`;return /3D|三维|CG/i.test(text)?'3D':/2D|二维|动画/.test(text)?'2D':/仙侠|国风|古装/.test(text)?'国风':'写实'}
-const categories=computed(()=>['全部',...new Set(props.styles.map(group)),'上传图片'])
-const platform=computed(()=>props.styles.filter(item=>!['mine','favorite'].includes(scope.value)&&(scope.value!=='recent'||props.recent.includes(item.style_id))&&(category.value==='全部'||category.value===group(item))&&item.display_name.toLowerCase().includes(query.value.trim().toLowerCase())))
+// 只为真实目录中的同 ID 风格复用已有官方封面；不新增风格、不用无关作品补图。
+const catalogStyles=computed(()=>props.styles.map(item=>({...item,cover_url:item.cover_url||fallbackDramaVisualStyleOptions.find(row=>row.styleId===item.style_id)?.image})))
+const categories=computed(()=>['全部',...new Set(catalogStyles.value.map(group)),'上传图片'])
+const platform=computed(()=>catalogStyles.value.filter(item=>!['mine','favorite'].includes(scope.value)&&(scope.value!=='recent'||props.recent.includes(item.style_id))&&(category.value==='全部'||category.value===group(item))&&item.display_name.toLowerCase().includes(query.value.trim().toLowerCase())))
 const personal=computed(()=>rows.value.filter(item=>(scope.value!=='favorite'||item.is_favorite)&&(scope.value!=='recent'||recentPersonal.value.includes(item.id))&&(['mine','favorite'].includes(scope.value)||['全部','上传图片'].includes(category.value))&&item.name.toLowerCase().includes(query.value.trim().toLowerCase())))
 // 背景氛围只使用公开平台封面，不把个人上传图片复制到遮罩背景。
-const covers=computed(()=>props.styles.map(item=>item.cover_url).filter(Boolean).slice(0,4))
+const covers=computed(()=>catalogStyles.value.map(item=>item.cover_url).filter(Boolean).slice(0,4))
 function preview(item:LibraryItem){return libraryService.previewUrl(item.versions[0]?.preview_url||'')}
 /** 读取真实个人风格与配置；关闭、卸载和换号使迟到响应失效。 */
 async function load(reset=true){
