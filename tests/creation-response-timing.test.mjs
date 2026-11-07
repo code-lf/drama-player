@@ -23,4 +23,5 @@ test('响应中真实计时，终态冻结，不用历史更新时间编造秒�
   assert.equal(responseElapsedMs({status:'planning',response_started_at:'bad'},Date.now()),null)
   assert.equal(responseTimeLabel(4200,true),'已用时 4 秒')
   assert.equal(responseTimeLabel(65000,false),'用时 1 分 5 秒')
+  assert.equal(responseElapsedMs({status:'planning',response_started_at:'2026-10-16T00:00:00Z',response_finished_at:'2026-10-16T00:00:04Z',response_elapsed_ms:4000},Date.now()),4000)
 })

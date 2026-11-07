@@ -9,6 +9,8 @@ export default defineAppConfig({
       error: 'red',
       info: 'sky'
     },
+    // 全站Nuxt Toast沿用中性表面和品牌动作，避免默认slate深蓝通知。
+    toast:{slots:{root:'bg-[var(--liv-project-control-bg)] text-[var(--liv-project-text)] ring-[var(--liv-project-control-border)] rounded-2xl',title:'text-[var(--liv-project-text)]',description:'text-[var(--liv-project-muted)]'}},
     // 勾选图标使用品牌实心表面的前景色，避免深色主题 text-inverted 变成黑勾。
     checkbox: {
       slots: {

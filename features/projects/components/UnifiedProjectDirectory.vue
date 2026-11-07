@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import {computed,ref,watch,onBeforeUnmount} from 'vue'
-import {UButton,USkeleton,UIcon} from '#components'
+import {UButton,UIcon,DashboardSkeleton} from '#components'
 import {useRouter,useState,useRoute} from '#imports'
 import {useWorkbenchAuth} from '~/composables/useWorkbenchAuth'
 import LivDialog from '~/components/liv-ui/LivDialog.vue'
@@ -16,12 +16,14 @@ const route=useRoute(),recycle=useProjectRecycleBin()
 const directoryRevision=useState<number>('creation-project-directory-revision',()=>0)
 // 目录分页与短剧详情的工作流独立，不修改父工作台的历史项目缓存。
 const pageSize=20,page=ref(1),kind=ref<CreationProjectKind>('all'),items=ref<CreationProjectCard[]>([]),total=ref(0)
+// 回收站分类链接恢复真实分类；不让“剧本”入口仍读取全部项目。
+watch(()=>route.query.kind,value=>{kind.value=value==='drama'?'drama':'all';page.value=1},{immediate:true})
 const busy=ref(false),error=ref(''),batch=ref(false),selection=ref<string[]>([])
 const deleting=ref(false),deleteTargets=ref<CreationProjectCard[]>([]),deleteError=ref(''),createOpen=ref(false)
 let revision=0,controller:AbortController|undefined
 const pages=computed(()=>Math.max(1,Math.ceil(total.value/pageSize)))
 const numbers=computed(()=>{const start=Math.max(1,Math.min(page.value-2,pages.value-4));return Array.from({length:Math.min(5,pages.value)},(_,index)=>start+index)})
-const selectable=computed(()=>items.value.filter(item=>item.kind==='drama').map(item=>item.id))
+const selectable=computed(()=>items.value.map(item=>item.id))
 const allSelected=computed(()=>selectable.value.length>0&&selectable.value.every(id=>selection.value.includes(id)))
 
 /** 请求按账号、类型和页码隔离；卸载或换号的旧响应不能写回私人项目。 */
@@ -42,32 +44,41 @@ watch(()=>[page.value,kind.value,auth.session.user?.id,auth.session.loggedIn,rou
 // 侧栏重命名后刷新同一目录；本组件删除期间由确认流程自行刷新，避免双请求。
 watch(directoryRevision,()=>{if(!deleting.value)void load()})
 onBeforeUnmount(()=>{revision++;controller?.abort()})
-/** 全选仅操作明确支持删除的当前页短剧，绝不把会话编号发给短剧接口。 */
+/** 全选只管理本人当前页项目，移除统一走项目回收站，不调用旧短剧删除接口。 */
 function toggle(id:string){if(!selectable.value.includes(id))return;selection.value=selection.value.includes(id)?selection.value.filter(value=>value!==id):[...selection.value,id]}
 function selectAll(){selection.value=allSelected.value?[]:[...selectable.value]}
 function changeKind(value:CreationProjectKind){kind.value=value;page.value=1}
 function open(id:string){const item=items.value.find(value=>value.id===id);if(item)void router.push(projectDestination(item))}
-function askDelete(targets:CreationProjectCard[]){deleteError.value='';deleteTargets.value=targets.filter(item=>item.kind==='drama')}
+function askDelete(targets:CreationProjectCard[]){deleteError.value='';deleteTargets.value=targets.filter(item=>items.value.some(current=>current.id===item.id))}
 /** 项目页与侧栏一致移入回收站，不再在目录执行不可恢复的旧短剧删除。 */
 async function confirmDelete(){
   if(deleting.value||!deleteTargets.value.length)return
   deleting.value=true;deleteError.value=''
   const owner=auth.session.user?.id
+  const removed:CreationProjectCard[]=[]
   try{
-    for(const item of deleteTargets.value){if(owner!==auth.session.user?.id)return;await recycle.remove(item)}
+    for(const item of [...deleteTargets.value]){
+      if(owner!==auth.session.user?.id)return
+      await recycle.remove(item,true)
+      removed.push(item)
+      // 成功一项即移出当前目录；后续失败不能把已删除项目继续显示为可用。
+      items.value=items.value.filter(row=>row.id!==item.id)
+      deleteTargets.value=deleteTargets.value.filter(row=>row.id!==item.id)
+    }
     if(owner!==auth.session.user?.id)return
     deleteTargets.value=[];selection.value=[];batch.value=false
-    directoryRevision.value++
-    await load()
+    // remove已广播目录修订；统一在finally读取一次，避免连续重复刷新。
   }catch(reason){if(owner===auth.session.user?.id)deleteError.value=reason instanceof Error?reason.message:'删除失败，请重试。'}
-  finally{deleting.value=false}
+  finally{
+    deleting.value=false
+    if(owner===auth.session.user?.id&&removed.length){recycle.notifyRemoved(removed);await load()}
+  }
 }
 </script>
 <template>
   <ProjectTrashPanel v-if="route.query.view==='trash'"/>
   <section v-else class="unified-project-directory" :aria-busy="busy">
-    <UButton to="/dashboard-projects?view=trash" icon="i-lucide-trash-2" color="neutral" variant="soft" class="project-trash-entry">回收站</UButton>
-    <div v-if="busy" class="unified-project-loading" aria-label="正在读取我的项目"><USkeleton class="project-loading-title"/><USkeleton class="project-loading-toolbar"/><div class="project-loading-grid"><USkeleton v-for="index in 6" :key="index" class="project-loading-card"/></div></div>
+    <DashboardSkeleton v-if="busy" variant="projects" :rows="6" aria-label="正在读取我的项目"/>
     <div v-if="error" class="unified-project-error" role="alert"><p>{{error}}</p><UButton icon="i-lucide-refresh-cw" color="neutral" variant="outline" :loading="busy" @click="load">重试读取项目</UButton></div>
     <ProjectDirectoryPanel v-show="!busy&&!error" :current-project-page="page" :total-project-pages="pages" :page-number-list="numbers" :workspace-project-cards="items" :kind-filter="kind" project-overview-label="在一个地方继续对话，管理图片、视频、音乐与短剧创作" :is-all-current-page-selected="allSelected" :is-batch-selecting-projects="batch" :is-creating-workspace-project="false" :is-deleting-projects="deleting" :selected-project-count="selection.length" :selected-project-ids="selection" @create-project="createOpen=true" @go-to-page="page=$event" @update-kind="changeKind" @open-project="open" @toggle-batch-mode="batch=!batch;selection=[]" @toggle-select-all="selectAll" @toggle-project-selection="toggle" @request-delete-project="askDelete([$event as CreationProjectCard])" @request-delete-batch="askDelete(items.filter(item=>selection.includes(item.id)))"/>
     <LivDialog :open="createOpen" title="新建项目" settings dark @update:open="createOpen=$event">
@@ -84,7 +95,5 @@ async function confirmDelete(){
 .project-trash-entry{margin-bottom:16px}
 /* 首屏读取保持目录外壳，重试与业务表单共用语义令牌。 */
 .unified-project-directory{min-width:0;width:100%}.unified-project-error{display:flex;align-items:center;gap:16px;flex-wrap:wrap;color:var(--color-state-danger);font-size:var(--liv-font-body);padding:24px 0}
-/* 加载占位跟随紧凑卡片令牌，避免读取完成后卡片高度明显跳变。 */
-.project-loading-title{width:180px;height:36px}.project-loading-toolbar{width:100%;height:40px;margin:16px 0 12px}.project-loading-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr));gap:var(--liv-project-grid-gap)}.project-loading-card{height:calc(var(--liv-project-cover-max-height) + 96px)}
 .project-create-options{display:grid;gap:12px;margin-top:20px}.project-create-options>a{min-height:80px;justify-content:flex-start;gap:16px;padding:16px;text-align:left;font-size:var(--liv-font-section)}.project-create-options .iconify{width:24px;height:24px;flex:none}.project-create-options small{display:block;margin-top:4px;font-size:var(--liv-font-body);font-weight:400;color:var(--color-text-muted);white-space:normal}
 </style>

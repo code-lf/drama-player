@@ -10,11 +10,14 @@ const ref=value=>({value})
 function fixture(change='ok'){
   const original={id:'original',session_id:'same',status:'failed',calls:2,version:3,skill:'ad',mode:'skill',draft:{entry:'marketing',skill:'ad',prompt:'两条商品广告',references:[{item_id:'product',version_id:'fixed'}],parameters:{count:2,model:'chosen',durationSec:6,resolution:'480p',extra:{references_explicit:true}}}}
   const child={...original,id:'child',retry_of:'original',status:'planning',calls:0}
+  // 私人试用不在公开目录里，重整必须携带原运行才能得到冻结快照。
+  if(change==='private-trial')original.skill=original.draft.skill=child.skill=child.draft.skill='trial:private:1'
   const state={busy:ref(false),planningBusy:ref(false),graphPreparing:ref(false),stoppingAssistant:ref(false),planning:ref(original),uploads:ref([]),session:ref({id:'same'}),draftOwner:ref('owner'),prompt:ref(change==='ok'?'':'未发送原稿'),references:ref([]),roundReferences:ref([]),explicitSkillBoundary:ref(true),entry:ref('free'),skill:ref('free'),parameters:ref({count:9,extra:{creation_run_id:'old'}}),catalog:ref(null),assistantHistory:ref([]),assistantAccepted:ref(true),confirmation:ref({old:true}),error:ref(''),requests:[],texts:[]}
   let release
   const api={run:async()=>{if(change==='delayed')await new Promise(resolve=>release=resolve);if(change==='draft')state.prompt.value='准备期间的新稿';if(change==='round-change')state.roundReferences.value=[{version_id:'new'}];if(change==='boundary-change')state.explicitSkillBoundary.value=false;if(change==='session')state.session.value.id='other';if(change==='owner')state.draftOwner.value='other';return original},catalog:async()=>({skills:[{id:'ad'}]}),retryPlanning:async(...args)=>{state.requests.push(['retry',...args]);if(change==='lost')throw new Error('响应中断');if(change==='post-draft')state.prompt.value='请求期间新输入';if(change==='post-round')state.roundReferences.value=[{version_id:'new-round'}];return child},runByRequest:async()=>{state.requests.push(['read']);return child},advanceRun:async id=>{state.requests.push(['advance',id]);return {...child,status:'replied'}}}
   const values={...state,assistantEpoch:1,assistantDraft:'previous',userInitiatedRun:'old',requireLogin:()=>true,draft:()=>({prompt:state.prompt.value,skill:state.skill.value,parameters:state.parameters.value}),creationService:api,
     libraryService:{detail:async()=>({name:'商品图',media_type:'image',versions:change==='invalid'?[]:[{id:'fixed',preview_url:'/fixed'}]}),previewUrl:value=>value},defaultParameters:()=>({count:1,extra:{}}),confirmHomeAction:async()=>{if(change==='confirm-draft')state.prompt.value='确认期间新输入';return change!=='cancel'},setText:text=>{state.texts.push(text);state.prompt.value=text},stopCountdown:()=>{},routerRun:async()=>{},applyAssistantState:value=>state.planning.value=value}
+  if(change==='private-trial')api.catalog=async(entry,sid,runId)=>({skills:entry==='marketing'&&sid==='same'&&runId==='original'?[{id:'trial:private:1'}]:[]})
   const execute=new Function('fixture',`let {${Object.keys(values).join(',')}}=fixture;${js};return {run:retryGraphPlanning,read:()=>({assistantDraft,userInitiatedRun})}`)(values)
   return {...state,...execute,release:()=>release?.(),node:{id:'text:original',data:{phase:'planning',runId:'original',status:'failed'}}}
 }
@@ -32,6 +35,20 @@ test('重新整理保留原专业技能和两条规格，不进入自由派生�
   assert.deepEqual(state.requests.map(value=>value[0]),['retry','advance'])
   assert.equal(state.requests[0][1],'original');assert.equal(state.requests[0][3],2)
   assert.ok(source.includes('@retry="retryGraphPlanning"'))
+})
+
+test('重整目录携带本人会话和原运行，不用公开目录拒绝私人试用快照',()=>{
+  assert.ok(body.includes('creationService.catalog(source.draft.entry,sid,source.id)'))
+  const api=readFileSync('shared/api/services/creationService.ts','utf8')
+  assert.ok(api.includes('...(run_id?{run_id}:{})'))
+})
+
+test('私人试用实际重整继续原技能，不因公共目录缺项切回自由创作',async()=>{
+  const state=fixture('private-trial');await state.run(state.node)
+  assert.equal(state.skill.value,'trial:private:1')
+  assert.equal(state.planning.value.id,'child')
+  assert.deepEqual(state.requests.map(value=>value[0]),['retry','advance'])
+  assert.equal(state.error.value,'')
 })
 
 test('失效素材、输入变化、取消以及跨账号/会话迟到响应不覆盖草稿也不提交',async()=>{

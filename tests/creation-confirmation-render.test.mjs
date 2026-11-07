@@ -32,9 +32,18 @@ test('核价未完成不提前展示任务确认、规格或缺价按钮',async(
 test('完整报价与确认卡同时显示，零积分仍可确认',async()=>{
   for(const credits of [0,30]){
     const html=await render({hasQuote:true,credits})
-    for(const text of ['请确认本次图片生成任务','确认生成','测试模型',`${credits} 积分`])assert.ok(html.includes(text))
+    for(const text of ['请确认本次 1 个图片生成任务','liv-confirm-primary','测试模型',`${credits} 积分`,'确认执行'])assert.ok(html.includes(text))
     assert.ok(!html.includes('正在核算方案与积分'))
   }
+})
+
+test('确认任务行紧凑连续排版，移除多余账务说明和重复设置入口',async()=>{
+  const html=await render({hasQuote:true,credits:0,target:'video',requests:[{id:'v',model:'Seedance 2 Mini',spec:'4 秒 · 16:9 · 480p'}]})
+  assert.ok(html.includes('1. Seedance 2 Mini（4 秒 · 16:9 · 480p）'))
+  assert.ok(!html.includes('不因实际用量增加而补扣'))
+  assert.ok(!html.includes('本会话确认设置'))
+  assert.ok(source.includes('background:var(--liv-confirm-surface)'))
+  assert.ok(source.includes('font-size:13px;line-height:20px'))
 })
 test('只有真实核价失败提供重试，需求变化提示不能重报旧方案',async()=>{
   assert.ok((await render({error:'网络异常'})).includes('重试核算'))
@@ -46,14 +55,14 @@ test('只有真实核价失败提供重试，需求变化提示不能重报旧�
 test('确认卡先说明立即执行及不可取消，停止中有明确反馈',async()=>{
   const html=await render({hasQuote:true,credits:30})
   assert.ok(html.includes('确认后将立即提交生成，执行期间无法取消'))
-  assert.ok(html.indexOf('执行期间无法取消')<html.indexOf('确认生成'))
+  assert.ok(html.indexOf('执行期间无法取消')<html.indexOf('liv-confirm-primary'))
   assert.ok(html.includes('稍等一下'))
   assert.ok((await render({hasQuote:true,credits:30,cancelling:true})).includes('正在停止'))
 })
 
 test('当前轮与历史轮只按真实取消状态显示停止反馈',()=>{
   const studio=read('features/creation/components/CreationStudio.vue')
-  assert.ok(studio.includes('已为你停止本次待确认的生成任务，请问是否还有其他需求。'))
+  assert.ok(studio.includes('已为你停止本次处理，请问是否还有其他需求。已提交的生成任务不会因此撤销。'))
   assert.ok(studio.includes('row.run.status===\'cancelled\''))
   assert.ok(studio.includes(':cancelling="proposalCancelBusy"'))
   const cancel=studio.slice(studio.indexOf('async function cancelProposal'),studio.indexOf('const proposalModelLabel'))

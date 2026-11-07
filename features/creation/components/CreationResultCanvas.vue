@@ -18,7 +18,7 @@ export interface CanvasVersion {key:string;title:string;kind:'image'|'video'|'au
 // 视频提示词编辑仅替换底栏内容，继续复用原播放器、尺寸测量和作品操作。
 const props=defineProps<{versions:CanvasVersion[];results?:SessionResult[];selectedResult?:string;unreadResults?:string[];selectionDisabled?:boolean;selected:string;status?:string;detail?:string;progress?:number|null;progressUpdatedAt?:string;saveBusy?:boolean;musicTools?:Array<{code:string;name:string}>;musicTaskId?:string;favorite?:boolean;canFavorite?:boolean;videoEditing?:boolean;annotationHandoff?:boolean;inlineNode?:boolean;toolbarTarget?:string;playbackEnabled?:boolean}>()
 export interface AnnotationDraft {file:Blob;source:WorkspaceSource;operations:Record<string,unknown>[];requestId:string;preview:string}
-const emit=defineEmits<{select:[key:string];result:[key:string];save:[value:{file:Blob;source:WorkspaceSource;operations:Record<string,unknown>[];requestId:string}];annotation:[value:AnnotationDraft|null];useAnnotation:[value:AnnotationDraft];ai:[action:string,source:WorkspaceSource];music:[code:string,source:WorkspaceSource];audioTool:[operation:string,source:WorkspaceSource];video:[];refresh:[];favorite:[]}>()
+const emit=defineEmits<{select:[key:string];result:[key:string];save:[value:{file:Blob;source:WorkspaceSource;operations:Record<string,unknown>[];requestId:string}];annotation:[value:AnnotationDraft|null];useAnnotation:[value:AnnotationDraft];ai:[action:string,source:WorkspaceSource];music:[code:string,source:WorkspaceSource];audioTool:[operation:string,source:WorkspaceSource];editVideo:[source:WorkspaceSource];notice:[message:string];video:[];refresh:[];favorite:[]}>()
 const version=computed(()=>props.versions.find(v=>v.key===props.selected)||props.versions[0])
 /** 菜单项固定住打开时的原曲目来源，防止切换歌曲后沿用另一个下标。 */
 const audioToolItems=computed(()=>{
@@ -28,6 +28,36 @@ const audioToolItems=computed(()=>{
 })
 // 图片节点本身就是明确版本，不重复显示版本选择；辅助操作并入同一排工具。
 const compactImageTools=computed(()=>!!props.inlineNode&&!fullscreen.value&&version.value?.kind==='image')
+// 视频节点的全部已接通工具使用一个横向工具栏，不再上下拆成两层胶囊。
+const compactVideoTools=computed(()=>!!props.inlineNode&&!fullscreen.value&&version.value?.kind==='video')
+/** 完整视频工具目录按参考顺序展示；未接通项只反馈开发中，不借用近似工具或创建收费任务。 */
+const developingVideoTools=[
+  {label:'视频高清',icon:'i-lucide-monitor-up'},
+  {label:'爆款复刻',icon:'i-lucide-copy'},
+  {label:'反推提示词',icon:'i-lucide-clipboard-type'},
+  {label:'片段重拍',icon:'i-lucide-panels-top-left'},
+  {label:'深度提取',icon:'i-lucide-scan-eye'},
+]
+function developingVideoTool(){emit('notice','正在开发中，敬请期待')}
+/** 裁剪区分已接通的片段截取与尚未接通的画面裁切，菜单固定打开时的来源。 */
+const videoCutItems=computed(()=>{
+  const current=version.value
+  return [[
+    {label:'截取片段（剪辑工作台）',icon:'i-lucide-scissors',disabled:!current?.url||working.value||!!props.saveBusy,onSelect:()=>{if(current?.url&&current===version.value&&!working.value&&!props.saveBusy)emit('editVideo',{...current.source})}},
+    {label:'裁剪画面',icon:'i-lucide-crop',onSelect:developingVideoTool},
+  ]]
+})
+/** 原截帧与查看能力收进更多，保留原操作边界；不是删掉原功能换成展示入口。 */
+const videoMoreItems=computed(()=>{
+  const current=version.value,locked=working.value||!!props.saveBusy
+  const run=(action:()=>unknown)=>()=>{if(current===version.value&&!working.value&&!props.saveBusy)return action()}
+  return [[
+    ...(current?.url&&canCapture.value?[{label:'保存截帧',icon:'i-lucide-camera',disabled:locked,onSelect:run(capture)}]:[]),
+    ...(current?.url&&current.source.kind==='video'?[{label:'引用续作',icon:'i-lucide-message-circle-plus',disabled:locked,onSelect:run(()=>ai('video_reference'))}]:[]),
+    {label:'适应窗口',icon:'i-lucide-shrink',onSelect:run(fitCanvas)},
+    {label:'全屏画布',icon:'i-lucide-maximize',onSelect:run(toggleFullscreen)},
+  ]]
+})
 /** MV只接受带明确曲目序号的真实音乐结果，不能把上传音频或处理文件冒充第0首歌。 */
 // 分享与MV仅适用于明确的原歌曲曲目；分轨/剪辑结果不能借用第零首歌的身份。
 const canMakeMv=computed(()=>version.value?.kind==='audio'&&version.value.source.kind==='music'&&!version.value.source.result_id&&Number.isInteger(version.value.source.audio_index)&&(version.value.source.audio_index??-1)>=0)
@@ -51,6 +81,9 @@ async function download(){if(!version.value||downloading.value)return;downloadin
 /** 采用页内全屏，兼容嵌入式浏览器，不依赖宿主窗口的 Fullscreen 权限。 */
 async function toggleFullscreen(){fullscreen.value=!fullscreen.value;await nextTick();workspace.value?.focus({preventScroll:true})}
 const workspace=ref<HTMLElement|null>(null),hand=ref(false),spaceHeld=ref(false),pan=ref({x:0,y:0}),panning=ref(false)
+/** 普通看图让父节点接收拖动；真正使用图片编辑/查看平移时，才锁住节点位置。 */
+const ownsImageGesture=computed(()=>!!props.inlineNode&&version.value?.kind==='image'&&
+  (annotating.value||tool.value==='crop'||tool.value==='pointer'||hand.value||spaceHeld.value))
 let panStart:{x:number;y:number;left:number;top:number}|null=null
 /** 平移仅改变查看位置，不改像素或批注坐标，不产生新版本和费用。 */
 function startPan(event:PointerEvent){
@@ -349,12 +382,31 @@ const annotationMoreItems=computed(()=>{
 <template>
   <!-- 全屏只传送同一个作品编辑器，避开 Vue Flow 的 transform/overflow，不复制媒体或丢弃撤销栈。 -->
   <Teleport to="body" :disabled="!fullscreen">
-  <section ref="workspace" class="liv-canvas" :style="canvasLayoutStyle" :class="{'is-inline-node':inlineNode&&!fullscreen,'is-fullscreen':fullscreen,'is-video-result':version?.kind==='video'&&!pending&&!failed,'is-image-result':version?.kind==='image'&&!pending&&!failed}" aria-label="作品画布" tabindex="0" @pointerdown.capture="focusWorkspace" @keydown.esc.stop="canvasKey" @error.capture="imageLoadFailed">
+  <section ref="workspace" class="liv-canvas" :style="canvasLayoutStyle" :class="{'nodrag nopan':ownsImageGesture,'is-inline-node':inlineNode&&!fullscreen,'is-fullscreen':fullscreen,'is-video-result':version?.kind==='video'&&!pending&&!failed,'is-image-result':version?.kind==='image'&&!pending&&!failed}" aria-label="作品画布" tabindex="0" @pointerdown.capture="focusWorkspace" @keydown.esc.stop="canvasKey" @error.capture="imageLoadFailed">
     <!-- 节点工具传送到同画布的屏幕坐标层，避免随媒体缩放成无法点击的小按钮；全屏仍留在原容器。 -->
     <Teleport :to="toolbarTarget||'body'" :disabled="!toolbarTarget||fullscreen">
-    <header v-if="!compactImageTools" ref="canvasTop" class="canvas-top" :class="{'is-detached-tool':toolbarTarget&&!fullscreen,'is-node-image-tools':inlineNode&&!fullscreen&&version?.kind==='image'}" :style="topToolsStyle">
-      <div class="canvas-version"><UIcon :name="version?.kind==='video'?'i-lucide-film':version?.kind==='audio'?'i-lucide-disc-3':'i-lucide-image'"/><WorkspaceSelect v-if="versions.length" label="作品版本" :value="version?.key||''" :items="versionOptions" @select="select(String($event))"/><span v-else>作品画布</span></div>
+    <nav v-if="compactVideoTools&&version" ref="canvasTop" class="canvas-node-video-toolbar" role="toolbar" aria-label="视频作品工具">
+      <UButton icon="i-lucide-replace-all" color="neutral" variant="ghost" title="正在开发中，敬请期待" @click="developingVideoTool">一键替换素材</UButton>
+      <i aria-hidden="true"/>
+      <slot v-if="version.url" name="video-actions"/>
+      <i aria-hidden="true"/>
+      <template v-for="item in developingVideoTools" :key="item.label"><UButton :icon="item.icon" color="neutral" variant="ghost" title="正在开发中，敬请期待" @click="developingVideoTool">{{item.label}}</UButton><i aria-hidden="true"/></template>
+      <UDropdownMenu :items="videoCutItems" :modal="false" :content="{side:'bottom',align:'end'}" :ui="{content:'creative-image-tools-menu'}"><UButton icon="i-lucide-scissors" trailing-icon="i-lucide-chevron-down" color="neutral" variant="ghost" aria-label="裁剪">裁剪</UButton></UDropdownMenu>
+      <i aria-hidden="true"/>
+      <UTooltip text="标签"><UButton icon="i-lucide-tag" square color="neutral" variant="ghost" aria-label="标签" title="正在开发中，敬请期待" @click="developingVideoTool"/></UTooltip>
+      <UTooltip v-if="version.downloadable!==false" text="下载作品"><UButton icon="i-lucide-download" square color="neutral" variant="ghost" aria-label="下载作品" :loading="downloading" @click="download"/></UTooltip>
+      <slot name="video-toolbar"/>
+      <i aria-hidden="true"/>
+      <UDropdownMenu :items="videoMoreItems" :modal="false" :content="{side:'bottom',align:'end'}" :ui="{content:'creative-image-tools-menu'}"><UButton icon="i-lucide-ellipsis" square color="neutral" variant="ghost" aria-label="更多视频工具"/></UDropdownMenu>
+      <slot name="top-actions"/>
+    </nav>
+    <header v-else-if="!compactImageTools" ref="canvasTop" class="canvas-top" :class="{'is-node-video-tools':inlineNode&&!fullscreen&&version?.kind==='video','is-detached-tool':toolbarTarget&&!fullscreen,'is-node-image-tools':inlineNode&&!fullscreen&&version?.kind==='image'}" :style="topToolsStyle">
+      <div v-if="!inlineNode||fullscreen||version?.kind!=='video'||versions.length>1" class="canvas-version"><UIcon :name="version?.kind==='video'?'i-lucide-film':version?.kind==='audio'?'i-lucide-disc-3':'i-lucide-image'"/><WorkspaceSelect v-if="versions.length" label="作品版本" :value="version?.key||''" :items="versionOptions" @select="select(String($event))"/><span v-else>作品画布</span></div>
       <div v-if="version" class="canvas-controls">
+        <!-- 视频节点优先显示能实际执行的剪辑入口，不展示未接通的参考功能。 -->
+        <slot v-if="inlineNode&&!fullscreen&&version.kind==='video'&&version.url" name="video-actions"/>
+        <!-- 紧凑音乐隐藏大页业务区后，已有MV能力仍保留在原作品工具条。 -->
+        <UButton v-if="inlineNode&&!fullscreen&&canMakeMv" icon="i-lucide-film" color="neutral" variant="ghost" @click="makeMv">MV 制作</UButton>
         <WorkspaceSelect v-if="version.kind==='image'" label="画布缩放" :value="Number(zoom)" :items="zoomOptions" @select="zoom=Number($event)"/>
         <UTooltip v-if="version.kind!=='audio'" text="适应窗口（0）；Ctrl / Cmd + 滚轮缩放" :delay-duration="0" :content="{side:'bottom'}"><button aria-label="适应窗口" @click="fitCanvas"><UIcon name="i-lucide-shrink"/></button></UTooltip>
         <UTooltip v-if="version.kind!=='audio'" :text="fullscreen?'退出全屏':'全屏画布'" :delay-duration="0" :content="{side:'bottom'}"><button :aria-label="fullscreen?'退出全屏':'全屏画布'" @click="toggleFullscreen"><UIcon :name="fullscreen?'i-lucide-minimize':'i-lucide-maximize'"/></button></UTooltip>
@@ -380,7 +432,7 @@ const annotationMoreItems=computed(()=>{
           <div v-else class="canvas-image-wrap"><img ref="canvasImage" @load="positionTools" class="canvas-image" :class="{'is-painting':['text','draw'].includes(tool)}" :src="shownUrl" alt="当前作品" draggable="false" @pointerdown="pointerDown" @pointermove="pointerMove" @pointerup="pointerUp" @pointercancel="stroke=[]"><canvas v-if="annotating" ref="liveCanvas" class="annotation-surface" :class="{'is-drawing':drawing,'is-text':tool==='text','is-pointer':tool==='pointer'}" aria-label="图片批注画布" @pointerdown="pointerDown" @pointermove="pointerMove" @pointerup="pointerUp" @pointercancel="pointerUp"/><textarea v-if="annotating&&textPosition" ref="textInput" v-model="text" class="annotation-text-input" aria-label="批注文字" placeholder="输入文字" :style="{left:`${textPosition.x/width*100}%`,top:`${textPosition.y/height*100}%`,color,fontSize:`${Math.max(16,brush*4)*(canvasImage?.clientWidth||width)/width}px`}" @input="previewText" @keydown="textKey" @blur="commitText" @pointerdown.stop/><div v-if="tool==='crop'&&!working" class="crop-overlay" role="group" aria-label="图片裁剪选区" tabindex="0" @pointerdown="startCrop($event)" @pointermove="moveCrop" @pointerup="endCrop" @pointercancel="endCrop" @lostpointercapture="endCrop" @keydown="cropKey"><div v-if="cropBox" class="crop-box" :style="cropStyle" @pointerdown.stop="startCrop($event,'move')"><span class="crop-grid"/><span v-for="corner in ['nw','ne','sw','se']" :key="corner" :class="['crop-handle',corner]" @pointerdown.stop="startCrop($event,corner)"/></div></div><template v-if="compare"><img class="canvas-before" :src="beforeUrl" alt="修改前" :style="{clipPath:`inset(0 ${100-split}% 0 0)`}"><div class="compare-line" :style="{left:`${split}%`}"><span>↔</span></div><div class="compare-labels"><span>修改前</span><span>修改后</span></div><input v-model="split" type="range" min="0" max="100" aria-label="修改前后对比滑块" class="compare-slider"></template></div>
         </div>
         <template v-else-if="version.kind==='video'"><video v-if="version.url" ref="video" :key="version.key" class="canvas-video" :style="videoStyle" :src="version.url" :poster="version.cover" controls playsinline preload="metadata" @loadedmetadata="videoMetadata"/><p v-else-if="!videoEditing" class="text-muted">此方案尚未生成，可编辑当前提示词后核价。</p></template>
-        <MusicPlayer v-else :playback-enabled="playbackEnabled" :compact="inlineNode&&!fullscreen" :controls-target="toolbarTarget" :url="version.url" :title="version.title" :cover="version.cover" :lyrics="version.lyrics" :alignment="version.alignment" :task-id="canMakeMv?version.source.id:undefined" :track-number="version.source.audio_index" downloadable @download="download" :tracks="versions.filter(item=>item.kind==='audio').map(item=>({key:item.key,title:item.title,cover:item.cover}))" :selected="version.key" @select="select"><template #actions><UButton v-if="canMakeMv" icon="i-lucide-film" color="neutral" variant="outline" @click="makeMv">生成视频 MV</UButton></template></MusicPlayer>
+        <MusicPlayer v-else :playback-enabled="playbackEnabled" :canvas-mini="inlineNode&&!fullscreen" :compact="inlineNode&&!fullscreen" :controls-target="toolbarTarget" :url="version.url" :title="version.title" :cover="version.cover" :lyrics="version.lyrics" :alignment="version.alignment" :task-id="canMakeMv?version.source.id:undefined" :waveform-task-id="version.source.kind==='music'?version.source.id:undefined" :track-number="version.source.audio_index" downloadable @download="download" :tracks="versions.filter(item=>item.kind==='audio').map(item=>({key:item.key,title:item.title,cover:item.cover}))" :selected="version.key" @select="select"><template #actions><UButton v-if="canMakeMv" icon="i-lucide-film" color="neutral" variant="outline" @click="makeMv">生成视频 MV</UButton></template></MusicPlayer>
       </template>
       <div v-else class="canvas-state"><img src="/creation-presets/liv-creative-seed.png" alt="Liv 创作助手"/><h3>让想法在这里成形</h3><p>选择左侧历史消息查看作品，或继续描述你的想法。</p></div>
     </main>
@@ -395,7 +447,7 @@ const annotationMoreItems=computed(()=>{
     </div>
 
     <Teleport :to="toolbarTarget||'body'" :disabled="!toolbarTarget||fullscreen">
-    <footer v-if="version&&!pending&&!failed&&!(tool==='crop'&&version.kind==='image')" ref="canvasFooter" class="canvas-footer" :class="{'is-detached-tool':toolbarTarget&&!fullscreen,'is-node-image-tools':inlineNode&&!fullscreen&&version.kind==='image'}" :style="bottomToolsStyle">
+    <footer v-if="version&&!pending&&!failed&&!compactVideoTools&&!(tool==='crop'&&version.kind==='image')" ref="canvasFooter" class="canvas-footer" :class="{'is-detached-tool':toolbarTarget&&!fullscreen,'is-node-image-tools':inlineNode&&!fullscreen&&version.kind==='image'}" :style="bottomToolsStyle">
       <slot v-if="version.kind==='video'&&videoEditing" name="video-editor"/>
       <div v-else-if="version.kind==='image'&&annotating" class="canvas-toolbar annotation-toolbar" aria-label="批注工具栏">
         <UTooltip v-for="item in [{id:'draw',icon:'pencil',label:'画笔',shortcut:'B'},{id:'erase',icon:'eraser',label:'橡皮擦',shortcut:'E'}]" :key="item.id" :text="`${item.label}（${item.shortcut}）`" :delay-duration="0" :content="{side:'top'}"><button :class="{active:tool===item.id}" :aria-label="item.label" @click="annotationTool(item.id)"><UIcon :name="`i-lucide-${item.icon}`"/></button></UTooltip>
@@ -446,6 +498,12 @@ const annotationMoreItems=computed(()=>{
 </template>
 
 <style scoped>
+/* 与组工具栏统一：单排、正常屏幕字号、同色图标；窄工作区滚动而不是换成第二层。 */
+.canvas-node-video-toolbar{display:flex;align-items:center;flex-wrap:nowrap;gap:6px;width:max-content;max-width:100%;min-height:36px;overflow-x:auto;scrollbar-width:thin;color:var(--liv-account-text)}
+.canvas-node-video-toolbar :deep(button){display:inline-flex;align-items:center;justify-content:center;flex:none;width:auto;min-width:32px;min-height:32px;padding:0 10px;border-radius:999px;font-size:12px;line-height:18px;gap:6px;color:inherit;white-space:nowrap;cursor:pointer}
+.canvas-node-video-toolbar :deep(button:not(:disabled):is(:hover,:focus-visible)){background:var(--liv-account-hover)}
+.canvas-node-video-toolbar :deep(.iconify){width:16px;height:16px;flex:none;color:inherit}
+.canvas-node-video-toolbar>i{width:1px;height:18px;flex:none;background:var(--color-border-soft)}
 /* 传送只改变布局承载，不复制按钮与业务逻辑；工具始终保持正常字号和触控尺寸。 */
 .canvas-top.is-detached-tool{position:static!important;width:100%!important;padding:0!important;flex-wrap:wrap;gap:4px}
 .canvas-footer.is-detached-tool{position:static!important;width:100%!important;margin:0!important;padding:0!important;gap:0}
@@ -454,17 +512,23 @@ const annotationMoreItems=computed(()=>{
 .is-detached-tool button{display:inline-flex;align-items:center;justify-content:center;gap:5px;cursor:pointer;white-space:nowrap;color:inherit;min-height:32px}
 .is-detached-tool button:disabled{opacity:.35;cursor:default}
 .is-detached-tool .canvas-controls{flex-wrap:wrap;gap:8px}
+.canvas-top.is-node-video-tools{justify-content:center}
+.canvas-top.is-node-video-tools .canvas-controls{flex-wrap:nowrap;gap:6px;max-width:100%;overflow-x:auto;scrollbar-width:thin}
+.canvas-top.is-node-video-tools .canvas-controls :deep(button){padding:0 10px;border-radius:999px;font-size:12px;line-height:18px;color:var(--liv-account-text)}
+.canvas-top.is-node-video-tools .canvas-controls :deep(button:not(:disabled):is(:hover,:focus-visible)){background:var(--liv-account-hover)}
+.canvas-top.is-node-video-tools .canvas-controls :deep(.iconify){width:16px;height:16px;color:inherit}
 /* 主操作固定单排；低频动作进入更多菜单，不能用横向滚动把下载/退出推到屏幕外。 */
-.canvas-footer.is-node-image-tools{flex-direction:row;align-items:center;gap:2px}
-.canvas-footer.is-node-image-tools .canvas-toolbar{flex:0 1 auto;min-width:0;width:auto;max-width:100%;flex-wrap:nowrap!important;overflow:visible;justify-content:flex-start!important;gap:2px;padding:0}
-.is-node-image-tools .canvas-toolbar button{min-height:36px!important;padding:6px 8px!important;font-size:13px!important}
-.is-node-image-tools .canvas-toolbar :deep(.iconify){width:18px!important;height:18px!important}
+/* 图片工具与分组工具使用相同的按钮节奏，窄屏仍保留图标模式。 */
+.canvas-footer.is-node-image-tools{flex-direction:row;align-items:center;gap:6px}
+.canvas-footer.is-node-image-tools .canvas-toolbar{flex:0 1 auto;min-width:0;width:auto;max-width:100%;flex-wrap:nowrap!important;overflow:visible;justify-content:flex-start!important;gap:6px;padding:0}
+.is-node-image-tools .canvas-toolbar button{display:inline-flex;align-items:center;min-height:32px!important;padding:0 10px!important;border-radius:999px;font-size:12px!important;line-height:18px;font-weight:600;color:var(--liv-account-text)}
+.is-node-image-tools .canvas-toolbar button:not(:disabled):is(:hover,:focus-visible){background:var(--liv-account-hover)}
+.is-node-image-tools .canvas-toolbar :deep(.iconify){width:16px!important;height:16px!important;color:inherit}
 .canvas-node-utilities{display:flex;flex:none;align-items:center;gap:2px}
 .canvas-node-utilities :deep(button){width:32px;min-width:32px;min-height:36px;padding:6px}
 .is-node-image-tools .annotation-width{flex:1 1 80px;width:80px;min-width:48px;max-width:144px}
 /* 菜单传送至body后仍复用画布深灰令牌，子菜单由Nuxt UI负责碰撞与键盘焦点。 */
-:global(.creative-image-tools-menu){width:var(--liv-graph-tool-menu-width);max-width:calc(100vw - 24px);border-radius:16px;background:var(--liv-account-raised);color:var(--liv-account-text);--ui-bg:var(--liv-account-raised);--ui-bg-elevated:var(--liv-account-raised);--ui-text:var(--liv-account-text);--ui-text-highlighted:var(--liv-account-text);--ui-text-muted:var(--liv-account-muted);--ui-border:var(--liv-account-border)}
-:global(.creative-image-tools-menu [role=menuitem]){min-height:36px;font-size:14px}
+:global(.creative-image-tools-menu){width:var(--liv-graph-tool-menu-width);max-width:calc(100vw - 24px)}
 .canvas-footer.is-node-image-tools .canvas-primary{font-size:0!important;gap:0;padding:6px!important;width:32px}
 /* 手机只收起文字和装饰分隔，版本/缩放仍可点开原菜单，工具不删减、不另建平行组件。 */
 @media(max-width:600px){
@@ -510,7 +574,7 @@ const annotationMoreItems=computed(()=>{
 /* 节点内歌曲内容较长，只滚动播放器，避免上千像素的歌词布局把整个画布取景压成缩略图。 */
 .liv-canvas.is-inline-node>.canvas-stage.is-music-stage{max-height:280px;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain}
 /* 280px节点仍保留正常控件尺寸；沉浸播放器传送到body后不继承此紧凑规则。 */
-.liv-canvas.is-inline-node .is-music-stage :deep(.liv-music-player:not(.is-immersive)){padding:12px}
+.liv-canvas.is-inline-node .is-music-stage :deep(.liv-music-player:not(.is-immersive):not(.is-canvas-mini)){padding:12px}
 .liv-canvas.is-inline-node .is-music-stage :deep(.music-player-controls){gap:4px}
 /* 音频顶栏图标不能被窄屏flex压成20px；与播放控件共用至少32px真实命中。 */
 .liv-canvas .canvas-controls :deep(button),.canvas-top.is-detached-tool .canvas-controls :deep(button){min-width:32px;min-height:32px;flex-shrink:0}

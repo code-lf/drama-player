@@ -18,7 +18,7 @@ globalThis.localStorage={getItem:key=>storage.get(key)||null,setItem:(key,value)
 globalThis.document={hidden:false}
 const copy=value=>JSON.parse(JSON.stringify(value))
 const flush=async()=>{for(let i=0;i<16;i++)await vue.nextTick()}
-function mount({bound=false,saved=null,revision=null,loseSaveResponse=false,libraryEnabled=true}={}){
+function mount({bound=false,saved=null,revision=null,loseSaveResponse=false,libraryEnabled=true,musicSources,saveMusic,pickedVideo}={}){
   const calls=[],state={bound,allowSave:true,revision:revision??(saved?1:0),plan:saved,loseSaveResponse}
   const api={
     canvasBinding:async(_,node,create)=>{calls.push(create?'bind':'read-binding');if(create)state.bound=true;return {node_id:node,output_id:state.bound?'out':null}},
@@ -31,14 +31,15 @@ function mount({bound=false,saved=null,revision=null,loseSaveResponse=false,libr
   const helpers=compile('features/creation/compositionState.ts',{})
   const service={'~/shared/api/services/videoCompositionService':{videoCompositionService:api}}
   // 选择器仅隔离资料库请求；真实组件的选音、草稿和确认逻辑仍完整挂载。
-  const picker={default:{emits:['select','update:open'],setup:(_,{emit})=>()=>vue.h('button',{onClick:()=>emit('select',[{item:{id:'audio-item',name:'已有声音'},version:{id:'audio-v1',media:{duration_sec:2},preview_url:'/voice.wav'},reference:{item_id:'audio-item',version_id:'audio-v1',purpose:'reference'}}])},'选中测试音频')}}
-  const library={libraryService:{capabilities:async()=>({video_picker:libraryEnabled}),detail:async()=>({name:'已有声音',versions:[{id:'audio-v1',preview_url:'/voice.wav'}]}),previewUrl:url=>url}}
+  const picker={default:{emits:['select','update:open'],setup:(_,{emit})=>()=>vue.h('button',{onClick:()=>emit('select',[pickedVideo||{item:{id:'audio-item',name:'已有声音'},version:{id:'audio-v1',media:{duration_sec:2},preview_url:'/voice.wav'},reference:{item_id:'audio-item',version_id:'audio-v1',purpose:'reference'}}])},'选中测试音频')}}
+  const library={libraryService:{capabilities:async()=>({video_picker:libraryEnabled}),detail:async()=>({name:'已有声音',versions:[{id:'audio-v1',preview_url:'/voice.wav'}]}),previewUrl:url=>url,
+    saveResult:async(...args)=>{calls.push(['save-music',...args]);return saveMusic?saveMusic():{id:'owned-music',name:'原曲',status:'active',media_type:'audio',versions:[{id:'new-version',version_no:2,media:{duration_sec:20},preview_url:'/changed.wav'},{id:'original-version',version_no:1,media:{duration_sec:8.4},preview_url:'/original.wav'}]}}}}
   const panel=compile('features/creation/components/CreationCompositionPanel.vue',{...service,'../compositionState':helpers,'~/features/library/components/LibraryPicker.vue':picker,'~/shared/api/services/libraryService':library})
   const editor=compile('features/creation/components/CreativeCompositionEditor.vue',{...service,'./CreationCompositionPanel.vue':panel})
   const node=(type,text='')=>({type,text,children:[],props:{},parent:null})
   const renderer=vue.createRenderer({createElement:node,createText:text=>node('#text',text),createComment:text=>node('#comment',text),setText:(el,text)=>el.text=text,setElementText:(el,text)=>{el.text=text;el.children=[]},patchProp:(el,key,_,value)=>el.props[key]=value,insert:(el,parent,anchor)=>{if(el.parent)el.parent.children=el.parent.children.filter(value=>value!==el);el.parent=parent;const index=anchor?parent.children.indexOf(anchor):-1;parent.children.splice(index<0?parent.children.length:index,0,el)},remove:el=>{if(el.parent)el.parent.children=el.parent.children.filter(value=>value!==el)},parentNode:el=>el.parent,nextSibling:el=>el.parent?.children[el.parent.children.indexOf(el)+1]})
   const inputs=['a','b'].map(id=>({id,data:{kind:'video',title:id,url:'/'+id,source:{kind:'video',id:'task-'+id,result_id:'result-'+id}}}))
-  const app=renderer.createApp(editor.default,{sessionId:'session',ownerId:'owner',nodeId:'draft:compose',inputs,beforeSave:async()=>state.allowSave})
+  const app=renderer.createApp(musicSources?panel.default:editor.default,musicSources?{sessionId:'session',outputId:'out',sources:[],musicSources}:{sessionId:'session',ownerId:'owner',nodeId:'draft:compose',inputs,beforeSave:async()=>state.allowSave})
   app.component('UButton',{props:['disabled','loading'],setup:(p,{slots,attrs})=>()=>vue.h('button',{...attrs,disabled:p.disabled},slots.default?.())})
   app.component('UTooltip',{props:['text'],setup:(_,{slots})=>()=>slots.default?.()})
   for(const name of ['USelect','UInputNumber','UCheckbox'])app.component(name,{props:['modelValue'],setup:p=>()=>vue.h('field',{value:p.modelValue})})
@@ -46,8 +47,65 @@ function mount({bound=false,saved=null,revision=null,loseSaveResponse=false,libr
   const all=()=>{const values=[];function walk(el){values.push(el);el.children.forEach(walk)}walk(root);return values}
   const text=el=>el.text+el.children.map(text).join('')
   const click=async(label,index=0)=>{const button=all().filter(el=>el.type==='button'&&text(el)===label)[index];assert.ok(button,'缺少'+label);assert.ok(!button.props.disabled);await button.props.onClick();await flush()}
-  return {app,instance,calls,state,root,text,click}
+  return {app,instance,calls,state,root,text,click,all}
 }
+
+test('上传视频固定版本加入第二版草稿，保存刷新不采购，原生成片段保留',async()=>{
+  storage.clear()
+  const saved={schema_version:1,revision:1,clips:[{id:'one',task_id:'a',result_id:'r',trim_start_ms:0,trim_end_ms:800,keep_audio:true}],output:{width:1280,height:720,fps:25,fit:'contain',transition:'cut'}}
+  const pickedVideo={item:{id:'upload',name:'本人上传视频',media_type:'video'},version:{id:'upload-v1',media:{duration_sec:1.037}},reference:{item_id:'upload',version_id:'upload-v1',purpose:'reference_video'}}
+  const ui=mount({saved,musicSources:[],pickedVideo});await flush()
+  try{
+    await ui.click('从资料库添加视频');await ui.click('选中测试音频');await ui.click('保存片段计划')
+    assert.equal(ui.state.plan.schema_version,2);assert.equal(ui.state.plan.clips.length,2)
+    assert.equal(ui.state.plan.clips[1].reference.version_id,'upload-v1')
+    assert.equal(ui.state.plan.clips[1].trim_end_ms,1000)
+    assert.equal(ui.state.plan.clips[0].task_id,'a');assert.ok(!ui.calls.includes('compose'))
+    const restored=mount({saved:copy(ui.state.plan),musicSources:[]});await flush()
+    try{assert.match(restored.text(restored.root),/固定版本/);assert.ok(!restored.calls.includes('compose'))}finally{restored.app.unmount()}
+  }finally{ui.app.unmount()}
+})
+
+test('采用音乐在途不能提交旧计划、重复采用或保存；卸载后迟到结果不回填',async()=>{
+  const saved={schema_version:1,revision:1,clips:[{id:'one',task_id:'a',result_id:'r',trim_start_ms:0,trim_end_ms:4040,keep_audio:true}],output:{width:1280,height:720,fps:25,fit:'contain',transition:'cut'}}
+  let resolveMusic
+  const music=new Promise(resolve=>{resolveMusic=resolve})
+  const ui=mount({saved,musicSources:[{key:'song',title:'原曲',source:{kind:'music',id:'task-music',audio_index:0}}],saveMusic:()=>music});await flush()
+  const button=label=>ui.all().find(el=>el.type==='button'&&ui.text(el)===label)
+  const pending=button('采用《原曲》作为背景音乐').props.onClick();await flush()
+  try{
+    assert.equal(ui.instance.isBusy(),true)
+    assert.equal(button('确认合成当前短片').props.disabled,true)
+    assert.equal(button('保存片段计划').props.disabled,true)
+    // 即使残留事件晚到，也必须由方法本身防重，而非只依赖disabled样式。
+    await button('确认合成当前短片').props.onClick()
+    await button('保存片段计划').props.onClick()
+    await button('采用《原曲》作为背景音乐').props.onClick()
+    assert.ok(!ui.calls.includes('compose')&&!ui.calls.includes('save'))
+    assert.equal(ui.calls.filter(Array.isArray).length,1)
+  }finally{ui.app.unmount();resolveMusic({id:'audio',name:'原曲',status:'active',media_type:'audio',versions:[{id:'v1',version_no:1,media:{duration_sec:8.4}}]});await pending}
+  assert.equal(ui.state.plan.audio_tracks,undefined)
+})
+
+test('本会话生成音乐明确采用原始固定版本，不采购也不自动合成',async()=>{
+  const saved={schema_version:1,revision:1,clips:[{id:'one',task_id:'a',result_id:'r',trim_start_ms:0,trim_end_ms:4040,keep_audio:true}],output:{width:1280,height:720,fps:25,fit:'contain',transition:'cut'}}
+  const ui=mount({saved,musicSources:[{key:'song',title:'原曲',source:{kind:'music',id:'task-music',audio_index:0}}]});await flush()
+  try{
+    assert.equal(ui.instance.isDirty(),false)
+    await ui.click('采用《原曲》作为背景音乐');await ui.click('保存片段计划')
+    assert.deepEqual(ui.calls.filter(Array.isArray),[['save-music','music','task-music','0','music']])
+    const track=ui.state.plan.audio_tracks[0]
+    assert.equal(track.reference.version_id,'original-version');assert.equal(track.volume,.2)
+    assert.equal(track.trim_end_ms,4040);assert.equal(ui.state.plan.clips[0].keep_audio,true)
+    assert.ok(!ui.calls.includes('compose'))
+  }finally{ui.app.unmount()}
+})
+
+test('音乐固定失败保留片段，不加入伪造音轨',async()=>{
+  const saved={schema_version:1,revision:1,clips:[{id:'one',task_id:'a',result_id:'r',trim_start_ms:0,trim_end_ms:4040,keep_audio:true}],output:{width:1280,height:720,fps:25,fit:'contain',transition:'cut'}}
+  const ui=mount({saved,musicSources:[{key:'song',title:'失败曲',source:{kind:'music',id:'task-music',audio_index:0}}],saveMusic:async()=>{throw new Error('音频转存失败')}});await flush()
+  try{await ui.click('采用《失败曲》作为背景音乐');assert.match(ui.text(ui.root),/音频转存失败/);assert.equal(ui.instance.isDirty(),false);assert.ok(!ui.calls.includes('compose'))}finally{ui.app.unmount()}
+})
 
 test('合成节点只读恢复；保存绑定和片段计划均不执行，明确确认才派发',async()=>{
   storage.clear();const ui=mount();await flush()

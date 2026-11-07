@@ -52,7 +52,7 @@ const contentClass = computed(() => ({
       title: settings ? 'liv-settings-title' : 'text-lg font-bold tracking-normal text-highlighted',
       description: 'mt-1 text-sm leading-5 text-muted',
       body: settings ? 'liv-settings-body min-h-0 overflow-auto' : flush ? 'min-h-0 overflow-hidden p-0' : 'min-h-0 overflow-auto px-5 py-4 sm:px-6',
-      footer: settings ? 'liv-settings-footer' : 'justify-end gap-2 border-t border-default px-5 py-3 sm:px-6'
+      footer: settings ? 'liv-settings-footer liv-dialog-actions' : 'justify-end gap-2 border-t border-default px-5 py-3 sm:px-6'
     }"
     @update:open="emit('update:open', $event)"
   >
@@ -71,6 +71,9 @@ const contentClass = computed(() => ({
 </template>
 
 <style scoped>
+/* 操作底栏统一并排和足够点击区，覆盖旧display:block造成的按钮挤压。 */
+:global(.liv-settings-footer.liv-dialog-actions){display:flex!important;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:12px!important}
+:global(.liv-dialog-actions>.liv-settings-button){min-width:112px;padding-inline:24px!important;height:44px!important;min-height:44px!important}
 .liv-dialog-header-copy{display:flex;width:100%;align-items:flex-start;gap:12px}
 .liv-dialog-icon{display:flex;width:40px;height:40px;flex:0 0 40px;align-items:center;justify-content:center;border-radius:8px;background:#1768ff;color:#fff;box-shadow:0 8px 18px rgba(23,104,255,.2)}
 </style>

@@ -35,3 +35,20 @@ test('多图真实组件渲染缩略图按钮，点击只调用工作台预览�
   assert.doesNotMatch(html,/<a |target="_blank"/)
   assert.match(html,/预览 第一张/)
 })
+
+test('文字续聊气泡不重复带出沿用图片，显式重新附图仍正常展示',async()=>{
+  const {descriptor}=parse(read('features/creation/components/CreationRunAttachments.vue'))
+  const script=compileScript(descriptor,{id:'message-attachment-source',inlineTemplate:true})
+  const code=ts.transpileModule(script.content,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText
+  const module={exports:{}}
+  new Function('require','module','exports',code)(name=>name==='vue'?vue:{libraryService:{previewUrl:value=>value}},module,module.exports)
+  const draft={references:[{version_id:'old'},{version_id:'new'}],reference_names:{old:'沿用素材',new:'本次新图'}}
+  const previews={old:{available:true,media_type:'image',name:'沿用素材',preview_url:'/old.png'},new:{available:true,media_type:'image',name:'本次新图',preview_url:'/new.png'}}
+  const render=versions=>renderToString(vue.createSSRApp(module.exports.default,{run:{draft,reference_previews:previews,message_reference_versions:versions}}))
+  assert.doesNotMatch(await render([]),/<button|<img/)
+  const one=await render(['new'])
+  assert.match(one,/new.png/);assert.doesNotMatch(one,/old.png/)
+  assert.match(await render(['old']),/old.png/) // 用户明确重附同图，不因版本相同吞附件。
+  assert.equal(draft.references.length,2) // 展示过滤不清除实际执行引用。
+  assert.equal((await render(undefined)).match(/<button/g).length,2)
+})

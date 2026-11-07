@@ -1,8 +1,13 @@
 <script setup lang="ts">
-import {computed,markRaw,nextTick,onBeforeUnmount,ref,watch} from 'vue'
+import {computed,markRaw,nextTick,onMounted,onBeforeUnmount,ref,watch} from 'vue'
+import CreationMediaPreview from './CreationMediaPreview.vue'
+import CreationWorkspaceNotice from './CreationWorkspaceNotice.vue'
+import LivDialog from '~/components/liv-ui/LivDialog.vue'
+import LivButton from '~/components/liv-ui/LivButton.vue'
 import {VueFlow,useVueFlow,type Connection} from '@vue-flow/core'
 import {MiniMap} from '@vue-flow/minimap'
-import {groupBounds,groupMembers,moveGroup,arrangeGroup,type GroupMemberBox} from '../canvasGroups'
+import {groupBounds,groupMembers,moveGroup,arrangeGroup,syncAutomaticGroups,canvasGroupLabel,dropGroupMembers,type GroupMemberBox,type GroupDropFrame} from '../canvasGroups'
+import {canvasCompletionNotices} from '../canvasTaskNotices'
 import '@vue-flow/core/dist/style.css'
 import '@vue-flow/core/dist/theme-default.css'
 import '@vue-flow/minimap/dist/style.css'
@@ -20,7 +25,7 @@ import {useActionDialog} from '~/composables/useActionDialog'
 import {creativeVisibleArea,creativeCameraHasVisibleNode,creativeFocusCamera,creativeFreePosition,creativeNearbyPosition,creativeVisibleNearbyPosition,creativePromptPosition,creativeCanvasPoint,creativeEstimatedNodeBounds,CREATIVE_MIN_ZOOM,type CreativeBounds} from '../canvasViewport'
 
 const props=defineProps<{sessionId:string;ownerId:string;runs:CreationRun[];messages:CreationMessage[];results:SessionResult[];references:ComposerReference[];previews:Record<string,WorkspacePreview>;tasks:Record<string,any>;activity?:Record<string,{progress?:number|null}>;compositions?:Array<{title:string;job:CompositionJob;nodeId?:string;resultUnavailable?:boolean}>;focusId?:string;toolNodeId?:string;busy?:boolean;audioEnabled?:boolean;leftInset?:number;bottomInset?:number;obstructions?:CreativeBounds[];playbackEnabled?:boolean;beforeSelect?:(node?:CreativeNode)=>Promise<boolean>}>()
-const emit=defineEmits<{select:[node:CreativeNode];tools:[node:CreativeNode,action?:'crop'];generate:[node:CreativeNode,inputs:CreativeNode[]];retry:[node:CreativeNode];refreshFile:[node:CreativeNode];compose:[];compositionsChanged:[];upload:[];activity:[value:{running:number;unavailable:number}]}>()
+const emit=defineEmits<{select:[node:CreativeNode];tools:[node:CreativeNode,action?:'crop'];generate:[node:CreativeNode,inputs:CreativeNode[]];retry:[node:CreativeNode];refreshFile:[node:CreativeNode];compose:[];editWorkspace:[];compositionsChanged:[];upload:[];uploadAudio:[file:File];activity:[value:{running:number;unavailable:number}]}>()
 const compositionEditor=ref<InstanceType<typeof CreativeCompositionEditor>|null>(null)
 const {confirm}=useActionDialog()
 // 每个会话拥有独立图实例；保留原 Vue Flow 依赖，不接入第三方执行器。
@@ -31,12 +36,22 @@ const nodeToolTargetId=`creative-node-tools-${props.sessionId}`,toolDockElement=
 let toolDockObserver:ResizeObserver|undefined
 const layout=ref<CreativeLayout>(emptyCreativeLayout()),selectedId=ref(''),nodes=ref<CreativeNode[]>([]),ready=ref(false),saving=ref(false),error=ref(''),revision=ref(0)
 const minimap=ref(false),hand=ref(false),expanded=ref(false),taskOpen=ref(false),draftPrompt=ref(''),draftTitle=ref(''),saved=ref(false)
+const spacePan=ref(false),canvasHovered=ref(false),canvasListOpen=ref(false),canvasListQuery=ref(''),canvasListKind=ref('all')
+const filteredCanvasNodes=computed(()=>nodes.value.filter(node=>(canvasListKind.value==='all'||node.data.kind===canvasListKind.value)&&node.data.title.toLocaleLowerCase().includes(canvasListQuery.value.trim().toLocaleLowerCase())))
+// 空格只临时切换画布平移，不抢输入框、按钮或输入法；失焦时释放以防工具卡住。
+function canvasSpaceDown(event:KeyboardEvent){if(!canvasHovered.value||event.code!=='Space'||event.repeat||event.ctrlKey||event.metaKey||event.altKey||event.isComposing)return;const target=event.target as HTMLElement|null;if(target?.closest('input,textarea,button,select,[contenteditable=true],[role=textbox]'))return;spacePan.value=true;event.preventDefault()}
+function canvasSpaceUp(event:KeyboardEvent){if(event.code==='Space')spacePan.value=false}
+function clearSpacePan(){spacePan.value=false}
+onMounted(()=>{if(typeof window==='undefined')return;window.addEventListener('keydown',canvasSpaceDown);window.addEventListener('keyup',canvasSpaceUp);window.addEventListener('blur',clearSpacePan)})
+onBeforeUnmount(()=>{if(typeof window==='undefined')return;window.removeEventListener('keydown',canvasSpaceDown);window.removeEventListener('keyup',canvasSpaceUp);window.removeEventListener('blur',clearSpacePan)})
 // 普通选择不改变镜头；只有显式定位后才允许尺寸观察器继续补足取景。
 const magnifiedNodeId=ref(''),previewNode=ref<CreativeNode|null>(null)
 const multipleIds=ref<string[]>([]),selectedGroupId=ref('')
 /** 画布剪贴板只保存可编辑草案信息和来源节点ID，不复制任务、结果地址或执行许可。 */
 interface CreativeNodeClipboard {sourceId:string;kind:CreativeNodeKind;title:string;prompt:string}
 const copiedNode=ref<CreativeNodeClipboard|null>(null),clipboardStatus=ref('')
+// 操作校验与网络保存错误分开；自动保存成功不能提前清掉用户尚未读完的连线提示。
+const actionError=ref('')
 let clipboardStatusTimer:ReturnType<typeof setTimeout>|undefined
 /** 分组仅引用可见节点，已隐藏/暂未恢复的成员仍保留原编号，不能据此伪造业务节点。 */
 function memberBoxes(ids:string[]):GroupMemberBox[]{return ids.flatMap(id=>{
@@ -44,9 +59,12 @@ function memberBoxes(ids:string[]):GroupMemberBox[]{return ids.flatMap(id=>{
   const size=nodeBounds(node)
   return [{id,x:node.position.x,y:node.position.y,width:size.width,height:size.height}]
 })}
+// 节点独立拖动期间固定组框；整组移动仍沿成员实际位置同步更新。
+const nodeDropFrames=ref<GroupDropFrame[]|null>(null)
+let draggedNodeIds:string[]=[]
 const groupFrames=computed(()=>(layout.value.groups||[]).flatMap(group=>{
-  const members=memberBoxes(group.members),bounds=groupBounds(members)
-  return bounds?[{...group,...bounds,visibleCount:members.length}]:[]
+  const members=memberBoxes(group.members),bounds=nodeDropFrames.value?.find(frame=>frame.id===group.id)||groupBounds(members)
+  return bounds?[{...group,...bounds,label:canvasGroupLabel(group,nodes.value),visibleCount:members.length}]:[]
 }))
 function frameStyle(frame:{x:number;y:number;width:number;height:number}){const v=flow.viewport.value;return {left:`${frame.x*v.zoom+v.x}px`,top:`${frame.y*v.zoom+v.y}px`,width:`${frame.width*v.zoom}px`,height:`${frame.height*v.zoom}px`}}
 const selectionToolbarStyle=computed(()=>{
@@ -99,6 +117,12 @@ function renderedNodeBounds(node:CreativeNode){
 }
 const graph=computed(()=>projectCreativeGraph(props,layout.value))
 const edges=computed(()=>graph.value.edges)
+/** 业务编号幂等归组，保留用户位置与解组选择，不发起任务或移动历史作品。 */
+watch(()=>[ready.value,conflict.value,nodes.value.map(n=>`${n.id}:${n.data.source?.id||''}`).join('|')],()=>{
+  if(ready.value&&!conflict.value&&syncAutomaticGroups(layout.value,nodes.value,edges.value))changed()
+},{flush:'post'})
+// 完成记录只投影既有结果；刷新不补发任务，显示真实批次而非重复完成卡。
+const completedNotices=computed(()=>canvasCompletionNotices(nodes.value))
 const selected=computed(()=>nodes.value.find(node=>node.id===selectedId.value))
 /** 后期剪辑仅接收已有真实视频版本；混选图片、草案或未完成任务时不偷偷丢掉其中条目。 */
 function compositionSourceIds(ids:string[]){
@@ -134,8 +158,13 @@ watch(selected,node=>{
   if(node?.data.readonly&&!node.data.itemId&&!canEdit.value){draftPrompt.value=node.data.prompt;draftTitle.value=node.data.title}
 })
 const inputs=computed(()=>creativeInputs(nodes.value,edges.value,selectedId.value))
+/** 引用缩略图定位到真实来源节点；只切换选中与取景，不提交或生成媒体。 */
+async function openEditorReference(reference:ComposerReference){
+  const node=editorInputs.value.find(value=>value.id===reference.version_id||value.data.reference?.version_id===reference.version_id)
+  if(node)await focusSelectedNode(node.id)
+}
 // 编辑原媒体时把该媒体本身作为固定引用展示、校验，发送不会丢失商品参考图。
-const editorInputs=computed(()=>sourceEditing.value&&selected.value?[selected.value]:inputs.value)
+const editorInputs=computed(()=>sourceEditing.value&&selected.value&&selected.value.data.source?.kind!=='composition'?[selected.value]:inputs.value)
 /** 统一输入框仅展示真实节点引用；这些显示字段不替代提交时的服务端素材校验。 */
 const editorReferences=computed<ComposerReference[]>(()=>editorInputs.value.map(node=>node.data.reference||{item_id:node.data.source?.id||node.id,version_id:node.id,name:node.data.title,media_type:node.data.kind==='text'?'document':node.data.kind==='compose'?'video':node.data.kind,preview_url:node.data.url||''}))
 /** 规划线不偷偷切换文件；来源草案产出后由用户明确选定真实版本，再将该条线固定到结果节点。 */
@@ -167,11 +196,12 @@ const toolPosition=computed(()=>{
   if(!selected.value||props.toolNodeId!==selected.value.id)return undefined
   const size=flow.findNode(selected.value.id)?.dimensions
   const position=creativePromptPosition({...viewportArea(),...canvasSize.value},{...selected.value.position,width:size?.width||280,height:0},flow.viewport.value)
-  // 工具按自身内容收紧并在节点上方居中，不继承680px输入框宽度留下大段空白。
-  const width=Math.min(toolDockWidth.value||position.width,position.width)
+  // 完整视频工具允许使用聊天之外的可见宽度，短工具仍按内容收紧；不能被输入器680px上限裁掉半排入口。
+  const maxWidth=['video','compose'].includes(selected.value.data.kind)?Math.max(1,canvasSize.value.width-Math.max(16,props.leftInset||0)-16):position.width
+  const width=Math.min(toolDockWidth.value||maxWidth,maxWidth)
   const center=(selected.value.position.x+(size?.width||280)/2)*flow.viewport.value.zoom+flow.viewport.value.x
   const left=Math.max(Math.max(16,props.leftInset||0),Math.min(center-width/2,canvasSize.value.width-width-16))
-  return {left:`${left}px`,top:`${Math.max(8,selected.value.position.y*flow.viewport.value.zoom+flow.viewport.value.y-toolDockHeight.value-12)}px`,width:'max-content',maxWidth:`${position.width}px`}
+  return {left:`${left}px`,top:`${Math.max(8,selected.value.position.y*flow.viewport.value.zoom+flow.viewport.value.y-toolDockHeight.value-12)}px`,width:'max-content',maxWidth:`${maxWidth}px`}
 })
 const running=computed(()=>nodes.value.filter(node=>['planning','queued','pending','submitting','running','rendering','in_progress','processing','result_pending','status_unavailable','result_error'].includes(node.data.status)))
 /** 任务卡只展示真实节点阶段；未知状态单列说明，不通过等待时间推算进度。 */
@@ -219,8 +249,26 @@ function createMenuItems(anchor?:{x:number;y:number}){
 const newItems=computed(()=>[...createMenuItems(),{label:'添加素材',icon:'i-lucide-upload',onSelect:()=>emit('upload')}])
 const contextNodeId=ref('')
 const contextPoint=ref<{x:number;y:number}|null>(null)
+/** 右键拖动只平移镜头；超过阈值才阻止右键菜单，普通右键仍能新增节点。 */
+let rightPan:{x:number;y:number;view:{x:number;y:number;zoom:number};moved:boolean}|undefined
+let suppressContextMenu=false
+function startRightPan(event:PointerEvent){
+  if(event.button!==2||(event.target as HTMLElement).closest('button,input,textarea,[contenteditable=true],.nowheel'))return
+  suppressContextMenu=false
+  rightPan={x:event.clientX,y:event.clientY,view:{...flow.viewport.value},moved:false}
+  ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
+  event.stopPropagation()
+}
+function moveRightPan(event:PointerEvent){
+  if(!rightPan)return
+  const dx=event.clientX-rightPan.x,dy=event.clientY-rightPan.y
+  if(Math.hypot(dx,dy)>4)rightPan.moved=true
+  if(rightPan.moved){suppressContextMenu=true;void flow.setViewport({...rightPan.view,x:rightPan.view.x+dx,y:rightPan.view.y+dy})}
+}
+function endRightPan(){if(rightPan?.moved)viewportEnd({event:{type:'pointerup'}});rightPan=undefined}
 /** 右键固定本次菜单来源；打开菜单本身不切换或丢弃未保存编辑。 */
 function prepareContextMenu(event:MouseEvent){
+  if(suppressContextMenu){event.preventDefault();event.stopPropagation();suppressContextMenu=false;return}
   contextNodeId.value=(event.target as HTMLElement).closest('.vue-flow__node')?.getAttribute('data-id')||''
   const bounds=canvasElement.value?.getBoundingClientRect()
   // 坐标先转成画布世界坐标；缩放后点击空白新增仍落在鼠标附近，而不是默认挤到旧列。
@@ -235,10 +283,10 @@ const contextItems=computed(()=>{
   const node=nodes.value.find(value=>value.id===contextNodeId.value)
   if(node)return [...nodeCreationItems(node.id),
     ...(compositionSourceIds([node.id]).length?[{label:'剪辑 / 合成',icon:'i-lucide-clapperboard',disabled:!ready.value||conflict.value||creatingNode.value||!!props.busy,onSelect:()=>composeNodes([node.id])}]:[]),
-    ...(node.data.kind==='image'&&node.data.url&&node.data.source?[{label:'裁剪 / 改比例',icon:'i-lucide-crop',description:'本地裁剪后保存为来源附近的独立版本，不覆盖原图。',onSelect:()=>contextTools('crop')}]:[]),
+    ...(node.data.kind==='image'&&node.data.url&&node.data.source?[{label:'裁剪 / 改比例',icon:'i-lucide-crop',onSelect:()=>contextTools('crop')}]:[]),
     ...(node.data.url&&['image','video','audio','compose'].includes(node.data.kind)?[{label:'编辑与下载',icon:'i-lucide-sliders-horizontal',onSelect:()=>contextTools()}]:[]),
-    {label:'复制节点',icon:'i-lucide-copy',kbds:['Ctrl','C'],description:'仅复制草案内容和来源关系，不复制任务或费用许可。',onSelect:()=>copyNode(node.id)},
-    {label:'创建副本',icon:'i-lucide-copy-plus',kbds:['Ctrl','D'],description:'新建可编辑草案并保留来源连线；原作品与任务不变。',disabled:!ready.value||conflict.value||!!props.busy||creatingNode.value||!canDerive(node.data.kind,node.id),onSelect:()=>duplicateNode(node.id)},
+    {label:'复制节点',icon:'i-lucide-copy',kbds:['Ctrl','C'],onSelect:()=>copyNode(node.id)},
+    {label:'创建副本',icon:'i-lucide-copy-plus',kbds:['Ctrl','D'],disabled:!ready.value||conflict.value||!!props.busy||creatingNode.value||!canDerive(node.data.kind,node.id),onSelect:()=>duplicateNode(node.id)},
     {label:'移出画布',icon:'i-lucide-trash-2',disabled:!ready.value||conflict.value,onSelect:contextRemove}]
   return [
     {label:'添加',icon:'i-lucide-plus',content:contextSubmenuContent,children:createMenuItems(contextPoint.value||undefined)},
@@ -269,7 +317,7 @@ function nodeCreationItems(id:string){
   if(!source)return []
   const inheritedKind=['audio','compose'].includes(source.data.kind)?'video':source.data.kind
   const item=(label:string,kind:CreativeNodeKind,icon:string)=>({label,icon,disabled:!ready.value||conflict.value||creatingNode.value||!!props.busy||!canDerive(kind,id),
-    description:!canDerive(kind,id)?(source.data.kind==='video'&&kind==='image'?'先在作品工具保存截帧，再从截帧创作图片':'当前来源不支持直接引用到该类型'):undefined,
+
     onSelect:()=>createNode(kind,id)})
   return [item('派生',inheritedKind,'i-lucide-git-branch-plus'),item('文本','text','i-lucide-type'),item('图片','image','i-lucide-image'),item('视频','video','i-lucide-film')]
 }
@@ -471,7 +519,7 @@ async function doubleClickNode(id:string){
 // 浮层展开或拖宽只补足当前作品可见性；收起不重排节点，也不强制缩放整张图。
 watch(()=>props.leftInset,(value,previous)=>{if(ready.value&&selectedId.value&&magnifiedNodeId.value===selectedId.value&&(value||0)>(previous||0))void focusNode(selectedId.value,true)})
 /** 普通节点也响应窗口尺寸与缩小卡遮挡；仅补足取景，不改位置、正文或采购状态。 */
-watch(()=>[canvasSize.value.width,canvasSize.value.height,props.bottomInset,(props.obstructions||[]).map(box=>`${box.x},${box.y},${box.width},${box.height}`).join('|'),running.value.length,taskOpen.value],async()=>{
+watch(()=>[canvasSize.value.width,canvasSize.value.height,props.bottomInset,(props.obstructions||[]).map(box=>`${box.x},${box.y},${box.width},${box.height}`).join('|'),running.value.length,completedNotices.value.length,taskOpen.value],async()=>{
   // 实际工作区尺寸改变时恢复可读取景，避免手机临时缩放被带回宽屏；节点世界坐标不变。
   if(!expanded.value&&ready.value&&selectedId.value&&magnifiedNodeId.value===selectedId.value)await focusNode(selectedId.value)
 },{flush:'post'})
@@ -543,12 +591,45 @@ async function confirmCompositionLeave(){
 }
 /** 显式建立业务绑定前等待当前布局保存成功；失败或冲突时不能创建游离成片。 */
 async function ensureSaved(){clearTimeout(timer);if(saving.value)return false;await persist();return ready.value&&!dirty&&!conflict.value&&!saving.value}
-function dragStop(){if(conflict.value)return;snapshot();for(const node of flow.getNodes.value)layout.value.positions[node.id]={...node.position};layout.value.viewport={...flow.viewport.value};changed()}
+const nodeDragActive=ref(false)
+/** 保存起始组框和本次移动集合，单节点与多选移动共用同一落点规则。 */
+function dragStart(value:{node?:CreativeNode;nodes?:CreativeNode[]}){
+  nodeDropFrames.value=groupFrames.value.map(({id,x,y,width,height})=>({id,x,y,width,height}))
+  draggedNodeIds=(value.nodes?.length?value.nodes:value.node?[value.node]:[]).map(node=>node.id)
+  nodeDragActive.value=true
+}
+function dragStop(){
+  nodeDragActive.value=false
+  if(conflict.value){nodeDropFrames.value=null;draggedNodeIds=[];return}
+  snapshot()
+  if(nodeDropFrames.value){
+    const result=dropGroupMembers(layout.value,memberBoxes(draggedNodeIds),nodeDropFrames.value)
+    if(result.rejected.length)actionError.value='目标分组已达到200个节点，本次保留原分组归属。'
+  }
+  nodeDropFrames.value=null;draggedNodeIds=[]
+  for(const node of flow.getNodes.value)layout.value.positions[node.id]={...node.position}
+  layout.value.viewport={...flow.viewport.value};changed()
+}
+/** 鼠标在窗口外松开或失焦后释放图形库拖动，不允许无按键移动继续拖着节点走。 */
+function releaseCanvasDrag(event?:MouseEvent){
+  if(event&&'buttons' in event&&event.buttons!==0)return
+  endGroupDrag();endRightPan()
+  if(!nodeDragActive.value)return
+  nodeDragActive.value=false
+  // d3使用mouseup结束拖动；补偿丢失事件而不是重建节点/取消已有坐标。
+  window.dispatchEvent(new MouseEvent('mouseup',{bubbles:true,view:window,buttons:0,button:0}))
+  for(const node of flow.getNodes.value)node.dragging=false
+}
+onMounted(()=>{if(typeof window==='undefined')return;window.addEventListener('mousemove',releaseCanvasDrag,true);window.addEventListener('mouseup',releaseCanvasDrag,true);window.addEventListener('blur',releaseCanvasDrag)})
+onBeforeUnmount(()=>{if(typeof window==='undefined')return;window.removeEventListener('mousemove',releaseCanvasDrag,true);window.removeEventListener('mouseup',releaseCanvasDrag,true);window.removeEventListener('blur',releaseCanvasDrag)})
 /** 框选结束先通过原离开保护，关闭单节点工具；只改变选择，不自动打组或提交业务。 */
 async function collectSelection(){
   if(!ready.value||conflict.value)return
   const ids=(flow.getSelectedNodes?.value||nodes.value.filter(n=>(n as CreativeNode&{selected?:boolean}).selected)).map(n=>n.id)
-  await applyMultiSelection(ids)
+  // 框选碰到组成员时把整组纳入，打组后合并旧容器，不复制节点。
+  const selected=new Set(ids)
+  for(const group of layout.value.groups||[])if(group.members.some(id=>selected.has(id)))group.members.forEach(id=>selected.add(id))
+  await applyMultiSelection([...selected])
 }
 /** 修饰键选择以应用层当前选择为准，避免图形库默认按键或节点工具重绘先清空选择。 */
 async function applyMultiSelection(ids:string[]){
@@ -586,22 +667,43 @@ function arrange(ids:string[],axis:'horizontal'|'vertical'){
   snapshot();Object.assign(layout.value.positions,positions);changed()
 }
 // 移动以起始绝对位置和当前画布比例计算，组内相对位置不随轮询/缩放重复累加。
-let groupDrag:{id:string;x:number;y:number;zoom:number;members:GroupMemberBox[];active:boolean;moved:boolean}|undefined
+let groupDrag:{id:string;x:number;y:number;zoom:number;members:GroupMemberBox[];active:boolean;moved:boolean;lastMove?:PointerEvent}|undefined
 async function startGroupDrag(event:PointerEvent,id:string){
   if(event.button!==0||!ready.value||conflict.value)return
   const target=event.currentTarget as HTMLElement
+  // 阻止兼容 mousedown 再启动画布手势，避免选中后马上被清空。
+  event.preventDefault()
   const intent={id,x:event.clientX,y:event.clientY,zoom:flow.viewport.value.zoom,members:[] as GroupMemberBox[],active:false,moved:false}
   groupDrag=intent;target.setPointerCapture(event.pointerId)
   if(!await selectGroup(id)||groupDrag!==intent){if(groupDrag===intent)groupDrag=undefined;return}
   intent.members=memberBoxes(layout.value.groups?.find(g=>g.id===id)?.members||[]);intent.active=true
+  // 等待离开编辑确认时可能已经移动，获准后补上最后一次位移。
+  if(groupDrag.lastMove)moveGroupDrag(groupDrag.lastMove)
 }
 function moveGroupDrag(event:PointerEvent){
-  const value=groupDrag;if(!value?.active||conflict.value)return
+  if((event.buttons&1)===0){endGroupDrag();return}
+  const value=groupDrag;if(!value||conflict.value)return
+  if(!value.active){value.lastMove=event;return}
   if(!value.moved&&Math.hypot(event.clientX-value.x,event.clientY-value.y)<3)return
   if(!value.moved){snapshot();value.moved=true}
-  Object.assign(layout.value.positions,moveGroup(value.members,(event.clientX-value.x)/value.zoom,(event.clientY-value.y)/value.zoom))
+  const positions=moveGroup(value.members,(event.clientX-value.x)/value.zoom,(event.clientY-value.y)/value.zoom)
+  // 同步移动画布节点与持久化坐标，组框边界实时跟随成员，不等保存后再更新。
+  Object.assign(layout.value.positions,positions)
+  for(const node of nodes.value)if(positions[node.id])node.position=positions[node.id]!
 }
 function endGroupDrag(){if(groupDrag?.moved)changed();groupDrag=undefined}
+/** 组内空白也能拖动；实际节点、连线和工具仍优先接收各自事件。 */
+function startCanvasPointer(event:PointerEvent){
+  if(event.button!==0){startRightPan(event);return}
+  // 从组外空白框选，或按 Shift 从组内开始框选；普通左键拖组内空白移动整组。
+  if(hand.value||spacePan.value||event.shiftKey||!ready.value||conflict.value||!(event.target instanceof Element)||!event.target.closest('.vue-flow__pane')||event.target.closest('.vue-flow__node,.vue-flow__edge,button,input,textarea'))return
+  const rect=(event.currentTarget as HTMLElement).getBoundingClientRect(),view=flow.viewport.value
+  const x=(event.clientX-rect.left-view.x)/view.zoom,y=(event.clientY-rect.top-view.y)/view.zoom
+  const group=[...groupFrames.value].reverse().find(g=>x>=g.x&&x<=g.x+g.width&&y>=g.y&&y<=g.y+g.height)
+  if(!group)return
+  event.stopPropagation()
+  void startGroupDrag(event,group.id)
+}
 function viewportEnd(value?:{event?:{sourceEvent?:unknown;type?:string}}){if(!ready.value||!value?.event)return;magnifiedNodeId.value='';layout.value.viewport={...flow.viewport.value};changed()}
 /** 缩放按钮属于明确用户操作，图形库的程序化事件可能不带原生event，需要主动保存视口。 */
 async function userViewport(action:()=>Promise<unknown>){magnifiedNodeId.value='';await action();if(ready.value&&!conflict.value){layout.value.viewport={...flow.viewport.value};changed()}}
@@ -609,8 +711,8 @@ function fitAll(){return userViewport(()=>frameNodes())}
 function connect(value:Connection){
   if(conflict.value)return
   const issue=creativeConnectionIssue(nodes.value,edges.value,value.source,value.target)
-  if(issue){error.value=issue;return}
-  snapshot();layout.value.edges.push({id:`link:${crypto.randomUUID()}`,source:value.source,target:value.target});changed()
+  if(issue){actionError.value=issue;return}
+  actionError.value='';snapshot();layout.value.edges.push({id:`link:${crypto.randomUUID()}`,source:value.source,target:value.target});changed()
 }
 function removeEdge(id:string){snapshot();layout.value.edges=layout.value.edges.filter(edge=>edge.id!==id);changed()}
 /** 只替换当前手动规划边，保留原草案/产物/自动追溯线；选择引用不调用模型、不恢复费用许可。 */
@@ -799,6 +901,7 @@ function keyboard(event:KeyboardEvent){
   if(event.key==='Escape'){void choose('');expanded.value=false}
   if((event.key==='Delete'||event.key==='Backspace')&&selectedId.value){event.preventDefault();removeOpen.value=true}
   if(event.key==='0')void fitAll()
+  if(key==='v'&&!modifier&&!event.altKey)hand.value=false
   if(event.key.toLowerCase()==='f'&&!event.ctrlKey&&!event.metaKey&&!event.altKey){event.preventDefault();void focusSelectedNode()}
 }
 // 外部结果卡/工具保存后的定位同样要移动镜头，不能只改变选中边框却把新版本留在屏外。
@@ -873,28 +976,35 @@ defineExpose({focus:async(id:string)=>{await choose(id);if(selectedId.value!==id
 </script>
 <template>
   <!-- 画布始终全宽，遮挡值只移动空态/错误和镜头，不把聊天变成占位列。 -->
-  <section ref="canvasElement" class="creative-canvas" :style="{'--liv-graph-left-inset':`${Math.max(0,leftInset||0)}px`,'--liv-graph-camera-zoom':flow.viewport.value.zoom}" tabindex="0" aria-label="Agent 创作画布" @keydown="keyboard">
+  <section ref="canvasElement" class="creative-canvas" :style="{'--liv-graph-left-inset':`${Math.max(0,leftInset||0)}px`,'--liv-graph-camera-zoom':flow.viewport.value.zoom}" tabindex="0" aria-label="Agent 创作画布" @keydown="keyboard" @pointerenter="canvasHovered=true" @pointerleave="canvasHovered=false">
     <!-- 右键菜单复用Nuxt UI，菜单弹层自动避让屏幕；只包裹画布，不拦截输入框原生编辑菜单。 -->
-    <UContextMenu :items="contextItems" :ui="contextMenuUi" :content="contextMenuContent"><div class="creative-context-surface" @contextmenu.capture="prepareContextMenu">
+    <UContextMenu :items="contextItems" :ui="contextMenuUi" :content="contextMenuContent"><div class="creative-context-surface" @contextmenu.capture="prepareContextMenu" @pointerdown.capture="startCanvasPointer" @pointermove="moveGroupDrag($event);moveRightPan($event)" @pointerup="endGroupDrag();endRightPan()" @pointercancel="endGroupDrag();endRightPan()" @lostpointercapture="endGroupDrag();endRightPan()">
     <!-- 宿主先于节点挂载，Teleport无需另建弹窗或全屏遮罩；下方仍只有统一输入。 -->
     <div :id="nodeToolTargetId" ref="toolDockElement" class="creative-node-tool-dock nodrag nopan nowheel" :class="{'is-active':!!toolNodeId}" :style="toolPosition" aria-label="当前节点作品工具" @pointerdown.stop @click.stop/>
-    <!-- 右键专用于上下文菜单；中键平移，手型模式额外允许左键，避免图形库吞掉空白处右键。 -->
-    <VueFlow :id="graphId" v-model:nodes="nodes" :edges="edges" :node-types="nodeTypes" :edge-types="edgeTypes" :min-zoom="CREATIVE_MIN_ZOOM" :max-zoom="2" :delete-key-code="null" :nodes-draggable="ready" :nodes-connectable="ready" :pan-on-drag="hand?[0,1]:[1]" :selection-on-drag="!hand" :zoom-on-double-click="false" @nodes-initialized="nodesInitialized" @connect="connect" @node-click="nodeClicked" @node-drag-stop="dragStop" @selection-end="collectSelection" @selection-drag-stop="dragStop" @move-end="viewportEnd" @pane-click="choose('')">
-      <template #node-creative="node"><CreativeCanvasNode v-bind="node" :editing="toolNodeId===node.id" :creation-items="nodeCreationItems(node.id)" :busy="busy" :playback-enabled="playbackEnabled!==false&&!removeOpen&&!previewNode" @retry="retryPlanning" @refresh-file="refreshNodeFile" @focus="doubleClickNode" @toggle-selection="nodeModifierClicked" @tools="id=>{const item=nodes.find(value=>value.id===id);if(item)emit('tools',item)}"><template #media-editor><slot name="media-editor" :node="node" :tool-target="`#${nodeToolTargetId}`"/></template></CreativeCanvasNode></template>
+    <!-- 普通滚轮纵向平移，Ctrl滚轮缩放；右键拖动独立处理，中键及手型左键继续兼容。 -->
+    <!-- 实色组底在节点和连线下面，交互边框仍留在上层。 -->
+    <div class="creative-group-backdrops" aria-hidden="true"><div v-for="group in groupFrames" :key="group.id" :style="frameStyle(group)"/></div>
+    <VueFlow :id="graphId" v-model:nodes="nodes" :edges="edges" :node-types="nodeTypes" :edge-types="edgeTypes" :min-zoom="CREATIVE_MIN_ZOOM" :max-zoom="2" :delete-key-code="null" :nodes-draggable="ready&&!spacePan" :nodes-connectable="ready" :pan-on-drag="hand||spacePan?[0,1]:[1]" :selection-on-drag="!hand&&!spacePan" :class="{'is-hand-tool':hand||spacePan}" :zoom-on-double-click="false" :zoom-on-scroll="false" :zoom-on-pinch="true" zoom-activation-key-code="Control" :pan-on-scroll="true" pan-on-scroll-mode="vertical" @nodes-initialized="nodesInitialized" @connect="connect" @node-click="nodeClicked" @node-drag-start="dragStart" @node-drag-stop="dragStop" @selection-end="collectSelection" @selection-drag-start="dragStart" @selection-drag-stop="dragStop" @move-end="viewportEnd" @pane-click="choose('')">
+      <template #node-creative="node"><CreativeCanvasNode v-bind="node" :editing="toolNodeId===node.id" :creation-items="nodeCreationItems(node.id)" :busy="busy" :playback-enabled="playbackEnabled!==false&&!removeOpen&&!previewNode" @upload-audio="file=>emit('uploadAudio',file)" @retry="retryPlanning" @refresh-file="refreshNodeFile" @focus="doubleClickNode" @toggle-selection="nodeModifierClicked" @tools="id=>{const item=nodes.find(value=>value.id===id);if(item)emit('tools',item)}"><template #media-editor><slot name="media-editor" :node="node" :tool-target="`#${nodeToolTargetId}`"/></template></CreativeCanvasNode></template>
       <template #edge-creative="edge"><CreativeCanvasEdge v-bind="edge" @remove="removeEdge"/></template>
       <MiniMap v-if="minimap" pannable zoomable/>
     </VueFlow>
     </div></UContextMenu>
-    <!-- 仅标题接收指针，组框本体不遮挡素材、连线或框选；业务节点仍保持原绝对身份。 -->
+    <!-- 标题和边框内侧顶部可拖动；不拦截组内节点、连线或框选。 -->
     <div class="creative-group-layer" aria-label="画布分组">
       <section v-for="group in groupFrames" :key="group.id" class="creative-group-frame" :class="{'is-selected':selectedGroupId===group.id}" :style="frameStyle(group)" :aria-label="`${group.title}，${group.visibleCount}个可见节点`">
-        <header>
-          <UButton color="neutral" variant="ghost" icon="i-lucide-group" :aria-label="`移动${group.title}`" @pointerdown.stop="startGroupDrag($event,group.id)" @pointermove.stop="moveGroupDrag" @pointerup.stop="endGroupDrag" @pointercancel="endGroupDrag" @lostpointercapture="endGroupDrag" @click.stop="selectGroup(group.id)">{{group.title}} <small>{{group.visibleCount}}</small></UButton>
-          <template v-if="selectedGroupId===group.id">
-            <UTooltip text="水平排列，只调整布局"><UButton square color="neutral" variant="ghost" icon="i-lucide-columns-3" aria-label="水平排列分组" @click="arrange(group.members,'horizontal')"/></UTooltip>
-            <UTooltip text="垂直排列，只调整布局"><UButton square color="neutral" variant="ghost" icon="i-lucide-rows-3" aria-label="垂直排列分组" @click="arrange(group.members,'vertical')"/></UTooltip>
-            <UTooltip text="解组，保留所有节点"><UButton square color="neutral" variant="ghost" icon="i-lucide-ungroup" aria-label="解组" @click="ungroup(group.id)"/></UTooltip>
-          </template>
+        <div class="creative-group-grip" aria-hidden="true" @pointerdown.stop="startGroupDrag($event,group.id)" @pointermove.stop="moveGroupDrag" @pointerup.stop="endGroupDrag" @pointercancel="endGroupDrag" @lostpointercapture="endGroupDrag" @click.stop="selectGroup(group.id)"/>
+        <!-- 名称是跟随画布缩放的小字，不让所有组的屏幕尺寸大标签挡住节点。 -->
+        <UButton class="creative-group-label" color="neutral" variant="link" :title="group.label" :style="{zoom:Math.min(1,flow.viewport.value.zoom)}" :aria-label="`移动${group.label}`" @pointerdown.stop="startGroupDrag($event,group.id)" @pointermove.stop="moveGroupDrag" @pointerup.stop="endGroupDrag" @pointercancel="endGroupDrag" @lostpointercapture="endGroupDrag" @click.stop="selectGroup(group.id)">{{group.label}}</UButton>
+        <header v-if="selectedGroupId===group.id" aria-label="选中分组操作">
+          <!-- 工具栏只展示已接通操作；组名和边缘继续负责拖动。 -->
+          <UDropdownMenu :items="[{label:'水平排列',icon:'i-lucide-columns-3',onSelect:()=>arrange(group.members,'horizontal')},{label:'垂直排列',icon:'i-lucide-rows-3',onSelect:()=>arrange(group.members,'vertical')}]" :ui="{content:'creative-group-menu'}">
+            <UButton color="neutral" variant="ghost" icon="i-lucide-grip" trailing-icon="i-lucide-chevron-down">排序</UButton>
+          </UDropdownMenu>
+          <UDropdownMenu :items="[{label:'解组',icon:'i-lucide-ungroup',onSelect:()=>ungroup(group.id)}]" :ui="{content:'creative-group-menu'}">
+            <UButton color="neutral" variant="soft" icon="i-lucide-group" trailing-icon="i-lucide-chevron-down">编辑组</UButton>
+          </UDropdownMenu>
+          <UButton v-if="group.members.some(id=>compositionSourceIds([id]).length)" color="neutral" variant="ghost" icon="i-lucide-clapperboard" :disabled="!ready||conflict||busy||creatingNode" @click="emit('editWorkspace')">AI 剪辑</UButton>
         </header>
       </section>
     </div>
@@ -906,13 +1016,29 @@ defineExpose({focus:async(id:string)=>{await choose(id);if(selectedId.value!==id
       <UButton square icon="i-lucide-x" color="neutral" variant="ghost" aria-label="取消多选" @click="choose('')"/>
     </nav>
     <!-- 正文的本机备份不等于云端保存，输入未提交时不能沿用旧布局的已保存提示。 -->
-    <header class="creative-canvas-top"><span>创作画布</span><span class="creative-save-state" role="status">{{saving?'保存中':inputChanged?'有未保存修改':saved?'已保存':''}}</span><span v-if="clipboardStatus" class="creative-copy-status" role="status">{{clipboardStatus}}</span><UButton v-if="error" size="sm" color="neutral" variant="soft" @click="ready?persist():load()">重试{{ready?'保存':'读取'}}</UButton></header>
-    <div v-if="error" role="alert" class="creative-canvas-error">{{error}}<div v-if="conflict" class="flex gap-2 mt-2"><UButton color="neutral" variant="outline" :disabled="saving" @click="resolveConflict(false)">使用云端画布</UButton><UButton :disabled="saving" @click="resolveConflict(true)">保留本机画布</UButton></div></div>
+    <header class="creative-canvas-top"><span class="creative-save-state" role="status">{{saving?'保存中':inputChanged?'有未保存修改':saved?'已保存':''}}</span><span v-if="clipboardStatus" class="creative-copy-status" role="status">{{clipboardStatus}}</span></header>
+    <!-- 重试紧随对应错误，仍只重试画布读写；修订冲突继续要求用户明确选择。 -->
+    <!-- 布局保存、修订冲突与普通画布操作共用工作区通知，不再另画错误横条。 -->
+    <CreationWorkspaceNotice :text="error||actionError" :error="!!error||!!actionError" :busy="saving" :retry-label="ready?'重试画布保存':'重试画布读取'" dismiss-label="关闭画布操作提示" :retry="!!error&&!conflict" :dismissible="!error&&!!actionError" @retry="ready?persist():load()" @dismiss="actionError=''"><template #actions><template v-if="conflict"><button type="button" :disabled="saving" @click="resolveConflict(false)">使用云端画布</button><button type="button" :disabled="saving" @click="resolveConflict(true)">保留本机画布</button></template></template></CreationWorkspaceNotice>
     <div v-if="!nodes.length" class="creative-canvas-empty"><UIcon name="i-lucide-workflow"/><span>参考素材、方案与生成作品会出现在这里</span><span>也可以新建节点，从一个想法开始</span></div>
-    <nav class="creative-create-tools" aria-label="画布创建工具"><UDropdownMenu :items="newItems"><UButton icon="i-lucide-plus" square aria-label="创建节点" :disabled="!ready"/></UDropdownMenu><UTooltip :text="hand?'切换选择工具':'切换手型工具'"><UButton :icon="hand?'i-lucide-hand':'i-lucide-mouse-pointer-2'" color="neutral" variant="ghost" square aria-label="切换画布操作工具" @click="hand=!hand"/></UTooltip></nav>
-    <div ref="viewToolsElement" class="creative-view-tools"><UButton icon="i-lucide-undo-2" square color="neutral" variant="ghost" aria-label="撤销画布编辑" :disabled="!undoCount" @click="undo()"/><UButton icon="i-lucide-redo-2" square color="neutral" variant="ghost" aria-label="重做画布编辑" :disabled="!redoCount" @click="undo(true)"/><UTooltip text="总览全部节点（0）"><UButton icon="i-lucide-scan" square color="neutral" variant="ghost" aria-label="适应全部节点" @click="fitAll"/></UTooltip><UTooltip text="定位选中节点（F / 双击节点）"><UButton icon="i-lucide-focus" square color="neutral" variant="ghost" aria-label="定位选中节点" :disabled="!selectedId" @click="focusSelectedNode()"/></UTooltip><UButton icon="i-lucide-minus" square color="neutral" variant="ghost" aria-label="缩小画布" @click="userViewport(()=>flow.zoomOut())"/><span>{{zoom}}%</span><UButton icon="i-lucide-plus" square color="neutral" variant="ghost" aria-label="放大画布" @click="userViewport(()=>flow.zoomIn())"/><UButton icon="i-lucide-map" square color="neutral" variant="ghost" aria-label="切换小地图" @click="minimap=!minimap"/></div>
+    <!-- 右侧竖栏沿用画布已有操作：新增、总览、小地图和手型/选择，不加入未接通的外站功能。 -->
+    <nav class="creative-create-tools" aria-label="画布工具栏">
+      <UDropdownMenu :items="newItems" :ui="{content:'creative-node-create-menu creative-toolbar-menu'}" :content="{side:'left',align:'start',sideOffset:8}"><UButton class="creative-create-primary" icon="i-lucide-plus" square aria-label="创建节点" :disabled="!ready"/></UDropdownMenu>
+      <UTooltip text="画布列表"><UButton icon="i-lucide-panels-top-left" color="neutral" variant="ghost" square aria-label="画布列表" :aria-pressed="canvasListOpen" @click="canvasListOpen=!canvasListOpen"/></UTooltip>
+      <UTooltip text="打开资料库"><UButton icon="i-lucide-folder-heart" color="neutral" variant="ghost" square aria-label="打开资料库" @click="emit('upload')"/></UTooltip>
+      <span class="creative-create-tools-divider" aria-hidden="true"/>
+      <UDropdownMenu :items="[{label:hand?'选择工具 · V':'✓ 选择工具 · V',icon:'i-lucide-mouse-pointer-2',onSelect:()=>hand=false},{label:hand?'✓ 手型工具 · 空格':'手型工具 · 空格',icon:'i-lucide-hand',onSelect:()=>hand=true}]" :ui="{content:'creative-node-create-menu creative-toolbar-menu'}" :content="{side:'left',align:'end',sideOffset:8}"><UButton :icon="hand?'i-lucide-hand':'i-lucide-mouse-pointer-2'" color="neutral" variant="ghost" square aria-label="切换画布操作工具" :aria-pressed="hand"/></UDropdownMenu>
+    </nav>
+    <aside v-if="canvasListOpen" class="creative-canvas-list" aria-label="画布列表"><header><strong>画布列表</strong><UButton icon="i-lucide-x" square color="neutral" variant="ghost" aria-label="关闭画布列表" @click="canvasListOpen=false"/></header><div class="creative-canvas-list-filter"><USelect v-model="canvasListKind" :items="[{label:'全部',value:'all'},{label:'图片',value:'image'},{label:'视频',value:'video'},{label:'音频',value:'audio'},{label:'文本',value:'text'}]" aria-label="画布节点类型"/><UInput v-model="canvasListQuery" placeholder="搜索画布内节点" aria-label="搜索画布内节点" icon="i-lucide-search"/></div><div class="creative-canvas-list-items"><UButton v-for="node in filteredCanvasNodes" :key="node.id" color="neutral" variant="ghost" :aria-label="`定位节点：${node.data.title}`" @click="focusSelectedNode(node.id)"><img v-if="node.data.kind==='image'&&node.data.url" :src="node.data.url" alt=""/><UIcon v-else :name="node.data.kind==='image'?'i-lucide-image':node.data.kind==='video'?'i-lucide-film':node.data.kind==='audio'?'i-lucide-audio-lines':'i-lucide-type'"/><span>{{node.data.title}}</span></UButton><p v-if="!filteredCanvasNodes.length">暂无匹配节点</p></div></aside>
+    <!-- 完成提示与原任务列表共用真实节点，点击只定位，不重复提交或进入高级工作台。 -->
+    <div ref="viewToolsElement" class="creative-view-tools"><UButton icon="i-lucide-undo-2" square color="neutral" variant="ghost" aria-label="撤销画布编辑" :disabled="!undoCount" @click="undo()"/><UButton icon="i-lucide-redo-2" square color="neutral" variant="ghost" aria-label="重做画布编辑" :disabled="!redoCount" @click="undo(true)"/><UButton icon="i-lucide-scan" square color="neutral" variant="ghost" aria-label="适应全部节点" @click="fitAll"/><UButton icon="i-lucide-map" square color="neutral" variant="ghost" aria-label="切换小地图" :aria-pressed="minimap" @click="minimap=!minimap"/><UTooltip text="定位选中节点（F / 双击节点）"><UButton icon="i-lucide-focus" square color="neutral" variant="ghost" aria-label="定位选中节点" :disabled="!selectedId" @click="focusSelectedNode()"/></UTooltip><UButton icon="i-lucide-minus" square color="neutral" variant="ghost" aria-label="缩小画布" @click="userViewport(()=>flow.zoomOut())"/><span>{{zoom}}%</span><UButton icon="i-lucide-plus" square color="neutral" variant="ghost" aria-label="放大画布" @click="userViewport(()=>flow.zoomIn())"/></div>
     <!-- 任务列表定位同样等待离开确认，并扣除聊天/提示词遮挡，不能先移动镜头再判断取消。 -->
-    <aside v-if="running.length" ref="taskListElement" class="creative-task-list" aria-label="画布任务列表"><UButton class="creative-task-summary" color="neutral" variant="ghost" :aria-expanded="taskOpen" aria-label="展开或收起画布任务列表" @click="taskOpen=!taskOpen"><span class="creative-task-symbol"><UIcon :name="running.some(node=>!['status_unavailable','result_error'].includes(node.data.status))?'i-lucide-loader-circle':'i-lucide-circle-alert'"/></span><span><strong>任务列表</strong><small>{{running.length}} 项{{running.some(node=>['status_unavailable','result_error'].includes(node.data.status))?'待处理或核对':'正在处理'}}</small></span><UIcon :name="taskOpen?'i-lucide-chevron-down':'i-lucide-chevron-up'"/></UButton><div v-if="taskOpen" class="creative-task-items"><UButton v-for="node in running" :key="node.id" color="neutral" variant="ghost" @click="focusSelectedNode(node.id)"><UIcon :name="node.data.kind==='video'?'i-lucide-film':node.data.kind==='image'?'i-lucide-image':'i-lucide-file-text'"/><span>{{node.data.title}}<small>{{taskCaption(node)}}</small></span></UButton></div></aside>
+    <aside v-if="ready" ref="taskListElement" class="creative-task-list" aria-label="画布任务列表">
+      <!-- 只有真实在途任务转圈；待核对不能无限转圈暗示仍在执行。 -->
+      <UButton class="creative-task-summary" color="neutral" variant="ghost" :aria-expanded="taskOpen" aria-label="展开或收起画布任务列表" @click="taskOpen=!taskOpen"><span class="creative-task-symbol"><UIcon :class="{'creative-spin':running.some(node=>!['status_unavailable','result_error'].includes(node.data.status))}" :name="!running.length?'i-lucide-check':running.some(node=>!['status_unavailable','result_error'].includes(node.data.status))?'i-lucide-loader-circle':'i-lucide-circle-alert'"/></span><span><strong>任务列表</strong><small>{{running.length?`${running.length} 项${running.some(node=>['status_unavailable','result_error'].includes(node.data.status))?'待处理或核对':'正在处理'}`:'当前无任务'}}</small></span><UIcon :name="taskOpen?'i-lucide-chevron-down':'i-lucide-chevron-up'"/></UButton>
+      <div v-if="taskOpen&&running.length" class="creative-task-items"><UButton v-for="node in running" :key="node.id" color="neutral" variant="ghost" @click="focusSelectedNode(node.id)"><UIcon :name="node.data.kind==='video'?'i-lucide-film':node.data.kind==='image'?'i-lucide-image':'i-lucide-file-text'"/><span class="creative-task-copy"><strong>{{node.data.title}}</strong><small>{{taskCaption(node)}}</small></span></UButton></div>
+      <UButton v-for="notice in (taskOpen?completedNotices:[])" :key="notice.node.id" class="creative-completion-notice" color="neutral" variant="ghost" :aria-label="`定位完成作品：${notice.node.data.title}`" @click="focusSelectedNode(notice.node.id)"><CreationMediaPreview stable-thumbnail :kind="notice.node.data.kind==='compose'?'video':notice.node.data.kind" :url="notice.node.data.url||''" :cover="notice.node.data.cover"/><strong>{{notice.label}}</strong></UButton>
+    </aside>
     <aside v-if="selected" ref="dockElement" class="creative-prompt-dock" :style="promptPosition" :class="{'is-expanded':expanded,'has-task-card':running.length,'has-node-tools':!!toolNodeId,'is-space-constrained':!expanded&&!!bottomInset}" aria-label="节点提示词编辑区">
       <!-- 作品工具只保留在节点上方；输入框标题栏仅保留编辑器自身的移除/展开/关闭。 -->
       <header><span>{{selected.data.reference?.media_type==='document'?'文档参考':selected.data.kind==='compose'?'短片合成':'当前提示词'}}</span><span class="creative-dock-title">{{selected.data.title}}</span><UButton icon="i-lucide-trash-2" square color="neutral" variant="ghost" aria-label="从画布移除节点" :disabled="!ready" @click="removeOpen=true"/><UButton icon="i-lucide-maximize-2" square color="neutral" variant="ghost" aria-label="展开提示词输入框" @click="expanded=!expanded"/><UButton icon="i-lucide-x" square color="neutral" variant="ghost" aria-label="收起节点编辑器" @click="choose('')"/></header>
@@ -920,10 +1046,13 @@ defineExpose({focus:async(id:string)=>{await choose(id);if(selectedId.value!==id
         <UDropdownMenu :items="compositionSourcesMenu"><UButton color="neutral" variant="outline" icon="i-lucide-link" :disabled="!compositionSourcesMenu.length||conflict" class="mb-2">连接已完成视频</UButton></UDropdownMenu>
         <CreativeCompositionEditor :key="selected.id" ref="compositionEditor" :session-id="sessionId" :owner-id="ownerId" :node-id="selected.id" :inputs="inputs" :before-save="ensureSaved" @changed="emit('compositionsChanged')"/>
       </template>
-      <slot v-else-if="selected.data.runId&&selected.data.itemId&&!sourceEditing" name="plan-editor" :node="selected"/>
+      <template v-else-if="selected.data.runId&&selected.data.itemId&&!sourceEditing">
+        <!-- 条件分支和内容插槽分开，编辑器恢复或缺失时仍由父级提供明确反馈。 -->
+        <slot name="plan-editor" :node="selected"/>
+      </template>
       <template v-else>
         <div v-if="completedInputMenu.length" class="creative-input-resolution"><span>来源草案已有可用产物，请选择本次引用版本</span><UDropdownMenu :items="completedInputMenu"><UButton icon="i-lucide-link" color="neutral" variant="soft" :disabled="busy||submittingDraft||conflict">引用已完成结果</UButton></UDropdownMenu></div>
-        <slot v-if="['text','image','video','audio'].includes(selected.data.kind)&&selected.data.reference?.media_type!=='document'&&$slots['node-editor']" name="node-editor" :node="selected" :prompt="draftPrompt" :readonly="!canEdit||conflict" :references="editorReferences" :inputs="editorInputs" :value="editorParameters" :update="updateNodePrompt" :parameters="updateNodeParameters" :submit="generate" :save="saveNodePrompt" :busy="busy||submittingDraft"/>
+        <slot v-if="['text','image','video','audio'].includes(selected.data.kind)&&selected.data.reference?.media_type!=='document'&&$slots['node-editor']" name="node-editor" :node="selected" :prompt="draftPrompt" :readonly="!canEdit||conflict" :references="editorReferences" :open-reference="openEditorReference" :inputs="editorInputs" :value="editorParameters" :update="updateNodePrompt" :parameters="updateNodeParameters" :submit="generate" :save="saveNodePrompt" :busy="busy||submittingDraft"/>
         <template v-else>
         <UInput v-if="canEdit&&renaming" v-model="draftTitle" class="w-full mb-2" :maxlength="160" aria-label="节点名称" @keydown.enter="renaming=false"/>
         <div v-if="editorInputs.length" class="creative-input-refs" aria-label="当前节点引用素材"><span v-for="node in editorInputs" :key="node.id" :title="node.data.title"><img v-if="node.data.kind==='image'&&node.data.url" :src="node.data.url" :alt="node.data.title"><UIcon v-else :name="node.data.kind==='video'?'i-lucide-film':node.data.kind==='audio'?'i-lucide-music':'i-lucide-file-text'"/><small>{{node.data.title}}</small></span></div>
@@ -943,6 +1072,6 @@ defineExpose({focus:async(id:string)=>{await choose(id);if(selectedId.value!==id
     </aside>
     <slot name="tools"/>
     <CreationImageLightbox v-if="previewNode" :node="previewNode" @close="previewNode=null"/>
-    <UModal v-model:open="removeOpen" title="从画布移除节点"><template #body><p>只移除此节点的画布展示或编辑草案，历史作品、素材和已提交任务保留。可以通过画布撤销恢复。</p></template><template #footer><UButton color="neutral" variant="outline" @click="removeOpen=false">取消</UButton><UButton color="error" @click="removeNode">移除节点</UButton></template></UModal>
+    <LivDialog v-model:open="removeOpen" settings dark title="删除画布节点" description="只移除画布展示，不删除原媒体或任务。"><p>只移除此节点的画布展示或编辑草案，历史作品、素材和已提交任务保留。可以通过画布撤销恢复。</p><template #footer><!-- 操作组复用问题卡等宽胶囊规格，危险动作保留红字，不改删除范围。 --><div class="canvas-delete-actions"><LivButton settings block @click="removeOpen=false">取消</LivButton><LivButton settings block variant="danger" @click="removeNode">删除节点</LivButton></div></template></LivDialog>
   </section>
 </template>

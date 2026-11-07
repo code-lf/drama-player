@@ -40,7 +40,9 @@ const mobileMenuTrigger=ref<HTMLButtonElement|null>(null)
 const mobileSidebar=ref<HTMLElement|null>(null)
 // 切换按钮位置后同步键盘焦点，关闭或遮罩退出仍回到原展开入口。
 watch(mobileOpen,async value=>{await nextTick();if(value)mobileSidebar.value?.querySelector<HTMLButtonElement>('.creation-sidebar-close')?.focus();else mobileMenuTrigger.value?.focus()})
-const libraryEnabled = ref(false)
+// 公开能力跨页面复用；未知时先保留导航入口，不让菜单随着接口延迟消失/重现。
+// 此值仅控制入口展示，私人读取与写入仍由服务端验证权限及真实可用性。
+const libraryEnabled = useState<boolean|null>('dashboard-library-enabled',()=>null)
 const resources = ref({help_url:'',follow_qr:'',creator_document_codes:[] as string[]}), showQr = ref(false)
 const creationSessions = useState<CreationSession[]>('creation-recent-sessions', () => [])
 // 最近列表和“我的项目”读取同一聚合接口；保留旧会话缓存供工作台标题与恢复使用。
@@ -166,7 +168,7 @@ const isWorkbench = computed(() => props.activeWorkspaceView === 'console' && !r
     <NuxtLink v-if="!sessionsOnly" to="/dashboard?entry=free" class="liv-sidebar-brand"><img :src="siteAsset('/branding/livliv-logo.jpeg')" alt="Livliv Logo"><div><p class="dashboard-brand-title">Livliv</p><p class="dashboard-brand-subtitle">AI 创作平台</p></div></NuxtLink>
     <nav v-if="!sessionsOnly" class="liv-sidebar-primary" aria-label="创作导航">
       <NuxtLink to="/dashboard?entry=free" class="liv-sidebar-item" :class="{ 'is-active': isWorkbench }"><SidebarIcon name="i-lucide-panels-top-left" /><span>Liv 工作台</span></NuxtLink>
-      <NuxtLink v-if="libraryEnabled" to="/dashboard-library" class="liv-sidebar-item" :class="{ 'is-active': activeWorkspaceView === 'library' }"><SidebarIcon name="i-lucide-folder-open" /><span>资料库</span></NuxtLink>
+      <NuxtLink v-if="libraryEnabled!==false" to="/dashboard-library" class="liv-sidebar-item" :class="{ 'is-active': activeWorkspaceView === 'library' }"><SidebarIcon name="i-lucide-folder-open" /><span>资料库</span></NuxtLink>
       <NuxtLink to="/dashboard-skills" class="liv-sidebar-item" :class="{ 'is-active': activeWorkspaceView === 'skills' }"><SidebarIcon name="i-lucide-zap" /><span>技能</span></NuxtLink>
     </nav>
     <hr v-if="!sessionsOnly" class="creation-sidebar-divider">
@@ -241,16 +243,17 @@ const isWorkbench = computed(() => props.activeWorkspaceView === 'console' && !r
 .dashboard-brand-title{margin:0;font-size:20px;font-weight:800;color:#fff}
 .dashboard-brand-subtitle{margin:4px 0 0;font-size:12px;color:#a6a6b0}
 .liv-sidebar-primary{margin-top:35px;display:grid;gap:6px}
-.liv-sidebar-item{display:flex;align-items:center;gap:12px;width:100%;min-height:44px;padding:0 14px;border:0;border-radius:11px;background:transparent;font-size:15px;font-weight:600;text-align:left;color:#d4d4dc;text-decoration:none;cursor:pointer}
+.liv-sidebar-item{display:flex;align-items:center;gap:12px;width:100%;min-height:44px;padding:0 14px;border:0;border-radius:11px;background:transparent;font-size:15px;font-weight:600;text-align:left;color:var(--liv-account-muted);text-decoration:none;cursor:pointer}
 .liv-sidebar-item>.iconify{width:20px;height:20px;flex:none}
-.liv-sidebar-item:hover,.creation-sidebar-recent a:hover{background:#222225!important;color:#fff!important}
-.liv-sidebar-item.is-active,.creation-sidebar-recent .is-active{background:#29292e!important;color:#fff!important}
+.liv-sidebar-item:hover,.creation-sidebar-recent a:hover{background:#222225!important;color:var(--liv-chat-assistant-text)!important}
+.liv-sidebar-item.is-active,.creation-sidebar-recent .is-active{background:#29292e!important;color:var(--liv-chat-assistant-text)!important}
 .creation-sidebar-divider{margin:26px 0 16px;border:0;border-top:1px solid #ffffff26}
 .creation-sidebar-recent{margin:8px 0 20px!important}
-.creation-sidebar-recent a{display:flex;align-items:center;flex:1;min-width:0;height:40px;padding:0 8px;gap:8px;font-size:13px;line-height:20px}
+.creation-sidebar-recent a{display:flex;align-items:center;flex:1;min-width:0;height:40px;padding:0 8px;gap:8px;font-size:14px;font-weight:500;line-height:20px;color:var(--liv-account-muted);text-decoration:none}
 /* 三点始终保留命中位置，仅切换透明度，避免鼠标进入时重新排版造成漏触发。 */
 .liv-session-row{display:flex;align-items:center;min-width:0;border-radius:9px}
 .liv-session-row:hover,.liv-session-row:focus-within,.liv-session-row.is-menu-open{background:var(--liv-session-hover)}
+.liv-session-row:hover .liv-session-title,.liv-session-row:focus-within .liv-session-title,.liv-session-row.is-menu-open .liv-session-title,.liv-session-row.is-active .liv-session-title{color:var(--liv-chat-assistant-text)}
 .liv-session-row .liv-session-actions{display:inline-flex;opacity:0;flex:none;width:28px;min-width:28px;height:28px;padding:4px!important;margin-right:4px}
 .liv-session-row:hover .liv-session-actions,.liv-session-row:focus-within .liv-session-actions,.liv-session-row.is-menu-open .liv-session-actions{opacity:1}
 .creation-sidebar-recent .liv-session-title{display:block;white-space:nowrap;text-overflow:ellipsis;overflow:hidden}

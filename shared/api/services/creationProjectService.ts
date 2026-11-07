@@ -11,7 +11,13 @@ interface DirectoryItem {
 export const creationProjectService={
   /** 使用带类型的目录身份，不把会话编号提交给短剧接口。 */
   patch(item:{id:string},body:{title?:string;is_favorite?:boolean;cover?:{item_id:string;version_id:string;purpose:string}|null}){const [kind,key]=item.id.split(':');return request(`/creation/projects/${kind}/${key}`,{method:'PATCH',body})},
-  archive(item:{id:string}){const [kind,key]=item.id.split(':');return request(`/creation/projects/${kind}/${key}`,{method:'DELETE'})},
+  /** 必须取得对应项目的软删除回执，不能把任意2xx当作删除成功。 */
+  async archive(item:{id:string}){
+    const [kind,key]=item.id.split(':')
+    const result=await request<{id:string;is_deleted:boolean}>(`/creation/projects/${kind}/${key}`,{method:'DELETE'})
+    if(result.id!==item.id||result.is_deleted!==true)throw new Error('服务未确认该项目已移入回收站，请刷新核对后重试。')
+    return result
+  },
   restore(item:{id:string}){const [kind,key]=item.id.split(':');return request(`/creation/projects/${kind}/${key}/restore`,{method:'POST'})},
   async list(limit=20,offset=0,kind:CreationProjectKind='all',signal?:AbortSignal,trash=false):Promise<CreationProjectPage>{
     const page=await request<{items:DirectoryItem[];total:number;offset:number;limit:number}>('/creation/projects',{query:{limit,offset,kind,trash},signal})

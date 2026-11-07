@@ -21,6 +21,53 @@ const resultCode=ts.transpileModule(readFileSync('features/creation/resultCatalo
 const {batchImageResults}=await import(`data:text/javascript;base64,${Buffer.from(resultCode).toString('base64')}`)
 const base=()=>({messages:[],runs:[],results:[],references:[],previews:{},tasks:{}})
 
+test('取消未提交媒体方案隐藏画布节点，不隐藏已经提交的批次',()=>{
+  const run={id:'stopped',status:'cancelled',draft:{parameters:{},references:[]},creative_plan:{status:'draft',selected_ids:['v'],items:[{id:'v',title:'视频',prompt:'杯子',parameters:{},references:[]}]}}
+  assert.ok(!projectCreativeGraph({...base(),runs:[run]}).nodes.some(node=>node.data.runId==='stopped'))
+  run.creative_plan.batch={items:[{item_id:'v',task_id:'task',status:'queued'}]}
+  assert.ok(projectCreativeGraph({...base(),runs:[run]}).nodes.some(node=>node.data.runId==='stopped'))
+})
+
+test('历史已替代方案不因只读回放恢复节点，已提交作品仍保留',()=>{
+  const run={id:'previous',status:'replied',superseded_by:'next',draft:{parameters:{},references:[]},creative_plan:{status:'draft',selected_ids:['v'],items:[{id:'v',title:'旧视频',prompt:'杯子',parameters:{},references:[]}]}}
+  assert.ok(!projectCreativeGraph({...base(),runs:[run]}).nodes.some(node=>node.data.runId==='previous'))
+  run.executed_request={id:'confirmed'}
+  assert.ok(projectCreativeGraph({...base(),runs:[run]}).nodes.some(node=>node.data.runId==='previous'))
+})
+
+test('已采用镜头图片按固定版本分别连接视频，规划线不能替代实际输入',()=>{
+  const images={id:'images',status:'replied',draft:{parameters:{},references:[]},image_plan:{plan_type:'direct',selected_ids:['image-1','image-2'],
+    items:[1,2].map(n=>({id:`image-${n}`,title:`图${n}`,prompt:`场景${n}`,parameters:{aspectRatio:'16:9'},references:[]})),
+    batch:{items:[1,2].map(n=>({item_id:`image-${n}`,task_id:`task${n}`,status:'success',delivery_status:'completed',results:[{id:`result${n}`,status:'success',image_url:`/real${n}.png`}]}))}}}
+  const video={id:'videos',status:'replied',flow_runtime:{version:'creation-flow-v2'},draft:{parameters:{},references:[]},creative_plan:{selected_ids:['video-1','video-2'],
+    items:[1,2].map(n=>({id:`video-${n}`,title:`视频${n}`,prompt:`只处理场景${n}`,parameters:{aspectRatio:'16:9'},references:[{item_id:`library${n}`,version_id:`version${n}`}],
+      content_source:{kind:'image',run_id:'images',item_id:`image-${n}`,version_id:`version${n}`}}))}}
+  const graph=projectCreativeGraph({...base(),runs:[images,video]})
+  for(const n of [1,2]){
+    const inputs=creativeInputs(graph.nodes,graph.edges,`plan:videos:video-${n}`)
+    assert.equal(inputs.length,1);assert.equal(inputs[0].id,`image-plan:images:image-${n}`)
+    assert.equal(inputs[0].data.url,`/real${n}.png`)
+  }
+})
+
+test('独立素材批次从真实计划连到全部镜头，刷新身份不变且规划线不充当媒体输入',()=>{
+  const parent={id:'script',status:'replied',mode:'chat',draft:{prompt:'软件宣传片文稿',references:[]},card:{type:'reply',artifact_title:'宣传片剧本',text:'四段口播与分镜正文'}}
+  const run={id:'assets',parent_run_id:'script',status:'replied',flow_runtime:{version:'creation-flow-v2'},draft:{prompt:'生成4张独立首帧',references:[]},
+    card:{type:'reply',text:'四个独立镜头，统一核价后确认'},image_plan:{plan_type:'direct',selected_ids:[1,2,3,4].map(n=>`image-${n}`),
+      items:[1,2,3,4].map(n=>({id:`image-${n}`,title:`镜头${n}首帧`,prompt:`第${n}幅独立画面`,parameters:{aspectRatio:'16:9',count:1},references:[]}))}}
+  const input={...base(),runs:[parent,run]}
+  const graph=projectCreativeGraph(input)
+  assert.equal(graph.nodes.filter(node=>node.data.kind==='image').length,4)
+  assert.equal(graph.edges.filter(edge=>edge.source==='batch-plan:assets').length,4)
+  assert.ok(graph.edges.some(edge=>edge.source==='text:script'&&edge.target==='batch-plan:assets'&&edge.data.lineage))
+  for(const node of graph.nodes.filter(node=>node.data.kind==='image')){
+    assert.equal(node.data.status,'ready');assert.equal(node.data.url,undefined)
+    assert.deepEqual(creativeInputs(graph.nodes,graph.edges,node.id),[])
+  }
+  assert.deepEqual(projectCreativeGraph(input),graph)
+  assert.deepEqual(graph.nodes.filter(node=>node.data.kind==='image').map(node=>node.data.prompt),run.image_plan.items.map(item=>item.prompt))
+})
+
 test('部分结果已到时保留真实成品，缺文件独立显示只读同步节点，恢复不改成品身份',()=>{
   const message={id:'m',task_id:'task',task_type:'image',content:{prompt:'两张商品图',references:[{item_id:'product',version_id:'ref'}]}}
   const first={key:'image:task:first',messageId:'m',versionKey:'first',kind:'image',title:'商品图',summary:'第一张',url:'/first',taskResultIndex:0,source:{kind:'image',id:'task',result_id:'first'}}
@@ -69,7 +116,8 @@ test('图片计划逐张投影完整内容与固定引用，未选中不丢条�
   assert.equal(plans.length,2);assert.equal(graph.nodes.some(node=>node.id==='text:images'),false)
   assert.deepEqual(plans[1].position,{x:900,y:42});assert.equal(plans[1].data.prompt,items[1].prompt)
   assert.equal(plans[0].data.detail,'本次未选择 · 方案保留')
-  assert.ok(plans.every(node=>node.data.kind==='image'&&node.data.status==='draft'&&!node.data.url&&!node.data.source&&node.data.readonly))
+  assert.deepEqual(plans.map(node=>node.data.status),['draft','ready'])
+  assert.ok(plans.every(node=>node.data.kind==='image'&&!node.data.url&&!node.data.source&&node.data.readonly))
   assert.deepEqual(graph.edges.map(edge=>[edge.source,edge.target]),[['reference:first',plans[0].id],['reference:second',plans[1].id]])
   assert.equal(creativeActivity(graph.nodes).running,0)
 })
@@ -92,46 +140,36 @@ test('第二份产物先显示、第一份后到时，不更换第二份节点�
   }
 })
 
-test('文字流式正文在整理节点实时可见，进行态连线发光但不能引用半成品',()=>{
-  const layout=emptyCreativeLayout();layout.drafts=[{id:'draft:next',kind:'image',title:'下一张',prompt:'保留商品'}]
-  const draft={skill:'free',prompt:'原始要求',references:[{item_id:'i',version_id:'v'}],parameters:{}}
-  const previews={v:{available:true,name:'参考图',media_type:'image',preview_url:'/image'}}
-  const nodeFor=status=>projectCreativeGraph({...base(),runs:[{id:'writer',mode:'chat',status,stream_text:'正在公开输出的一半正文',draft,card:status==='replied'?{type:'reply',text:'完整正式文案'}:undefined}],previews},layout)
-  const progress=nodeFor('planning'),node=progress.nodes.find(node=>node.id==='text:writer')
-  assert.equal(node.data.prompt,'正在公开输出的一半正文');assert.equal(node.data.readonly,true)
-  assert.equal(progress.edges.find(edge=>edge.target===node.id).data.active,true)
-  assert.equal(canConnectCreative(progress.nodes,[],node.id,'draft:next'),false)
-  const done=nodeFor('replied');assert.equal(done.nodes.find(value=>value.id===node.id).data.prompt,'完整正式文案')
-  assert.equal(done.edges.find(edge=>edge.target===node.id).data.active,false)
-  assert.equal(canConnectCreative(done.nodes,[],node.id,'draft:next'),true)
-  for(const status of ['waiting','failed','cancelled']){const graph=nodeFor(status);assert.equal(canConnectCreative(graph.nodes,[],node.id,'draft:next'),false);assert.equal(graph.edges.find(edge=>edge.target===node.id).data.active,false)}
-})
-
-test('原技能重整建立独立节点和追溯线，失败文本不被作为新轮素材',()=>{
-  const draft={skill:'ad',prompt:'两条香水广告',references:[{item_id:'product',version_id:'fixed'}],parameters:{output:'video'}}
-  const runs=[{id:'original',status:'failed',draft},{id:'retry',retry_of:'original',status:'planning',draft}]
-  const graph=projectCreativeGraph({...base(),runs,previews:{fixed:{available:true,name:'商品图',media_type:'image',preview_url:'/fixed'}}})
-  assert.equal(graph.nodes.filter(node=>node.id.startsWith('text:')).length,2)
-  const lineage=graph.edges.find(edge=>edge.source==='text:original'&&edge.target==='text:retry')
-  assert.ok(lineage?.data.lineage)
-  assert.deepEqual(creativeInputs(graph.nodes,graph.edges,'text:retry').map(node=>node.id),['reference:fixed'])
-  assert.equal(creativeActivity(graph.nodes).running,1)
-})
-
-test('整理失败或停止不消失，原始需求/位置/来源保持，不采用未经校验的助手草稿',()=>{
-  const layout=emptyCreativeLayout();layout.positions['text:failed-plan']={x:880,y:250};layout.overrides={'text:failed-plan':{prompt:'旧画布改稿',title:'不能覆盖'}}
-  const run={id:'failed-plan',status:'planning',mode:'skill',draft:{original_prompt:'用户要求两条香水广告',prompt:'用户要求两条香水广告',parameters:{output:'video'},references:[{item_id:'product',version_id:'fixed'}]}}
-  const previews={fixed:{available:true,name:'商品图',media_type:'image',preview_url:'/product'}}
-  for(const status of ['failed','cancelled']){
-    const graph=projectCreativeGraph({...base(),runs:[{...run,status,error:status==='failed'?'无法读取所选文档，请重新选择':'',generation_prompt:'未经校验的半成品',stream_text:'只写了一半'}],previews},layout)
-    const node=graph.nodes.find(node=>node.id==='text:failed-plan')
-    assert.ok(node);assert.equal(node.data.phase,'planning');assert.equal(node.data.status,status);assert.equal(node.data.readonly,true)
-    assert.equal(node.data.prompt,'用户要求两条香水广告');assert.deepEqual(node.position,{x:880,y:250})
-    assert.equal(node.data.detail,status==='failed'?'无法读取所选文档，请重新选择':undefined)
-    assert.equal(node.data.url,undefined);assert.equal(node.data.source,undefined)
-    assert.ok(graph.edges.some(edge=>edge.source==='reference:fixed'&&edge.target===node.id&&!edge.data.active))
-    assert.deepEqual(creativeActivity(graph.nodes),{running:0,unavailable:0})
+test('输入、思考、补问、失败不创建虚构产物，保留真实参考与手建草案',()=>{
+  const draft={prompt:'继续',references:[],parameters:{output:'image'}}
+  const layout=emptyCreativeLayout();layout.drafts=[{id:'draft:manual',kind:'image',title:'手建',prompt:'保留'}]
+  for(const status of ['planning','waiting','failed','cancelled']){
+    const run={id:'dialog',status,planning_target:'video',generation_prompt:'未接受草稿',stream_text:'片段',draft}
+    assert.deepEqual(projectCreativeGraph({...base(),runs:[run]},layout).nodes.map(node=>node.id),['draft:manual'])
   }
+})
+
+test('实际媒体确认合同创建待确认组件，停止按轮移除且刷新不复活',()=>{
+  const draft={prompt:'制作图片',parameters:{output:'image'},references:[]}
+  const run=id=>({id,status:'ready',draft,card:{type:'proposal',target:'image',text:'创意说明'},task_input:{target:'image',prompt:'完整执行内容',parameters:{},references:[]}})
+  const runs=[run('first'),run('second')]
+  const layout=emptyCreativeLayout();layout.positions['text:first']={x:800,y:300}
+  const graph=projectCreativeGraph({...base(),runs},layout)
+  assert.deepEqual(graph.nodes.map(node=>node.id),['text:first','text:second'])
+  assert.ok(graph.nodes.every(node=>node.data.status==='ready'&&node.data.kind==='image'))
+  runs[0].status='cancelled'
+  assert.deepEqual(projectCreativeGraph({...base(),runs},layout).nodes.map(node=>node.id),['text:second'])
+  const message={id:'submitted',task_id:'task',task_type:'image',content:{prompt:'真实任务',parameters:{extra:{creation_run_id:'first'}}}}
+  const submitted=projectCreativeGraph({...base(),runs,messages:[message],tasks:{submitted:{status:'running'}}},layout)
+  assert.ok(submitted.nodes.some(node=>node.id==='task:image:task'&&node.data.status==='running'))
+})
+
+test('图片计划已接受后显示待确认，不用普通输入草稿冒充任务',()=>{
+  const run={id:'images',status:'replied',draft:{parameters:{},references:[]},image_plan:{selected_ids:['one'],items:[{id:'one',title:'镜头1',prompt:'单幅画面',parameters:{},references:[]}]}}
+  const graph=projectCreativeGraph({...base(),runs:[run]})
+  assert.equal(graph.nodes[0].id,'image-plan:images:one')
+  assert.equal(graph.nodes[0].data.status,'ready')
+  assert.deepEqual(creativeActivity(graph.nodes),{running:0,unavailable:0})
 })
 
 test('批次逐条展示真实失败/未知/等待文件，不因成功状态缺文件而声称整套完成',()=>{
@@ -190,45 +228,30 @@ test('文档片段独立投影为只读文件引用，不冒充图片或已读�
   assert.equal(expired.nodes[0].data.status,'unavailable');assert.ok(!expired.nodes[0].data.detail.includes('已读取'))
 })
 
-test('文本节点从整理到完整回复保留身份、来源与坐标，不被旧媒体规格和整理稿覆盖',()=>{
-  const layout=emptyCreativeLayout();layout.positions['text:writing']={x:920,y:180}
-  const draft={prompt:'写完整商品文案',references:[{item_id:'i',version_id:'v'}],parameters:{output:'video',extra:{canvas_node_kind:'text'}}}
-  const demand={id:'writing',mode:'chat',status:'planning',draft}
-  const previews={v:{available:true,name:'商品参考',media_type:'image',preview_url:'/product'}}
-  const pending=projectCreativeGraph({...base(),runs:[demand],previews},layout).nodes.find(node=>node.id==='text:writing')
-  assert.equal(pending.data.kind,'text');assert.equal(pending.data.title,'文本');assert.equal(pending.data.status,'planning')
-  const full='完整文稿。'.repeat(600)
-  const graph=projectCreativeGraph({...base(),runs:[{...demand,status:'replied',generation_prompt:'旧整理稿',card:{type:'reply',text:full}}],previews},layout)
-  const result=graph.nodes.find(node=>node.id==='text:writing')
-  assert.equal(result.data.prompt,full);assert.equal(result.data.status,'replied');assert.deepEqual(result.position,{x:920,y:180})
-  assert.ok(graph.edges.some(edge=>edge.source==='reference:v'&&edge.target===result.id));assert.ok(!result.data.url)
-})
-test('讨论已回复不冒充待核对，已回复方案仍等待确认而不是媒体完成',()=>{
-  const graph=projectCreativeGraph({...base(),runs:[{id:'reply',status:'replied',draft:{parameters:{}},card:{type:'reply',text:'收到，不生成'}},{id:'proposal',status:'replied',draft:{parameters:{}},card:{type:'proposal',text:'待确认方案'}}]})
-  assert.equal(graph.nodes.find(node=>node.id==='text:reply').data.status,'replied')
-  assert.equal(graph.nodes.find(node=>node.id==='text:proposal').data.status,'ready')
-  assert.ok(graph.nodes.every(node=>!node.data.url))
-})
-test('明确视频需求整理时即显示视频方案，真实任务受理后沿用方案位置及引用线',()=>{
-  const layout=emptyCreativeLayout();layout.positions['text:live-run']={x:910,y:220}
-  const demand={id:'live-run',status:'planning',draft:{prompt:'根据商品制作6秒视频',references:[{item_id:'i',version_id:'v',purpose:'reference'}],parameters:{output:'video'}}}
-  const planning=projectCreativeGraph({...base(),runs:[demand],previews:{v:{available:true,name:'商品',media_type:'image',preview_url:'/reference'}}},layout)
-  const plan=planning.nodes.find(node=>node.id==='text:live-run')
-  assert.equal(plan.data.kind,'video');assert.equal(plan.data.status,'planning');assert.equal(plan.data.url,undefined)
-  assert.ok(planning.edges.some(edge=>edge.target===plan.id&&edge.source==='reference:v'))
-  const messages=[{id:'message',task_id:'video-task',task_type:'video',content:{prompt:'完整6秒视频',references:demand.draft.references,parameters:{extra:{creation_run_id:'live-run'}}}}]
-  const accepted=projectCreativeGraph({...base(),runs:[{...demand,status:'replied',card:{type:'proposal',target:'video',text:'方案'}}],messages,tasks:{message:{status:'queued'}}},layout)
-  const task=accepted.nodes.find(node=>node.id==='task:video:video-task')
-  assert.deepEqual(task.position,{x:910,y:220});assert.equal(task.data.status,'queued')
-  assert.ok(!accepted.nodes.some(node=>node.id===plan.id))
-  const completed=projectCreativeGraph({...base(),runs:[demand],messages,results:[{key:'result',messageId:'message',kind:'video',url:'/finished.mp4',source:{kind:'video',id:'video-task',result_id:'v1'}}]},layout)
-  assert.deepEqual(completed.nodes.find(node=>node.id===task.id).position,task.position)
-  assert.equal(completed.nodes.find(node=>node.id===task.id).data.runId,'live-run')
+test('完整文本产物交付后创建，普通聊天不建节点且不通过正文猜类型',()=>{
+  const draft={prompt:'写完整剧本',references:[],parameters:{output:'video'}}
+  const run={id:'script',status:'planning',draft,stream_text:'正文写到一半'}
+  const layout=emptyCreativeLayout();layout.positions['text:script']={x:920,y:180}
+  assert.equal(projectCreativeGraph({...base(),runs:[run]},layout).nodes.length,0)
+  for(const card of [{type:'reply',text:'已整理'}, {type:'reply',text:'剧本'.repeat(500)}]){
+    assert.equal(projectCreativeGraph({...base(),runs:[{...run,status:'replied',card}]},layout).nodes.length,0)
+  }
+  const card={type:'reply',artifact_title:'雨夜咖啡馆剧本',text:'完整剧本正文。'.repeat(600)}
+  const accepted={...run,status:'replied',card}
+  const text=projectCreativeGraph({...base(),runs:[accepted]},layout).nodes[0]
+  assert.equal(text.data.kind,'text');assert.equal(text.data.title,card.artifact_title);assert.equal(text.data.prompt,card.text)
+  assert.deepEqual(text.position,{x:920,y:180})
+  assert.equal(projectCreativeGraph({...base(),runs:[{...accepted,status:'cancelled'}]},layout).nodes[0].data.prompt,card.text)
 })
 
-test('普通闲聊即使入口选图片仍为文字回复，不冒充图片任务',()=>{
-  const graph=projectCreativeGraph({...base(),runs:[{id:'reply',status:'replied',draft:{parameters:{output:'image'}},card:{type:'reply',text:'只聊天'}}]})
-  assert.equal(graph.nodes[0].data.kind,'text');assert.equal(graph.nodes[0].data.status,'replied')
+test('显式文本节点交付兼容旧正文，待确认媒体必须存在真实任务合同',()=>{
+  const draft={parameters:{extra:{canvas_node_kind:'text'}}}
+  const text={id:'explicit',mode:'chat',status:'replied',draft,card:{type:'reply',text:'已有文本内容'}}
+  const proposal={id:'proposal',status:'ready',draft:{parameters:{}},card:{type:'proposal',target:'video',text:'待确认'}}
+  assert.equal(projectCreativeGraph({...base(),runs:[text,proposal]}).nodes.length,1)
+  proposal.task_input={target:'video',prompt:'真实6秒视频',parameters:{},references:[]}
+  const graph=projectCreativeGraph({...base(),runs:[text,proposal]})
+  assert.equal(graph.nodes[1].data.kind,'video');assert.equal(graph.nodes[1].data.status,'ready')
 })
 const ref={item_id:'library',version_id:'v1',purpose:'reference'}
 const run=(status='queued')=>({id:'r1',status:'ready',draft:{references:[ref],parameters:{}},reference_previews:{v1:{available:true,name:'真实商品',media_type:'image',preview_url:'/preview'}},creative_plan:{selected_ids:['a','b'],items:[{id:'a',title:'暖阳',prompt:'暖阳下展示商品',references:[ref],parameters:{aspectRatio:'9:16'}},{id:'b',title:'摄影棚',prompt:'摄影棚展示商品',references:[ref],parameters:{}}],batch:{items:[{item_id:'a',task_id:'ta',status,results:status==='succeeded'?[{id:'va',status:'succeeded',video_url:'/video'}]:[]}]}}})

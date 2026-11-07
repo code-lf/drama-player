@@ -9,13 +9,14 @@ import {parse,compileScript} from 'vue/compiler-sfc'
 function moduleOf(path,deps={}){
   const raw=readFileSync(path,'utf8'),source=path.endsWith('.vue')?compileScript(parse(raw).descriptor,{id:'canvas-test',inlineTemplate:true}).content:raw
   const output=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ESNext}}).outputText,module={exports:{}}
-  new Function('require','exports','module',output)(name=>name==='vue'?vue:name==='../canvasViewport'?viewportGeometry:name==='../canvasGroups'?groupGeometry:name==='./CreationImageLightbox.vue'?{default:{props:['node'],setup:p=>()=>vue.h('image-lightbox',{'data-node':p.node.id})}}:deps[name]||{},module.exports,module)
+  new Function('require','exports','module',output)(name=>name==='vue'?vue:name==='./CreationMediaPreview.vue'?{default:{render:()=>null}}:name==='~/components/liv-ui/LivDialog.vue'?{default:{props:['open'],setup:(p,{slots})=>()=>p.open?vue.h('dialog',[slots.default?.(),slots.footer?.()]):null}}:name==='~/components/liv-ui/LivButton.vue'?{default:{setup:(_,{slots,attrs})=>()=>vue.h('button',attrs,slots.default?.())}}:name==='../canvasViewport'?viewportGeometry:name==='../canvasGroups'?groupGeometry:name==='./CreationImageLightbox.vue'?{default:{props:['node'],setup:p=>()=>vue.h('image-lightbox',{'data-node':p.node.id})}}:deps[name]||{},module.exports,module)
   return module.exports
 }
 const media=moduleOf('features/creation/videoWorkbenchMedia.ts')
 const model=moduleOf('features/creation/agentCanvas.ts',{'./videoWorkbenchMedia':media})
 const viewportGeometry=moduleOf('features/creation/canvasViewport.ts')
 const groupGeometry=moduleOf('features/creation/canvasGroups.ts')
+const noticeGeometry=moduleOf('features/creation/canvasTaskNotices.ts')
 const storage=new Map()
 globalThis.localStorage={getItem:key=>storage.get(key)||null,setItem:(key,value)=>storage.set(key,value)}
 const tick=async()=>{for(let i=0;i<8;i++)await vue.nextTick()}
@@ -25,8 +26,9 @@ function mount({saved=null,failSave=false,requestHandler,results=[],messages=[],
   const request=async(url,options)=>{calls.push({url,options});if(requestHandler)return requestHandler(url,options);if(options?.method==='PUT'){if(failSave)throw new Error('测试保存失败');return {revision:1}}return {revision:saved?1:0,content:saved}}
   // 真实父组件把逐节点菜单交给节点；夹具保留节点身份，不能再靠编辑器底栏的旧菜单测试派生。
   const nodeProbe={props:['id','selected','creationItems'],setup:p=>()=>vue.h('menu',{'data-node':p.id,selected:p.selected,items:p.creationItems})}
-  const component=moduleOf('features/creation/components/CreationAgentCanvas.vue',{'@vue-flow/core':{useVueFlow:()=>flow,VueFlow:{props:['nodes','edges'],setup:(props,{slots})=>()=>{flowNodes.value=props.nodes;return vue.h('flow',{nodes:props.nodes,edges:props.edges},props.nodes.map(node=>slots['node-creative']?.(node)))}}},'@vue-flow/minimap':{MiniMap:{render:()=>null}},'../agentCanvas':model,'~/shared/api/adapters/httpAdapter':{request},'~/composables/useActionDialog':{useActionDialog:()=>({confirm:async()=>true})},'./CreativeCanvasNode.vue':{default:nodeProbe},'./CreativeCanvasEdge.vue':{default:{render:()=>null}},'./CreativeCompositionEditor.vue':{default:{render:()=>null}}})
-  const node=(type,text='')=>({type,text,children:[],props:{},parent:null,getBoundingClientRect:()=>({left:100,top:50,width:1200,height:800})})
+  const component=moduleOf('features/creation/components/CreationAgentCanvas.vue',{'@vue-flow/core':{useVueFlow:()=>flow,VueFlow:{props:['nodes','edges'],setup:(props,{slots})=>()=>{flowNodes.value=props.nodes;return vue.h('flow',{nodes:props.nodes,edges:props.edges},props.nodes.map(node=>slots['node-creative']?.(node)))}}},'@vue-flow/minimap':{MiniMap:{render:()=>null}},'../agentCanvas':model,'../canvasTaskNotices':noticeGeometry,'~/shared/api/adapters/httpAdapter':{request},'~/composables/useActionDialog':{useActionDialog:()=>({confirm:async()=>true})},'./CreativeCanvasNode.vue':{default:nodeProbe},'./CreativeCanvasEdge.vue':{default:{render:()=>null}},'./CreativeCompositionEditor.vue':{default:{render:()=>null}}})
+  // 常驻空任务头不等于整块画布，按真实紧凑尺寸测量遮挡，避免夹具把所有落点挤出视口。
+  const node=(type,text='')=>({type,text,children:[],props:{},parent:null,getBoundingClientRect(){return this.props.class?.includes('creative-task-list')?{left:1036,top:732,width:248,height:54}:{left:100,top:50,width:1200,height:800}}})
   const renderer=vue.createRenderer({createElement:node,createText:text=>node('text',text),createComment:text=>node('comment',text),setText:(el,text)=>el.text=text,setElementText:(el,text)=>{el.text=text;el.children=[]},patchProp:(el,key,_,value)=>el.props[key]=value,insert:(el,parent,anchor)=>{if(el.parent){const i=el.parent.children.indexOf(el);if(i>=0)el.parent.children.splice(i,1)}el.parent=parent;const index=anchor?parent.children.indexOf(anchor):-1;if(index<0)parent.children.push(el);else parent.children.splice(index,0,el)},remove:el=>{if(el.parent)el.parent.children=el.parent.children.filter(value=>value!==el)},parentNode:el=>el.parent,nextSibling:el=>el.parent?.children[el.parent.children.indexOf(el)+1]})
   const app=renderer.createApp(component.default,{sessionId:'session-test',ownerId:'owner-test',runs,messages,results,references,previews:{},tasks,leftInset,compositions,beforeSelect,onSelect:value=>selections.push(value.id),onTools:(node,action)=>toolActions.push({nodeId:node.id,action}),onActivity:value=>activity.push(value),onGenerate:(...value)=>events.push(value)})
   app.component('UButton',{setup:(_,{slots,attrs})=>()=>vue.h('button',attrs,slots.default?.())})
@@ -37,6 +39,8 @@ function mount({saved=null,failSave=false,requestHandler,results=[],messages=[],
   app.component('UContextMenu',{props:['items'],setup:(props,{slots})=>()=>vue.h('context-menu',{items:props.items},slots.default?.())})
   app.component('UTextarea',{props:['modelValue','readonly'],emits:['update:modelValue'],setup:(props,{emit})=>()=>vue.h('textarea',{value:props.modelValue,readonly:props.readonly,onInput:value=>emit('update:modelValue',value)})})
   app.component('UIcon',{render:()=>null})
+  // 通知改为共享组件后仍挂载真实SFC，不能用空壳让冲突选择和错误重试在测试中消失。
+  app.component('CreationWorkspaceNotice',moduleOf('features/creation/components/CreationWorkspaceNotice.vue').default)
   const root=node('root'),instance=app.mount(root)
   const find=(predicate,el=root)=>predicate(el)?el:el.children.map(child=>find(predicate,child)).find(Boolean)
   const text=el=>el.text+el.children.map(text).join('')
@@ -366,21 +370,22 @@ test('商品图发送先建立独立草案并携带原图，不使用旧作品�
   assert.ok(ui.calls.some(call=>call.options?.method==='PUT'));ui.app.unmount()
 })
 
-test('选中只读文字节点时流式与完成正文同步输入区，不需要重新点击，也不写草案或生成',async()=>{
+test('文字产物未交付前无占位，交付后可定位完整正文且不提交生成',async()=>{
   storage.clear()
   const runs=vue.reactive([{id:'writer',mode:'chat',status:'planning',stream_text:'第一段公开正文',draft:{prompt:'用户的写作要求',references:[],parameters:{}}}])
   const saved=model.emptyCreativeLayout();saved.selected_id='text:writer'
   const ui=mount({saved,runs});await tick()
   const input=()=>ui.find(el=>el.type==='textarea')
-  assert.equal(input().props.value,'第一段公开正文');assert.equal(input().props.readonly,true)
+  assert.equal(input(),undefined)
   runs[0].stream_text='第一段公开正文以及第二段';await tick()
-  assert.equal(input().props.value,'第一段公开正文以及第二段')
-  runs[0].status='replied';runs[0].card={type:'reply',text:'完整最终的文字交付'};await tick()
+  assert.equal(input(),undefined)
+  runs[0].status='replied';runs[0].card={type:'reply',artifact_title:'完整文稿',text:'完整最终的文字交付'};await tick()
+  await ui.instance.focus('text:writer');await tick()
   assert.equal(input().props.value,'完整最终的文字交付')
   assert.equal(ui.events.length,0);assert.ok(ui.calls.every(call=>!call.options));ui.app.unmount()
 })
 
-test('Agent整理节点失败后保留位置和选择，派生新草案恢复原需求与参考，不自动重试',async()=>{
+test('未产出方案的整理失败不创建假节点，原参考素材保留且不自动重试',async()=>{
   storage.clear()
   const runs=vue.reactive([{id:'failed-plan',status:'planning',mode:'skill',draft:{prompt:'两条香水广告，每条六秒',references:[{item_id:'product',version_id:'product-version'}],parameters:{output:'video'}}}])
   const references=[{item_id:'product',version_id:'product-version',name:'商品图',media_type:'image',preview_url:'/product.png'}]
@@ -388,14 +393,9 @@ test('Agent整理节点失败后保留位置和选择，派生新草案恢复原
   const ui=mount({saved,runs,references});await tick()
   runs[0].status='failed';runs[0].error='图片暂不可读取，请重新选择';await tick()
   const node=ui.flow.getNodes.value.find(node=>node.id==='text:failed-plan')
-  assert.ok(node);assert.deepEqual(node.position,{x:900,y:240});assert.equal(ui.selections.at(-1),node.id)
-  assert.ok(ui.text(ui.find(el=>el.type==='section')).includes('图片暂不可读取，请重新选择'))
+  assert.equal(node,undefined)
+  assert.ok(ui.flow.getNodes.value.some(node=>node.id==='reference:product-version'))
   assert.equal(ui.events.length,0);assert.deepEqual(ui.activity.at(-1),{running:0,unavailable:0})
-  await ui.create('派生视频')
-  const created=ui.flow.getNodes.value.find(node=>node.data.manual)
-  assert.equal(created.data.prompt,'两条香水广告，每条六秒')
-  const graph=ui.find(el=>el.type==='flow');assert.ok(graph.props.edges.some(edge=>edge.source==='reference:product-version'&&edge.target===created.id))
-  assert.ok(!graph.props.edges.some(edge=>edge.source==='text:failed-plan'&&edge.target===created.id))
   assert.equal(ui.events.length,0);assert.ok(ui.calls.every(call=>call.url.endsWith('/canvas')));ui.app.unmount()
 })
 
@@ -427,7 +427,7 @@ test('任务列表定位先通过离开保护，取消不移动镜头；成功�
 })
 
 test('真实任务受理继承所选方案位置，已确认快照只读，不抢无关选择',async()=>{
-  storage.clear();const runs=vue.reactive([{id:'new-run',status:'planning',draft:{prompt:'商品视频',references:[],parameters:{output:'video'}}}])
+  storage.clear();const runs=vue.reactive([{id:'new-run',status:'ready',card:{type:'proposal',target:'video',text:'商品视频方案'},task_input:{target:'video',prompt:'完整商品视频需求',parameters:{},references:[]},draft:{prompt:'商品视频',references:[],parameters:{output:'video'}}}])
   const messages=vue.reactive([]),tasks=vue.reactive({})
   const saved=model.emptyCreativeLayout();saved.positions['text:new-run']={x:880,y:250};saved.selected_id='text:new-run'
   const ui=mount({saved,runs,messages,tasks});await tick()
@@ -603,9 +603,42 @@ test('保存失败显示真实错误并保留账号会话隔离的本地备份',
   storage.clear();const ui=mount({failSave:true});await tick();await ui.create('图片')
   await new Promise(resolve=>setTimeout(resolve,700));await tick()
   assert.ok(ui.find(el=>el.props.role==='alert'&&ui.text(el).includes('测试保存失败')))
+  const retry=ui.find(el=>el.type==='button'&&el.props['aria-label']==='重试画布保存')
+  assert.equal(ui.text(retry),'重试')
+  assert.equal(retry.parent.props.class,'creation-workspace-notice')
+  assert.ok(!ui.find(el=>el.props.class==='creative-canvas-top'&&ui.text(el).includes('重试')))
   const backup=JSON.parse(storage.get('liv-creative-canvas-v1:owner-test:session-test'))
   assert.equal(backup.dirty,true);assert.equal(backup.layout.drafts.length,1)
   ui.app.unmount()
+})
+
+test('读取失败的重试跟随错误，点击只重读画布且不生成媒体',async()=>{
+  storage.clear();let offline=true
+  const ui=mount({requestHandler:async()=>{if(offline)throw new Error('测试读取失败');return {revision:0,content:null}}});await tick()
+  const retry=ui.find(el=>el.type==='button'&&el.props['aria-label']==='重试画布读取')
+  assert.ok(retry);assert.equal(retry.parent.props.class,'creation-workspace-notice')
+  offline=false;await ui.click('重试画布读取');await tick()
+  assert.ok(!ui.find(el=>el.props.role==='alert'))
+  assert.equal(ui.events.length,0)
+  assert.ok(ui.calls.every(call=>!call.options||call.options.method==='GET'))
+  ui.app.unmount();storage.clear()
+})
+
+test('连线校验提示不被自动保存清除，手动关闭且不显示无效保存重试',async()=>{
+  storage.clear();const saved=model.emptyCreativeLayout()
+  saved.drafts=[{id:'draft:source',kind:'image',title:'测试来源',prompt:'来源'}];saved.selected_id='draft:source'
+  const ui=mount({saved,results:[{key:'done-image',messageId:'',versionKey:'one',kind:'image',title:'已提交作品',summary:'原提示词',url:'/test.png',source:{kind:'image',id:'task-done',result_id:'one'}}]});await tick()
+  const flow=ui.find(el=>el.type==='flow')
+  const target=ui.flow.getNodes.value.find(node=>!node.data.manual)
+  assert.ok(target)
+  flow.props.onConnect({source:'draft:source',target:target.id});await tick()
+  assert.ok(ui.find(el=>el.props.role==='alert'&&ui.text(el).includes('只能连接到可编辑草案')))
+  assert.ok(!ui.find(el=>el.props['aria-label']==='重试画布保存'))
+  ui.find(el=>el.type==='textarea').props.onInput('改动仅用于触发画布保存');await tick()
+  await new Promise(resolve=>setTimeout(resolve,700));await tick()
+  assert.ok(ui.find(el=>el.props.role==='alert'&&ui.text(el).includes('只能连接到可编辑草案')))
+  await ui.click('关闭画布操作提示');assert.ok(!ui.find(el=>el.props.role==='alert'))
+  assert.equal(ui.events.length,0);ui.app.unmount();storage.clear()
 })
 test('多页冲突未选择前不能覆盖云端，离开页面仍保留本机旧修订',async()=>{
   storage.clear()
@@ -680,7 +713,7 @@ test('派生菜单与手动连线同一校验，不从视频直接创建非法�
   const menu=ui.find(el=>el.type==='menu'&&el.props['data-node']==='result:video:original:v')
   assert.deepEqual(menu.props.items.map(item=>item.label),['派生','文本','图片','视频'])
   assert.equal(menu.props.items.find(item=>item.label==='图片').disabled,true)
-  assert.ok(menu.props.items.find(item=>item.label==='图片').description.includes('保存截帧'))
+  assert.equal(menu.props.items.find(item=>item.label==='图片').description,undefined)
   // 即使调用禁用项的回调，创建方法仍须拒绝，不能只靠视觉置灰。
   await ui.create('派生图片');assert.equal(ui.flow.getNodes.value.length,before)
   assert.ok(ui.find(el=>el.props.role==='alert'))
@@ -825,7 +858,7 @@ test('图片节点右键可直达裁剪，裁剪入口只打开本地工具不�
   const sourceId='result:image:task-1:result-1',surface=ui.find(el=>el.props.class==='creative-context-surface')
   surface.props.onContextmenuCapture({target:{closest:()=>({getAttribute:()=>sourceId})},clientX:500,clientY:300});await tick()
   const item=ui.find(el=>el.type==='context-menu').props.items.find(value=>value.label==='裁剪 / 改比例')
-  assert.ok(item);assert.match(item.description,/独立版本/)
+  assert.ok(item);assert.equal(item.description,undefined)
   await item.onSelect();await tick()
   assert.deepEqual(ui.toolActions,[{nodeId:sourceId,action:'crop'}])
   assert.equal(ui.selections.at(-1),sourceId);assert.equal(ui.events.length,0)
@@ -867,7 +900,7 @@ test('真实SFC框选打组、整体拖动、解组及撤销沿布局保存，�
   await ui.click('打组')
   const header=ui.find(el=>el.type==='button'&&el.props['aria-label']?.startsWith('移动分组'))
   assert.ok(header)
-  const event={button:0,pointerId:1,clientX:100,clientY:100,stopPropagation(){},currentTarget:{setPointerCapture(){}}}
+  const event={button:0,buttons:1,pointerId:1,clientX:100,clientY:100,preventDefault(){},stopPropagation(){},currentTarget:{setPointerCapture(){}}}
   await header.props.onPointerdown(event);await tick()
   header.props.onPointermove({...event,clientX:180,clientY:140});await tick()
   header.props.onPointerup(event);await tick()
@@ -877,7 +910,7 @@ test('真实SFC框选打组、整体拖动、解组及撤销沿布局保存，�
     assert.equal(node.position.y-prior.position.y,50)
     assert.deepEqual(JSON.parse(JSON.stringify(node.data)),prior.data)
   }
-  await ui.click('解组');assert.ok(!ui.find(el=>el.type==='button'&&el.props['aria-label']?.startsWith('移动分组')))
+  await ui.create('解组');assert.ok(!ui.find(el=>el.type==='button'&&el.props['aria-label']?.startsWith('移动分组')))
   await ui.click('撤销画布编辑');assert.ok(ui.find(el=>el.type==='button'&&el.props['aria-label']?.startsWith('移动分组')))
   await new Promise(resolve=>setTimeout(resolve,700));await tick()
   const saved=ui.calls.filter(call=>call.options?.method==='PUT').at(-1).options.body.content
@@ -887,6 +920,43 @@ test('真实SFC框选打组、整体拖动、解组及撤销沿布局保存，�
   const restored=mount({references,saved});await tick()
   assert.ok(restored.find(el=>el.type==='button'&&el.props['aria-label']?.startsWith('移动分组')))
   assert.equal(restored.events.length,0);restored.app.unmount()
+})
+
+test('真实SFC独立拖出不会拖大原组，拖入后扩框，撤销和刷新保存真实归属',async()=>{
+  storage.clear()
+  const saved=model.emptyCreativeLayout()
+  saved.drafts=[1,2,3].map(i=>({id:`draft:drop-${i}`,kind:'image',title:`素材${i}`,prompt:'原素材说明'}))
+  saved.positions={'draft:drop-1':{x:0,y:0},'draft:drop-2':{x:400,y:0},'draft:drop-3':{x:1200,y:0}}
+  saved.groups=[{id:'group:drop',title:'拖放验收',members:['draft:drop-1','draft:drop-2']}]
+  const ui=mount({saved});await tick()
+  const frame=()=>ui.find(el=>el.type==='section'&&el.props.class==='creative-group-frame')
+  const flow=()=>ui.find(el=>el.type==='flow')
+  const initial={...frame().props.style}
+  // 使用真实SFC的Vue Flow事件，不直接修改布局对象绕过拖动处理。
+  const second=ui.flow.getNodes.value.find(n=>n.id==='draft:drop-2')
+  flow().props.onNodeDragStart({node:second})
+  second.position={x:900,y:700};await tick()
+  assert.deepEqual(frame().props.style,initial,'拖动中原组边界必须固定')
+  flow().props.onNodeDragStop();await tick()
+  assert.match(frame().props['aria-label'],/1个可见节点/)
+  await ui.click('撤销画布编辑')
+  assert.match(frame().props['aria-label'],/2个可见节点/)
+  // 恢复后把组外第三项中心放入右边缘，完整节点应扩展原框。
+  const third=ui.flow.getNodes.value.find(n=>n.id==='draft:drop-3')
+  flow().props.onNodeDragStart({node:third})
+  third.position={x:520,y:0};await tick()
+  const frozenWidth=parseFloat(frame().props.style.width)
+  flow().props.onNodeDragStop();await tick()
+  assert.match(frame().props['aria-label'],/3个可见节点/)
+  assert.ok(parseFloat(frame().props.style.width)>frozenWidth)
+  await new Promise(resolve=>setTimeout(resolve,700));await tick()
+  const content=ui.calls.filter(call=>call.options?.method==='PUT').at(-1).options.body.content
+  assert.deepEqual(content.groups[0].members,['draft:drop-1','draft:drop-2','draft:drop-3'])
+  assert.equal(content.positions['draft:drop-3'].x,520)
+  assert.equal(ui.events.length,0);ui.app.unmount();storage.clear()
+  const restored=mount({saved:content});await tick()
+  assert.match(restored.find(el=>el.type==='section'&&el.props.class==='creative-group-frame').props['aria-label'],/3个可见节点/)
+  assert.equal(restored.events.length,0);restored.app.unmount();storage.clear()
 })
 
 test('修饰键多选不依赖图形库已经更新的选择状态，可继续取消单个成员',async()=>{

@@ -370,7 +370,7 @@ onUnmounted(() => { alive = false; previewEpoch++; if (pollTimer) clearInterval(
     <div class="grid gap-6" :class="compact?'grid-cols-1':'xl:grid-cols-[minmax(0,1fr)_minmax(380px,.88fr)]'">
       <section class="rounded-[22px] border border-[#dce6f4] bg-white p-6 shadow-[0_20px_55px_rgba(31,70,134,.06)]">
         <div class="mb-5 flex items-center justify-between gap-4">
-          <div><p class="text-lg font-black">{{ selectedGroup }}工作台</p><p class="mt-1 text-xs text-[#7384a0]">选择操作，填写内容，再确认本次点数</p></div>
+          <div><p class="text-lg font-black">{{ selectedGroup }}工作台</p><p class="mt-1 text-xs text-[#7384a0]">选择操作，填写内容，再确认本次积分</p></div>
           <span class="rounded-full bg-[#eff5ff] px-3 py-1 text-xs font-bold text-[#2767d7]">{{ groupOperations.length }} 项能力</span>
         </div>
         <div class="mb-6 grid grid-cols-2 gap-2 sm:grid-cols-3">
@@ -431,7 +431,7 @@ onUnmounted(() => { alive = false; previewEpoch++; if (pollTimer) clearInterval(
           <label v-if="current.rights_required" class="flex items-start gap-2 rounded-xl bg-amber-50 p-3 text-xs leading-5 text-amber-900"><input v-model="rightsConfirmed" type="checkbox" class="mt-1 accent-[#cc7c00]">我确认拥有上传音频、声音及相关作品的合法使用授权，并知悉不得仿冒他人声音。</label>
           <div class="flex flex-wrap items-center justify-between gap-3 border-t border-[#edf1f7] pt-5">
             <div class="text-sm text-[#6d7d96]">{{ current.enabled ? `基础价 ${current.retail_credits} 点 / 次` : '管理员尚未开放此操作' }}</div>
-            <UButton ref="quoteTrigger" :disabled="!current.enabled || busy" :loading="busy" @click="preview">预估本次点数</UButton>
+            <UButton ref="quoteTrigger" :disabled="!current.enabled || busy" :loading="busy" @click="preview">预估本次积分</UButton>
           </div>
         </div>
       </section>
@@ -476,7 +476,7 @@ onUnmounted(() => { alive = false; previewEpoch++; if (pollTimer) clearInterval(
 
     <!-- 二级费用确认沿用统一设置弹窗，只展示服务端本次报价，不自行推算倍数。 -->
     <LivDialog v-if="quote" :open="true" settings dark title="确认音乐费用" :dismissible="!busy" @update:open="open=>{if(!open)void dismissQuote()}">
-      <p class="liv-settings-copy">{{ quote.label }}本次需 <CreditIcon class="inline-block"/> {{ quote.retail_credits }} 点数。确认后提交任务，失败时的点数处理以实际账单为准。</p>
+      <p class="liv-settings-copy">{{ quote.label }}本次需 <CreditIcon class="inline-block"/> {{ quote.retail_credits }} 积分。确认后提交任务，失败时的积分处理以实际账单为准。</p>
       <template #footer><LivButton settings variant="secondary" :disabled="busy" @click="dismissQuote">返回修改</LivButton><LivButton settings variant="primary" :loading="busy" :disabled="busy" @click="submit">确认并生成</LivButton></template>
     </LivDialog>
   </fieldset>

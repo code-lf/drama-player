@@ -12,8 +12,8 @@ const maintenanceBlocked = useState<boolean>('maintenance:full-blocked', () => f
 
 <template>
   <!-- Nuxt UI 的浮层、提示和全局交互状态都由 UApp 统一承载。 -->
-  <!-- 全站提示固定右上角，并通过进度条提示自动关闭倒计时。 -->
-  <UApp :toaster="{ position: 'top-right', duration: 4500, progress: true, max: 4 }">
+  <!-- Nuxt通知统一顶部居中，不重复堆叠右上角卡片；主色仍走品牌令牌。 -->
+  <UApp :toaster="{ position: 'top-center', duration: 4500, progress: false, max: 2 }">
     <div :inert="maintenanceBlocked || undefined"><NuxtLayout>
       <NuxtPage />
     </NuxtLayout>

@@ -1,0 +1,29 @@
+/* 旧图标名称兼容层：统一生成/AI星芒造型，不替换积分、上传等不同语义的图标。 */
+:is(.i-lucide-sparkles,.iconify[class*="lucide"][class*="sparkles"]){
+  --svg:url('/icons/liv-generate.svg')!important;
+  mask:url('/icons/liv-generate.svg') center/contain no-repeat!important;
+  -webkit-mask:url('/icons/liv-generate.svg') center/contain no-repeat!important;
+  background-color:currentColor!important;
+}
+/* 菜单传送到body，不能使用资料库scoped样式；继续由Nuxt负责焦点和键盘交互。 */
+.asset-library-menu{
+  width:176px;min-width:176px!important;padding:6px!important;
+  border:1px solid var(--liv-project-control-border)!important;border-radius:16px!important;
+  background:var(--liv-project-control-bg)!important;color:var(--liv-project-text)!important;
+  box-shadow:0 8px 24px #0003!important;
+}
+.asset-library-menu [role=menuitem]{
+  display:flex;align-items:center;gap:10px;min-height:36px;padding:8px 10px!important;
+  border-radius:8px;font-family:var(--liv-font-menu);font-size:13px!important;font-weight:400;
+  line-height:20px;color:var(--liv-project-text)!important;
+}
+.asset-library-menu [role=menuitem] .iconify{width:16px;height:16px;color:inherit!important;flex:none}
+.asset-library-menu [role=menuitem]:is(:hover,[data-highlighted]){background:var(--liv-project-hover)!important}
+.asset-library-menu [role=menuitem]::before{display:none!important}
+.asset-library-menu [role=menuitem]:is([data-color=error],[class*="text-error"]){color:var(--color-state-danger)!important}
+/* Nuxt Toast仅压缩项目结果通知，不创建另一套通知宿主。动作文字使用高对比前景。 */
+.project-recycle-toast{padding:10px 14px!important;gap:8px!important;min-height:48px!important}
+.project-recycle-toast [data-slot=title]{font-size:13px;line-height:20px}
+.project-recycle-toast [data-slot=actions]{margin:0!important;gap:8px!important}
+.project-recycle-toast button{color:var(--liv-control-on-primary)!important;border-color:var(--liv-project-control-border)!important}
+.project-recycle-toast [data-slot=wrapper]{display:flex;align-items:center;flex-wrap:wrap;gap:10px}

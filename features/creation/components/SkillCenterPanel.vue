@@ -9,6 +9,7 @@ import AssistantReply from './AssistantReply.vue'
 import {workspaceNavigationItems} from '../workspaceNavigation'
 import SkillFlowEditor from './SkillFlowEditor.vue'
 import SkillTextResources from './SkillTextResources.vue'
+import {skillMediaResources} from '../skillMediaResources'
 import SkillReferenceAssets from './SkillReferenceAssets.vue'
 // 业务目录位于自动扫描目录外，显式引入弹窗，避免未知标签将关闭状态的表单直接铺到列表页。
 import LivDialog from '~/components/liv-ui/LivDialog.vue'
@@ -490,15 +491,21 @@ async function importRecipe() {
 }
 /** 私有资源仅从本人素材库读取，选择时固定版本；不把文件地址当授权凭证。 */
 let assetReadRevision=0
+// 预览地址只来自已鉴权固定版本，不持久化短期链接、不修改技能引用。
+const resourceMedia=computed(()=>skillMediaResources(assetItems.value,recipe.value?.references||[]).map(item=>({...item,url:libraryService.previewUrl(item.url)})))
 async function loadAssets(){
   const target=recipe.value,owner=auth.session.user?.id,revision=++assetReadRevision
   if(!target||!owner)return
   try{
     const base=rows.value.find(row=>row.id===target.base_code)
     const result=await libraryService.list({scope:'personal'})
+    // 已绑定附件可能不在目录第一页，逐项读取原条目，禁止用最新版本替代固定版本。
+    const missing=target.references.filter(reference=>!result.items.some(item=>item.id===reference.item_id&&item.versions.some(version=>version.id===reference.version_id)))
+    const details=await Promise.allSettled([...new Set(missing.map(reference=>reference.item_id))].map(id=>libraryService.detail(id)))
     // 私有目录迟到时不能落入另一账号或另一技能，也不能覆盖更新的目录读取。
     if(recipe.value!==target||auth.session.user?.id!==owner||revision!==assetReadRevision)return
-    assetItems.value=result.items.filter(item=>base?.media_types.includes(item.media_type))
+    const bound=details.flatMap(value=>value.status==='fulfilled'?[value.value]:[])
+    assetItems.value=[...result.items.filter(item=>!bound.some(value=>value.id===item.id)),...bound].filter(item=>base?.media_types.includes(item.media_type)||target.references.some(reference=>reference.item_id===item.id))
   }catch(cause){if(recipe.value===target&&auth.session.user?.id===owner&&revision===assetReadRevision)report(cause)}
 }
 function toggleAsset(item: LibraryItem, version: LibraryVersion){if(!recipe.value)return;const index=recipe.value.references.findIndex(ref=>ref.version_id===version.id);if(index>=0)recipe.value.references.splice(index,1);else if(recipe.value.references.length<12)recipe.value.references.push({item_id:item.id,version_id:version.id,purpose:item.media_type==='video'?'reference_video':'reference'})}
@@ -615,7 +622,12 @@ watch(busy,value=>{if(!value)scheduleAutoSave()})
 <UButton v-if="authoring?.status==='processing'" color="neutral" variant="soft" @click="readAuthoring()">读取原整理结果</UButton><UButton v-if="authoring?.status==='ready'&&!proposal&&acknowledgedAuthoring!==authoring.request_id" color="neutral" variant="ghost" @click="acknowledgedAuthoring=authoring.request_id">放弃原整理结果，保留当前稿</UButton>
       <section v-if="authoring?.status==='processing'&&authoring.recovery_available" class="builder-recovery"><p>整理等待已超过10分钟，可保留原稿并结束等待。此操作不取消供应商请求，也不会自动重发。</p><UButton color="neutral" variant="soft" :disabled="busy" @click="endAuthoringWait">结束等待并保留原稿</UButton></section>
       <template #attachments><div v-if="authoringReferences.length" class="builder-attachments"><UButton v-for="(reference,index) in authoringReferences" :key="reference.version_id" color="neutral" variant="soft" icon="i-lucide-paperclip" :disabled="busy" @click="authoringReferences.splice(index,1)">分析附件 {{index+1}} ×</UButton><small>文档按已上传全文读取；仅供助手分析，不随技能共享。</small></div></template>
-      <div class="tabs"><button v-for="tab in [authoringMode==='steps'?'Skill 流程':'SKILL.md','资源附件','引用资产']" :key="tab" :class="{active:(documentTab==='文档'?'SKILL.md':documentTab==='步骤'?'Skill 流程':documentTab)===tab}" @click="documentTab=tab==='SKILL.md'?'文档':tab==='Skill 流程'?'步骤':tab; if(tab==='引用资产')loadAssets()">{{ tab }}</button><UButton class="builder-view-toggle" color="neutral" variant="ghost" :disabled="busy" @click="toggleAuthoringMode">{{authoringMode==='steps'?'切换为文档视图':'切换为步骤视图'}}</UButton></div><p v-if="documentTab==='步骤' && executionFlow?.source_document != null && executionFlow.source_document !== config.document" role="status" class="flow-document-notice">文档已变更，步骤可能需要更新；原文与步骤均已保留，可通过对话重新转换并先核对候选。</p><SkillFlowEditor :models="stepModels" :styles="stepStyles" v-if="documentTab==='步骤'" v-model="executionFlow"/><section v-else-if="documentTab==='文档'" class="builder-document-editor"><label><span class="sr-only">SKILL.md 专业文档</span><UTextarea v-model="config.document" aria-label="技能专业文档" :rows="16" :maxlength="20000" class="w-full flex-1 min-h-0" :ui="{base:'h-full resize-none'}"/></label><UButton v-if="!config.document" variant="soft" @click="config.document=skillDocumentTemplate(config.label)">填入文档模板</UButton></section><SkillTextResources v-else-if="documentTab==='资源附件'" :model-value="config.text_resources||[]" :busy="busy" @update:model-value="config.text_resources=$event"/><SkillReferenceAssets v-else :items="assetItems" :references="recipe.references" :busy="busy" @refresh="loadAssets" @toggle="toggleAsset" @remove="recipe.references=recipe.references.filter(ref=>ref.version_id!==$event)"/>
+      <div class="tabs"><button v-for="tab in [authoringMode==='steps'?'Skill 流程':'SKILL.md','资源附件','引用资产']" :key="tab" :class="{active:(documentTab==='文档'?'SKILL.md':documentTab==='步骤'?'Skill 流程':documentTab)===tab}" @click="documentTab=tab==='SKILL.md'?'文档':tab==='Skill 流程'?'步骤':tab; if(['资源附件','引用资产'].includes(tab))loadAssets()">{{ tab }}</button><UButton class="builder-view-toggle" color="neutral" variant="ghost" :disabled="busy" @click="toggleAuthoringMode">{{authoringMode==='steps'?'切换为文档视图':'切换为步骤视图'}}</UButton></div>
+      <p v-if="documentTab==='步骤' && executionFlow?.source_document != null && executionFlow.source_document !== config.document" role="status" class="flow-document-notice">文档已变更，步骤可能需要更新；原文与步骤均已保留，可通过对话重新转换并先核对候选。</p>
+      <SkillFlowEditor :models="stepModels" :styles="stepStyles" v-if="documentTab==='步骤'" v-model="executionFlow"/>
+      <section v-else-if="documentTab==='文档'" class="builder-document-editor"><label><span class="sr-only">SKILL.md 专业文档</span><UTextarea v-model="config.document" aria-label="技能专业文档" :rows="16" :maxlength="20000" class="w-full flex-1 min-h-0" :ui="{base:'h-full resize-none'}"/></label><UButton v-if="!config.document" variant="soft" @click="config.document=skillDocumentTemplate(config.label)">填入文档模板</UButton></section>
+      <SkillTextResources v-else-if="documentTab==='资源附件'" :model-value="config.text_resources||[]" :media-resources="resourceMedia" :busy="busy" @update:model-value="config.text_resources=$event"/>
+      <SkillReferenceAssets v-else :items="assetItems" :references="recipe.references" :busy="busy" @refresh="loadAssets" @toggle="toggleAsset" @remove="recipe.references=recipe.references.filter(ref=>ref.version_id!==$event)"/>
     </SkillBuilderShell>
     <div v-if="importOpen" class="overlay" @click.self="importOpen=false"><section class="dialog"><header><h2>导入 JSON / SKILL.md</h2><button @click="importOpen=false">×</button></header><p>请确认内容使用许可；只接受 liv-skill-v1 JSON 或 liv-skill-json 配方块。未知步骤与脚本不会执行。可先导出个人技能作为示例。</p><label>选择配方文件<input type="file" accept=".json,.md" @change="importFile" /></label><textarea v-model="importedText" class="import" placeholder="粘贴受控配方文档" /><p v-if="error" class="error">{{ error }}</p><button class="primary" @click="importRecipe">校验并预览</button></section></div>
   </section>

@@ -5,7 +5,7 @@ import CreationCompositionPanel from './CreationCompositionPanel.vue'
 import CreationGenerationBinding from './CreationGenerationBinding.vue'
 import {videoCompositionService as api,type CompositionOutputs} from '~/shared/api/services/videoCompositionService'
 
-const props=defineProps<{sessionId:string;sources:SessionResult[]}>()
+const props=defineProps<{sessionId:string;sources:SessionResult[];musicSources?:SessionResult[]}>()
 const emit=defineEmits<{openRun:[id:string]}>()
 const {confirm}=useActionDialog()
 const manifest=ref<CompositionOutputs>({schema_version:1,revision:0,output_count:0,outputs:[]})
@@ -88,6 +88,7 @@ function move(direction:number){
 }
 onMounted(()=>void load())
 onBeforeUnmount(()=>{alive=false;readEpoch++})
+defineExpose({canLeave})
 </script>
 <template>
   <section class="space-y-4 text-sm" aria-label="成片与片段计划">
@@ -116,7 +117,7 @@ onBeforeUnmount(()=>{alive=false;readEpoch++})
     <p v-if="error" role="alert" class="text-error">{{error}}</p>
     <div :inert="busy||bindingBusy||undefined" :aria-busy="busy||bindingBusy" class="space-y-4">
       <CreationGenerationBinding v-if="current&&!legacy" ref="binding" :key="`${sessionId}:${selected}:binding`" :session-id="sessionId" :output-id="selected" :before-change="beforeBindingChange" @busy="bindingBusy=$event" @changed="bindingChanged" @open-run="openSourceRun"/>
-      <CreationCompositionPanel v-if="legacy||current" ref="child" :key="`${sessionId}:${legacy?'legacy':selected}:${editorVersion}`" :session-id="sessionId" :output-id="legacy?undefined:selected" :sources="sources" @changed="editorChanged"/>
+      <CreationCompositionPanel v-if="legacy||current" ref="child" :key="`${sessionId}:${legacy?'legacy':selected}:${editorVersion}`" :session-id="sessionId" :output-id="legacy?undefined:selected" :sources="sources" :music-sources="musicSources" @changed="editorChanged"/>
       <p v-else-if="ready" class="text-muted">先新增成片计划，再添加该成片的片段。原单片草稿保持原样，可从上方打开。</p>
     </div>
   </section>

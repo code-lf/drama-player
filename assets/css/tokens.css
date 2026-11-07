@@ -1,9 +1,39 @@
 :root {
+  /* 项目目录的浮层由原Nuxt组件传送，样式只约束对应业务浮层。 */
+  /* 项目目录独立中性展示令牌，避免Nuxt默认输入框/按钮恢复蓝灰色。 */
+  --liv-project-control-bg: #222222;
+  --liv-project-control-border: #303030;
+  --liv-project-hover: #333333;
+  --liv-project-filter-bg: #111111;
+  --liv-project-text: #f5f5f5;
+  --liv-project-muted: #858585;
+  /* 我的项目媒体卡使用中性灰固定展示面，空封面仅展示低对比品牌字标。 */
+  --liv-project-cover-surface: #282828;
+  --liv-project-card-surface: #1b1b1b;
+  --liv-project-placeholder-mark: #363636;
+  /* 画布居中通知采用固定中性灰表面，与业务错误颜色和右上角全站通知隔离。 */
+  --liv-canvas-notice-bg: #333333;
+  --liv-canvas-notice-border: #494949;
+  --liv-canvas-notice-text: #ffffff;
+  /* 采购确认采用固定黑色媒体表面与紧凑任务行；不更改全站面板或品牌色。 */
+  --liv-confirm-surface: #0e0e0e;
+  --liv-confirm-task-surface: #1c1c1c;
+  /* 对话业务问题卡统一色阶与操作高度；不改变报价卡、弹窗或品牌主色。 */
+  --liv-question-surface: #1D1D1D;
+  --liv-question-option: #292929;
+  --liv-question-action-height: 44px;
+  /* 正文资产引用使用浅黄色标签；与品牌按钮靛紫区分，固定深色创作表面共用。 */
+  --liv-reference-tag-text: #d8ed8c;
+  --liv-reference-tag-background: #292929;
+  --liv-reference-tag-border: #3c3c3c;
   /* 制造机步骤列表占编辑区约四成，滚动条使用中性灰，不继承全站蓝灰。 */
   --liv-builder-step-column: 44%;
   --liv-builder-scroll-width: 6px;
   --liv-builder-scroll-thumb: #343434;
   --liv-builder-scroll-thumb-hover: #505050;
+  /* 制造机资源栏与选中边界：沿用深色文件浏览器层级，不另造基础控件。 */
+  --liv-builder-resource-column: 30%;
+  --liv-builder-resource-selected-border: #999999;
   /* 创作画布统一尺寸：媒体节点按文件比例，输入区固定屏幕尺寸不随画布缩放。 */
   --liv-graph-node-width: 280px;
   --liv-graph-media-height: 420px;
@@ -178,6 +208,11 @@
   /* 顶栏左右一级入口同高；头像与内部图标另计，不随文字或余额撑高。 */
   --liv-topbar-control-height: 40px;
   --liv-topbar-icon-size: 18px;
+  /* 桌面会话导航独立加高15px，账户入口维持原大小；工作区同步扣除新增高度。 */
+  --liv-session-nav-height: 55px;
+  --liv-session-header-height: 71px;
+  --liv-session-nav-title-size: 16px;
+  --liv-session-nav-icon-size: 20px;
   /* 音乐为固定深色媒体舞台，封面氛围与玻璃面板不随明暗主题反转。 */
   --liv-music-stage: #080b16;
   --liv-music-panel: rgba(13, 19, 38, .72);
@@ -204,9 +239,16 @@
   --liv-home-dock-arrow: rgba(255, 255, 255, .1);
   --liv-chat-assistant-text: #ffffff;
   /* 创作会话统一规格：消息、表单与输入框共享，不跟随窗口高度拉伸字号。 */
-  --liv-chat-font: 14px;
-  --liv-chat-line: 1.7;
+  --liv-chat-font: 15px;
+  --liv-chat-line: 24.7px;
+  /* 对话正文和输入提示共享字体；400为常规字重，不取消Markdown语义加粗。 */
+  --liv-chat-family: "PingFang SC", sans-serif;
+  --liv-chat-weight: 400;
+  --liv-chat-placeholder: rgba(255, 255, 255, 0.34);
   --liv-chat-gap: 24px;
+  /* 技能说明共享紧凑正文节奏，不让各技能生成独立CSS或放大字段标题。 */
+  --liv-chat-copy-gap: 8px;
+  --liv-chat-section-gap: 12px;
   --liv-chat-inset: 16px;
   --liv-chat-editor-min: 96px;
   --liv-chat-editor-max: 220px;
@@ -283,5 +325,8 @@
 }
 /* 风格媒体浏览器按参考布局保持七列竖卡，大窗口不无限拉伸。 */
 :root{--liv-style-browser-width:1160px;--liv-style-browser-height:780px;--liv-style-browser-gap:16px;--liv-style-card-ratio:3/5}
+/* 紧凑音乐与任务提示共用画布规格；不随缩放放大固定操作层。 */
+/* 画布组框固定深色，与画布媒体表面一致。 */
+:root{--liv-canvas-group-surface:#111111;--liv-canvas-music-padding:16px;--liv-canvas-music-radius:12px;--liv-canvas-music-play-size:40px;--liv-canvas-task-width:248px;--liv-canvas-task-height:54px;--liv-canvas-task-thumb:40px;--liv-canvas-group-label-size:12px}
 /* 提示词恢复卡片与首行预留共用宽度，避免各入口文字被覆盖。 */
 :root{--liv-prompt-undo-width:128px;--liv-skill-preview-width:280px;--liv-model-list-height:320px;--liv-badge-indigo:#A5B4FC;--liv-badge-green:#86EFAC;--liv-badge-amber:#FCD34D;--liv-badge-rose:#FDA4AF;--liv-badge-cyan:#67E8F9}

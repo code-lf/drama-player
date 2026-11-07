@@ -4,6 +4,8 @@ import { request } from '~/shared/api/adapters/httpAdapter'
 /** 共用库使用现有 HTTP 鉴权和协议确认入口，不把文件地址当作授权依据。 */
 export const libraryService = {
   detail: (id: string) => request<LibraryItem>(`/library/${id}`),
+  /** 原用户提示词仅从本人固定版本读取，不使用平台编译提示词或推断上传图提示词。 */
+  creationContext: (id:string,version:string) => request<{prompt:string;available:boolean}>(`/library/${id}/versions/${version}/creation`),
   capabilities: () => request<LibraryCapabilities>('/library/capabilities'),
   configuration: () => request<LibraryConfiguration>('/library/configuration'),
   list: (filters: { scope?: string; group?: string; favorite?: boolean; category?: string; media_type?: string; query?: string; page?: number; archived?: boolean }) => request<LibraryPage>('/library/', { query: filters }),

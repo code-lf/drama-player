@@ -8,7 +8,7 @@ import {allowedDurations,referenceDurationValues} from '../durationOptions'
 import {nodeParameterError} from '../nodeParameterValidation'
 
 /** 业务适配层只隔离节点规格，模型菜单/风格/参数弹层全部复用原输入框组件。 */
-const props=defineProps<{kind:'text'|'image'|'video'|'music';value?:Partial<CreativeNodeParameters>;initial?:Partial<CreationParameterState>;catalog:CreationCatalog|null;busy?:boolean;referenceTypes?:Array<{media_type?:string;purpose?:string}>;skill?:string;fullEditor?:boolean;prompt?:string;readonly?:boolean;sendDisabledReason?:string;references?:ComposerReference[];annotation?:{preview:string}|null}>()
+const props=defineProps<{kind:'text'|'image'|'video'|'music';value?:Partial<CreativeNodeParameters>;initial?:Partial<CreationParameterState>;catalog:CreationCatalog|null;busy?:boolean;referenceTypes?:Array<{media_type?:string;purpose?:string}>;skill?:string;fullEditor?:boolean;prompt?:string;readonly?:boolean;sendDisabledReason?:string;references?:ComposerReference[];openReference?:(reference:ComposerReference)=>void;annotation?:{preview:string}|null}>()
 const emit=defineEmits<{update:[value:CreativeNodeParameters];text:[value:string];send:[]}>()
 const models=computed<Array<{code:string;name:string;description?:string;input_schema?:Record<string,any>}>>(()=>{
   // 文本节点交给原Agent只回复，不展示或继承图片/视频采购模型。
@@ -57,7 +57,7 @@ function update(patch:Partial<CreationParameterState>){
   <!-- 规格适配保留，完整节点直接渲染同一个输入框；不再将正文与工具栏拆成两个实例。 -->
   <div :class="fullEditor?'creative-node-composer':'creative-node-controls'">
     <!-- 完整节点直接沿用公共输入器的容器自适应：窄栏图标、宽栏展开文字，不再复制一套移动端工具条。 -->
-    <CreationComposer :compact="fullEditor" :controls-only="!fullEditor" :node-editor="fullEditor" :canvas-readonly="readonly" :send-disabled-reason="sendDisabledReason" :controls-kind="kind" :annotation="annotation" entry="free" :skill="skill||'free'" :prompt="prompt||''" :segments="[{type:'text',text:prompt||''}]" :references="references||[]" :parameters="parameters" :catalog="catalog" :templates="[]" :busy="!!busy" credit-label="" :script-file="null" :models="models" :ratios="ratios" :resolutions="resolutions" :qualities="['low','medium','high']" :duration-range="durations" :music-sources="[]" @parameters="update" @text="!readonly&&!busy&&emit('text',$event)" @send="!readonly&&!busy&&!sendDisabledReason&&prompt?.trim()&&emit('send')">
+    <CreationComposer :compact="fullEditor" :controls-only="!fullEditor" :node-editor="fullEditor" :canvas-readonly="readonly" :send-disabled-reason="sendDisabledReason" :controls-kind="kind" :annotation="annotation" entry="free" :skill="skill||'free'" :prompt="prompt||''" :segments="[{type:'text',text:prompt||''}]" :references="references||[]" :open-reference="openReference" :parameters="parameters" :catalog="catalog" :templates="[]" :busy="!!busy" credit-label="" :script-file="null" :models="models" :ratios="ratios" :resolutions="resolutions" :qualities="['low','medium','high']" :duration-range="durations" :music-sources="[]" @parameters="update" @text="!readonly&&!busy&&emit('text',$event)" @send="!readonly&&!busy&&!sendDisabledReason&&prompt?.trim()&&emit('send')">
       <template #toolbar-actions><slot name="toolbar-actions"/></template>
     </CreationComposer>
     <p v-if="warning&&!readonly" class="text-warning text-xs" role="status">{{warning}}</p>

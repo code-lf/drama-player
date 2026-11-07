@@ -59,7 +59,8 @@ export function skillAuthoringSummary(config:{label?:string;description?:string;
     '### 🎬 模板与质量检查',excerpt(/口播台词模板|剧本模板/,650),excerpt(/视频提示词|生视频模板/,650),excerpt(/质量|自检/,650),
     '### 🚀 下次如何使用',guide.usage||excerpt(/必要输入|核心输入/,650),
     '### 📄 交付内容',guide.output||excerpt(/交付清单|输出内容/,500),
-    config.text_resources?.length?'附带指南：'+config.text_resources.map(item=>item.name).join('、'):'',
-    '### ⚠️ 使用边界',excerpt(/能力限制|安全|限制/,450),
-    '内容已放在右侧供核对、编辑；本次未生成媒体。'].filter(Boolean).join('\n\n')
+    // 摘要解释创作交付，不反复复制内部目录/费用规则；完整原文仍在右侧可核对。
+    // 只从真实资源列表显示附件名称，正文提到文件名不算已经创建附件。
+    config.text_resources?.length?'### 📚 资源附件\n\n'+config.text_resources.map(item=>'- `'+item.name+'`').join('\n'):'',
+  ].filter(Boolean).join('\n\n')
 }

@@ -23,6 +23,13 @@ export function assistantInteraction(state:{preparing:boolean;requesting:boolean
   return {working:state.preparing||state.requesting||state.stopping||state.phase==='planning'||state.countdown||state.annotating,
     canStop:!state.preparing&&!state.stopping&&(state.countdown||['planning','waiting'].includes(state.phase||''))}
 }
+/** 等待用户是进行中的可暂停对话，不是模型仍在请求；刷新从服务端运行状态恢复。 */
+export function awaitingCreationDecision(run:{status:string;executed_request?:unknown;superseded_by?:string;card?:{type:string}|null;image_plan?:{status:string}|null;creative_plan?:{status:string}|null}|null|undefined,submitted=false){
+  // 确认提交返回的任务早于运行快照刷新时，真实任务引用已足以结束旧确认态。
+  if(submitted||!run||run.executed_request||run.superseded_by||['cancelled','failed'].includes(run.status))return false
+  return run.status==='waiting'||run.status==='ready'&&run.card?.type==='proposal'||
+    ['ready','replied'].includes(run.status)&&(run.image_plan?.status==='draft'||run.creative_plan?.status==='draft')
+}
 /** 保存响应只确认提交时的来源与编辑快照，不能清空后来切换作品或新增的编辑。 */
 export function sameSavedEdit(source:unknown,operations:unknown,currentSource:unknown,currentOperations:unknown){return JSON.stringify(source)===JSON.stringify(currentSource)&&JSON.stringify(operations)===JSON.stringify(currentOperations)}
 /** 自由创作配方只属于自由入口；旧云草稿也要修复此组合，不清空会话或素材。 */

@@ -22,7 +22,8 @@ export function hasUnsubmittedImagePlan(run:{status:string;executed_request?:unk
 }
 /** 仅排队/执行/有限文件等待继续只读轮询，提交未知或文件超时须显式核对。 */
 export function imagePlanNeedsPolling(plan:ImageCreativePlan){
-  return plan.status==='submitted'&&!!plan.batch?.items.some(item=>['queued','processing','pending','submitting','result_pending'].includes(item.delivery_status))
+  // 异步报价尚未创建批次时也要只读同步，不能让确认卡永久停在准备状态。
+  return (plan.status==='draft'&&plan.quote_delivery==='pending')||(plan.status==='submitted'&&!!plan.batch?.items.some(item=>['queued','processing','pending','submitting','result_pending'].includes(item.delivery_status)))
 }
 /** 刷新可恢复已提交的图片批次，不重新取得费用许可。 */
 export function hasSubmittedImagePlan(run:{image_plan?:ImageCreativePlan}){

@@ -28,3 +28,17 @@ for(const path of ['features/creation/components/SessionWorkspaceNav.vue','featu
   const {descriptor}=parse(read(path));const script=compileScript(descriptor,{id:path})
   assert.deepEqual(compileTemplate({source:descriptor.template.content,filename:path,id:path,compilerOptions:{bindingMetadata:script.bindings}}).errors,[])
 })
+
+test('桌面导航加高15px、放大文字图标，右侧紧凑且保留手机规格',()=>{
+  const source=read('features/creation/components/SessionWorkspaceNav.vue'),css=read('assets/css/creation.css'),tokens=read('assets/css/tokens.css')
+  // 尺寸来自公共令牌；桌面顶栏和画布高度同源，不能只撑高胶囊造成裁切。
+  assert.match(tokens,/--liv-session-nav-height: 55px/)
+  assert.match(tokens,/--liv-session-header-height: 71px/)
+  assert.match(tokens,/--liv-session-nav-title-size: 16px/)
+  assert.match(tokens,/--liv-session-nav-icon-size: 20px/)
+  assert.match(source,/class="session-nav-actions"/)
+  assert.match(css,/session-nav-actions\{[^}]*gap:2px[^}]*margin-left:auto/)
+  assert.match(css,/session-nav-action\{background:transparent!important/)
+  assert.match(css,/--liv-graph-workspace-height:calc\(100dvh - var\(--liv-session-header-height\)\)/)
+  assert.match(css,/@media\(min-width:768px\)\{[\s\S]*?height:var\(--liv-session-nav-height\)/)
+})

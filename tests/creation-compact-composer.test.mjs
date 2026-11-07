@@ -28,6 +28,7 @@ test('会话上传移到底栏，图标有提示和可访问名称且费用未�
   assert.ok(composer.includes('从资料库选择'))
   assert.ok(!composer.includes('aria-label="引用资产"'))
   assert.match(composer, /class="creation-cost" v-if="creditNumber" role="status" :aria-label="creditLabel"/)
+  // 输入工具栏保留原积分图标；报价卡的纯文字规则不影响这里。
   assert.match(composer, /<CreditIcon size="xs" \/>\{\{ creditNumber \}\}/)
   assert.ok(composer.includes("(canStop&&emit('stop')) : emit('send')"))
 })

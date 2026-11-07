@@ -110,5 +110,7 @@ test('重新挂载只恢复该来源的已保存稿，不恢复旧授权、不�
   ui.app.unmount()
   const workspace=readFileSync('features/creation/useCreationWorkspace.ts','utf8')
   assert.ok(workspace.includes("route.query.session===id&&typeof route.query.videoRun==='string'"))
-  assert.ok(workspace.includes('query: { session: id,...videoQuery }'))
+  // 视频来源仍保留；普通方案深链同样限定在原会话内，不能因增加run参数丢掉片段定位。
+  assert.ok(workspace.includes('query: { session: id,...videoQuery,...runQuery }'))
+  assert.ok(workspace.includes("route.query.session===id&&typeof route.query.run==='string'"))
 })

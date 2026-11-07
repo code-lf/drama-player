@@ -5,8 +5,8 @@ import assert from 'node:assert/strict'
 import ts from 'typescript'
 import {ref,computed,reactive,watch,nextTick} from 'vue'
 const source=readFileSync(new URL('../features/creation/components/CreationComposer.vue',import.meta.url),'utf8')
-function setup(skill='',entry='free',base){
-  const props=reactive({skill,entry,models:[],catalog:{capabilities:{platform:{music:{enabled:true}}},skill_models:{'free:image':[{code:'image-real'}],'free:video':[{code:'video-real'}]},profiles:{}}})
+function setup(skill='',entry='free',base,nodeKind){
+  const props=reactive({skill,entry,nodeEditor:!!nodeKind,controlsKind:nodeKind,models:[],catalog:{capabilities:{platform:{music:{enabled:true}}},skill_models:{'free:image':[{code:'image-real'}],'free:video':[{code:'video-real'}]},profiles:{}}})
   const selectedSkill=ref(base?{base_code:base}:undefined)
   const baseLine=source.split(/\r?\n/).find(line=>line.startsWith('const baseSkill ='))
   const methods=source.slice(source.indexOf('type ModelKind='),source.indexOf('function open('))
@@ -48,6 +48,15 @@ test('分类连续排列，滚动与 Tab 导航不选模型，最后小分组到
 test('音乐专项与其他入口不因空值扩大自由创作能力',()=>{
   assert.equal(setup('song','music','song').baseSkill.value,'song')
   assert.equal(setup('','drama').baseSkill.value,'')
+})
+
+test('单一类型节点只列对应模型，多类型自由创作才显示分类Tab',()=>{
+  for(const kind of ['image','video','music']){
+    assert.deepEqual(setup('free','free',undefined,kind).modelGroups.value.map(group=>group.kind),[kind])
+  }
+  assert.match(source,/v-if="modelGroups.length>1"[^>]*class="creation-filter creation-model-tabs"/)
+  assert.match(source,/v-for="section in modelGroups"/)
+  assert.equal(setup('free').modelGroups.value.length,3)
 })
 
 test('固定能力和不可选模型隐藏入口，自由创作保留跨媒体切换',()=>{

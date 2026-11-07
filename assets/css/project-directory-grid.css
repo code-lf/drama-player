@@ -1,0 +1,5 @@
+/* 项目实体与加载骨架共用列数，不能按各自最小宽度推算而产生跳列。 */
+.project-card-grid,.project-loading-grid{display:grid;grid-template-columns:minmax(0,1fr);gap:12px}
+@container project-directory (min-width:440px){.project-card-grid,.project-loading-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@container project-directory (min-width:680px){.project-card-grid,.project-loading-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:767px){.project-card-grid,.project-loading-grid{gap:12px}}

@@ -32,9 +32,13 @@ test('AI 增长不能误判为用户上翻，暂停后新回复不抢滚动',asy
   assert.equal(nextHistoryFollow(true,0,true),false)
   assert.equal(nextHistoryFollow(false,500),false)
   assert.equal(nextHistoryFollow(false,0),true)
+  assert.equal(nextHistoryFollow(false,0,false,true),false)
+  assert.equal(nextHistoryFollow(true,0,false,true),false)
   const studio=read('features/creation/components/CreationStudio.vue')
   assert.ok(studio.includes('@wheel.passive="historyWheel"'))
   assert.ok(studio.includes('@touchmove.passive="historyTouchMove"'))
+  assert.ok(studio.includes('@browse="browseHistoryDetails"'))
+  assert.ok(studio.includes('if(force){historyDetailsBrowsing=false;followLatest.value=true}'))
   assert.ok(studio.includes('display:flow-root;min-width:0;flex:none'))
 })
 

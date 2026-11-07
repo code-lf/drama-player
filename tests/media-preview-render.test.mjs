@@ -27,6 +27,12 @@ test('图片完成卡使用真实结果url，即使没有独立cover也显示缩
   assert.ok(!html.includes('<video'))
 })
 
+test('固定完成提示预留真实缩略图尺寸，不采用异步解码懒加载反复出现',async()=>{
+  const html=await render({kind:'image',url:'/owned-result.png',stableThumbnail:true})
+  assert.match(html,/width="40"/);assert.match(html,/height="40"/)
+  assert.match(html,/loading="eager"/);assert.match(html,/decoding="sync"/)
+})
+
 test('缺少图片文件显示图片占位，音乐和视频仍沿用各自预览',async()=>{
   assert.ok((await render({kind:'image',url:''})).includes('i-lucide-image'))
   assert.ok((await render({kind:'audio',url:'/song.mp3'})).includes('i-lucide-music'))

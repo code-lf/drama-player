@@ -4,8 +4,11 @@ import type { LibraryItem, LibraryReference, LibraryVersion } from '~/entities/l
 import { libraryService } from '~/shared/api/services/libraryService'
 import { request } from '~/shared/api/adapters/httpAdapter'
 import { readSelectedDocument } from '../documentFragment'
+import AssetLibraryPanel from './AssetLibraryPanel.vue'
+import LivButton from '~/components/liv-ui/LivButton.vue'
+import {libraryErrorMessage} from '../libraryError'
 
-const props = defineProps<{ open: boolean; kind: 'image' | 'video' | 'drama' | 'composition'; model?: string; remaining: number; mediaType?: string; analysisOnly?: boolean; documentRemaining?: number; initialCategory?: string; dark?: boolean }>()
+const props = defineProps<{ open: boolean; kind: 'image' | 'video' | 'drama' | 'composition'; model?: string; remaining: number; mediaType?: string; analysisOnly?: boolean; documentRemaining?: number; initialCategory?: string; dark?: boolean;homepage?:boolean }>()
 const emit = defineEmits<{ 'update:open': [value: boolean]; select: [values: Array<{ item: LibraryItem; version: LibraryVersion; reference: LibraryReference }>] }>()
 const scope = ref('personal'), category = ref(''), query = ref(''), page = ref(1)
 const mediaFilter = ref('')
@@ -43,7 +46,7 @@ async function load() {
         if (!item.versions.some(value => value.id === versions[item.id])) versions[item.id] = item.versions[0]?.id || ''
       }
     }
-  } catch (exception) { if (current === revision) error.value = (exception as Error).message }
+  } catch (exception) { if (current === revision) {entries.value=[];error.value = libraryErrorMessage(exception)} }
   finally { if (current === revision) loading.value = false }
 }
 async function toggle(item: typeof entries.value[number]) {
@@ -105,28 +108,33 @@ watch(() => props.open, async value => {
   if (!value) return
   // 每次打开按当前创作槽位预选用途；用户仍可切换分类，避免把商品图误当角色参考图。
   selected.value = []; page.value = 1; category.value = props.initialCategory || ''; documentDraft.value = null
+  // 图片收集复用首页资产面板，不能同时请求旧选择目录或重建另一份素材列表。
+  if(props.homepage){error.value='';return}
   try { categories.value = (await libraryService.configuration()).categories; await load() }
-  catch (exception) { error.value = (exception as Error).message }
+  catch (exception) { error.value = libraryErrorMessage(exception) }
 })
-watch([scope, category, mediaFilter], () => { ++documentRevision;documentBusy.value=false;documentDraft.value=null;previewRange.value='';page.value = 1; if (props.open) void load() })
+watch([scope, category, mediaFilter], () => { ++documentRevision;documentBusy.value=false;documentDraft.value=null;previewRange.value='';page.value = 1; if (props.open&&!props.homepage) void load() })
 </script>
 
 <template>
   <LivDialog :open="open" :dark="dark" title="从资料库选择" description="固定使用所选版本；更新资料不会改变已生成作品。" width="xl" @update:open="emit('update:open', $event)">
+    <AssetLibraryPanel v-if="homepage&&!documentDraft" compact selectable :kind="kind" :model="model" :initial-category="initialCategory" :allowed-media-types="mediaType?[mediaType]:undefined" :selected-versions="selected.map(row=>row.version.id)" :max-references="remaining" :existing="selected.map(row=>row.reference)" @select="item=>toggle({...item,incompatibilities:item.incompatibilities||{}})" @close="emit('update:open',false)"/>
+    <template v-else>
     <!-- 常用用途直接提供图标入口，完整类别筛选仍保留，避免隐藏现有资料类型。 -->
     <div v-if="dark && !documentDraft && kind!=='composition'" class="creation-library-categories">
       <button :class="{ active: !category }" @click="category = ''"><UIcon name="i-lucide-layout-grid" />全部</button>
       <button v-for="item in categories.filter(item => ['角色', '场景', '道具', '商品'].includes(item.name))" :key="item.code" :class="{ active: category === item.code }" @click="category = item.code"><UIcon :name="item.name === '角色' ? 'i-lucide-user-round' : item.name === '场景' ? 'i-lucide-mountain' : 'i-lucide-box'" />{{ item.name }}</button>
     </div>
     <div v-if="!documentDraft" class="flex flex-wrap gap-2 mb-4">
-      <button v-for="tab in (kind==='composition'?[{ code: 'personal', name: '个人音频' }]:[{ code: 'personal', name: '个人资料' }, { code: 'public', name: '平台素材' }])" :key="tab.code" class="border rounded px-3 py-2" :class="scope === tab.code ? 'text-blue-600 bg-blue-50' : ''" @click="scope = tab.code">{{ tab.name }}</button>
+      <!-- 后期来源按明确媒体类型显示；视频不再误标音频，也不扩大公开素材权限。 -->
+      <UButton v-for="tab in (kind==='composition'?[{ code: 'personal', name: mediaType==='video'?'个人视频':'个人音频' }]:[{ code: 'personal', name: '个人资料' }, { code: 'public', name: '平台素材' }])" :key="tab.code" color="neutral" :variant="scope===tab.code?'soft':'ghost'" @click="scope = tab.code">{{ tab.name }}</UButton>
       <LivSelect v-model="category" class="border rounded p-2"><option value="">全部用途</option><option v-for="entry in categories" :key="entry.code" :value="entry.code">{{ entry.name }}</option></LivSelect>
       <LivSelect v-if="!mediaType" v-model="mediaFilter" aria-label="文件类型" class="border rounded p-2"><option value="">全部类型</option><option value="image">图片</option><option value="video">视频</option><option value="audio">音频</option><option value="document">文档</option></LivSelect>
       <input v-model="query" class="border rounded p-2" placeholder="搜索名称或文档" @keyup.enter="load"><button @click="load">搜索</button>
     </div>
-    <p v-if="error" role="alert" class="text-red-600">{{ error }}</p>
+    <p v-if="error" role="alert" class="text-stateDanger">{{ error }} <UButton color="neutral" variant="link" @click="load">重试</UButton></p>
     <DashboardSkeleton v-if="loading" variant="cards" :rows="3" />
-    <p v-else-if="!documentDraft && !entries.length" class="rounded-lg bg-slate-50 p-8 text-center text-sm text-slate-500">{{ scope === 'personal' ? '当前筛选下没有个人资料，可先上传或更换筛选条件。' : '当前筛选下没有可用的平台素材。' }}</p>
+    <p v-else-if="!error&&!documentDraft && !entries.length" class="rounded-lg bg-surfaceRaised p-8 text-center text-sm text-textMuted">{{ scope === 'personal' ? '当前筛选下没有个人资料，可先上传或更换筛选条件。' : '当前筛选下没有可用的平台素材。' }}</p>
     <div v-else-if="!documentDraft" data-library-media-grid class="grid gap-3 max-h-[55vh] overflow-auto" :class="kind==='composition'?'grid-cols-1 sm:grid-cols-2':'grid-cols-3'">
       <article v-for="item in entries" :key="item.id" class="border rounded-lg p-3">
         <img v-if="item.media_type === 'image'" class="w-full h-28 object-contain" :src="libraryService.previewUrl(version(item).preview_url)" :alt="item.name">
@@ -138,6 +146,7 @@ watch([scope, category, mediaFilter], () => { ++documentRevision;documentBusy.va
         <button class="text-blue-600 mt-2" :disabled="!!reason(item)" @click="toggle(item)">{{ selected.some(value => value.version.id === version(item).id) ? '取消选择' : item.media_type === 'document' ? '选原文片段' : '选择此版本' }}</button>
       </article>
     </div>
+    </template>
     <section v-if="documentDraft" class="space-y-4">
       <h3 class="font-semibold">选择原文片段 · {{ documentDraft.item.name }}</h3>
       <p class="text-sm text-slate-500">共 {{ documentDraft.total }} 字；仅作为参考资料，不是台词或旁白。预览最多显示前四千字。</p>
@@ -145,15 +154,15 @@ watch([scope, category, mediaFilter], () => { ++documentRevision;documentBusy.va
       <pre class="max-h-[35vh] overflow-auto whitespace-pre-wrap rounded bg-slate-50 p-4 text-sm">{{ documentPreview }}</pre>
       <div class="flex justify-end gap-3"><button :disabled="documentBusy" @click="documentDraft = null; error = ''">返回选择</button><button :disabled="documentBusy || previewRange !== `${documentStart}:${documentEnd}`" class="rounded bg-blue-600 px-4 py-2 text-white disabled:opacity-50" @click="confirmDocument">确认引用片段</button></div>
     </section>
-    <div v-if="!documentDraft && selected.length" class="mt-4 rounded-lg border border-blue-100 bg-blue-50 p-3 text-sm">
-      <p class="font-medium text-blue-700">已选 {{ selected.length }} 份固定版本</p>
+    <div v-if="!documentDraft && selected.length" class="mt-4 rounded-lg border border-default bg-surfaceRaised p-3 text-sm">
+      <p class="font-medium">已选 {{ selected.length }} 项</p>
       <div class="mt-2 flex flex-wrap gap-2">
-        <span v-for="value in selected" :key="value.version.id" class="inline-flex items-center gap-2 rounded border bg-white px-2 py-1">
+        <span v-for="value in selected" :key="value.version.id" class="inline-flex items-center gap-2 rounded border border-default px-2 py-1">
           <span>{{ value.item.name }} · v{{ value.version.version_no }}{{ value.item.media_type === 'document' ? ` · 原文 ${value.reference.start}–${value.reference.end}` : '' }}</span>
-          <button type="button" :aria-label="`移除${value.item.name}版本${value.version.version_no}`" class="text-slate-500 hover:text-red-600" @click="selected = selected.filter(entry => entry !== value)">移除</button>
+          <UButton color="neutral" variant="ghost" icon="i-lucide-x" :aria-label="`移除${value.item.name}版本${value.version.version_no}`" @click="selected = selected.filter(entry => entry !== value)"/>
         </span>
       </div>
     </div>
-    <div v-if="!documentDraft" class="flex justify-between mt-4"><div><button :disabled="page === 1" @click="page--; load()">上一页</button> {{ page }} <button :disabled="page * 24 >= total" @click="page++; load()">下一页</button></div><button class="bg-blue-600 text-white rounded px-4 py-2" :disabled="!selected.length" @click="emit('select', selected); emit('update:open', false)">使用 {{ selected.length }} 份资料</button></div>
+    <div v-if="!documentDraft" class="flex justify-between items-center mt-4"><div v-if="!homepage"><UButton color="neutral" variant="ghost" :disabled="page === 1" @click="page--; load()">上一页</UButton> {{ page }} <UButton color="neutral" variant="ghost" :disabled="page * 24 >= total" @click="page++; load()">下一页</UButton></div><span v-else class="text-sm text-textMuted">最多选择 {{remaining}} 项</span><LivButton variant="primary" :disabled="!selected.length" @click="emit('select', selected); emit('update:open', false)">使用 {{ selected.length }} 项资料</LivButton></div>
   </LivDialog>
 </template>

@@ -31,13 +31,13 @@ async function mount({cards=[card('1')],batch=false,loggedIn=true,sessions=async
   let reads=0
   const errors=[],events=[]
   const widgets={}
-  for(const name of ['UButton','UInput','USelect','UCheckbox','UProgress','UBadge','UTooltip','UIcon','USkeleton','NuxtLink']){
+  for(const name of ['UButton','UInput','USelect','UCheckbox','UProgress','UBadge','UTooltip','UIcon','USkeleton','NuxtLink','UPopover','UCollapsible']){
     widgets[name]=vue.defineComponent({inheritAttrs:false,props:['modelValue','items','to','color'],emits:['update:modelValue'],setup(props,{attrs,slots,emit}){
       return()=>vue.h(name==='UButton'?'button':name==='NuxtLink'?'a':name,{...attrs,'data-widget':name,'data-color':props.color,'data-model':props.modelValue,href:props.to,
         ...(name==='UInput'?{onInput:value=>emit('update:modelValue',value)}:{}),
         ...(name==='USelect'?{onChange:value=>emit('update:modelValue',value)}:{}),
         ...(name==='UCheckbox'?{onChange:value=>emit('update:modelValue',value)}:{}),
-      },slots.default?.())
+      },[slots.default?.(),...(['UPopover','UCollapsible'].includes(name)?[slots.content?.()]:[])])
     }})
   }
   const {descriptor}=parse(source)
@@ -47,6 +47,15 @@ async function mount({cards=[card('1')],batch=false,loggedIn=true,sessions=async
   const imports=name=>{
     if(name==='vue')return vue
     if(name==='#components')return widgets
+    if(name==='./ProjectCardMenu.vue')return {default:vue.defineComponent({props:['project'],setup:props=>()=>vue.h('button',{'aria-label':'项目操作：'+props.project.title},'…')})}
+    if(name==='./ProjectDirectoryToolbar.vue'){
+      // 工具区使用真实模板与候选确认逻辑；仅基础UI浮层由内存宿主替代。
+      const input=readFileSync(new URL('../features/projects/components/ProjectDirectoryToolbar.vue',import.meta.url),'utf8')
+      const script=compileScript(parse(input).descriptor,{id:'project-toolbar-test',inlineTemplate:true})
+      const child={exports:{}}
+      new Function('require','module','exports',ts.transpileModule(script.content,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText)(imports,child,child.exports)
+      return child.exports
+    }
     if(name==='~/composables/useWorkbenchAuth')return {useWorkbenchAuth:()=>({auth})}
     if(name==='~/shared/api/services/creationService')return {creationService:{sessions:async limit=>{reads++;assert.equal(limit,100);return sessions()}}}
     if(name==='~/components/ui/FluidImage.vue')return {default:vue.defineComponent({props:['src','alt','wrapperClass'],setup:props=>()=>vue.h('img',{src:props.src,alt:props.alt,class:props.wrapperClass})})}
@@ -86,14 +95,29 @@ test('搜索、状态筛选和排序只作用当前页，视图可切换',async(
   assert.ok(text(r.root).includes('本页没有匹配项目'))
   input.props.onInput('');await r.flush()
   r.find('本页项目状态筛选').props.onChange('completed');await r.flush()
+  assert.equal(r.all().filter(n=>n.tag==='article').length,2)
+  r.all().find(n=>n.tag==='button'&&text(n)==='确认').props.onClick();await r.flush()
   assert.equal(r.all().filter(n=>n.tag==='article').length,1)
   assert.ok(r.find('打开项目：甲项目'))
   r.find('本页项目状态筛选').props.onChange('all')
-  r.find('本页项目排序').props.onChange('title-asc');await r.flush()
+  r.all().find(n=>n.tag==='button'&&text(n)==='标题').props.onClick()
+  r.all().find(n=>n.tag==='button'&&text(n)==='确认').props.onClick();await r.flush()
   assert.equal(r.all().find(n=>n.tag==='article').props['aria-label'],'打开项目：甲项目')
   r.find('列表视图').props.onClick();await r.flush()
   assert.equal(r.all().filter(n=>n.props.class==='project-list-row').length,2)
   assert.equal(r.reads(),0)
+  assert.deepEqual(r.errors,[])
+  r.app.unmount()
+})
+
+test('收藏筛选空态准确说明，清除筛选同时解除收藏条件',async()=>{
+  const r=await mount()
+  r.find('仅看本页收藏').props.onClick();await r.flush()
+  assert.ok(text(r.root).includes('本页暂无收藏项目'))
+  assert.equal(r.all().filter(n=>n.tag==='article').length,0)
+  r.all().find(n=>n.tag==='button'&&text(n)==='清除筛选').props.onClick();await r.flush()
+  assert.equal(r.all().filter(n=>n.tag==='article').length,1)
+  assert.equal(r.find('仅看本页收藏').props['aria-pressed'],false)
   assert.deepEqual(r.errors,[])
   r.app.unmount()
 })
@@ -103,9 +127,8 @@ test('新建、打开、分页、批量选择及删除仍交给父级确认处�
   r.all().find(n=>n.tag==='button'&&text(n)==='新建项目').props.onClick()
   r.find('打开项目：项目1').props.onClick()
   r.find('下一页').props.onClick()
-  r.find('删除项目：项目1').props.onClick({stopPropagation(){}})
+  assert.ok(r.find('项目操作：项目1'))
   assert.deepEqual(r.events.slice(0,3),[['create-project'],['open-project','1'],['go-to-page',2]])
-  assert.equal(r.events[3][0],'request-delete-project')
   r.props.isBatchSelectingProjects=true;await r.flush()
   r.find('打开项目：项目1').props.onClick()
   r.find('选择项目：项目1').props.onChange(true)
@@ -136,7 +159,7 @@ test('自由创作和关联短剧在同一网格，纯会话不显示进度且�
   assert.ok(!text(r.root).includes('最近创作会话'))
   assert.ok(!r.find('删除项目：项目creation:one'))
   r.props.isBatchSelectingProjects=true;await r.flush()
-  assert.ok(!r.find('选择项目：项目creation:one'))
+  assert.ok(r.find('选择项目：项目creation:one'))
   assert.ok(r.find('选择项目：项目drama:two'))
   assert.deepEqual(r.errors,[])
   r.app.unmount()
@@ -145,15 +168,19 @@ test('自由创作和关联短剧在同一网格，纯会话不显示进度且�
 test('空项目与访客初始化不发会话读取',async()=>{
   const r=await mount({cards:[],loggedIn:false})
   assert.equal(r.reads(),0)
-  assert.ok(text(r.root).includes('还没有项目'))
+  assert.ok(text(r.root).includes('暂无项目'))
   assert.deepEqual(r.errors,[])
   r.app.unmount()
 })
 
 test('页面布局规格及主题只在目录局部生效',()=>{
   assert.ok(source.includes('container:project-directory / inline-size'))
-  for(const columns of [2,3,4,5,6])assert.ok(source.includes(`repeat(${columns},minmax(0,1fr))`))
-  assert.ok(source.includes('max-height:var(--liv-project-cover-max-height)'))
+  const grid=readFileSync(new URL('../assets/css/project-directory-grid.css',import.meta.url),'utf8')
+  for(const columns of [2,3])assert.ok(grid.includes(`repeat(${columns},minmax(0,1fr))`))
+  assert.ok(!grid.includes('repeat(4,'))
+  assert.ok(source.includes('aspect-ratio:16/9'))
+  assert.ok(source.includes('project-new-card'))
+  assert.ok(!source.includes('project.title.slice(0,1)'))
   assert.ok(source.includes('white-space:nowrap'))
   assert.ok(!source.includes('project-session-strip'))
   assert.ok(!/#[a-f\d]{3,8}\b|font-size:1[01]px|<LivSelect/.test(source))
@@ -161,12 +188,37 @@ test('页面布局规格及主题只在目录局部生效',()=>{
   for(const value of ['search-width:280px','status-width:144px','sort-width:200px','cover-max-height:144px','grid-gap:12px','card-padding:12px'])assert.ok(tokens.includes('--liv-project-'+value))
 })
 
+test('项目骨架复用实体网格和封面比例，启动与接口读取不再维护平行大色块',()=>{
+  const skeleton=readFileSync(new URL('../components/DashboardSkeleton.vue',import.meta.url),'utf8')
+  assert.ok(skeleton.includes("variant==='projects'"))
+  assert.ok(skeleton.includes('project-loading-cover'))
+  assert.ok(skeleton.includes('height:64px'))
+  assert.ok(skeleton.includes('project-directory-grid.css'))
+  const unified=readFileSync(new URL('../features/projects/components/UnifiedProjectDirectory.vue',import.meta.url),'utf8')
+  assert.ok(unified.includes('variant="projects"'))
+  assert.ok(!unified.includes('class="project-loading-toolbar"'))
+  compileScript(parse(skeleton).descriptor,{id:'project-skeleton-check',inlineTemplate:true})
+})
+
+test('真实封面失败回退灰色品牌占位，更换封面地址可重新显示',async()=>{
+  const r=await mount({cards:[card('cover',{coverImageUrl:'/broken.webp'})]})
+  const image=r.all().find(n=>n.tag==='img'&&n.props.src==='/broken.webp')
+  assert.ok(image)
+  image.props.onError();await r.flush()
+  assert.ok(r.find('暂无项目封面'))
+  assert.ok(text(r.root).includes('Livliv'))
+  r.props.workspaceProjectCards=[card('cover',{coverImageUrl:'/new.webp'})];await r.flush()
+  assert.ok(r.all().some(n=>n.tag==='img'&&n.props.src==='/new.webp'))
+  assert.deepEqual(r.errors,[])
+  r.app.unmount()
+})
+
 /** 实际执行统一目录控制器；列表视图已在上方独立跑过真实模板。 */
 async function mountUnified({list=async()=>({items:[card('drama:one',{projectId:'one'})],total:1}),loggedIn=true,remove=async ids=>({deletedIds:ids})}={}){
   const auth=vue.reactive({session:{loggedIn,user:loggedIn?{id:'owner'}:null}}),errors=[],calls=[],destinations=[],deletes=[]
   let panel
   const passthrough=vue.defineComponent({setup:(_,ctx)=>()=>vue.h('button',ctx.attrs,ctx.slots.default?.())})
-  const mocks={UButton:passthrough,UIcon:passthrough,USkeleton:passthrough}
+  const mocks={UButton:passthrough,UIcon:passthrough,USkeleton:passthrough,DashboardSkeleton:passthrough}
   const panelStub=vue.defineComponent({inheritAttrs:false,setup:(_,ctx)=>{panel=ctx;return()=>vue.h('div',{'data-widget':'panel'})}})
   const dialogStub=vue.defineComponent({props:['open','title'],setup:(props,ctx)=>()=>props.open?vue.h('section',{'aria-label':props.title},[ctx.slots.default?.(),ctx.slots.footer?.()]):null})
   const input=readFileSync(new URL('../features/projects/components/UnifiedProjectDirectory.vue',import.meta.url),'utf8')
@@ -235,16 +287,29 @@ test('统一目录读取失败可重试；账号退出与取消信号阻止旧�
   late.app.unmount()
 })
 
-test('删除需要明确确认，送往旧接口的只能是真实短剧编号',async()=>{
+test('普通创作与短剧批量移除均须明确确认并走回收站',async()=>{
   const drama=card('drama:one',{projectId:'one'}),free=card('creation:free',{kind:'creation',projectId:'',sessions:[{id:'s',title:'保留'}]})
   const r=await mountUnified({list:async()=>({items:[drama,free],total:2})})
   r.panel().emit('request-delete-project',free);await r.flush()
-  assert.ok(!text(r.root).includes('确定删除这'))
+  assert.ok(text(r.root).includes('关联对话和独立图片'))
   r.panel().emit('request-delete-project',drama);await r.flush()
   assert.ok(text(r.root).includes('关联对话和独立图片'))
   assert.deepEqual(r.deletes,[])
   r.all().find(n=>n.tag==='button'&&text(n)==='确认删除').props.onClick();await r.flush()
   assert.deepEqual(r.deletes,[['one']])
+  assert.deepEqual(r.errors,[])
+  r.app.unmount()
+})
+
+test('普通创作批量全选只选当前页；取消确认不移除任何项目',async()=>{
+  const free=card('creation:free',{kind:'creation',projectId:'',sessions:[{id:'s',title:'保留'}]})
+  const r=await mountUnified({list:async()=>({items:[free,card('drama:one')],total:2})})
+  r.panel().emit('toggle-batch-mode');r.panel().emit('toggle-select-all');await r.flush()
+  assert.equal(r.panel().attrs['selected-project-count'],2)
+  r.panel().emit('request-delete-batch');await r.flush()
+  assert.ok(text(r.root).includes('将这 2 个项目移入回收站'))
+  r.all().find(n=>n.tag==='button'&&text(n)==='取消').props.onClick();await r.flush()
+  assert.deepEqual(r.deletes,[])
   assert.deepEqual(r.errors,[])
   r.app.unmount()
 })

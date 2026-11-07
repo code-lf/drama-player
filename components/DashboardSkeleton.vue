@@ -1,11 +1,18 @@
 <script setup lang="ts">
 // 读取页面资料时展示布局占位；生成、上传和支付等业务进度仍使用真实任务状态。
-withDefaults(defineProps<{ layout?: 'unknown' | 'conversation' | 'media'; variant?: 'home' | 'workspace' | 'cards' | 'rows' | 'conversation' | 'toolbar'; rows?: number; heading?: boolean; simple?:boolean }>(), { layout: 'unknown', variant: 'rows', rows: 3, heading: true, simple:false })
+withDefaults(defineProps<{ layout?: 'unknown' | 'conversation' | 'media'; variant?: 'projects' | 'home' | 'workspace' | 'cards' | 'rows' | 'conversation' | 'toolbar'; rows?: number; heading?: boolean; simple?:boolean }>(), { layout: 'unknown', variant: 'rows', rows: 3, heading: true, simple:false })
 </script>
 <template>
   <div class="dashboard-skeleton" :class="[`dashboard-skeleton--${variant}`,{'creation-studio':variant==='home','is-conversation-only':variant==='conversation'&&layout==='conversation','is-simple-loading':variant==='conversation'&&simple}]" role="status" aria-label="正在载入页面" aria-busy="true">
     <!-- 普通画布恢复仅展示中性加载点，不再预设旧左右分栏、媒体大小或价格占位。 -->
-    <div v-if="variant==='conversation'&&simple" class="workspace-loading"><span class="sr-only">正在加载会话</span><span class="workspace-loading-dots" aria-hidden="true"><i/><i/></span></div>
+    <div v-if="variant==='projects'" class="project-loading-layout">
+      <!-- 复用同一项目网格，封面16:9及64px信息区与真实卡片完全一致。 -->
+      <!-- 回收站已呈现真实标题及页签时只复用卡片骨架，避免重复占位导航。 -->
+      <div v-if="heading" class="project-loading-heading"><USkeleton class="project-loading-title"/></div>
+      <div v-if="heading" class="project-loading-controls"><USkeleton class="project-loading-tabs"/><USkeleton class="project-loading-search"/></div>
+      <div class="project-loading-grid"><div v-for="index in rows" :key="index" class="project-loading-card"><USkeleton class="project-loading-cover"/><div class="project-loading-body"><USkeleton class="project-loading-name"/><USkeleton class="project-loading-time"/></div></div></div>
+    </div>
+    <div v-else-if="variant==='conversation'&&simple" class="workspace-loading"><span class="sr-only">正在加载会话</span><span class="workspace-loading-dots" aria-hidden="true"><i/><i/></span></div>
     <!-- 占位均复用 Nuxt UI；会话恢复保持消息区、编辑器、工具栏和画布的位置。 -->
     <!-- 首页占位复用实际标题位置、800px输入区及案例区域，不能套项目列表布局。 -->
     <template v-else-if="variant==='home'">
@@ -33,14 +40,16 @@ withDefaults(defineProps<{ layout?: 'unknown' | 'conversation' | 'media'; varian
     </template>
   </div>
 </template>
+<style src="../assets/css/liv-loading-dots.css"></style>
 <style scoped>
+/* 项目读取只使用中性骨架；外层启动与接口加载共享此分支，避免两套蓝灰大块。 */
+.dashboard-skeleton--projects{padding:0;container:project-directory / inline-size;box-sizing:border-box}
+.project-loading-heading{height:36px;display:flex;align-items:center}.project-loading-title{width:180px;height:28px}.project-loading-controls{height:36px;margin:34px 0 22px;display:flex;align-items:center;justify-content:space-between;gap:16px}.project-loading-tabs{width:180px;height:20px}.project-loading-search{width:240px;height:36px}.project-loading-card{min-width:0;border:1px solid var(--color-border-soft);border-radius:16px;overflow:hidden}.project-loading-cover{width:100%;aspect-ratio:16/9;border-radius:0!important}.project-loading-body{height:64px;box-sizing:border-box;padding:10px 12px;display:flex;flex-direction:column;gap:8px}.project-loading-name{height:18px;width:80%}.project-loading-time{height:12px;width:35%}.project-loading-layout :deep([data-slot=root]){background:var(--liv-skeleton-surface)!important}.project-loading-layout :deep(.animate-pulse){background:var(--liv-skeleton-surface)!important}@media(max-width:767px){.dashboard-skeleton--projects{padding-inline:0}.project-loading-controls{margin-top:24px}}
 .dashboard-skeleton{width:100%;padding:20px 0;color-scheme:dark}
 /* 复用原工作区高度，双点只表达读取中，不显示伪进度；减少动态效果时保持静止。 */
 .dashboard-skeleton--conversation.is-simple-loading{height:var(--liv-workspace-height);display:grid;place-items:center}
-.workspace-loading-dots{display:flex;align-items:center;gap:4px}
-.workspace-loading-dots i{width:8px;height:8px;display:block;border-radius:50%;background:var(--ui-text-muted);animation:workspace-loading-dot 1s ease-in-out infinite}
-.workspace-loading-dots i+ i{animation-delay:.2s}
-@keyframes workspace-loading-dot{0%,100%{opacity:.4;transform:translateY(1px)}50%{opacity:.9;transform:translateY(-1px)}}
+/* 保留宽屏最大尺寸；两个球沿椭圆错开半圈，前景球变大，后景球缩回 8px。 */
+.workspace-loading{width:100%;container-type:inline-size}
 /* 首页与真实内容共享外边距及容器令牌，移动端快捷入口同样换行。 */
 .dashboard-skeleton--home{padding:0}
 .home-skeleton-hero{flex-direction:column}
@@ -79,3 +88,4 @@ withDefaults(defineProps<{ layout?: 'unknown' | 'conversation' | 'media'; varian
 .is-conversation-only .dashboard-skeleton-conversation{max-width:var(--liv-workspace-conversation-width);margin-inline:auto;grid-template-columns:minmax(0,1fr)}
 @media(prefers-reduced-motion:reduce){.dashboard-skeleton :deep(*){animation:none}}
 </style>
+<style src="~/assets/css/project-directory-grid.css"></style>

@@ -34,24 +34,18 @@ async function mounted(){
   const click=()=>{const button=all().find(n=>n.type==='button');assert.ok(button&&!button.props.disabled);return button.props.onClick()}
   return {state,app,root,text,click,flush}
 }
-test('挂载只展示状态；取消不恢复；明确恢复只发送原命令身份',async()=>{
+test('待核对卡不再显示恢复按钮，也不提交POST恢复命令',async()=>{
   const v=await mounted()
   try{
     assert.equal(v.state.calls.length,0)
-    assert.ok(v.text(v.root).includes('40 积分'))
-    await v.click();assert.equal(v.state.calls.length,0)
-    v.state.allow=true;await v.click();await v.flush()
-    assert.deepEqual(v.state.calls,[['run',{action:'confirm',request_id:'original-request'}]])
-    assert.equal(v.state.updates[0].flow_runtime.phase,'submitted')
+    assert.ok(!v.text(v.root).includes('核对并恢复'))
+    assert.ok(!descriptor.scriptSetup.content.includes('resumeFlow('))
+    assert.ok(descriptor.scriptSetup.content.includes('creationService.run(id)'))
   }finally{v.app.unmount()}
 })
 test('离页后迟到恢复响应不覆盖其他会话',async()=>{
-  const v=await mounted();v.state.allow=true
-  let resolve
-  v.state.deferred=new Promise(done=>{resolve=done})
-  const pending=v.click();await v.flush()
-  assert.equal(v.state.calls.length,1)
-  v.app.unmount();resolve({id:'run',flow_runtime:{phase:'submitted'}})
-  await pending
+  const v=await mounted()
+  v.app.unmount();await v.flush()
+  assert.equal(v.state.calls.length,0)
   assert.deepEqual(v.state.updates,[])
 })

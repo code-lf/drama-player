@@ -11,7 +11,7 @@ const method=compile(source.slice(source.indexOf('async function readGraphCompos
 function fixture(){
   const jobs=[{id:'job',status:'succeeded',output:{},plan:{clips:[]}}],calls=[],timers=[]
   const state={session:{value:{id:'session'}},draftOwner:{value:'owner'},entry:{value:'free'},graphCompositions:{value:[]},graphCompositionFileReads:new Map(),advanceCompositionReads:stateModule.exports.advanceCompositionReads,document:{hidden:false},videoCompositionService:{canvasOutputs:async id=>{calls.push(['directory',id]);return {outputs:[{id:'output',title:'商品短片',canvas_node_id:'draft:compose'}]}},outputJobs:async(...args)=>{calls.push(['jobs',...args]);return jobs}},setTimeout:(fn,ms)=>{timers.push({fn,ms});return timers.length},clearTimeout:()=>{}}
-  const fn=new Function('state',`const {${Object.keys(state).join(',')}}=state;let graphCompositionEpoch=0,graphCompositionTimer;${method};return readGraphCompositions`)(state)
+  const fn=new Function('state',`const {${Object.keys(state).join(',')}}=state;const graphRuns={value:[]};let graphCompositionEpoch=0,graphCompositionTimer;${method};return readGraphCompositions`)(state)
   return {state,jobs,calls,timers,fn}
 }
 

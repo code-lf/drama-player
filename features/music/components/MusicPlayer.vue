@@ -2,12 +2,37 @@
 import {computed,nextTick,ref,watch,useId,onMounted,onBeforeUnmount} from 'vue'
 import MusicShareDialog from './MusicShareDialog.vue'
 import {plainLyricLines,timedLyrics,toLrc} from '../utils/lyricsTimeline'
-const props=defineProps<{url:string;title:string;cover?:string;lyrics?:string;alignment?:unknown;style?:string;standalone?:boolean;compact?:boolean;playbackEnabled?:boolean;controlsTarget?:string;tracks?:Array<{key:string;title:string;cover?:string}>;selected?:string;taskId?:string;trackNumber?:number;downloadable?:boolean}>()
+import {decodeAudioWaveform,readAudioWaveform} from '../utils/audioWaveform'
+import {request} from '~/shared/api/adapters/httpAdapter'
+import {rememberCanvasPosition,readCanvasPosition} from '../utils/canvasPlaybackPosition'
+// Teleport根节点不能自动透传class；显式传给播放器，保证画布控件不触发拖拽。
+defineOptions({inheritAttrs:false})
+const props=defineProps<{url:string;title:string;cover?:string;lyrics?:string;alignment?:unknown;style?:string;standalone?:boolean;compact?:boolean;canvasMini?:boolean;playbackEnabled?:boolean;controlsTarget?:string;tracks?:Array<{key:string;title:string;cover?:string}>;selected?:string;waveformTaskId?:string;taskId?:string;trackNumber?:number;downloadable?:boolean}>()
 const emit=defineEmits<{select:[key:string];download:[]}>()
+// 波形读取身份独立于分享权限，选中和未选中播放器均使用固定曲目序号。
 const audio=ref<HTMLAudioElement|null>(null),root=ref<HTMLElement|null>(null),lyricRoot=ref<HTMLElement|null>(null)
 const position=ref(0),duration=ref(0),playing=ref(false),volume=ref(1),immersive=ref(false),error=ref(''),following=ref(true)
 const detailId=useId()
 const shareOpen=ref(false),tab=ref<'lyrics'|'info'>('lyrics'),repeat=ref(false),shuffle=ref(false)
+const peaks=ref<number[]>([])
+const waveformMounted=ref(false)
+onMounted(()=>{waveformMounted.value=true})
+/** 画布直接解析真实波形，不必先选中；切换文件或卸载时取消旧请求。 */
+watch(()=>[props.url,props.canvasMini,waveformMounted.value] as const,async([url,mini,mounted],old,onCleanup)=>{
+  if(url!==old?.[0])peaks.value=[]
+  if(!mounted||!mini||!url||peaks.value.length)return
+  const controller=new AbortController();onCleanup(()=>controller.abort())
+  try{
+    const result=await readAudioWaveform(url,controller.signal).catch(async error=>{
+      if(controller.signal.aborted||!props.waveformTaskId||props.trackNumber==null)throw error
+      const blob=await request<Blob>(`/music/tasks/${encodeURIComponent(props.waveformTaskId)}/waveform-audio`,{query:{track:props.trackNumber},responseType:'blob',signal:controller.signal})
+      return decodeAudioWaveform(await blob.arrayBuffer(),controller.signal)
+    })
+    if(!controller.signal.aborted)peaks.value=result
+  }catch{/* 无法读取时保留播放，不画假波形。 */}
+},{immediate:true})
+/** 格式仅取已知文件后缀；签名地址无后缀时不猜测MP3。 */
+const audioFormat=computed(()=>{try{return new URL(props.url, 'http://localhost').pathname.match(/\.(mp3|wav|m4a|aac|ogg|flac)$/i)?.[1]?.toUpperCase()||'音频'}catch{return '音频'}})
 const progress=computed(()=>duration.value>0?Math.min(100,Math.max(0,position.value/duration.value*100)):0)
 const timeline=computed(()=>timedLyrics(props.alignment||props.lyrics||''))
 const lines=computed(()=>plainLyricLines(props.lyrics||''))
@@ -16,7 +41,7 @@ const trackIndex=computed(()=>props.tracks?.findIndex(track=>track.key===props.s
 /** 节点可能只传一首歌；展示原任务曲目序号，不把局部播放列表第一项误称原第一首。 */
 const displayTrackNumber=computed(()=>Number.isInteger(props.trackNumber)&&(props.trackNumber??-1)>=0?props.trackNumber!+1:trackIndex.value>=0?trackIndex.value+1:undefined)
 /** 复用同画布的屏幕坐标工具宿主，只有控件移动，audio始终留在同一播放器实例。 */
-const dockControls=computed(()=>!!props.compact&&!immersive.value&&!!props.controlsTarget)
+const dockControls=computed(()=>!!props.compact&&!props.canvasMini&&!immersive.value&&!!props.controlsTarget)
 /** 只在歌词容器内跟随真实时间轴；用户浏览时不抢夺滚动位置。 */
 async function follow(){await nextTick();const el=lyricRoot.value,line=el?.querySelector<HTMLElement>(`[data-line="${active.value}"]`);if(el&&line)el.scrollTo({top:line.offsetTop-el.clientHeight/2+line.clientHeight/2,behavior:'smooth'})}
 watch(active,()=>{if(following.value)void follow()})
@@ -28,19 +53,35 @@ let resumeOnLoad=false
 function pausePlayback(){resumeOnLoad=false;audio.value?.pause();playing.value=false}
 watch(()=>props.playbackEnabled,allowed=>{if(allowed===false)pausePlayback()},{flush:'sync'})
 function visibilityChanged(){if(document.hidden)pausePlayback()}
-onMounted(()=>document.addEventListener('visibilitychange',visibilityChanged))
-onBeforeUnmount(()=>{pausePlayback();document.removeEventListener('visibilitychange',visibilityChanged)})
+// 画布音乐允许不选中即播放，但同一时间只试听一首。
+function canvasAudioStarted(event:Event){if(props.canvasMini&&(event as CustomEvent).detail!==audio.value)pausePlayback()}
+onMounted(()=>{document.addEventListener('visibilitychange',visibilityChanged);document.addEventListener('liv-canvas-audio-play',canvasAudioStarted)})
+onBeforeUnmount(()=>{if(props.canvasMini)rememberCanvasPosition(props.url,position.value);pausePlayback();document.removeEventListener('visibilitychange',visibilityChanged);document.removeEventListener('liv-canvas-audio-play',canvasAudioStarted)})
 /** 异步play完成时仍检查当前可见性，防止隐藏后迟到的播放事件重新出声。 */
-function played(){if(props.playbackEnabled===false||document.hidden){pausePlayback();return}playing.value=true;error.value=''}
+function played(){if(props.playbackEnabled===false||document.hidden){pausePlayback();return}if(props.canvasMini&&document.dispatchEvent)document.dispatchEvent(new CustomEvent('liv-canvas-audio-play',{detail:audio.value}));playing.value=true;error.value=''}
 /** 切换曲目沿用播放意图；切换布局不会换音频节点或重置音量。 */
 watch(()=>props.url,()=>{resumeOnLoad=resumeOnLoad||playing.value;position.value=0;duration.value=0;playing.value=false;error.value='';following.value=true;shareOpen.value=false})
-function loaded(){duration.value=audio.value?.duration||0;if(audio.value)audio.value.volume=volume.value;if(resumeOnLoad){resumeOnLoad=false;void toggle()}}
+function loaded(){duration.value=audio.value?.duration||0;if(audio.value){audio.value.volume=volume.value;if(props.canvasMini){const saved=readCanvasPosition(props.url);if(saved>0&&Number.isFinite(duration.value)&&saved<duration.value)seek(saved)}}if(resumeOnLoad){resumeOnLoad=false;void toggle()}}
 /** 顺序、随机和单曲循环均驱动真实播放，不用动画模拟音频进度。 */
 function ended(){playing.value=false;if(props.playbackEnabled===false||document.hidden){pausePlayback();return}if(!props.tracks?.length)return;if(shuffle.value&&props.tracks.length>1){const choices=props.tracks.filter(item=>item.key!==props.selected);emit('select',choices[Math.floor(Math.random()*choices.length)]!.key);resumeOnLoad=true}else if(trackIndex.value<props.tracks.length-1){changeTrack(1);resumeOnLoad=true}}
 function clock(value:number){if(!Number.isFinite(value))return'0:00';return`${Math.floor(value/60)}:${String(Math.floor(value%60)).padStart(2,'0')}`}
+/** 紧凑条使用真实时钟；尚未取得时长时显示占位，不能假设歌曲为一分钟。 */
+function miniClock(value:number){return Number.isFinite(value)&&value>=0?`${String(Math.floor(value/3600)).padStart(2,'0')}:${String(Math.floor(value/60)%60).padStart(2,'0')}:${String(Math.floor(value%60)).padStart(2,'0')}`:'--:--:--'}
 /** 播放错误转换为用户提示，避免暴露资源请求地址。 */
 async function toggle(){if(!audio.value||props.playbackEnabled===false||document.hidden)return;try{if(audio.value.paused)await audio.value.play();else audio.value.pause()}catch{error.value='音频暂时无法播放，请重试或下载。'}}
 function seek(value:number){if(audio.value&&Number.isFinite(value)){audio.value.currentTime=value;position.value=value}}
+/** 用波形容器的屏幕坐标换算时间，兼容画布缩放，拖出波形仍可定位。 */
+function seekWaveform(event:PointerEvent){
+  const input=event.currentTarget as HTMLInputElement
+  if(input.disabled)return
+  if(event.type==='pointerdown'){
+    if(event.button!==0)return
+    input.focus();input.setPointerCapture(event.pointerId)
+  }else if(!input.hasPointerCapture(event.pointerId))return
+  event.preventDefault()
+  const rect=input.getBoundingClientRect()
+  if(rect.width>0)seek(duration.value*Math.max(0,Math.min(1,(event.clientX-rect.left)/rect.width)))
+}
 function setVolume(event:Event){volume.value=Number((event.target as HTMLInputElement).value);if(audio.value)audio.value.volume=volume.value}
 /** 沉浸视图复用同一个 audio 元素，不重新加载曲目或丢失播放位置。 */
 function fullscreen(){immersive.value=!immersive.value;nextTick(()=>{root.value?.focus();if(following.value)void follow()})}
@@ -56,7 +97,21 @@ function exportLyrics(format:'txt'|'lrc'){
 <template>
   <!-- 只移动同一棵 DOM，避免画布的容器查询／裁切限制全屏；不另建音频节点。 -->
   <Teleport to="body" :disabled="!immersive">
-  <section ref="root" class="liv-music-player" :class="{'is-immersive':immersive,'is-standalone':standalone,'is-playing':playing,'is-compact':compact&&!immersive}" aria-label="音乐播放器" tabindex="0" @keydown.esc.stop.prevent="immersive=false">
+  <section ref="root" v-bind="$attrs" class="liv-music-player" :class="{'is-immersive':immersive,'is-standalone':standalone,'is-playing':playing,'is-compact':compact&&!immersive,'is-canvas-mini':canvasMini&&!immersive}" aria-label="音乐播放器" tabindex="0" @keydown.esc.stop.prevent="immersive=false">
+    <!-- 全尺寸/紧凑外观使用同一个audio，不因布局切换创建第二路声音。 -->
+    <audio ref="audio" :src="url" :loop="repeat" preload="metadata" @loadedmetadata="loaded" @timeupdate="position=audio?.currentTime||0" @durationchange="duration=audio?.duration||0" @play="played" @pause="playing=false" @ended="ended" @error="error='音频暂时无法播放，请稍后重试。'"/>
+    <template v-if="canvasMini&&!immersive">
+      <header class="music-mini-heading"><div class="music-mini-title"><UIcon name="i-lucide-audio-lines"/><span :title="title">{{title}}</span></div><small>{{audioFormat}}</small></header>
+      <div class="music-mini-body">
+        <div class="music-mini-transport"><UButton class="nodrag nopan" square color="neutral" variant="soft" :icon="playing?'i-lucide-pause':'i-lucide-play'" :aria-label="playing?'暂停音乐':'播放音乐'" :disabled="playbackEnabled===false" @click="toggle"/><time>{{miniClock(position)}} <span>/ {{duration>0?miniClock(duration):'--:--:--'}}</span></time></div>
+        <div v-if="peaks.length" class="music-mini-seek has-waveform nodrag nopan">
+          <div class="music-mini-waveform" aria-hidden="true"><i v-for="(peak,index) in peaks" :key="index" :class="{'is-elapsed':(index+0.5)/peaks.length<=progress/100}" :style="{height:`${Math.max(3,peak*24)}px`}"/></div>
+          <input aria-label="音乐播放进度" type="range" min="0" :max="Number.isFinite(duration)&&duration>0?duration:1" step="0.1" :value="position" :disabled="playbackEnabled===false||!Number.isFinite(duration)||duration<=0" @pointerdown.stop="seekWaveform" @pointermove.stop="seekWaveform" @click.stop @input="seek(Number(($event.target as HTMLInputElement).value))">
+        </div>
+        <p v-if="error" role="alert" class="music-player-note">{{error}}<UButton size="xs" color="neutral" variant="link" @click="audio?.load()">重新加载</UButton></p>
+      </div>
+    </template>
+    <template v-else>
     <!-- 氛围图只来自当前真实封面；唱片与光晕是装饰，不冒充实时频谱。 -->
     <div class="music-ambient" aria-hidden="true"><img v-if="cover" :src="cover" alt=""><div class="music-aurora"/></div>
     <header class="music-player-heading"><div><span>LIVLIV MUSIC</span><p>用 AI 创造属于你的音乐</p></div><UButton :icon="immersive?'i-lucide-minimize':'i-lucide-expand'" color="neutral" variant="ghost" :aria-label="immersive?'退出沉浸播放':'沉浸播放'" @click="fullscreen">{{immersive?'退出沉浸':'沉浸播放'}}</UButton></header>
@@ -72,7 +127,6 @@ function exportLyrics(format:'txt'|'lrc'){
           <UButton v-if="downloadable" icon="i-lucide-download" color="neutral" variant="outline" @click="emit('download')">下载</UButton>
           <UButton v-if="taskId" icon="i-lucide-share-2" color="neutral" variant="outline" @click="shareOpen=true">分享音乐</UButton>
         </div>
-        <audio ref="audio" :src="url" :loop="repeat" preload="metadata" @loadedmetadata="loaded" @timeupdate="position=audio?.currentTime||0" @durationchange="duration=audio?.duration||0" @play="played" @pause="playing=false" @ended="ended" @error="error='音频暂时无法播放，请稍后重试。'"/>
         <div class="music-player-seek"><input aria-label="音乐播放进度" type="range" min="0" :max="Number.isFinite(duration)&&duration>0?duration:1" step="0.1" :value="position" :style="{'--music-fill':progress+'%'}" @input="seek(Number(($event.target as HTMLInputElement).value))"><div><span>{{clock(position)}}</span><span>{{clock(duration)}}</span></div></div>
         <Teleport :to="controlsTarget||'body'" :disabled="!dockControls">
         <div class="music-player-controls" :class="{'is-canvas-controls':dockControls}">
@@ -109,10 +163,32 @@ function exportLyrics(format:'txt'|'lrc'){
       </section>
     </div>
     <MusicShareDialog v-if="taskId" v-model:open="shareOpen" :task-id="taskId" :track="trackNumber??0"/>
+    </template>
   </section>
   </Teleport>
 </template>
 <style scoped>
+/* 画布只展示名称、真实时钟与可拖动波形；完整音乐页和沉浸页沿用原播放器。 */
+.liv-music-player.is-canvas-mini{padding:0;border:0;border-radius:0;background:transparent;overflow:visible;container-type:normal;box-shadow:none}
+.music-mini-heading{display:flex;align-items:center;gap:4px;height:24px;font-size:12px;color:var(--liv-account-muted)}
+.music-mini-title{display:flex;align-items:center;justify-content:flex-start;gap:4px;min-width:0;flex:1;text-align:left}
+.music-mini-title>.iconify{flex:none}
+.music-mini-title>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.music-mini-heading>small{flex:none;font-size:12px}
+.music-mini-body{padding:var(--liv-canvas-music-padding);border-radius:var(--liv-canvas-music-radius);background:var(--liv-account-raised)}
+.music-mini-transport{display:flex;align-items:center;gap:12px;margin-bottom:12px}
+.liv-music-player .music-mini-transport>button{display:flex;justify-content:center;align-items:center;flex:none;width:var(--liv-canvas-music-play-size);height:var(--liv-canvas-music-play-size);min-height:var(--liv-canvas-music-play-size);padding:0;border:0;border-radius:50%;background:var(--liv-account-hover);color:var(--liv-account-text)}
+.music-mini-transport time{font-size:12px;font-weight:600;color:var(--liv-account-text);font-variant-numeric:tabular-nums}
+.music-mini-transport time span{color:var(--liv-account-muted)}
+.music-mini-seek{position:relative;height:28px;display:flex;align-items:center}
+.music-mini-waveform{position:absolute;inset:0;display:flex;align-items:flex-end;gap:2px;pointer-events:none}
+.music-mini-waveform>i{flex:1;min-width:0;background:color-mix(in srgb,var(--liv-account-text) 22%,transparent);border-radius:1px}
+.music-mini-waveform>i.is-elapsed{background:var(--liv-ui-primary)}
+.liv-music-player .music-mini-seek.has-waveform>input{position:absolute;inset:0;z-index:1;height:100%;margin:0;background:transparent;touch-action:none}
+.liv-music-player .music-mini-seek.has-waveform>input::-webkit-slider-thumb{background:transparent;box-shadow:none}
+.liv-music-player .music-mini-seek.has-waveform>input::-moz-range-thumb{background:transparent}
+.liv-music-player .music-mini-seek.has-waveform>input::-moz-range-track,.liv-music-player .music-mini-seek.has-waveform>input::-moz-range-progress{background:transparent}
+.liv-music-player .music-mini-seek.has-waveform>input:focus-visible{outline:2px solid var(--liv-ui-primary-foreground);outline-offset:3px}
 /* 固定深色音乐舞台：颜色复用媒体令牌，背景只从当前封面提取，不引入假作品。 */
 .liv-music-player{--music-title:24px;--music-lyric:20px;--music-active:22px;container-type:inline-size;isolation:isolate;position:relative;width:100%;max-width:none;min-width:0;margin:auto;padding:24px;color:var(--liv-music-text);background:var(--liv-music-stage);border:1px solid var(--liv-music-border);border-radius:var(--liv-music-radius);outline:none;box-sizing:border-box;overflow:hidden}
 .music-ambient{position:absolute;inset:0;z-index:-1;overflow:hidden;pointer-events:none}.music-ambient>img{width:100%;height:100%;object-fit:cover;filter:blur(60px) saturate(.7);opacity:.2;transform:scale(1.15)}
@@ -144,7 +220,7 @@ function exportLyrics(format:'txt'|'lrc'){
 @container (max-width:460px){.music-player-info{padding:0;gap:16px}.music-player-layout{gap:24px}.music-lyrics-heading{padding:16px;flex-wrap:wrap}.music-tabs .is-active:after{bottom:-4px}.music-player-tracks{padding:16px}.music-player-lyrics{padding-inline:16px}.music-player-art{border-radius:16px}.music-player-heading button{font-size:12px}.music-track-info{padding:24px;gap:12px}.music-record-stage{width:min(100%,280px)}}
 @media(max-width:600px){.liv-music-player{padding:16px}.liv-music-player.is-immersive{padding:16px}}
 /* 画布节点复用同一播放器与audio，先呈现播放控制；业务操作、歌词和导出仍保留在纵向内容中。 */
-.liv-music-player.is-compact{padding:12px;--music-title:16px}
+.liv-music-player.is-compact:not(.is-canvas-mini){padding:12px;--music-title:16px}
 .is-compact .music-player-heading{margin-bottom:8px;gap:8px}.is-compact .music-player-heading p{display:none}
 .is-compact .music-player-heading span{font-size:12px;letter-spacing:0}
 .is-compact .music-player-layout{gap:12px}

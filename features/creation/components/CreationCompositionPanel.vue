@@ -5,7 +5,7 @@ import {videoCompositionService as api,type CompositionClip,type CompositionPlan
 import LibraryPicker from '~/features/library/components/LibraryPicker.vue'
 import {libraryService} from '~/shared/api/services/libraryService'
 import type {LibraryItem,LibraryVersion,LibraryReference} from '~/entities/library/types'
-const props=defineProps<{sources:SessionResult[];sessionId:string;ownerId?:string;outputId?:string;linkedOnly?:boolean}>()
+const props=defineProps<{sources:SessionResult[];musicSources?:SessionResult[];sessionId:string;ownerId?:string;outputId?:string;linkedOnly?:boolean}>()
 const emit=defineEmits<{changed:[]}>()
 const plan=ref<CompositionPlan>({schema_version:1,revision:1,clips:[],output:{width:720,height:1280,fps:25,fit:'contain',transition:'cut'}})
 const lengths=ref<Record<string,number>>({}),jobs=ref<CompositionJob[]>([]),busy=ref(false),error=ref(''),offset=ref(0),more=ref(true)
@@ -14,6 +14,29 @@ const panelElement=ref<HTMLElement|null>(null)
 // 音轨选择仅修改本成片草稿，不复用聊天音频或旧生成授权。
 const audioRole=ref<'narration'|'bgm'|null>(null)
 const audioSelectionBusy=ref(false)
+const videoPickerOpen=ref(false)
+const videoNames=ref<Record<string,string>>({})
+/** 固定资料版本加入本成片草稿，不把选择素材当合成或费用授权。 */
+function chooseVideos(values:Array<{item:LibraryItem;version:LibraryVersion;reference:LibraryReference}>){
+  if(busy.value||!draftReady.value)return
+  const candidates=values.map(value=>({value,duration:Math.floor(Number(value.version.media.duration_sec)*25)*40}))
+  if(plan.value.clips.length+candidates.length>24||candidates.some(({value,duration})=>value.item.media_type!=='video'||!Number.isFinite(duration)||duration<=0)){
+    error.value='请选择有有效画面时长的视频，最多24个片段。';return
+  }
+  for(const {value,duration} of candidates){
+    videoNames.value[value.version.id]=value.item.name
+    plan.value.clips.push({id:crypto.randomUUID(),reference:{...value.reference,purpose:'composition_video'},trim_start_ms:0,trim_end_ms:duration,keep_audio:true})
+  }
+  plan.value.schema_version=2;videoPickerOpen.value=false;error.value=''
+}
+/** 入口开放状态由原资料库配置决定，不能绕过服务端开关。 */
+async function openVideos(){
+  if(busy.value||audioSelectionBusy.value||!draftReady.value)return
+  audioSelectionBusy.value=true;error.value=''
+  try{const capability=await libraryService.capabilities();if(!alive)return;if(capability.video_picker)videoPickerOpen.value=true;else error.value='视频资料库入口尚未开放。'}
+  catch(cause){if(alive)error.value=(cause as Error).message}
+  finally{if(alive)audioSelectionBusy.value=false}
+}
 const audioPreviews=ref<Record<string,{name:string;url:string}>>({})
 const totalDuration=computed(()=>plan.value.clips.reduce((sum,clip)=>sum+clip.trim_end_ms-clip.trim_start_ms,0))
 /** 复用资料库真实开放状态；入口关闭或读取失败不展示可用的音频选择器。 */
@@ -29,8 +52,8 @@ async function openAudio(role:'narration'|'bgm'){
   finally{if(alive)audioSelectionBusy.value=false}
 }
 /** 以真实素材时长初始化可编辑切点；未知长度不得按目标成片时长伪造。 */
-function chooseAudio(values:Array<{item:LibraryItem;version:LibraryVersion;reference:LibraryReference}>){
-  const selected=values[0],role=audioRole.value
+function chooseAudio(values:Array<{item:LibraryItem;version:LibraryVersion;reference:LibraryReference}>,selectedRole?:'narration'|'bgm'){
+  const selected=values[0],role=selectedRole||audioRole.value
   if(!selected||!role||busy.value||!draftReady.value)return
   const duration=Math.floor(Number(selected.version.media.duration_sec)*1000)
   if(!Number.isFinite(duration)||duration<=0||totalDuration.value<=0){error.value='请先添加视频片段，并选择有真实时长的音频。';return}
@@ -39,6 +62,22 @@ function chooseAudio(values:Array<{item:LibraryItem;version:LibraryVersion;refer
   plan.value.audio_tracks=[...(plan.value.audio_tracks||[]).filter(track=>track.role!==role),chosen]
   audioPreviews.value[chosen.id]={name:selected.item.name,url:libraryService.previewUrl(selected.version.preview_url)}
   error.value='';audioRole.value=null
+}
+/** 采用本会话真实歌曲时先固定私人原始版本；不生成音乐，也不把外部URL当授权。 */
+async function adoptMusic(source:SessionResult){
+  if(busy.value||audioSelectionBusy.value||!draftReady.value||totalDuration.value<=0||source.source.kind!=='music'||!Number.isInteger(source.source.audio_index))return
+  const snapshot=JSON.stringify(plan.value),sessionId=props.sessionId,outputId=props.outputId
+  audioSelectionBusy.value=true;error.value=''
+  try{
+    const item=await libraryService.saveResult('music',source.source.id,String(source.source.audio_index),'music')
+    // 下载期间发生编辑、换成片或卸载，不能让迟到的选择覆盖新计划。
+    if(!alive||sessionId!==props.sessionId||outputId!==props.outputId)return
+    if(snapshot!==JSON.stringify(plan.value)){error.value='片段计划已变化，音乐已保留在资料库，请重新选择采用。';return}
+    const version=item.versions.find(value=>value.version_no===1)
+    if(item.status!=='active'||item.media_type!=='audio'||!version)throw new Error('音乐原始版本不可用，请从资料库核对。')
+    chooseAudio([{item,version,reference:{item_id:item.id,version_id:version.id,purpose:'bgm'}}],'bgm')
+  }catch(cause){if(alive)error.value=(cause as Error).message||'音乐采用失败，请重试。'}
+  finally{if(alive)audioSelectionBusy.value=false}
 }
 /** 刷新仅恢复固定版本的试听地址；旧请求不能给新选择回填别的音频。 */
 watch(()=>plan.value.audio_tracks,async tracks=>{
@@ -52,12 +91,21 @@ watch(()=>plan.value.audio_tracks,async tracks=>{
     }catch{/* 试听失败不丢弃原固定引用，提交仍由服务端重验。 */}
   }
 },{deep:true})
+/** 刷新后只读取原固定版本名称；迟到结果不得覆盖其他账号或新片段。 */
+watch(()=>plan.value.clips,async clips=>{
+  for(const clip of clips){
+    const reference=clip.reference
+    if(!reference||videoNames.value[reference.version_id])continue
+    try{const item=await libraryService.detail(reference.item_id);if(alive&&item.versions.some(value=>value.id===reference.version_id)&&plan.value.clips.some(value=>value.reference?.version_id===reference.version_id))videoNames.value[reference.version_id]=item.name}
+    catch{/* 读取名称失败保留固定引用，提交时仍会重新校验权限。 */}
+  }
+},{deep:true})
 /** 同一片段面板只试听一个声音，切换或销毁不自动续播。 */
 function previewAudio(event:Event){const audio=event.target as HTMLMediaElement;panelElement.value?.querySelectorAll('audio,video').forEach(media=>{if(media!==audio)(media as HTMLMediaElement).pause()})}
 // 断开来源只改变候选素材，不偷偷改写已保存切点；明确移除失联片段后才能保存或执行。
-const disconnected=computed(()=>props.linkedOnly&&plan.value.clips.some(clip=>!props.sources.some(source=>source.source.id===clip.task_id&&source.source.result_id===clip.result_id)))
+const disconnected=computed(()=>props.linkedOnly&&plan.value.clips.some(clip=>!clip.reference&&!props.sources.some(source=>source.source.id===clip.task_id&&source.source.result_id===clip.result_id)))
 /** 按任务和结果双重身份显示片段来源；缺失时不借用其他视频的名称。 */
-function clipSourceTitle(clip:CompositionClip){return props.sources.find(source=>source.source.id===clip.task_id&&source.source.result_id===clip.result_id)?.title||'来源未在当前列表中'}
+function clipSourceTitle(clip:CompositionClip){return clip.reference?(videoNames.value[clip.reference.version_id]||'资料库视频（固定版本）'):props.sources.find(source=>source.source.id===clip.task_id&&source.source.result_id===clip.result_id)?.title||'来源未在当前列表中'}
 const errors=computed(()=>[...compositionErrors(plan.value),...(disconnected.value?['存在已断开来源的片段，请重新连接来源，或移除相应片段后保存。']:[])])
 const historyBusy=ref(false),mediaErrors=ref<Record<string,boolean>>({})
 // 实际解码宽高驱动卡片，不用页面宽度或提示词中的比例冒充媒体尺寸。
@@ -84,14 +132,14 @@ watch(plan,backup,{deep:true,flush:'sync'})
 function resolveBackup(useLocal:boolean){const retained=localConflict.value;localConflict.value=null;if(useLocal&&retained)plan.value=retained.plan;error.value='';backup()}
 const draftSaved=computed(()=>draftRevision.value>0&&savedPlanHash.value===JSON.stringify(plan.value))
 // 父层切换成片前核对未保存编辑/正在执行的写入，不让片段跨成片混用。
-defineExpose({isDirty:()=>draftReady.value&&savedPlanHash.value!==JSON.stringify(plan.value),isBusy:()=>busy.value})
+defineExpose({isDirty:()=>draftReady.value&&savedPlanHash.value!==JSON.stringify(plan.value),isBusy:()=>busy.value||audioSelectionBusy.value})
 let historyEpoch=0
 let alive=true,timer:ReturnType<typeof setTimeout>|undefined,receipt:{key:string;id:string}|null=null
 /** 实际媒体元数据对齐到25fps帧边界，目标生成秒数不冒充真实文件容量。 */
 function metadata(key:string,event:Event){mediaRatio(key,event);const value=(event.target as HTMLVideoElement).duration;if(Number.isFinite(value))lengths.value[key]=Math.floor(value*25)*40}
 /** 添加前读取真正可裁切的画面容量；浏览器音轨尾部不进入默认视频切点。 */
 async function add(source:SessionResult){
-  if(busy.value||!draftReady.value||!source.source.result_id||plan.value.clips.length>=24)return
+  if(busy.value||audioSelectionBusy.value||!draftReady.value||!source.source.result_id||plan.value.clips.length>=24)return
   busy.value=true;error.value=''
   try{
     const capacity=await api.inspect(source.source.id,source.source.result_id)
@@ -107,14 +155,15 @@ async function loadDraft(){
   busy.value=true
   try{const saved=await (props.outputId?api.outputDraft(props.sessionId,props.outputId):api.draft(props.sessionId));if(!alive)return;draftRevision.value=saved.revision;if(saved.plan){plan.value=saved.plan;const {width,height}=saved.plan.output;preset.value=width===720&&height===1280?'portrait':width===1280&&height===720?'landscape':width===720&&height===720?'square':'custom'}await nextTick();savedPlanHash.value=JSON.stringify(plan.value);draftReady.value=true
     const key=backupKey()
-    if(key)try{let retained=null;try{if(typeof sessionStorage!=='undefined')retained=JSON.parse(sessionStorage.getItem(key)||'null')}catch{/* 私有备份不可读时检查共享备份。 */}if(!retained)retained=JSON.parse(localStorage.getItem(key)||'null');if(retained?.plan?.schema_version===1&&Array.isArray(retained.plan.clips)&&JSON.stringify(retained.plan)!==savedPlanHash.value){if(retained.base_revision===saved.revision){plan.value=retained.plan;error.value='已恢复本机未保存片段计划，请核对后保存。'}else{localConflict.value=retained;error.value='云端片段计划已更新，本机编辑仍保留，请选择要使用的版本。'}}}catch{/* 忽略损坏备份，不影响云端原计划。 */}
+    if(key)try{let retained=null;try{if(typeof sessionStorage!=='undefined')retained=JSON.parse(sessionStorage.getItem(key)||'null')}catch{/* 私有备份不可读时检查共享备份。 */}if(!retained)retained=JSON.parse(localStorage.getItem(key)||'null');if([1,2].includes(retained?.plan?.schema_version)&&Array.isArray(retained.plan.clips)&&JSON.stringify(retained.plan)!==savedPlanHash.value){if(retained.base_revision===saved.revision){plan.value=retained.plan;error.value='已恢复本机未保存片段计划，请核对后保存。'}else{localConflict.value=retained;error.value='云端片段计划已更新，本机编辑仍保留，请选择要使用的版本。'}}}catch{/* 忽略损坏备份，不影响云端原计划。 */}
   }
   catch(cause){if(alive)error.value=(cause as Error).message}
   finally{if(alive)busy.value=false}
 }
 /** 明确保存不执行合成；修订冲突保留本地稿，不覆盖其他页面新计划。 */
 async function saveDraft(){
-  if(busy.value||!draftReady.value||disconnected.value||localConflict.value)return
+  // 采用音乐尚未落定时不保存旧无声计划，避免紧接确认时合成的不是用户选择。
+  if(busy.value||audioSelectionBusy.value||!draftReady.value||disconnected.value||localConflict.value)return
   busy.value=true;error.value=''
   try{const saved=await (props.outputId?api.saveOutputDraft(props.sessionId,props.outputId,draftRevision.value,plan.value):api.saveDraft(props.sessionId,draftRevision.value,plan.value));if(alive){draftRevision.value=saved.revision;plan.value=saved.plan;savedPlanHash.value=JSON.stringify(saved.plan);backup();emit('changed')}}
   catch(cause){if(alive)error.value=(cause as Error).message}
@@ -124,20 +173,22 @@ async function saveDraft(){
 async function history(reset=false){
   if(historyBusy.value)return
   historyBusy.value=true;const epoch=++historyEpoch
-  try{const page=await (props.outputId?api.outputJobs(props.sessionId,props.outputId):api.list(reset?0:offset.value));if(!alive||epoch!==historyEpoch)return;const ids=new Set(props.sources.map(s=>s.source.id));const matching=props.outputId?page:page.filter(j=>j.plan.clips.every(c=>ids.has(c.task_id)));jobs.value=reset?matching:[...jobs.value,...matching.filter(j=>!jobs.value.some(old=>old.id===j.id))];offset.value=(reset?0:offset.value)+page.length;more.value=!props.outputId&&page.length===20}
+  try{const page=await (props.outputId?api.outputJobs(props.sessionId,props.outputId):api.list(reset?0:offset.value));if(!alive||epoch!==historyEpoch)return;const ids=new Set(props.sources.map(s=>s.source.id));const matching=props.outputId?page:page.filter(j=>j.plan.clips.every(c=>c.reference?plan.value.clips.some(clip=>clip.reference?.version_id===c.reference.version_id):ids.has(c.task_id)));jobs.value=reset?matching:[...jobs.value,...matching.filter(j=>!jobs.value.some(old=>old.id===j.id))];offset.value=(reset?0:offset.value)+page.length;more.value=!props.outputId&&page.length===20}
   catch(cause){if(alive&&epoch===historyEpoch)error.value=(cause as Error).message}
   finally{if(alive)historyBusy.value=false}
 }
 async function poll(){if(!alive)return;if(!document.hidden)for(const job of jobs.value.filter(j=>['queued','rendering'].includes(j.status))){try{const next=await api.read(job.id);if(alive)jobs.value=jobs.value.map(j=>j.id===next.id?next:j)}catch(cause){if(alive)error.value=(cause as Error).message}}if(alive)timer=setTimeout(poll,4000)}
 /** 相同内容请求失败沿用编号，只在明确确认或重试按钮点击时POST。 */
-async function submit(retry?:CompositionJob){if(busy.value||localConflict.value||(!retry&&(errors.value.length||(props.outputId&&!draftSaved.value))))return;historyEpoch++;busy.value=true;error.value='';try{const key=JSON.stringify(plan.value);if(receipt?.key!==key)receipt={key,id:crypto.randomUUID()};const job=retry?await api.retry(retry.id):props.outputId?await api.createOutputJob(props.sessionId,props.outputId,draftRevision.value):await api.create(receipt.id,plan.value);if(alive){jobs.value=[job,...jobs.value.filter(j=>j.id!==job.id)];emit('changed')}}catch(cause){if(alive)error.value=(cause as Error).message}finally{if(alive)busy.value=false}}
+async function submit(retry?:CompositionJob){if(busy.value||audioSelectionBusy.value||localConflict.value||(!retry&&(errors.value.length||(props.outputId&&!draftSaved.value))))return;historyEpoch++;busy.value=true;error.value='';try{const key=JSON.stringify(plan.value);if(receipt?.key!==key)receipt={key,id:crypto.randomUUID()};const job=retry?await api.retry(retry.id):props.outputId?await api.createOutputJob(props.sessionId,props.outputId,draftRevision.value):await api.create(receipt.id,plan.value);if(alive){jobs.value=[job,...jobs.value.filter(j=>j.id!==job.id)];emit('changed')}}catch(cause){if(alive)error.value=(cause as Error).message}finally{if(alive)busy.value=false}}
 onMounted(async()=>{await Promise.all([history(true),loadDraft()]);if(alive)timer=setTimeout(poll,4000)})
 onBeforeUnmount(()=>{backup();alive=false;clearTimeout(timer)})
 </script>
 <template>
   <section ref="panelElement" class="space-y-4 text-sm" aria-label="短片片段列表">
+    <LibraryPicker v-if="videoPickerOpen" :open="videoPickerOpen" kind="composition" media-type="video" :remaining="24-plan.clips.length" dark @select="chooseVideos" @update:open="videoPickerOpen=$event"/>
     <LibraryPicker v-if="audioRole" :open="!!audioRole" kind="composition" media-type="audio" :remaining="1" dark @select="chooseAudio" @update:open="value=>{if(!value)audioRole=null}"/>
-    <p>选择本会话已完成的视频，按顺序合成一个短片。原视频保留，本地直切合成不新增扣点。</p>
+    <p>选择已完成的视频或资料库上传视频，按顺序合成。原视频保留，直切合成不新增扣点。</p>
+    <UButton color="neutral" variant="soft" icon="i-lucide-folder-open" :disabled="busy||audioSelectionBusy||!draftReady||plan.clips.length>=24" @click="openVideos">从资料库添加视频</UButton>
     <div class="liv-composition-media-list" :class="{'is-canvas-sources':linkedOnly}">
       <div v-for="source in sources" :key="source.key" class="liv-composition-media-card rounded-xl border border-default space-y-2" :style="ratioStyle(source.key)">
         <video v-if="!linkedOnly" :src="source.url" controls playsinline preload="metadata" class="liv-composition-video" @loadedmetadata="mediaErrors[source.key]=false;metadata(source.key,$event)" @error="mediaErrors[source.key]=true;delete lengths[source.key]"/>
@@ -164,6 +215,10 @@ onBeforeUnmount(()=>{backup();alive=false;clearTimeout(timer)})
       <h3 class="font-semibold">声音选择</h3>
       <p class="text-muted">可保留片段原声，也可从资料库选择已有旁白或背景音乐。不选择就不添加，不会自动生成或扣点。</p>
       <div class="flex flex-wrap gap-2"><UButton color="neutral" variant="soft" :disabled="busy||audioSelectionBusy||!draftReady||totalDuration<=0" @click="openAudio('narration')">选择旁白音频</UButton><UButton color="neutral" variant="soft" :disabled="busy||audioSelectionBusy||!draftReady||totalDuration<=0" @click="openAudio('bgm')">选择背景音乐</UButton></div>
+      <div v-if="musicSources?.length" class="space-y-2" aria-label="本会话已生成音乐">
+        <p class="text-muted">采用已生成音乐作为 BGM，不重新生成；原声仍按各片段选择保留。</p>
+        <UButton v-for="source in musicSources" :key="source.key" color="neutral" variant="soft" :disabled="busy||audioSelectionBusy||!draftReady||totalDuration<=0" @click="adoptMusic(source)">采用《{{source.title}}》作为背景音乐</UButton>
+      </div>
       <article v-for="track in plan.audio_tracks||[]" :key="track.id" class="space-y-3">
         <div class="flex items-center gap-2"><strong>{{track.role==='narration'?'旁白':'背景音乐'}}</strong><span class="text-muted">{{audioPreviews[track.id]?.name||'固定版本音频'}}</span><UButton color="neutral" variant="ghost" icon="i-lucide-x" :aria-label="`移除${track.role==='narration'?'旁白':'背景音乐'}`" :disabled="busy" @click="plan.audio_tracks=plan.audio_tracks?.filter(value=>value.id!==track.id)"/></div>
         <audio v-if="audioPreviews[track.id]?.url" :src="audioPreviews[track.id]!.url" controls preload="none" class="w-full" @play="previewAudio"/>
@@ -180,9 +235,9 @@ onBeforeUnmount(()=>{backup();alive=false;clearTimeout(timer)})
     <p v-for="item in errors" :key="item" class="text-muted">{{item}}</p>
     <div class="flex flex-wrap items-center gap-2">
       <UButton v-if="!draftReady" color="neutral" variant="outline" :disabled="busy" @click="loadDraft">重试读取片段计划</UButton>
-      <UButton color="neutral" variant="outline" :disabled="busy||!draftReady" @click="saveDraft">保存片段计划</UButton>
+      <UButton color="neutral" variant="outline" :disabled="busy||audioSelectionBusy||!draftReady" @click="saveDraft">保存片段计划</UButton>
       <span v-if="draftSaved" role="status">片段计划已保存，刷新可恢复。</span>
-      <UButton :loading="busy" :disabled="busy||!draftReady||!!errors.length||!!outputId&&!draftSaved" @click="submit()">确认合成当前短片</UButton>
+      <UButton :loading="busy" :disabled="busy||audioSelectionBusy||!draftReady||!!errors.length||!!outputId&&!draftSaved" @click="submit()">确认合成当前短片</UButton>
     </div>
     <p v-if="outputId&&!draftSaved" class="text-muted">请先保存当前成片的片段计划，再确认合成；其他成片不会一起提交。</p>
     <p v-if="error" role="alert">{{error}}</p>

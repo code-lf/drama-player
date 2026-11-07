@@ -28,6 +28,7 @@ const sendDisabledReason=computed(()=>{
   const current=props.run.image_plan||plan.value
   if(current.status==='submitted'||current.batch)return '图片任务已提交，请在原批次查看状态；不会重复生成'
   if(conflict.value)return '请先核对图片计划的最新修订'
+  if(current.quote&&!current.quote.expired)return '请在左侧费用卡确认本批图片；画布编辑不会直接生成'
   return current.batch_supported?'请在对话中统一核价并确认本批图片':'此运行未开放图片批次执行，可先保存方案'
 })
 watch(()=>props.run.image_plan,value=>{
@@ -71,6 +72,7 @@ defineExpose({isDirty:()=>dirty.value,isBusy:()=>saving.value,reload})
   <CreationNodeControls v-if="item" full-editor kind="image" :skill="run.skill" :catalog="catalog" :value="parameters" :prompt="prompt" :readonly="readonly" :references="references" :reference-types="references" :busy="busy||saving" :send-disabled-reason="sendDisabledReason" @text="prompt=$event" @update="parameters=editableImageParameters($event)">
     <template #toolbar-actions><UTooltip text="保存本张方案，不生成、不扣点"><UButton icon="i-lucide-save" color="neutral" variant="ghost" square aria-label="保存图片方案" :disabled="readonly||busy||saving||!dirty" :loading="saving" @click="save"/></UTooltip></template>
   </CreationNodeControls>
+  <p v-else role="alert">当前图片方案条目暂不可读，请重新选择节点或刷新会话。</p>
   <p v-if="error" role="alert" class="text-warning text-sm">{{error}}</p>
   <UButton v-if="conflict" color="neutral" variant="outline" :disabled="saving" @click="reload">读取最新计划并核对</UButton>
 </template>

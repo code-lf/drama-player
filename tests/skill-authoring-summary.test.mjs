@@ -7,8 +7,20 @@ const code=ts.transpileModule(readFileSync(new URL('../features/creation/skillAu
 const exports={};new Function('exports',code)(exports)
 test('从实际章节提炼方法、输入、模板和检查，而非只回复状态',()=>{
   const result=exports.skillAuthoringSummary({label:'软件宣传',document:'# 技能\n\n## 必要输入\n软件名、真实卖点。\n\n## 创作方法\n按痛点与演示组织。\n\n### 口播台词模板\n{{软件名}}帮助{{受众}}。\n\n### 视频提示词模板\n保持真实UI。\n\n## 质量检查\n总时长不符先修正文案。\n\n## 交付清单\n口播、分镜、提示词。\n\n## 能力限制\n不自动采购。'})
-  for(const text of ['软件名、真实卖点','按痛点与演示','{{受众}}','保持真实UI','总时长不符','口播、分镜','不自动采购'])assert.ok(result.includes(text),text)
+  for(const text of ['软件名、真实卖点','按痛点与演示','{{受众}}','保持真实UI','总时长不符','口播、分镜'])assert.ok(result.includes(text),text)
   assert.doesNotMatch(result,/已保存|已发布|联网检索|已生成视频|成功/)
+  assert.doesNotMatch(result,/使用边界|不自动采购|本次未生成媒体/)
+})
+
+test('仅列真实资源，不将正文文件名或固定系统说明冒充交付',()=>{
+  const config={label:'视频制作',document:'# 技能\n## 目标\n可先策划再制作。\n## 能力限制\n模型目录仅表示当前可用规格。\n\n参考 method.md。',public_guide:{output:'口播、分镜和可继续制作的提示词。'}}
+  const empty=exports.skillAuthoringSummary(config)
+  assert.doesNotMatch(empty,/method\.md|资源附件|模型目录仅表示/)
+  const actual=exports.skillAuthoringSummary({...config,text_resources:[{name:'method.md'}]})
+  assert.match(actual,/资源附件[\s\S]*`method.md`/)
+  assert.match(actual,/可继续制作/)
+  // 仅改变摘要呈现，历史文档和原有业务限制不被改写。
+  assert.match(config.document,/模型目录仅表示/)
 })
 test('空文档不杜撰方法或时间预算',()=>{const result=exports.skillAuthoringSummary({label:'空稿'});assert.doesNotMatch(result,/60秒|五段|180|已绑定/)})
 

@@ -38,6 +38,9 @@ export default defineNuxtConfig({
   // 关闭 devtools，保持演示界面简洁
   devtools: { enabled: false },
 
+  // CSR路由在模块加载前直接输出静态骨架，不能等Vue启动后才显示占位。
+  spaLoadingTemplate: 'spa-loading-template.html',
+
   // 在 Nuxt 挂载前先同步本地主题到 `html[data-theme]`，
   // 这样浏览器首屏绘制就能直接命中正确主题，避免出现“先黑一下再白一下”的闪烁。
   app: {
@@ -45,10 +48,7 @@ export default defineNuxtConfig({
       // 浏览器标签页统一复用首页导航栏的 Livliv 品牌 Logo。
       // 查询参数用于刷新浏览器已经缓存的旧 favicon，避免修改后仍显示 Nuxt 默认图标。
       link: [
-        // 预加载本地字体，首页与工作台统一使用，无需访问第三方字体服务。
-        { rel: 'preload', as: 'font', type: 'font/woff2', href: '/fonts/GoogleSansFlex-Variable.woff2', crossorigin: 'anonymous' },
-        // 中文界面同样预加载真实中文字体，避免首屏长期显示系统字体。
-        { rel: 'preload', as: 'font', type: 'font/woff2', href: '/fonts/NotoSansSC-Variable.woff2', crossorigin: 'anonymous' },
+        // 字体保留font-display:swap按实际字形使用加载，不让9MB字体预加载争抢首屏模块。
         { rel: 'icon', type: 'image/jpeg', href: '/branding/livliv-logo.jpeg?v=20260815' },
         { rel: 'shortcut icon', type: 'image/jpeg', href: '/branding/livliv-logo.jpeg?v=20260815' },
         { rel: 'apple-touch-icon', href: '/branding/livliv-logo.jpeg?v=20260815' }
@@ -82,7 +82,7 @@ export default defineNuxtConfig({
   buildDir: nuxtBuildDir,
 
   // 全局样式：设计令牌、基础样式、Vue Flow 样式
-  css: ['~/assets/css/tokens.css', '~/assets/css/main.css', '~/assets/css/creation.css', '@vue-flow/core/dist/style.css', '@vue-flow/core/dist/theme-default.css', '~/assets/css/creative-canvas.css'],
+  css: ['~/assets/css/tokens.css', '~/assets/css/main.css', '~/assets/css/creation.css', '@vue-flow/core/dist/style.css', '@vue-flow/core/dist/theme-default.css', '~/assets/css/creative-canvas.css', '~/assets/css/liv-icon-menu.css'],
 
   // Nuxt UI 统一提供按钮、图标、下拉、徽章、弹窗、抽屉等基础交互；
   // 项目业务卡片仍保留 Livliv 自己的页面结构和视觉规范。

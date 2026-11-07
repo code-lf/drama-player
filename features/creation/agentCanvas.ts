@@ -6,6 +6,12 @@ import type {CompositionJob} from '~/shared/api/services/videoCompositionService
 
 /** 画布只保存布局和编辑草案；状态、文件及费用始终投影自原业务记录。 */
 export type CreativeNodeKind='text'|'image'|'video'|'audio'|'compose'
+/** 已停止或被新需求替代的未提交产物不再展示；业务历史、未知受理及已提交成果不得误删。 */
+export function hiddenProposalOutput(run:Pick<CreationRun,'status'|'superseded_by'|'executed_request'|'creative_plan'|'image_plan'|'card'>){
+  const submitted=!!run.executed_request||!!run.creative_plan?.batch||!!run.image_plan?.batch
+  const hasProposal=!!run.creative_plan||!!run.image_plan||run.card?.type==='proposal'
+  return hasProposal&&!submitted&&!!(run.status==='cancelled'||run.superseded_by||run.creative_plan?.status==='stopped'||run.image_plan?.status==='stopped')
+}
 /** 只保存可编辑创作规格；费用、素材地址与执行许可不能进入画布布局。 */
 export interface CreativeNodeParameters {model:string;style:string;styleId:string;aspectRatio:string;durationSec:number;resolution:string;quality:'low'|'medium'|'high';instrumental?:boolean;vocalGender?:''|'m'|'f'}
 export interface CreativeNodeData {
@@ -56,13 +62,15 @@ export interface CreativeLayout {
   edges:Array<{id:string;source:string;target:string}>; hidden:string[]; viewport:{x:number;y:number;zoom:number};selected_id?:string;overrides?:Record<string,{title:string;prompt:string}>
   node_parameters?:Record<string,CreativeNodeParameters>
   /** 分组只管理布局；成员仍使用原业务身份和绝对坐标，不新增任务或引用线。 */
-  groups?:Array<{id:string;title:string;members:string[]}>
+  groups?:Array<{id:string;title:string;members:string[];excluded_members?:string[]}>
+  /** 已处理的自动分组编号；用户解组后刷新不重新强制成组。 */
+  auto_group_keys?:string[]
 }
 export const emptyCreativeLayout=():CreativeLayout=>({schema_version:1,positions:{},drafts:[],edges:[],hidden:[],viewport:{x:40,y:60,zoom:.8}})
 /** JSONB会重排对象键；按结构比较已保存布局，兼容服务端补齐的可选默认值。 */
 export function sameCreativeLayout(left:CreativeLayout,right:CreativeLayout){
   const canonical=(value:any):any=>Array.isArray(value)?value.map(canonical):value&&typeof value==='object'?Object.fromEntries(Object.keys(value).sort().map(key=>[key,canonical(value[key])])):value
-  const normalized=(value:CreativeLayout)=>canonical({...value,selected_id:value.selected_id||'',overrides:value.overrides||{},node_parameters:value.node_parameters||{},groups:value.groups||[]})
+  const normalized=(value:CreativeLayout)=>canonical({...value,selected_id:value.selected_id||'',overrides:value.overrides||{},node_parameters:value.node_parameters||{},groups:(value.groups||[]).map(group=>({...group,excluded_members:group.excluded_members||[]})),auto_group_keys:value.auto_group_keys||[]})
   return JSON.stringify(normalized(left))===JSON.stringify(normalized(right))
 }
 /** 用真实业务身份构造稳定节点编号，刷新或任务轮询不会新增同一作品。 */
@@ -106,7 +114,14 @@ export function projectCreativeGraph(input:{messages:CreationMessage[];runs:Crea
   const runs=[...new Map(input.runs.map(run=>[run.id,run])).values()]
   const boundResults=new Set<string>()
   for(const run of runs){
+    // 用户已停止的未提交草案不再投影节点；真实已提交批次及成果仍保留。
+    if(hiddenProposalOutput(run)&&(run.creative_plan||run.image_plan||run.card?.type==='proposal'))continue
     const refs=(run.task_input?.references||run.draft.references||[]).map(ref=>reference(ref,run.reference_previews?.[ref.version_id]))
+    // 新根图中的独立镜头批次投影真实计划摘要，连线只追溯规划来源，不把整份方案传作图片提示词。
+    const batchPlan=run.image_plan?.plan_type==='direct'?run.image_plan:run.creative_plan
+    const batchRoot=run.flow_runtime?.version==='creation-flow-v2'&&batchPlan&&batchPlan.items.length>1?`batch-plan:${run.id}`:''
+    if(batchRoot)add(batchRoot,{kind:'text',title:'镜头素材计划',prompt:run.card?.text||run.draft.original_prompt||run.draft.prompt,
+      status:run.status==='planning'?'planning':'replied',phase:'planning',readonly:true,runId:run.id},0)
     if(run.image_plan){
       // 逐张计划各占一个稳定节点；计划不是成品，禁止用商品参考图冒充生成结果。
       for(const item of run.image_plan.items){
@@ -116,7 +131,7 @@ export function projectCreativeGraph(input:{messages:CreationMessage[];runs:Crea
         const source=result&&task?.task_id?{kind:'image' as const,id:task.task_id,result_id:result.id}:undefined
         if(source)boundResults.add(resultNodeId(source))
         // 图片业务终态success映射为画布统一succeeded；保留原任务状态，不让已出图节点误报待核对或禁止后续连线。
-        const status=task?(task.delivery_status==='unknown'?'status_unavailable':task.delivery_status==='completed'&&!result?'result_pending':task.delivery_status==='completed'?'succeeded':task.delivery_status||'status_unavailable'):['failed','cancelled'].includes(run.status)?run.status:'draft'
+        const status=task?(task.delivery_status==='unknown'?'status_unavailable':task.delivery_status==='completed'&&!result?'result_pending':task.delivery_status==='completed'?'succeeded':task.delivery_status||'status_unavailable'):['failed','cancelled'].includes(run.status)?run.status:run.image_plan.selected_ids.includes(item.id)?'ready':'draft'
         add(id,{kind:'image',title:item.title,prompt:item.prompt,status,phase:task?'generation':'planning',readonly:true,
           runId:run.id,itemId:item.id,planTarget:'image',aspectRatio:item.parameters.aspectRatio,
           url:result?.image_url,source,progress:task?.progress,
@@ -124,6 +139,7 @@ export function projectCreativeGraph(input:{messages:CreationMessage[];runs:Crea
           detail:task?.error||task?.detail||(run.status==='failed'?run.error:run.image_plan.selected_ids.includes(item.id)?'图片方案 · 尚未生成':'本次未选择 · 方案保留')},1)
         const itemRefs=item.references?.map(ref=>reference(ref,run.reference_previews?.[ref.version_id]))||refs
         itemRefs.forEach(source=>link(source,id))
+        if(batchRoot)link(batchRoot,id,true)
       }
     }else if(run.creative_plan){
       const media=workbenchMedia(run.id,run.creative_plan,runs)
@@ -136,23 +152,31 @@ export function projectCreativeGraph(input:{messages:CreationMessage[];runs:Crea
         add(id,{kind:'video',title:item.title,prompt:item.prompt,status,phase:task?'generation':'planning',detail:task?.detail||(!task&&run.status==='failed'?run.error:undefined),progress:task?.progress,url:result?.video_url,cover:result?.cover_url,source:result&&task?.task_id?{kind:'video',id:task.task_id,result_id:result.id}:undefined,runId:run.id,itemId:item.id,aspectRatio:item.parameters.aspectRatio},1)
         const inherited=media.find(value=>value.itemId===item.id&&value.inherited)
         if(inherited&&!task){Object.assign(nodes.get(id)!.data,{url:inherited.result.url,source:inherited.result.source,inherited:true})}
-        const itemRefs=item.references?.map(ref=>reference(ref,run.reference_previews?.[ref.version_id]))||refs
-        itemRefs.forEach(source=>link(source,id))
+        // 仅真实固定引用匹配时展示图片→视频输入线；方案父节点仍是追溯线，不冒充垫图。
+        const fixedSource=typeof item.content_source==='object'?item.content_source:undefined
+        const imageNode=fixedSource?.kind==='image'?`image-plan:${fixedSource.run_id}:${fixedSource.item_id}`:''
+        if(imageNode&&nodes.has(imageNode)&&item.references?.some(ref=>ref.version_id===fixedSource?.version_id))link(imageNode,id)
+        else (item.references?.map(ref=>reference(ref,run.reference_previews?.[ref.version_id]))||refs).forEach(source=>link(source,id))
+        if(batchRoot)link(batchRoot,id,true)
       }
-    }else if(run.generation_prompt||run.card?.text||['planning','waiting','failed','cancelled'].includes(run.status)){
+    }else{
       const message=input.messages.find(value=>value.content.parameters?.extra?.creation_run_id===run.id&&value.task_id)
-      // 明确的媒体需求先出现对应方案节点；仍是整理/待确认，绝不冒充已提交生成。
-      const target=run.mode==='chat'||run.card?.type==='reply'?'text':run.task_input?.target||run.card?.target||run.draft.parameters?.output
+      // 对话输入、目录核对、思考及补问都不是画布产物。仅接收已保存的媒体任务合同或实际交付的文本。
+      const textArtifact=run.card?.type==='reply'&&!!run.card.text?.trim()&&!!(run.card.artifact_title||run.draft.parameters?.extra?.canvas_node_kind==='text')
+      const mediaProposal=run.card?.type==='proposal'&&!!run.task_input&&['ready','replied'].includes(run.status)&&!run.superseded_by
+      if(message||!textArtifact&&!mediaProposal)continue
+      const target=textArtifact?'text':run.task_input!.target
       const kind:CreativeNodeKind=target==='image'?'image':target==='video'?'video':target==='music'||target==='audio'?'audio':'text'
-      const label=run.mode==='chat'&&run.draft.parameters?.extra?.canvas_node_kind==='text'?'文本':kind==='image'?'图片方案':kind==='video'?'视频方案':kind==='audio'?'音乐方案':run.card?.type==='proposal'?'创作方案':'需求整理'
-      const status=run.status==='replied'&&run.card?.type==='proposal'?'ready':run.status
-      // 回复正文优先，旧整理稿不能遮住本轮真实交付的文本内容。
-      // 失败/停止的流式草稿未经校验，不能当成正式提示词；保留用户原话供显式派生重试。
-      // 文字整理期间仅展示服务端公开流式正文；仍是只读进行态，失败后恢复原始需求。
-      const stream=run.status==='planning'&&kind==='text'?run.stream_text:''
-      const content=['failed','cancelled'].includes(run.status)?run.draft.original_prompt||run.draft.prompt||'':stream|| (run.card?.type==='reply'?run.card.text:run.task_input?.prompt||run.generation_prompt||run.card?.text||run.draft.prompt||'')
-      if(!message){const id=`text:${run.id}`;add(id,{kind,title:label,prompt:content,status,phase:'planning',detail:run.status==='failed'?run.error:undefined,readonly:true,runId:run.id},1);refs.forEach(source=>link(source,id))}
+      const label=textArtifact?run.card!.artifact_title||'文本':kind==='image'?'图片方案':kind==='video'?'视频方案':kind==='audio'?'音乐方案':'创作方案'
+      // 已交付文本不因后续停止文字流程丢失；未提交媒体仍由真实取消状态撤下。
+      const status=textArtifact?'replied':'ready',content=textArtifact?run.card!.text:run.task_input!.prompt
+      const id=`text:${run.id}`;add(id,{kind,title:label,prompt:content,status,phase:'planning',readonly:true,runId:run.id},1);refs.forEach(source=>link(source,id))
     }
+  }
+  // 批次来源与自己的镜头靠近排列，不能被多年历史节点的累计行号拉成一条超长连线；用户已保存位置仍优先。
+  for(const root of nodes.values())if(root.id.startsWith('batch-plan:')){
+    const children=[...edges.values()].filter(edge=>edge.source===root.id&&edge.data?.lineage).map(edge=>nodes.get(edge.target)).filter((node):node is CreativeNode=>!!node)
+    if(children.length)root.position={x:children[0]!.position.x-400,y:(children[0]!.position.y+children[children.length-1]!.position.y)/2}
   }
   for(const result of input.results){
     if(boundResults.has(resultNodeId(result.source)))continue
@@ -197,6 +221,8 @@ export function projectCreativeGraph(input:{messages:CreationMessage[];runs:Crea
     if(!bound)job.plan.clips.forEach(clip=>{const source=[...nodes.values()].find(node=>node.data.source?.kind==='video'&&node.data.source.id===clip.task_id&&node.data.source.result_id===clip.result_id);if(source)link(source.id,id)})
   }
   // 成片也可能是截帧/批注来源，须在全部业务节点就绪后建立固定追溯线。
+  // 同会话续作只使用服务端校验过的父运行身份；不存在的父节点不补造，也不继承旧媒体费用许可。
+  for(const run of runs)if(run.parent_run_id&&nodes.has(`text:${run.parent_run_id}`)&&nodes.has(`batch-plan:${run.id}`))link(`text:${run.parent_run_id}`,`batch-plan:${run.id}`,true)
   // 原技能重整只显示需求追溯线；失败节点不是可传给模型的素材文件。
   for(const run of input.runs)if(run.retry_of&&nodes.has(`text:${run.retry_of}`)&&nodes.has(`text:${run.id}`))link(`text:${run.retry_of}`,`text:${run.id}`,true)
   // 追溯线不将旧原片自动作为下一轮生成素材。

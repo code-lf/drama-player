@@ -36,3 +36,11 @@ test('富文本独立管理换行和段落，旧气泡样式不重置助手段�
   assert.match(panel,/\.builder-chat>p\{margin:0!important/)
   assert.doesNotMatch(panel,/\.skill-center \.skill-builder \.builder-chat p\{margin:0!important/)
 })
+
+test('技能说明复用紧凑正文变体，结构由技能决定且不执行自带HTML或CSS',()=>{
+  const source=read('features/creation/components/AssistantReply.vue')
+  assert.ok(source.includes("variant?:'default'|'skill'"))
+  assert.ok(source.includes('font-size:var(--liv-chat-font);line-height:var(--liv-chat-line);margin:var(--liv-chat-section-gap)'))
+  assert.ok(source.lastIndexOf('.liv-assistant-reply--skill h3')>source.indexOf('.liv-assistant-reply h3,'))
+  assert.ok(read('features/creation/components/CreationProcessEvents.vue').includes('variant="skill"'))
+})

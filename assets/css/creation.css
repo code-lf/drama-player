@@ -222,8 +222,8 @@
 .creation-execution-preview ol{padding-left:22px;line-height:1.8;margin:8px 0}.creation-execution-preview pre{white-space:pre-wrap;max-height:180px;overflow:auto;font-size:12px;line-height:1.7}.creation-execution-preview summary{cursor:pointer;color:#83b7ff}
 /* 更多为弱提示，仅超出会话上限时显示，避免全局白字规则覆盖。 */
 /* 最近会话比主菜单小一级：统一覆盖导航通用字号，长标题仍保留省略和悬停全名。 */
-.dashboard-shell.dashboard-shell--creation .dashboard-sidebar .creation-sidebar-recent a{height:36px;min-height:36px;padding:6px 10px;gap:8px;font-size:12px!important;line-height:20px;box-sizing:border-box}
-.dashboard-shell.dashboard-shell--creation .dashboard-sidebar .creation-sidebar-recent a>span{font-size:12px!important;font-weight:500}
+.dashboard-shell.dashboard-shell--creation .dashboard-sidebar .creation-sidebar-recent a{height:44px;min-height:44px;padding:8px 10px;gap:8px;font-size:14px!important;line-height:22px;box-sizing:border-box}
+.dashboard-shell.dashboard-shell--creation .dashboard-sidebar .creation-sidebar-recent a>span{font-size:14px!important;font-weight:500;line-height:22px}
 .dashboard-shell.dashboard-shell--creation .dashboard-sidebar .creation-sidebar-recent .iconify{width:14px!important;height:14px!important}
 .dashboard-shell.dashboard-shell--creation .dashboard-sidebar .creation-sidebar-recent .creation-sidebar-more,.dashboard-shell.dashboard-shell--creation .dashboard-sidebar .creation-sidebar-recent .creation-sidebar-more span{font-size:11px!important;color:#81818b!important}
 @media(max-width:600px){.creation-parameter-fields{grid-template-columns:minmax(0,1fr)}.creation-studio .creation-popover.is-parameters .creation-ratio-options button{font-size:12px!important}}
@@ -376,6 +376,19 @@
 .session-workspace-nav button{height:32px;min-height:32px;width:32px;padding:0;justify-content:center;flex:none}
 /* 品牌是带文字的旧胶囊按钮，不得继承历史／新建图标按钮的 32px 固定宽度。 */
 .session-workspace-nav .session-brand-trigger{width:auto;padding:5px 10px;min-width:76px}
+/* 导航右侧沿用原历史与新建能力，仅收紧组内间隔，不给图标加常驻底色。 */
+.session-nav-actions{display:flex;align-items:center;gap:2px;flex:none;margin-left:auto}
+.session-workspace-nav .session-nav-action{background:transparent!important}
+.session-workspace-nav .session-nav-action>.iconify{width:var(--liv-session-nav-icon-size);height:var(--liv-session-nav-icon-size)}
+/* 最新桌面导航规格优先于旧的左右同高约定；手机继续保留原56px双页签顶栏。 */
+@media(min-width:768px){
+  .dashboard-shell.is-session-immersive{--liv-workspace-height:calc(100dvh - var(--liv-session-header-height) - 24px);--liv-graph-workspace-height:calc(100dvh - var(--liv-session-header-height))}
+  .dashboard-shell.is-session-immersive .dashboard-topbar{height:var(--liv-session-header-height)!important;flex-shrink:0}
+  .session-workspace-nav{height:var(--liv-session-nav-height);width:440px;gap:8px;padding:4px 8px;border-radius:999px;background:var(--liv-workspace-surface)}
+  .session-workspace-nav .session-brand-trigger{background:transparent!important;color:var(--liv-ui-primary-foreground);font-size:18px;height:40px;min-height:40px;padding:0 8px}
+  .session-workspace-nav .session-brand-trigger>.iconify{width:14px;height:14px}
+  .session-workspace-nav .session-nav-title{flex:1;font-size:var(--liv-session-nav-title-size);font-weight:650}
+}
 /* 恢复旧下拉深灰外观；浮层仍由 Nuxt UI 定位，不能沿用旧绝对定位偏移。 */
 .session-brand-dropdown.session-nav-dropdown{position:relative;inset:auto;width:164px;min-width:164px;background:#252527;border:1px solid #404044;border-radius:14px;padding:7px;color:#eee}
 .session-brand-dropdown .session-brand-menu-item{display:flex;align-items:center;gap:10px;padding:10px;min-height:40px;border-radius:8px;font-size:14px;line-height:20px;color:#eee;background:transparent;white-space:nowrap}
@@ -824,3 +837,28 @@
 .liv-composition-video{display:block;width:100%;height:auto;aspect-ratio:var(--liv-media-ratio,auto);object-fit:contain;border-radius:8px}
 /* 深色创作弹窗覆盖旧表面色；保留引导等有专门规格的高优先级例外。 */
 .creation-dark-dialog{background:var(--liv-settings-panel)!important;--ui-bg:var(--liv-settings-panel)}
+/* 资产大面板锚定工具栏，点击即引用；与@的小型候选菜单分工，不再提供第二次确认。 */
+.creation-assets-popover{width:min(640px,calc(100vw - 24px));max-height:min(600px,var(--reka-popper-available-height,70dvh));overflow-y:auto;overscroll-behavior:contain;padding:16px;background:var(--liv-workspace-surface)!important;color:var(--liv-chat-assistant-text);border:1px solid var(--color-border-soft);border-radius:20px!important;container-type:inline-size}
+.creation-assets-popover .asset-controls{margin-bottom:12px}.creation-assets-popover .asset-copy small{display:none!important}
+.creation-composer .creation-assets-trigger{display:inline-flex;align-items:center;gap:4px;flex:none;font-size:12px;white-space:nowrap}
+.creation-composer .creation-assets-trigger .iconify{width:16px;height:16px}
+/* 紧凑技能只保留实心闪电；名称由悬停提示承载，不单独留下下拉箭头。 */
+.creation-composer.is-compact .creation-toolbar .creation-skill{width:32px!important;min-width:32px;flex:none;padding:5px!important;justify-content:center}
+.creation-composer.is-compact .creation-toolbar .creation-skill .creation-skill-label,.creation-composer.is-compact .creation-toolbar .creation-skill>.iconify:last-child{display:none!important}
+/* 删除确认与对话问题卡同高、等宽并留12px间距，避免默认block页脚挤成一团。 */
+.canvas-delete-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;width:100%}
+.canvas-delete-actions>.liv-button{height:var(--liv-question-action-height)!important;min-height:var(--liv-question-action-height)!important;width:100%;padding:0 16px!important}
+/* 正文与提示采用统一中文排版；仅改变常规字重，不抹掉标题、强调及代码的语义。 */
+.creation-studio .creation-chat-history,.creation-composer .creation-editor,.creation-composer .creation-placeholder{font-family:var(--liv-chat-family);font-weight:var(--liv-chat-weight);font-size:var(--liv-chat-font);line-height:var(--liv-chat-line)}
+.creation-studio .creation-chat-history p,.creation-studio .creation-chat-history .liv-assistant-reply{font-family:var(--liv-chat-family)!important;font-weight:var(--liv-chat-weight)!important;font-size:var(--liv-chat-font)!important;line-height:var(--liv-chat-line)!important}
+.creation-composer .creation-placeholder{font-family:var(--liv-chat-family)!important;font-size:var(--liv-chat-font)!important;font-weight:var(--liv-chat-weight)!important;line-height:var(--liv-chat-line)!important;color:var(--liv-chat-placeholder)!important}
+/* Nuxt表单控件自行声明字号，必须落到原生输入元素，不能只让问题卡父级继承。 */
+.creation-stage-question textarea,.creation-stage-question input:not([type=checkbox]),.creation-question-pages textarea,.creation-question-pages input:not([type=checkbox]){font-family:var(--liv-chat-family)!important;font-size:var(--liv-chat-font)!important;font-weight:var(--liv-chat-weight)!important;line-height:var(--liv-chat-line)!important}
+.creation-stage-question textarea::placeholder,.creation-stage-question input::placeholder,.creation-question-pages textarea::placeholder,.creation-question-pages input::placeholder{font-family:var(--liv-chat-family)!important;font-size:var(--liv-chat-font)!important;font-weight:var(--liv-chat-weight)!important;line-height:var(--liv-chat-line)!important;color:var(--liv-chat-placeholder)!important;opacity:1}
+/* 原子素材标签只展示缩略图与名称，@只作为输入触发符，不写进展示文字。 */
+.creation-composer .creation-reference-chip{display:inline-flex;vertical-align:middle;align-items:center;gap:4px;max-width:100%;padding:0 3px;border:1px solid var(--liv-reference-tag-border);border-radius:5px;color:var(--liv-reference-tag-text);background:var(--liv-reference-tag-background);font-size:13px;line-height:18px;cursor:default}
+.creation-composer .creation-reference-chip>img{display:inline-block;width:18px;height:18px;object-fit:cover;border-radius:4px;flex:none}
+.creation-composer .creation-reference-chip>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* 侧栏未选项目统一使用灰色；指针悬停、键盘聚焦与当前项恢复高对比白色。 */
+.dashboard-shell.dashboard-shell--creation .dashboard-sidebar .liv-sidebar-item,.dashboard-shell.dashboard-shell--creation .dashboard-sidebar .liv-sidebar-item span,.dashboard-shell.dashboard-shell--creation .dashboard-sidebar .creation-sidebar-recent .liv-session-title{color:var(--liv-account-muted)!important}
+.dashboard-shell.dashboard-shell--creation .dashboard-sidebar .liv-sidebar-item:hover,.dashboard-shell.dashboard-shell--creation .dashboard-sidebar .liv-sidebar-item.is-active,.dashboard-shell.dashboard-shell--creation .dashboard-sidebar .liv-sidebar-item:hover span,.dashboard-shell.dashboard-shell--creation .dashboard-sidebar .liv-sidebar-item.is-active span,.dashboard-shell.dashboard-shell--creation .dashboard-sidebar .liv-session-row:hover .liv-session-title,.dashboard-shell.dashboard-shell--creation .dashboard-sidebar .liv-session-row:focus-within .liv-session-title,.dashboard-shell.dashboard-shell--creation .dashboard-sidebar .liv-session-row.is-menu-open .liv-session-title,.dashboard-shell.dashboard-shell--creation .dashboard-sidebar .liv-session-row.is-active .liv-session-title{color:var(--liv-chat-assistant-text)!important}

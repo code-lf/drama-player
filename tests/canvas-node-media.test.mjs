@@ -10,7 +10,14 @@ const raw=readFileSync('features/creation/components/CreativeCanvasNode.vue','ut
 const script=compileScript(parse(raw).descriptor,{id:'node-media-test',inlineTemplate:true}).content
 const output=ts.transpileModule(script,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ESNext}}).outputText
 const module={exports:{}}
-new Function('require','exports','module',output)(name=>name==='vue'?vue:name==='@vue-flow/core'?{Handle:{render:()=>null},Position:{Left:'left',Right:'right'}}:{},module.exports,module)
+// 音乐改用共享播放器后挂载真实子组件；只隔离音频下载，不把空组件当播放验收。
+const musicModule={exports:{}},lyricModule={exports:{}}
+const positionModule={exports:{}}
+new Function('exports',ts.transpileModule(readFileSync('features/music/utils/canvasPlaybackPosition.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS}}).outputText)(positionModule.exports)
+new Function('exports',ts.transpileModule(readFileSync('features/music/utils/lyricsTimeline.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS}}).outputText)(lyricModule.exports)
+const musicScript=compileScript(parse(readFileSync('features/music/components/MusicPlayer.vue','utf8')).descriptor,{id:'node-music-test',inlineTemplate:true}).content
+new Function('require','exports','module',ts.transpileModule(musicScript,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ESNext}}).outputText)(name=>name==='vue'?vue:name.includes('lyricsTimeline')?lyricModule.exports:name.includes('canvasPlaybackPosition')?positionModule.exports:name.includes('audioWaveform')?{readAudioWaveform:async()=>[.2,.8,.4]}:{},musicModule.exports,musicModule)
+new Function('require','exports','module',output)(name=>name==='vue'?vue:name.includes('MusicPlayer')?musicModule.exports:name==='@vue-flow/core'?{Handle:{render:()=>null},Position:{Left:'left',Right:'right'}}:{},module.exports,module)
 const tick=async()=>{for(let i=0;i<4;i++)await vue.nextTick()}
 function mount(kind='video',selected=true){
   const listeners=new Map(),events=[]
@@ -29,6 +36,31 @@ function mount(kind='video',selected=true){
   const text=el=>el.text+el.children.map(text).join('')
   return {app,props,events,listeners,find,text}
 }
+
+test('待确认真实方案使用共享双点，显示待确认而不冒充生成中',async()=>{
+  const ui=mount('image')
+  ui.props.data.url=undefined;ui.props.data.status='ready';ui.props.data.phase='planning';await tick()
+  const dots=ui.find(el=>String(el.props.class).includes('workspace-loading-dots'))
+  assert.ok(dots);assert.equal(dots.children.filter(el=>el.type==='i').length,2)
+  assert.ok(ui.find(el=>el.type==='span'&&ui.text(el)==='待确认'))
+  assert.ok(!String(ui.find(el=>el.type==='article').props.class).includes('is-pending'))
+  ui.props.data.status='draft';await tick()
+  assert.equal(ui.find(el=>String(el.props.class).includes('workspace-loading-dots')),undefined)
+  ui.app.unmount()
+})
+
+test('真实排队与生成节点沿用双球，状态文字不伪造供应商已受理',async()=>{
+  const ui=mount('image');ui.props.data.url=undefined
+  for(const [value,label] of [['queued','排队中'],['processing','生成中']]){
+    ui.props.data.status=value;await tick()
+    const dots=ui.find(el=>String(el.props.class).includes('workspace-loading-dots'))
+    assert.equal(dots.children.filter(el=>el.type==='i').length,2)
+    assert.ok(ui.find(el=>el.type==='span'&&ui.text(el)===label))
+  }
+  ui.props.data.status='failed';await tick()
+  assert.equal(ui.find(el=>String(el.props.class).includes('workspace-loading-dots')),undefined)
+  ui.app.unmount()
+})
 
 test('空文本节点单独标记灰色提示，填写后恢复正文且不改变内容',async()=>{
   const ui=mount('text')
@@ -50,25 +82,40 @@ test('工具打开后在原节点内渲染编辑器，不重复播放器和下�
   assert.equal(ui.events.length,0);ui.app.unmount()
 })
 
-test('视频、成片和音乐切走即暂停；重新选中不会自动续播',async()=>{
-  for(const kind of ['video','compose','audio']){
+test('视频与成片切走即暂停；重新选中不会自动续播',async()=>{
+  for(const kind of ['video','compose']){
     const ui=mount(kind),media=ui.find(el=>el.type===(kind==='audio'?'audio':'video'))
-    assert.ok(media);assert.equal(media.props.controls,true);assert.equal(media.props.autoplay,undefined)
+    assert.ok(media);if(kind!=='audio')assert.equal(media.props.controls,true);assert.equal(media.props.autoplay,undefined)
     ui.props.selected=false;await tick()
-    assert.equal(media.pauseCount,1);assert.equal(media.props.controls,false)
-    if(kind==='audio')assert.ok(ui.text(ui.find(el=>el.type==='article')).includes('选中后播放'))
+    assert.equal(media.pauseCount,1)
+    if(kind==='audio')assert.equal(ui.find(el=>el.type==='button'&&el.props['aria-label']==='播放音乐').props.disabled,true)
+    else assert.equal(media.props.controls,false)
     ui.props.selected=true;await tick();assert.equal(media.pauseCount,1)
     ui.app.unmount();assert.equal(media.pauseCount,2);assert.equal(ui.listeners.size,0)
   }
 })
 
-test('节点右侧加号承载四项菜单，展开保持可见；下方与正文不再重复出现派生按钮',async()=>{
+test('音乐未选中仍可直接操作，波形拖动按缩放后的宽度定位',async()=>{
+  const ui=mount('audio',false),audio=ui.find(el=>el.type==='audio')
+  audio.duration=40;audio.props.onLoadedmetadata();await tick()
+  assert.equal(ui.find(el=>el.type==='button'&&el.props['aria-label']==='播放音乐').props.disabled,false)
+  const range=ui.find(el=>el.type==='input'&&el.props['aria-label']==='音乐播放进度')
+  let captured=false
+  Object.assign(range,{focus(){},setPointerCapture(){captured=true},hasPointerCapture(){return captured},getBoundingClientRect(){return {left:20,width:80}}})
+  const event={currentTarget:range,button:0,pointerId:1,preventDefault(){},stopPropagation(){}}
+  range.props.onPointerdown({...event,type:'pointerdown',clientX:40});assert.equal(audio.currentTime,10)
+  range.props.onPointermove({...event,type:'pointermove',clientX:80});assert.equal(audio.currentTime,30)
+  ui.app.unmount()
+})
+
+test('节点右侧加号显示生成标题和三个类型选项，展开保持可见',async()=>{
   const ui=mount('image',false)
   ui.props.creationItems=['派生','文本','图片','视频'].map(label=>({label,onSelect:()=>ui.events.push(['create',label])}))
   await tick()
   const menu=ui.find(el=>el.type==='menu'),button=ui.find(el=>el.type==='button'&&el.props['aria-label']==='基于真实作品添加节点')
   assert.ok(button);assert.equal(button.props.icon,'i-lucide-plus')
-  assert.deepEqual(menu.props.items.map(item=>item.label),['派生','文本','图片','视频'])
+  assert.deepEqual(menu.props.items.map(item=>item.label),['生成','文本','图片','视频'])
+  assert.equal(menu.props.items[0].type,'label')
   assert.deepEqual(menu.props.content,{side:'right',align:'center',sideOffset:8})
   menu.props.onOpen(true);await tick()
   const wrapper=ui.find(el=>el.props.class?.includes('creative-node-create nodrag'))
@@ -114,16 +161,20 @@ test('工具弹层或短剧页签隐藏画布时暂停，普通悬浮窗不隐�
   for(const kind of ['video','compose','audio']){
     const ui=mount(kind),media=ui.find(el=>el.type===(kind==='audio'?'audio':'video'))
     ui.props.playbackEnabled=false;await tick()
-    assert.equal(media.pauseCount,1);assert.equal(ui.props.selected,true);assert.equal(media.props.controls,false)
+    assert.equal(media.pauseCount,1);assert.equal(ui.props.selected,true);if(kind!=='audio')assert.equal(media.props.controls,false)
     media.props.onPlay({target:media});assert.equal(media.pauseCount,2)
-    if(kind==='audio')assert.ok(ui.text(ui.find(el=>el.type==='article')).includes('已暂停'))
+    if(kind==='audio')assert.equal(ui.find(el=>el.type==='button'&&el.props['aria-label']==='播放音乐').props.disabled,true)
     ui.props.playbackEnabled=true;await tick()
-    assert.equal(media.pauseCount,2);assert.equal(media.props.controls,true);assert.equal(media.props.autoplay,undefined)
+    assert.equal(media.pauseCount,2);if(kind!=='audio')assert.equal(media.props.controls,true);assert.equal(media.props.autoplay,undefined)
     assert.equal(ui.events.length,0);ui.app.unmount()
   }
   const canvas=readFileSync('features/creation/components/CreationAgentCanvas.vue','utf8'),studio=readFileSync('features/creation/components/CreationStudio.vue','utf8')
   assert.ok(canvas.includes(':playback-enabled="playbackEnabled!==false&&!removeOpen&&!previewNode"'))
-  assert.ok(studio.includes(':playback-enabled="!graphToolsOpen&&!compositionOpen&&!rulesOpen&&(floatingChat||desktopWorkspace||mobilePane===\'canvas\')"'))
+  assert.ok(studio.includes(':playback-enabled="!editingWorkspaceOpen&&!compositionOpen&&!rulesOpen&&(floatingChat||desktopWorkspace||mobilePane===\'canvas\')"'))
+  // 内联工具已替换当前节点播放器，不应连带禁用其他节点试听；真正遮挡工作区的弹窗仍隔离播放。
+  assert.ok(!studio.includes(':playback-enabled="!graphToolsOpen&&'))
+  const node=readFileSync('features/creation/components/CreativeCanvasNode.vue','utf8')
+  assert.ok(node.includes('v-if="editing"')&&node.includes('v-else-if="data.kind===\'audio\'&&data.url&&!failed"'))
 })
 
 test('页面隐藏暂停所有节点；异步play事件不能让未选中或隐藏节点继续播放',async()=>{
@@ -136,8 +187,8 @@ test('页面隐藏暂停所有节点；异步play事件不能让未选中或隐�
   ui.app.unmount()
 })
 
-test('图片、视频和音乐加载失败可重载同一文件，不发派生或生成事件',async()=>{
-  for(const kind of ['image','video','audio']){
+test('图片和视频加载失败可重载同一文件，不发派生或生成事件',async()=>{
+  for(const kind of ['image','video']){
     const ui=mount(kind),tag=kind==='image'?'img':kind
     const old=ui.find(el=>el.type===tag);old.props.onError({target:old});await tick()
     assert.ok(!ui.find(el=>el.type===tag))
@@ -148,6 +199,19 @@ test('图片、视频和音乐加载失败可重载同一文件，不发派生�
     assert.equal(renewed.props.autoplay,undefined);assert.deepEqual(ui.events,[['refreshFile','task:real']])
     ui.app.unmount()
   }
+})
+
+test('紧凑音乐错误保留同一audio，重新加载不发生成事件，真实时间与拖动进度可用',async()=>{
+  const ui=mount('audio'),audio=ui.find(el=>el.type==='audio')
+  let loads=0;audio.load=()=>{loads++}
+  audio.duration=61;audio.props.onLoadedmetadata();await tick()
+  assert.ok(ui.text(ui.find(el=>el.type==='time')).includes('00:01:01'))
+  const range=ui.find(el=>el.type==='input'&&el.props['aria-label']==='音乐播放进度')
+  range.props.onInput({target:{value:'17'}});await tick();assert.equal(audio.currentTime,17)
+  audio.props.onError();await tick()
+  assert.equal(ui.find(el=>el.type==='audio'),audio)
+  ui.find(el=>el.type==='button'&&ui.text(el)==='重新加载').props.onClick();assert.equal(loads,1)
+  assert.equal(ui.events.length,0);ui.app.unmount()
 })
 
 test('换文件停止旧播放，迟到的旧错误和元数据不能覆盖新文件或真实比例',async()=>{

@@ -2,7 +2,7 @@ import type {VideoPlan} from '~/shared/api/services/creationService'
 
 /** 草案回复不是普通闲聊；刷新后仍恢复为可编辑计划，不重新规划或自动核价。 */
 export function hasUnsubmittedVideoPlan(run:{status:string;executed_request?:unknown;superseded_by?:string;creative_plan?:Pick<VideoPlan,'status'|'total_count'>}){
-  return run.status==='replied'&&!run.executed_request&&!run.superseded_by&&run.creative_plan?.status==='draft'&&run.creative_plan.total_count>1
+  return run.status==='replied'&&!run.executed_request&&!run.superseded_by&&run.creative_plan?.status==='draft'&&run.creative_plan.total_count>=1
 }
 
 /** 只产生内容与选择变更，顺序固定为原计划顺序，不发送素材或模型替换。 */

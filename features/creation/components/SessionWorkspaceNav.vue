@@ -45,11 +45,14 @@ watch(()=>[route.fullPath,auth.session.user?.id,props.navigationOpen],()=>{clear
 <!-- 复用既有品牌按钮和下拉样式，组件只负责外点、Esc、焦点与菜单键盘行为。 -->
 <UDropdownMenu v-model:open="brandOpen" :modal="false" :items="brandItems" :content="{side:'bottom',align:'start',sideOffset:0,onOpenAutoFocus:brandAutoFocus,onCloseAutoFocus:brandAutoFocus,onKeydown:()=>brandPointer=false}" :ui="{content:'session-nav-dropdown session-brand-dropdown',item:'session-brand-menu-item',itemLeadingIcon:'session-brand-menu-icon'}"><button class="session-brand-trigger" type="button" aria-label="Livliv 导航菜单" @pointerenter="$event.pointerType!=='touch' && enterBrand()" @pointerleave="leaveBrand" @pointerdown="brandPointer=false" @keydown="brandPointer=false"><span>Livliv</span><UIcon name="i-lucide-chevron-down"/></button></UDropdownMenu>
 <span class="session-nav-title" :title="title">{{title}}</span>
+<!-- 右侧操作独立成紧凑组，标题伸缩不再把两个图标拉开。 -->
+<div class="session-nav-actions">
 <UPopover v-if="!navigationOpen" :open="historyOpen" @update:open="!interaction && (historyOpen=$event)" :content="{side:'bottom',align:'start',sideOffset:8,onOpenAutoFocus:preventHoverFocus}" :ui="{content:'session-recent-popover'}">
-<UButton icon="i-lucide-history" variant="ghost" color="neutral" square aria-label="最近项目" :aria-expanded="historyOpen" @pointerdown="pointerOpen=false" @keydown="pointerOpen=false" @pointerenter="$event.pointerType!=='touch' && enterHistory()" @pointerleave="leaveHistory"/>
+<UButton class="session-nav-action" icon="i-lucide-history" variant="ghost" color="neutral" square aria-label="最近项目" :aria-expanded="historyOpen" @pointerdown="pointerOpen=false" @keydown="pointerOpen=false" @pointerenter="$event.pointerType!=='touch' && enterHistory()" @pointerleave="leaveHistory"/>
 <template #content><section aria-label="最近项目" @pointerenter="inside=true;keepHistory()" @pointerleave="leaveHistory" @focusin="keepHistory" @focusout="leaveHistory"><slot name="history" :hold="hold"/></section></template>
 </UPopover>
-<UTooltip text="新建创作"><UButton to="/dashboard?entry=free&new=1" icon="i-lucide-square-pen" variant="ghost" color="neutral" square aria-label="新建创作"/></UTooltip>
+<UTooltip text="新建创作"><UButton class="session-nav-action" to="/dashboard?entry=free&new=1" icon="i-lucide-square-pen" variant="ghost" color="neutral" square aria-label="新建创作"/></UTooltip>
+</div>
 </nav>
 </template>
 <style scoped>

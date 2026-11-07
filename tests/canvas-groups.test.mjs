@@ -7,13 +7,75 @@ new Function('exports',ts.transpileModule(readFileSync('features/creation/canvas
 const {groupBounds,groupMembers,moveGroup,arrangeGroup}=module.exports
 const boxes=[{id:'a',x:10,y:20,width:280,height:300},{id:'b',x:450,y:100,width:480,height:240}]
 
+test('拖出自动组保留另一成员且刷新不吸回，拖入目标后边界容纳完整节点',()=>{
+  const {dropGroupMembers,syncAutomaticGroups}=module.exports
+  const layout={groups:[{id:'group:auto-one',title:'分镜视频',members:['a','b']},{id:'group:target',title:'素材',members:['c']}]}
+  const frames=[{id:'group:auto-one',x:0,y:0,width:400,height:400},{id:'group:target',x:600,y:0,width:300,height:400}]
+  // 中心进入目标框即可加入，卡片右侧超出时按真实尺寸扩框。
+  assert.deepEqual(dropGroupMembers(layout,[{id:'b',x:740,y:80,width:280,height:160}],frames),{changed:true,rejected:[]})
+  assert.deepEqual(layout.groups[0].members,['a'])
+  assert.deepEqual(layout.groups[0].excluded_members,['b'])
+  assert.deepEqual(layout.groups[1].members,['c','b'])
+  const enlarged=groupBounds([{id:'c',x:640,y:30,width:100,height:100},{id:'b',x:740,y:80,width:280,height:160}])
+  assert.ok(enlarged.x+enlarged.width>1020)
+  // 服务端JSON持久化后重新投影同一批任务，明确拖出仍优先。
+  const restored=JSON.parse(JSON.stringify(layout))
+  syncAutomaticGroups(restored,['a','b'].map(id=>({id,data:{runId:'one',kind:'video'}})),[])
+  assert.deepEqual(restored.groups[0].members,['a'])
+  // 拖到组外不删除作品、引用或其他布局字段。
+  restored.edges=[{source:'a',target:'b'}]
+  dropGroupMembers(restored,[{id:'b',x:1200,y:800,width:280,height:160}],frames)
+  assert.deepEqual(restored.groups[1].members,['c'])
+  assert.deepEqual(restored.edges,[{source:'a',target:'b'}])
+})
+
+test('组内移动不改归属，多选逐项落组，满组不抢占原成员，空组移除',()=>{
+  const {dropGroupMembers}=module.exports
+  const frames=[{id:'group:a',x:0,y:0,width:400,height:400},{id:'group:b',x:600,y:0,width:400,height:400}]
+  const value={groups:[{id:'group:a',title:'原组',members:['a']},{id:'group:b',title:'目标',members:['b']}]}
+  assert.equal(dropGroupMembers(value,[{id:'a',x:50,y:50,width:100,height:100}],frames).changed,false)
+  dropGroupMembers(value,[{id:'a',x:700,y:50,width:100,height:100}],frames)
+  assert.equal(value.groups.length,1)
+  assert.deepEqual(value.groups[0].members,['b','a'])
+  const full={groups:[{id:'group:a',title:'原组',members:['a']},{id:'group:b',title:'满组',members:Array.from({length:200},(_,i)=>`n${i}`)}]}
+  assert.deepEqual(dropGroupMembers(full,[{id:'a',x:700,y:50,width:100,height:100}],frames),{changed:false,rejected:['a']})
+  assert.deepEqual(full.groups[0].members,['a'])
+})
+
+test('业务批次自动归组含真实成片，刷新幂等且解组不会复活，不移动原位置',()=>{
+ const {syncAutomaticGroups}=module.exports
+ const nodes=['a','b'].map(id=>({id,data:{runId:'batch-real',kind:'video'}}))
+ nodes.push({id:'film',data:{kind:'video',source:{kind:'composition',id:'job'}}})
+ const edges=['a','b'].map(source=>({source,target:'film'}))
+ const layout={positions:{a:{x:30,y:40}},groups:[]}
+ assert.equal(syncAutomaticGroups(layout,nodes,edges),true)
+ assert.deepEqual(layout.groups[0].members,['a','b','film'])
+ assert.equal(syncAutomaticGroups(layout,nodes,edges),false)
+ layout.groups=[]
+ assert.equal(syncAutomaticGroups(layout,nodes,edges),false)
+ assert.deepEqual(layout.positions,{a:{x:30,y:40}})
+})
+
+test('自动归组不抢占手动组成员，不混入文本策划或其他批次',()=>{
+ const {syncAutomaticGroups}=module.exports
+ const layout={groups:[{id:'group:manual',title:'手动',members:['a','b']}]}
+ const nodes=['a','b','c','d'].map(id=>({id,data:{runId:id<'c'?'one':'two',kind:'image'}}))
+ nodes.push({id:'text',data:{runId:'two',kind:'text'}})
+ syncAutomaticGroups(layout,nodes,[])
+ assert.equal(layout.groups.length,2)
+ assert.deepEqual(layout.groups[0].members,['a','b'])
+ assert.deepEqual(layout.groups[1].members,['c','d'])
+})
+
 test('分组工具保持屏幕单排尺寸，不受缩远后的组框宽度挤压',()=>{
   const css=readFileSync('assets/css/creative-canvas.css','utf8')
   const header=css.match(/\.creative-group-frame>header\{([^}]+)\}/)?.[1]
   assert.match(header,/width:max-content/)
   assert.ok(!header.includes('max-width:calc(100%'))
   assert.match(css,/\.creative-group-frame>header>button\{[^}]*flex:none;min-height:32px/)
-  assert.match(css,/\[aria-label="解组"\]\{width:32px;height:32px\}/)
+  const canvas=readFileSync('features/creation/components/CreationAgentCanvas.vue','utf8')
+  assert.match(canvas,/label:'解组'[^\n]*creative-group-menu/)
+  assert.match(canvas,/trailing-icon="i-lucide-chevron-down">排序/)
 })
 
 test('组框包含真实节点边界与标题空间，不改变节点坐标',()=>{

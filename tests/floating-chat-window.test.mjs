@@ -19,15 +19,16 @@ test('缩小保留当前左下锚点，小卡可独立拖动且不受大窗最�
 test('最小化状态没有前置图标，只按真实工作状态切换且保留安全停止门禁',()=>{
   const source=readFileSync('features/creation/components/CreationStudio.vue','utf8')
   const start=source.indexOf('const miniChatStatus=computed('),end=source.indexOf('\nfunction miniChatAction',start)
-  const graphActivity=ref({running:0}),workInProgress=ref(false)
+  const graphActivity=ref({running:0}),workInProgress=ref(false),awaitingDecision=ref(false)
   const snippet=ts.transpileModule(source.slice(start,end),{compilerOptions:{target:ts.ScriptTarget.ESNext}}).outputText
-  const status=new Function('computed','graphActivity','workInProgress',snippet+';return miniChatStatus')(computed,graphActivity,workInProgress)
+  const status=new Function('computed','graphActivity','workInProgress','awaitingDecision',snippet+';return miniChatStatus')(computed,graphActivity,workInProgress,awaitingDecision)
   assert.equal(status.value,'空闲中')
   workInProgress.value=true;assert.equal(status.value,'正在思考…')
   graphActivity.value.running=2;assert.equal(status.value,'正在工作…')
   graphActivity.value.running=0;workInProgress.value=false;graphActivity.value.unavailable=2
   assert.equal(status.value,'任务待核对')
   graphActivity.value.unavailable=0;assert.equal(status.value,'空闲中')
+  awaitingDecision.value=true;assert.equal(status.value,'等待确认…')
   const statusArea=source.slice(source.indexOf('<div class="creative-chat-mini-status">'),source.indexOf('</Transition>',source.indexOf('<div class="creative-chat-mini-status">')))
   assert.doesNotMatch(statusArea,/<UIcon/)
   assert.match(statusArea,/\(workInProgress\|\|!!graphActivity.running\)&&!canStopWork/)

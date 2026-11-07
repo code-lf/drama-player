@@ -5,7 +5,7 @@ import {readFileSync} from 'node:fs'
 import ts from 'typescript'
 import {ref,reactive,computed} from 'vue'
 async function load(file){const js=ts.transpileModule(readFileSync(new URL('../features/creation/'+file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ESNext}}).outputText;return import(`data:text/javascript;base64,${Buffer.from(js).toString('base64')}`)}
-const {canAcceptRun,sameRunScope,appendResultKeys,unreadResultKeys,resultReadState,assistantInteraction,sameSavedEdit,shouldRefreshTaskBalance}=await load('workflowState.ts')
+const {canAcceptRun,sameRunScope,appendResultKeys,unreadResultKeys,resultReadState,assistantInteraction,awaitingCreationDecision,sameSavedEdit,shouldRefreshTaskBalance}=await load('workflowState.ts')
 const {sessionResults,hasRenderableResult,processingResults}=await load('resultCatalog.ts')
 const base={id:'run-a',session_id:'session-a',status:'planning',calls:2,awaiting_calls:2,question_revision:1,stream_seq:5}
 
@@ -86,4 +86,18 @@ test('保存迟到不清空新作品或继续追加的编辑，下一次保存�
   assert.equal(sameSavedEdit(source,operations,{...source},[...operations]),true)
   assert.equal(sameSavedEdit(source,operations,{...source,result_id:'two'},operations),false)
   assert.equal(sameSavedEdit(source,operations,source,[...operations,{type:'rotate',degrees:90}]),false)
+})
+
+test('等待问题或确认仍可暂停，刷新恢复；已提交、停止与旧方案不冒充进行中',()=>{
+  const pending=[{status:'waiting'},{status:'ready',card:{type:'proposal'}},{status:'replied',creative_plan:{status:'draft'}},{status:'replied',image_plan:{status:'draft'}}]
+  for(const run of pending){
+    assert.equal(awaitingCreationDecision(run),true)
+    assert.equal(awaitingCreationDecision(JSON.parse(JSON.stringify(run))),true)
+    for(const change of [{status:'cancelled'},{status:'failed'},{executed_request:'submitted'},{superseded_by:'next'}])assert.equal(awaitingCreationDecision({...run,...change}),false)
+  }
+  assert.equal(awaitingCreationDecision({status:'replied'}),false)
+  assert.equal(awaitingCreationDecision({status:'ready',card:{type:'proposal'}},true),false)
+  const studio=readFileSync('features/creation/components/CreationStudio.vue','utf8')
+  assert.match(studio,/:working="workInProgress\|\|awaitingDecision"/)
+  assert.match(studio,/await creationService.cancelRun\(id,'composer_stop'\)/)
 })

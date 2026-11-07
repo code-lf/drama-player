@@ -1,27 +1,43 @@
 <script setup lang="ts">
 import type { DramaCreditPreview, DramaProjectCard, DramaProjectDetail, DramaRuntimeConfig, PublicVideoCapabilities } from '~/entities/drama/types'
-import AnnouncementWorkspacePanel from '~/features/dashboard/components/AnnouncementWorkspacePanel.vue'
+import { defineComponent, h } from 'vue'
+import { defineWorkspaceComponent } from '~/features/dashboard/asyncWorkspace'
+import DashboardSkeleton from '~/components/DashboardSkeleton.vue'
 import CreditAmount from '~/components/ui/CreditAmount.vue'
 import CreditAccountPopover from '~/features/billing/components/CreditAccountPopover.vue'
 import LivButton from '~/components/liv-ui/LivButton.vue'
 import {accountBillingLinks} from '~/features/billing/accountNavigation'
 import {hoverMenuBoundary} from '~/features/dashboard/hoverMenuBoundary'
-import AccountProfileDialog from '~/features/account/components/AccountProfileDialog.vue'
-import AccountSecurityDialog from '~/features/account/components/AccountSecurityDialog.vue'
 import DashboardAnnouncementCenter from '~/features/dashboard/components/DashboardAnnouncementCenter.vue'
 import DashboardSidebar from '~/features/dashboard/components/DashboardSidebar.vue'
-import ExportCenterPanel from '~/features/dashboard/components/ExportCenterPanel.vue'
-import FeedbackDrawer from '~/features/support/components/FeedbackDrawer.vue'
-import HelpCenterPanel from '~/features/support/components/HelpCenterPanel.vue'
 import PlaceholderWorkspacePanel from '~/features/dashboard/components/PlaceholderWorkspacePanel.vue'
 import UnifiedProjectDirectory from '~/features/projects/components/UnifiedProjectDirectory.vue'
-import ProductImageWorkspacePanel from '~/features/product-image/components/ProductImageWorkspacePanel.vue'
-import ProductVideoWorkspacePanel from '~/features/product-video/components/ProductVideoWorkspacePanel.vue'
-import LibraryWorkspacePanel from '~/features/library/components/AssetLibraryPanel.vue'
-import SkillCenterPanel from '~/features/creation/components/SkillCenterPanel.vue'
-import WatermarkPreferenceDialog from '~/features/creation/components/WatermarkPreferenceDialog.vue'
-import MusicWorkspacePanel from '~/features/music/components/MusicWorkspacePanel.vue'
-import CreationStudio from '~/features/creation/components/CreationStudio.vue'
+// 各工作区按实际进入加载；项目目录不提前解析创作画布、技能和商品媒体组件。
+const CreationStudio=defineWorkspaceComponent({
+  loader:()=>import('~/features/creation/components/CreationStudio.vue'),
+  delay:0,
+  // 模块下载期间延续对应路由的骨架，避免静态启动占位卸载后再次出现空白。
+  loadingComponent:defineComponent({
+    setup(){
+      const pendingRoute=useRoute()
+      return()=>h(DashboardSkeleton,{
+        variant:pendingRoute.query.session?'conversation':'home',
+        simple:!!pendingRoute.query.session
+      })
+    }
+  })
+})
+const ProductImageWorkspacePanel=defineWorkspaceComponent(()=>import('~/features/product-image/components/ProductImageWorkspacePanel.vue'))
+const ProductVideoWorkspacePanel=defineWorkspaceComponent(()=>import('~/features/product-video/components/ProductVideoWorkspacePanel.vue'))
+const LibraryWorkspacePanel=defineWorkspaceComponent({loader:()=>import('~/features/library/components/AssetLibraryPanel.vue'),delay:0,loadingComponent:DashboardSkeleton})
+const MusicWorkspacePanel=defineWorkspaceComponent(()=>import('~/features/music/components/MusicWorkspacePanel.vue'))
+const AnnouncementWorkspacePanel=defineWorkspaceComponent(()=>import('~/features/dashboard/components/AnnouncementWorkspacePanel.vue'))
+const ExportCenterPanel=defineWorkspaceComponent(()=>import('~/features/dashboard/components/ExportCenterPanel.vue'))
+const HelpCenterPanel=defineWorkspaceComponent(()=>import('~/features/support/components/HelpCenterPanel.vue'))
+const AccountProfileDialog=defineWorkspaceComponent(()=>import('~/features/account/components/AccountProfileDialog.vue'))
+const AccountSecurityDialog=defineWorkspaceComponent(()=>import('~/features/account/components/AccountSecurityDialog.vue'))
+const FeedbackDrawer=defineWorkspaceComponent(()=>import('~/features/support/components/FeedbackDrawer.vue'))
+const WatermarkPreferenceDialog=defineWorkspaceComponent(()=>import('~/features/creation/components/WatermarkPreferenceDialog.vue'))
 import SessionWorkspaceNav from '~/features/creation/components/SessionWorkspaceNav.vue'
 // Nuxt 页面本身也统一尾斜杠，避免仅查询参数导航时整页重建、丢失未发送草稿。
 definePageMeta({ key: route => route.path.replace(/\/$/, '') })
@@ -86,8 +102,8 @@ const { $siteAsset: siteAsset } = useNuxtApp()
 
 const activeMenu = ref<DashboardMenuKey>('drama')
 const activeWorkspaceView = ref<DashboardWorkspaceView>('console')
-// 会话深链从首屏进入沉浸布局，不依赖列表先加载，也不改变首页或资料库布局。
-const immersiveSession = computed(() => activeWorkspaceView.value === 'console' && typeof route.query.session === 'string' && !!route.query.session)
+// 只有真实登录态才显示私人会话顶栏；游客保留深链意图但使用首页导航，登录后仍可恢复原会话。
+const immersiveSession = computed(() => authStore.session.loggedIn && !!authStore.session.user?.id && activeWorkspaceView.value === 'console' && typeof route.query.session === 'string' && !!route.query.session)
 // 会话默认隐藏导航；完整侧栏只响应明确点击，路由和账号变化都收起。
 const sessionNavigationOpen=ref(false),wideSessionNavigation=ref(false)
 // 1440px 以下覆盖式抽屉，避免挤压聊天和作品区；监听在卸载时释放。
@@ -541,7 +557,7 @@ function closeCreditPopover(): void {
 function setCreditPopoverOpen(value:boolean){
   if(value&&!requireLogin())return
   isCreditPopoverOpen.value=value
-  if(value)isUserMenuOpen.value=false
+  if(value){isUserMenuOpen.value=false;void accountStore.refreshLedgers(1,6).catch(()=>{/* 流水读取失败不影响页面和已有余额。 */})}
 }
 
 function openCreditBilling(): void {
@@ -827,6 +843,12 @@ async function confirmDeleteProjects(): Promise<void> {
 }
 
 async function bootstrapDashboard(): Promise<void> {
+  // 普通首页/项目/技能均有自己的能力与资料读取，不等待旧短剧配置或账单流水。
+  // 余额异步回填；报价、提交和权限仍通过原服务核验，不能用缓存余额授权。
+  if (['console','projects','skills','library','help','announcements'].includes(activeWorkspaceView.value)) {
+    void accountStore.refreshProfile().catch(error=>console.warn('[livliv] 账户资料稍后重试',error))
+    return
+  }
   // 同页登录回调与首次挂载不能并行重放整套初始化读取。
   if(busyKey.value==='boot')return
   busyKey.value = 'boot'
@@ -1489,7 +1511,7 @@ watch(()=>authStore.session.user?.id,()=>{projectItems.value=[];accountStore.res
         </header>
 
         <div class="dashboard-main-content px-8 py-9">
-        <DashboardSkeleton v-if="isBooting" :simple="activeWorkspaceView==='console'&&!!route.query.session" :variant="activeWorkspaceView==='console' ? (route.query.session?'conversation':'home') : 'workspace'" :rows="5" />
+        <DashboardSkeleton v-if="isBooting" :simple="activeWorkspaceView==='console'&&!!route.query.session" :variant="activeWorkspaceView==='console' ? (route.query.session?'conversation':'home') : activeWorkspaceView==='projects'?'projects':'workspace'" :rows="6" />
 
         <template v-else>
           <div v-if="errorMessage" class="mb-4 rounded-2xl border border-rose-400/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
@@ -1864,10 +1886,10 @@ watch(()=>authStore.session.user?.id,()=>{projectItems.value=[];accountStore.res
       </section>
     </div>
 
-    <FeedbackDrawer :open="isFeedbackDrawerOpen" @close="isFeedbackDrawerOpen = false" @submitted="handleFeedbackSubmitted" />
-    <AccountProfileDialog :open="isProfileDialogOpen" @close="isProfileDialogOpen = false" @updated="accountStore.refreshProfile()" />
-    <AccountSecurityDialog :open="isAccountSecurityDialogOpen" @close="isAccountSecurityDialogOpen = false" />
-    <WatermarkPreferenceDialog :open="isWatermarkDialogOpen" @close="isWatermarkDialogOpen=false" />
+    <FeedbackDrawer v-if="isFeedbackDrawerOpen" :open="isFeedbackDrawerOpen" @close="isFeedbackDrawerOpen = false" @submitted="handleFeedbackSubmitted" />
+    <AccountProfileDialog v-if="isProfileDialogOpen" :open="isProfileDialogOpen" @close="isProfileDialogOpen = false" @updated="accountStore.refreshProfile()" />
+    <AccountSecurityDialog v-if="isAccountSecurityDialogOpen" :open="isAccountSecurityDialogOpen" @close="isAccountSecurityDialogOpen = false" />
+    <WatermarkPreferenceDialog v-if="isWatermarkDialogOpen" :open="isWatermarkDialogOpen" @close="isWatermarkDialogOpen=false" />
 
     <div v-if="isEntryCostConfirmOpen" class="fixed inset-0 z-[140] flex items-center justify-center bg-[#0f172a]/48 px-4 backdrop-blur-sm" @click.self="isEntryCostConfirmOpen = false">
       <div class="w-full max-w-[520px] rounded-[24px] border border-borderSoft bg-white p-7 shadow-[0_30px_80px_rgba(15,23,42,0.24)]">

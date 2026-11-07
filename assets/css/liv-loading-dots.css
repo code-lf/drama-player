@@ -1,0 +1,13 @@
+/* 复用现有双球绕行动画：前景放大、后景缩小。只表达等待，不代表采购或任务已提交。 */
+.workspace-loading-dots{--loading-dot-max:clamp(12px,2cqw,20px);--loading-dot-min:8px;--loading-dot-x:12px;--loading-dot-y:5px;position:relative;display:block;width:44px;height:34px;margin-inline:auto;flex:none}
+/* 仅画布任务确认使用小尺寸；页面加载沿用原最大20px，不用全局缩放连带缩小文字。 */
+.creative-node .workspace-loading-dots{--loading-dot-max:10px;--loading-dot-min:4px;--loading-dot-x:6px;--loading-dot-y:3px;width:24px;height:18px}
+.workspace-loading-dots i{position:absolute;inset:50% auto auto 50%;width:var(--loading-dot-min);aspect-ratio:1;display:block;border-radius:50%;background:var(--ui-text-muted);transform:translate(-50%,-50%) translateX(calc(-1 * var(--loading-dot-x)));animation:workspace-loading-dot 1.2s linear infinite}
+.workspace-loading-dots i+i{transform:translate(-50%,-50%) translateX(var(--loading-dot-x));animation-delay:-.6s}
+@keyframes workspace-loading-dot{
+  0%,100%{width:var(--loading-dot-min);opacity:.4;z-index:0;transform:translate(-50%,-50%) translateY(calc(-1 * var(--loading-dot-y)));animation-timing-function:ease-out}
+  25%{transform:translate(-50%,-50%) translateX(var(--loading-dot-x));animation-timing-function:ease-in}
+  50%{width:var(--loading-dot-max);opacity:1;z-index:1;transform:translate(-50%,-50%) translateY(var(--loading-dot-y));animation-timing-function:ease-out}
+  75%{transform:translate(-50%,-50%) translateX(calc(-1 * var(--loading-dot-x)));animation-timing-function:ease-in}
+}
+@media(prefers-reduced-motion:reduce){.workspace-loading-dots i{animation:none}}

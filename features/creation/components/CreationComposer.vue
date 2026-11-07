@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import CreationDurationSlider from './CreationDurationSlider.vue'
+import CreationMediaPreview from './CreationMediaPreview.vue'
+import CreditIcon from '~/components/ui/CreditIcon.vue'
 import { allowedDurations } from '../durationOptions'
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
-import CreditIcon from '~/components/ui/CreditIcon.vue'
 import {compactCreditNumber} from '../referenceCreditLabel'
 import CreationTemplateDialog from './CreationTemplateDialog.vue'
 import CreationStyleDialog from './CreationStyleDialog.vue'
@@ -14,7 +15,11 @@ import type { ComposerReference, ComposerSegment, CreationCatalog, CreationEntry
 import { skillExamples, localVisualStyles } from '../catalog'
 import ReferenceMentionMenu from '~/features/library/components/ReferenceMentionMenu.vue'
 import {activeMention} from '../workbenchRules'
+import {referenceDisplaySegments} from '../referenceDisplaySegments'
 import {modelDisplayName,modelDescription} from '../canvasNavigation'
+import {createReferencePreviewRecovery} from '../referencePreviewRecovery'
+import {referenceMentionPlacement} from '../referenceMentionPlacement'
+import AssetLibraryPanel from '~/features/library/components/AssetLibraryPanel.vue'
 
 const props = defineProps<{
   entry: CreationEntryType; skill: string; prompt: string; segments: ComposerSegment[]; references: ComposerReference[]
@@ -36,6 +41,8 @@ const props = defineProps<{
   canvasEditor?:boolean; canvasReadonly?:boolean
   /** 节点直接使用完整输入框，仅限制引用和执行边界，不另拼一套工具栏。 */
   nodeEditor?:boolean
+  /** 节点引用点击由画布定位真实来源；普通聊天继续沿原图片预览交互。 */
+  openReference?:(reference:ComposerReference)=>void
   /** 尚未具备执行能力时仍可编辑/保存，鼠标与回车都不可绕过真实发送门禁。 */
   sendDisabledReason?:string
   /** 节点工具栏只复用本媒体类型的真实控件，不展示上传、技能切换或第二个发送按钮。 */
@@ -65,7 +72,7 @@ const editor = ref<HTMLDivElement | null>(null), fileInput = ref<HTMLInputElemen
 function updateCount(value:number|undefined){if(typeof value==='number'&&Number.isFinite(value))update({count:Math.min(4,Math.max(1,Math.round(value)))})}
 /** 工具只把引用意图带回编辑器，定位到文字末尾；不模拟发送或触发收费。 */
 async function focusInput(){await nextTick();if(!editor.value)return;editor.value.focus({preventScroll:true});const range=document.createRange();range.selectNodeContents(editor.value);range.collapse(false);const selection=window.getSelection();selection?.removeAllRanges();selection?.addRange(range)}
-defineExpose({focusInput})
+defineExpose({focusInput,insertReferences})
 // 仅显示积分数字，没有数值时隐藏整项；详细含义仍保留在读屏及悬停说明，不新增费用许可。
 const creditNumber = computed(() => compactCreditNumber(props.creditLabel))
 const popoverAnchor = ref<HTMLElement>()
@@ -79,16 +86,54 @@ function lockSkillPlacement(){
   skillPopoverHeight.value=Math.min(wanted,skillPopoverSide.value==='top'?above:below)
 }
 const popover = ref(''), query = ref(''), category = ref('全部'), mentionOpen = ref(false), mentionIndex = ref(0)
+const assetsOpen=ref(false)
+let assetInsertionRange:Range|null=null
+/** 打开大面板前保留光标及正在输入的@触发范围；取消选择不修改原文。 */
+function rememberAssetInsertion(){
+  if(!editor.value)return
+  const selection=window.getSelection(),current=selection?.rangeCount?selection.getRangeAt(0):null
+  const range=current&&editor.value.contains(current.startContainer)?current.cloneRange():document.createRange()
+  if(!current||!editor.value.contains(range.startContainer)){range.selectNodeContents(editor.value);range.collapse(false)}
+  if(range.collapsed&&range.startContainer.nodeType===Node.TEXT_NODE){const match=activeMention(range.startContainer.textContent||'',range.startOffset);if(match)range.setStart(range.startContainer,match.start)}
+  assetInsertionRange=range
+}
 const composing = ref(false)
 const mentionKind=computed<'image'|'video'|'music'|'drama'>(()=>props.entry==='drama'?'drama':isMusic.value?'music':isVideo.value?'video':'image')
 const mentionMenu=ref<InstanceType<typeof ReferenceMentionMenu>|null>(null),mentionQuery=ref(''),mentionStyle=ref<Record<string,string>>({})
+const mentionHost=ref<HTMLElement|null>(null)
+let mentionSide:'top'|'bottom'|undefined,mentionObserver:ResizeObserver|undefined
 let mentionRange:Range|null=null
 /** 光标锚点独立于工具栏，滚动和缩放时重算；视口下方不足时向上展开。 */
-function positionMention(){if(!mentionOpen.value||!editor.value||!mentionRange)return;const caret=mentionRange.cloneRange();caret.collapse(false);let rect=caret.getBoundingClientRect();if(!rect.width&&!rect.height)rect=editor.value.getBoundingClientRect();const width=Math.min(350,window.innerWidth-24),height=340;const top=rect.bottom+height+10<window.innerHeight?rect.bottom+7:Math.max(12,rect.top-height-7);mentionStyle.value={position:'fixed',zIndex:'390',left:`${Math.max(12,Math.min(rect.left,window.innerWidth-width-12))}px`,top:`${top}px`,width:`${width}px`,maxHeight:`${window.innerHeight-top-12}px`,overflowY:'auto'}}
-function selectMention(values:ComposerReference[]){if(!editor.value||!mentionRange)return;if(props.references.length+values.filter(value=>!props.references.some(item=>item.version_id===value.version_id)).length>12)return;const selection=window.getSelection();const range=mentionRange.cloneRange();if(!editor.value.contains(range.startContainer))return;range.deleteContents();for(const value of values){emit('reference',value);const chip=referenceNode(value.version_id,`@${value.name}`),space=document.createTextNode(' ');range.insertNode(chip);range.setStartAfter(chip);range.collapse(true);range.insertNode(space);range.setStartAfter(space);range.collapse(true)}selection?.removeAllRanges();selection?.addRange(range);mentionOpen.value=false;editor.value.focus();changed()}
+function positionMention(){if(!mentionOpen.value||!editor.value||!mentionRange)return;const caret=mentionRange.cloneRange();caret.collapse(false);let rect=caret.getBoundingClientRect();if(!rect.width&&!rect.height)rect=editor.value.getBoundingClientRect();const placed=referenceMentionPlacement(rect,{width:window.innerWidth,height:window.innerHeight},mentionHost.value?.getBoundingClientRect().height||360,mentionSide);mentionSide=placed.side;mentionStyle.value=placed.style}
+// 真实候选加载后重测浮层高度；不再用固定340px假高度把短菜单悬空到问题卡上。
+watch(mentionOpen,async open=>{mentionObserver?.disconnect();mentionSide=undefined;if(!open)return;await nextTick();positionMention();if(mentionHost.value){mentionObserver=new ResizeObserver(positionMention);mentionObserver.observe(mentionHost.value)}})
+function selectMention(values:ComposerReference[]){if(!editor.value||!mentionRange)return;insertReferences(values,mentionRange);mentionOpen.value=false}
+/** 大资产面板与@候选共享插入逻辑：一次点击固定版本并加入正文，不发送需求或生成媒体。 */
+function insertReferences(values:ComposerReference[],mention?:Range){
+  if(!editor.value||props.canvasReadonly||props.busy)return
+  if(props.references.length+values.filter(value=>!props.references.some(item=>item.version_id===value.version_id)).length>12)return
+  const range=mention?.cloneRange()||document.createRange(),selection=window.getSelection()
+  if(mention&&!editor.value.contains(range.startContainer))return
+  if(!mention){range.selectNodeContents(editor.value);range.collapse(false)}else range.deleteContents()
+  for(const value of values){emit('reference',value);if([...editor.value.querySelectorAll('[data-reference]')].some(node=>(node as HTMLElement).dataset.reference===value.version_id))continue;const chip=referenceNode(value.version_id,value.name,value),space=document.createTextNode(' ');range.insertNode(chip);range.setStartAfter(chip);range.insertNode(space);range.setStartAfter(space);range.collapse(true)}
+  selection?.removeAllRanges();selection?.addRange(range);editor.value.focus({preventScroll:true});changed()
+}
+function chooseAsset(item:LibraryItem){const version=item.versions[0];if(!version)return;if(item.media_type==='document'){assetsOpen.value=false;emit('assets');return}insertReferences([{item_id:item.id,version_id:version.id,purpose:item.media_type==='video'?'reference_video':'reference',name:item.name,media_type:item.media_type,preview_url:libraryService.previewUrl(version.preview_url)}],assetInsertionRange||undefined);assetInsertionRange=null;assetsOpen.value=false;mentionOpen.value=false}
 const replacementIndex = ref<number | null>(null), previewImage = ref<{url:string;name:string} | null>(null), hiddenExample = ref('')
 const hoverPreview = ref<{ url: string; name: string; style: Record<string, string> } | null>(null)
 /** 按图片真实比例显示，最多缩小到视口内；悬浮预览独立挂载，不继承48px附件样式。 */
+const referencePreview=createReferencePreviewRecovery(()=>props.references,libraryService.detail,libraryService.previewUrl)
+onBeforeUnmount(()=>referencePreview.dispose())
+// 已内联的资产只保留正文标签；普通上传及节点来源仍沿用原附件区，不删除真实引用。
+const inlineReferenceIds=computed(()=>new Set(props.segments.filter(part=>part.type==='reference').map(part=>part.version_id)))
+const hasAttachmentReferences=computed(()=>props.references.some(item=>props.nodeEditor||!inlineReferenceIds.value.has(item.version_id)))
+/** 附件与正文小图共享同一固定版本预览恢复；只换展示地址，不重写文字或移动光标。 */
+watch(()=>props.references.map(item=>`${item.version_id}:${referencePreview.url(item)}`).join('|'),()=>{
+  for(const chip of editor.value?.querySelectorAll<HTMLElement>('[data-reference]')||[]){
+    const item=props.references.find(value=>value.version_id===chip.dataset.reference)
+    if(item)updateChipPreview(chip,item)
+  }
+},{flush:'post'})
 function showReferencePreview(event: MouseEvent, reference: ComposerReference) {
   const image = event.currentTarget as HTMLImageElement
   if (!image.naturalWidth || !image.naturalHeight) return
@@ -96,7 +141,14 @@ function showReferencePreview(event: MouseEvent, reference: ComposerReference) {
   const scale = Math.min(1, 320 / image.naturalWidth, (window.innerWidth - 24) / image.naturalWidth, (window.innerHeight - 24) / image.naturalHeight)
   const width = image.naturalWidth * scale, height = image.naturalHeight * scale
   const top = rect.bottom + 8 + height <= window.innerHeight - 12 ? rect.bottom + 8 : Math.max(12, rect.top - height - 8)
-  hoverPreview.value = { url: reference.preview_url, name: reference.name, style: { width: `${width}px`, height: `${height}px`, left: `${Math.max(12, Math.min(rect.left, window.innerWidth - width - 12))}px`, top: `${top}px` } }
+  hoverPreview.value = { url: referencePreview.url(reference), name: reference.name, style: { width: `${width}px`, height: `${height}px`, left: `${Math.max(12, Math.min(rect.left, window.innerWidth - width - 12))}px`, top: `${top}px` } }
+}
+/** 内联资产预览优先贴在标签上方；只读取当前真实图片尺寸，不创建假封面。 */
+function showInlineReferencePreview(chip:HTMLElement,item:ComposerReference){
+  const image=chip.querySelector('img');if(!image?.naturalWidth||!image.naturalHeight)return
+  const rect=chip.getBoundingClientRect(),scale=Math.min(1,280/image.naturalWidth,220/image.naturalHeight,(window.innerWidth-24)/image.naturalWidth)
+  const width=image.naturalWidth*scale,height=image.naturalHeight*scale
+  hoverPreview.value={url:referencePreview.url(item),name:item.name,style:{width:`${width}px`,height:`${height}px`,left:`${Math.max(12,Math.min(rect.left,window.innerWidth-width-12))}px`,top:`${rect.top-height-8>=12?rect.top-height-8:Math.min(rect.bottom+8,window.innerHeight-height-12)}px`}}
 }
 watch(() => props.references, () => { hoverPreview.value = null }, { deep: true })
 const editorFocused = ref(false), animatedPlaceholder = ref('')
@@ -205,6 +257,16 @@ const isVideo = computed(() => (props.nodeEditor||props.controlsOnly)?props.cont
 // 导演模式时长为全片规划目标，不把单个生成镜头的秒数冒充整片长度。
 const isDirectorProduction = computed(() => ['ad','story'].includes(baseSkill.value) && props.parameters.workflow === 'director')
 const isImage = computed(() => !isMv.value && !isMusic.value && !isVideo.value && props.entry !== 'drama')
+/** 只在当前真实能力存在可编辑规格时显示参数入口；固定纯音乐不能借此切换歌词模式。 */
+const showParameterControl=computed(()=>{
+  if(props.nodeEditor&&props.controlsKind==='text')return false
+  if(props.entry==='drama')return true
+  if(isMv.value)return props.ratios.length>1&&!isParameterLocked('aspectRatio')
+  if(!props.parameters.model)return false
+  if(isMusic.value)return ['free','song'].includes(baseSkill.value)&&!isParameterLocked('extra')||['reference','remix','lyric-video'].includes(baseSkill.value)
+  return props.ratios.length>1&&!isParameterLocked('aspectRatio')||props.resolutions.length>1&&!isParameterLocked('resolution')||isVideo.value&&props.durationRange.max>props.durationRange.min&&!isParameterLocked('durationSec')||isImage.value&&(props.qualities?.length||0)>1&&!isParameterLocked('quality')||!props.nodeEditor&&!isParameterLocked('count')
+})
+watch(showParameterControl,visible=>{if(!visible&&popover.value==='parameters')popover.value=''})
 /** 所有入口固定六种常用比例，不追加模型扩展项；实际能否选择仍按能力校验。 */
 const commonRatios = computed(() => ['16:9', '9:16', '4:3', '3:4', '1:1', '21:9'])
 /** 比例显示不代表模型支持，按钮与实际更新必须使用同一能力校验。 */
@@ -340,7 +402,7 @@ function renderText() {
   if (current === props.prompt) return
   editor.value.replaceChildren()
   const segments = props.segments.length ? props.segments : [{ type: 'text' as const, text: props.prompt }]
-  for (const part of segments) {
+  for (const part of referenceDisplaySegments(segments)) {
     if (part.type === 'text' && part.field) {
       // 字段内容直接在原位编辑；文本节点赋值避免模板注入 HTML。
       const field = document.createElement('span')
@@ -359,10 +421,24 @@ function selectTemplateField(event: MouseEvent) {
   const range = document.createRange(); range.selectNodeContents(field)
   const selection = window.getSelection(); selection?.removeAllRanges(); selection?.addRange(range)
 }
-function referenceNode(id: string, label: string) {
+function referenceNode(id: string, label: string,reference?:ComposerReference) {
   const chip = document.createElement('span')
-  chip.contentEditable = 'false'; chip.dataset.reference = id; chip.className = 'creation-reference-chip'; chip.textContent = label
+  chip.contentEditable = 'false'; chip.dataset.reference = id; chip.className = 'creation-reference-chip'
+  // 历史标签仅去掉展示前缀；版本身份仍来自data-reference，不从名称反推权限。
+  const item=reference||props.references.find(value=>value.version_id===id)
+  const name=document.createElement('span');name.textContent=label.replace(/^@/,'');chip.append(name);chip.title=name.textContent
+  if(item){updateChipPreview(chip,item);chip.tabIndex=0;chip.onmouseenter=()=>showInlineReferencePreview(chip,item);chip.onmouseleave=()=>{hoverPreview.value=null};chip.onfocus=()=>showInlineReferencePreview(chip,item);chip.onblur=()=>{hoverPreview.value=null}}
   return chip
+}
+/** 图片失败最多读取原条目同一版本一次；移除标签后迟到响应不重新插入图片。 */
+function updateChipPreview(chip:HTMLElement,item:ComposerReference){
+  const url=item.media_type==='image'?referencePreview.url(item):''
+  const previous=chip.querySelector('img')
+  if(!url){previous?.remove();return}
+  if(previous?.getAttribute('src')===url)return
+  const image=document.createElement('img');image.alt='';image.loading='eager';image.decoding='async'
+  image.onerror=async()=>{await referencePreview.failed(item);if(chip.isConnected&&props.references.some(value=>value.version_id===item.version_id))updateChipPreview(chip,item)}
+  image.src=url;previous?.remove();chip.prepend(image)
 }
 function mention(item: ComposerReference) {
   const selection = window.getSelection()
@@ -375,7 +451,7 @@ function mention(item: ComposerReference) {
     if (start >= 0 && mentionOpen.value) range.setStart(selection.anchorNode, start)
   }
   range.deleteContents()
-  const chip = referenceNode(item.version_id, `@${item.name}`), space = document.createTextNode(' ')
+  const chip = referenceNode(item.version_id, item.name,item), space = document.createTextNode(' ')
   range.insertNode(space); range.insertNode(chip); range.setStartAfter(space); range.collapse(true)
   selection?.removeAllRanges(); selection?.addRange(range)
   mentionOpen.value = false; editor.value.focus(); changed()
@@ -443,7 +519,7 @@ function filesChanged(event: Event) {
   input.value = ''
 }
 /** 浮层与素材菜单均支持 Esc 关闭，不拦截编辑器其他按键。 */
-function closeOnEscape(event: KeyboardEvent) { if (event.key === 'Escape') { popover.value = ''; mentionOpen.value = false } }
+function closeOnEscape(event: KeyboardEvent) { if (event.key === 'Escape') { popover.value = ''; mentionOpen.value = false;assetsOpen.value=false } }
 watch(() => [props.prompt, props.segments], () => nextTick(renderText), { deep: true })
 onMounted(() => {
   window.addEventListener('keydown', closeOnEscape)
@@ -457,7 +533,7 @@ onMounted(() => {
   try { recentStyles.value = JSON.parse(localStorage.getItem('creation-recent-styles') || '[]'); recentTemplates.value = JSON.parse(localStorage.getItem('creation-recent-templates') || '[]') } catch { /* 损坏的预设缓存直接忽略。 */ }
 })
 watch(() => props.templateExample?.id, () => { exampleVideoOpen.value = false })
-onBeforeUnmount(() => { window.removeEventListener('scroll',positionMention,true);window.removeEventListener('resize',positionMention);window.removeEventListener('keydown', closeOnEscape); window.removeEventListener('resize', positionParameters);window.removeEventListener('resize',updateSkillCategoryOverflow); window.removeEventListener('scroll', positionParameters, true) })
+onBeforeUnmount(() => { mentionObserver?.disconnect();window.removeEventListener('scroll',positionMention,true);window.removeEventListener('resize',positionMention);window.removeEventListener('keydown', closeOnEscape); window.removeEventListener('resize', positionParameters);window.removeEventListener('resize',updateSkillCategoryOverflow); window.removeEventListener('scroll', positionParameters, true) })
 </script>
 
 <template>
@@ -496,11 +572,11 @@ onBeforeUnmount(() => { window.removeEventListener('scroll',positionMention,true
     <template v-else>
       <!-- MV 先选择歌曲，空素材区不再占位；音频来源由同一个选歌弹窗管理。 -->
       <slot v-if="isMv" name="audio-source" />
-      <div v-if="(!compact && !isMv && !nodeEditor) || annotation || references.length || (!isMv && isMusic && templateExample && hiddenExample!==templateExample.id)" class="creation-attachments">
+      <div v-if="(!compact && !isMv && !nodeEditor) || annotation || hasAttachmentReferences || (!isMv && isMusic && templateExample && hiddenExample!==templateExample.id)" class="creation-attachments">
         <div v-if="annotation" class="creation-annotation-thumb" aria-label="批注预览"><img :src="annotation.preview" alt="批注"><span>批注</span></div>
         <button v-if="!nodeEditor && !compact && !isMv && entry!=='drama'" class="creation-add" aria-label="添加素材" @click="open('add', $event)"><UIcon name="i-lucide-plus" /></button>
         <div v-if="!isMv && isMusic && templateExample && hiddenExample!==templateExample.id" class="creation-attachment"><img :src="templateExample.example_image || templateExample.cover" :alt="templateExample.name" @click="previewImage={url:templateExample.example_image || templateExample.cover,name:templateExample.name}"><button class="remove" aria-label="移除示意封面" @click="hiddenExample=templateExample.id">×</button><small class="cover-only">封面预览</small></div>
-        <div v-for="(reference, index) in references" v-show="!annotation||reference.media_type!=='image'" :key="reference.version_id" class="creation-attachment" :class="{'is-song-card':reference.media_type==='audio','is-document-card':reference.media_type==='document'}" :title="reference.name" :aria-label="reference.media_type==='document'?`文本引用 ${index+1}：${reference.name||'文本来源'}`:undefined">
+        <div v-for="(reference, index) in references" v-show="(!annotation||reference.media_type!=='image')&&(nodeEditor||!inlineReferenceIds.has(reference.version_id))" :key="reference.version_id" class="creation-attachment" :class="{'is-song-card':reference.media_type==='audio','is-document-card':reference.media_type==='document'}" :title="reference.name" :aria-label="reference.media_type==='document'?`文本引用 ${index+1}：${reference.name||'文本来源'}`:undefined">
           <!-- 音频地址不能交给 img；歌曲使用独立封面，缺封面显示设计占位，不伪造图片。 -->
           <template v-if="reference.media_type==='audio'"><div class="creation-song-cover"><img v-if="reference.cover_url||musicSources.find(item=>item.id===parameters.sourceTask)?.cover" :src="reference.cover_url||musicSources.find(item=>item.id===parameters.sourceTask)?.cover" alt="歌曲封面" @error="($event.target as HTMLImageElement).style.display='none'"><UIcon name="i-lucide-disc-3"/></div><div class="creation-song-copy"><strong>{{reference.name}}</strong><small>{{isMv?'MV 歌曲来源':'音频素材'}} · 已引用</small></div><UButton icon="i-lucide-x" aria-label="移除歌曲" :disabled="busy" color="neutral" variant="ghost" square @click="emit('remove',index)"/></template>
           <!-- 文本/文档没有图片缩略图；明确来源名称和引用顺序，不把序号画成孤立黑点。 -->
@@ -511,7 +587,9 @@ onBeforeUnmount(() => { window.removeEventListener('scroll',positionMention,true
             <UButton v-if="!nodeEditor" icon="i-lucide-x" square color="neutral" variant="ghost" :aria-label="`移除 ${reference.name}`" :disabled="busy" @click="emit('remove',index)"/>
           </template>
           <template v-else>
-          <img v-if="reference.media_type === 'image'" :src="reference.preview_url" :alt="reference.name" @mouseenter="showReferencePreview($event,reference)" @mouseleave="hoverPreview=null" @click="hoverPreview=null;previewImage={url:reference.preview_url,name:reference.name}"><UIcon v-else :name="reference.media_type === 'audio' ? 'i-lucide-audio-lines' : 'i-lucide-film'" />
+          <!-- 视频引用使用同一真实首帧预览组件，不能把视频URL当图片或只留下空序号。 -->
+          <button v-if="reference.media_type==='video'&&reference.preview_url" type="button" class="creation-reference-video" :aria-label="`查看来源：${reference.name}`" @click="openReference?.(reference)"><CreationMediaPreview kind="video" :url="reference.preview_url" :cover="reference.cover_url"/></button>
+          <img v-else-if="reference.media_type === 'image'&&referencePreview.url(reference)" :key="referencePreview.url(reference)" :src="referencePreview.url(reference)" :alt="reference.name" @error="hoverPreview=null;referencePreview.failed(reference)" @mouseenter="showReferencePreview($event,reference)" @mouseleave="hoverPreview=null" @click="hoverPreview=null;previewImage={url:referencePreview.url(reference),name:reference.name}"><UIcon v-else :name="reference.media_type === 'image' ? 'i-lucide-image-off' : 'i-lucide-film'" :aria-label="reference.media_type==='image'?'图片预览暂不可用':undefined" />
           <span>{{ index + 1 }}</span><button v-if="!nodeEditor" class="remove" :aria-label="`移除 ${reference.name}`" @click="emit('remove', index)">×</button>
           <button v-if="!nodeEditor" class="attachment-replace" :aria-label="`替换 ${reference.name}`" @click="replacementIndex=index;fileInput?.click()"><UIcon name="i-lucide-refresh-cw"/></button>
           </template>
@@ -523,7 +601,7 @@ onBeforeUnmount(() => { window.removeEventListener('scroll',positionMention,true
         <UTooltip v-if="showPlanner" text="整理需求" :delay-duration="0" :content="{ side: 'top', sideOffset: 6, avoidCollisions: false }"><button class="creation-plan-icon" aria-label="整理需求" :disabled="planningBusy||busy||!prompt.trim()" @click="emit('plan')"><UIcon :name="planningBusy?'i-lucide-loader-circle':'i-lucide-wand-sparkles'"/></button></UTooltip><div ref="editor" class="creation-editor" :contenteditable="!canvasReadonly&&(!nodeEditor||!busy)" role="textbox" aria-multiline="true" :aria-readonly="!!canvasReadonly" :aria-label="nodeEditor?'当前节点提示词':'创作需求'" @click="selectTemplateField" @input="changed" @keydown="keydown" @focus="editorFocused=true;stopPlaceholder()" @blur="editorFocused=false" @compositionstart="composing = true;stopPlaceholder()" @compositionend="composing = false; changed()" />
         <p v-if="!prompt.trim()" class="creation-placeholder">{{editorPlaceholder || (nodeEditor?(isMusic?'描述你想创作的音乐、氛围和乐器…':'描述你想创作的画面…'):skillExample(selectedSkill)?'按下 Tab 键填入以下参考示例：\n'+skillExampleParts(selectedSkill).map(part=>part.text).join(''):isMv?'描述 MV 创意，可直接粘贴歌词；纯音乐请在这里说明。':'说说想法，拖拽／粘贴素材，输入 @ 引用资料库。')}}</p>
       </div>
-      <Teleport to="body"><div v-if="mentionOpen" :style="mentionStyle"><ReferenceMentionMenu ref="mentionMenu" :query="mentionQuery" :kind="mentionKind" :model="parameters.model" :allowed-media-types="selectedSkill?.media_types||['image','document']" :existing="references" @select="selectMention" @browse="mentionOpen=false;emit('assets')" @close="mentionOpen=false"/></div></Teleport>
+      <Teleport to="body"><div v-if="mentionOpen" ref="mentionHost" class="creation-reference-mention-host" :style="mentionStyle"><ReferenceMentionMenu ref="mentionMenu" :query="mentionQuery" :kind="mentionKind" :model="parameters.model" :allowed-media-types="selectedSkill?.media_types||['image','document']" :existing="references" @select="selectMention" @browse="mentionOpen=false;emit('assets')" @close="mentionOpen=false"/></div></Teleport>
       <div v-if="baseSkill === 'story'" class="creation-workflow"><button v-if="selectedSkill?.workflows.includes('direct')" :class="{ active: parameters.workflow === 'direct' }" @click="update({ workflow: 'direct' })"><UIcon name="i-lucide-zap" />直接生成</button><button v-if="selectedSkill?.workflows.includes('director')" :class="{ active: parameters.workflow === 'director' }" @click="update({ workflow: 'director' })"><UIcon name="i-lucide-clapperboard" />故事导演制作</button></div>
       <!-- 输出类型由模型选择统一确定，避免与模型浮层的图片／视频／音频分类重复。 -->
     </template>
@@ -549,6 +627,8 @@ onBeforeUnmount(() => { window.removeEventListener('scroll',positionMention,true
         <UTooltip text="清除风格" :delay-duration="0" :content="{ side: 'top', align: 'center', sideOffset: 8, avoidCollisions: false }"><UButton type="button" class="creation-selected-style-clear" icon="i-lucide-x" aria-label="清除风格" square color="neutral" variant="solid" :disabled="isParameterLocked('style')" @click.stop="clearStyle"/></UTooltip>
       </div>
       <UTooltip v-else :delay-duration="0" :content="{ side: 'top', align: 'center', sideOffset: 8, avoidCollisions: false }" text="选择风格"><button class="creation-tool creation-icon-tool" aria-label="选择风格" :disabled="isParameterLocked('style')" @click="open('style', $event)"><UIcon name="i-lucide-palette" /><span class="creation-tool-label">风格</span></button></UTooltip>
+      <!-- 资产入口复用工具栏响应式图标/文字规则：窄输入框仅图标，宽布局恢复名称；点击仍直接引用。 -->
+      <UPopover v-if="!nodeEditor&&entry!=='drama'&&!isMv" v-model:open="assetsOpen" :content="{side:'top',align:'end',sideOffset:8,collisionPadding:12}" :ui="{content:'creation-assets-popover'}"><button class="creation-tool creation-icon-tool creation-assets-trigger" aria-label="选择资产" title="选择资产" :disabled="busy" @mousedown.prevent="rememberAssetInsertion" @keydown.enter="rememberAssetInsertion" @keydown.space="rememberAssetInsertion"><UIcon name="i-lucide-contact-round"/><span class="creation-tool-label">资产</span></button><template #content><AssetLibraryPanel compact selectable immediate :kind="mentionKind" :model="parameters.model" :existing="references" :max-references="Math.max(0,12-references.length)" :allowed-media-types="selectedSkill?.media_types||['image','video','document']" @select="chooseAsset" @close="assetsOpen=false"/></template></UPopover>
       <!-- 只隐藏短剧输入框模板入口，案例复刻及关联模板保留。 -->
       <UTooltip v-if="entry!=='drama'&&!nodeEditor" :delay-duration="0" :content="{ side: 'top', align: 'center', sideOffset: 8, avoidCollisions: false }" text="选择创作模板"><button class="creation-tool creation-icon-tool" aria-label="选择创作模板" @click="openTemplates"><UIcon name="i-lucide-lightbulb" /><span class="creation-tool-label">模板</span></button></UTooltip>
       <div class="creation-toolbar-spacer" />
@@ -558,7 +638,7 @@ onBeforeUnmount(() => { window.removeEventListener('scroll',positionMention,true
       <div class="creation-submit-actions">
       <slot name="toolbar-actions"/>
       <template v-if="!nodeEditor||controlsKind!=='text'">
-      <UTooltip :delay-duration="0" :content="{ side: 'top', align: 'center', sideOffset: 8, avoidCollisions: false }" :text="`创作参数：${parameterLabel}`"><button ref="parameterButton" class="creation-param creation-icon-tool" :aria-label="isMv?'调整 MV 比例':'调整创作参数'" :aria-expanded="popover === 'parameters'" @click="open('parameters', $event)"><UIcon :name="isMv?'i-lucide-rectangle-horizontal':'i-lucide-sliders-horizontal'" /><span class="creation-tool-label">{{ parameterLabel }}</span><UIcon v-if="!compact" name="i-lucide-chevron-down" /></button></UTooltip>
+      <UTooltip v-if="showParameterControl" :delay-duration="0" :content="{ side: 'top', align: 'center', sideOffset: 8, avoidCollisions: false }" :text="`创作参数：${parameterLabel}`"><button ref="parameterButton" class="creation-param creation-icon-tool" :aria-label="isMv?'调整 MV 比例':'调整创作参数'" :aria-expanded="popover === 'parameters'" @click="open('parameters', $event)"><UIcon :name="isMv?'i-lucide-rectangle-horizontal':'i-lucide-sliders-horizontal'" /><span class="creation-tool-label">{{ parameterLabel }}</span><UIcon v-if="!compact" name="i-lucide-chevron-down" /></button></UTooltip>
       <span class="creation-cost" v-if="creditNumber" role="status" :aria-label="creditLabel" :title="creditLabel"><CreditIcon size="xs" />{{ creditNumber }}</span>
       </template>
       <UTooltip :delay-duration="0" :content="{ side: 'top', align: 'center', sideOffset: 8, avoidCollisions: false }" :text="sendDisabledReason||(working||busy ? stopReason||'处理中，暂不能中断当前请求' : nodeEditor&&controlsKind==='text'?'交给 Agent，只回复文字':`预估费用并继续创作 · ${creditLabel}`)"><button class="creation-send" :class="{'is-working':working||busy}" :disabled="canvasReadonly||!!sendDisabledReason||(nodeEditor&&!prompt.trim())||(working||busy ? !canStop : false)" :aria-label="sendDisabledReason||(working||busy ? (canStop?'停止整理需求':stopReason||'请求处理中，暂不能中断') : nodeEditor&&controlsKind==='text'?'交给 Agent':conversational ? '发送给 Liv 创作助手' : '预估费用并继续创作')" @click="!canvasReadonly&&!sendDisabledReason&&(working||busy ? (canStop&&emit('stop')) : emit('send'))"><span v-if="working||busy" class="creation-stop-square" aria-hidden="true"/><UIcon v-else name="i-lucide-arrow-up" /></button></UTooltip>
@@ -599,7 +679,8 @@ onBeforeUnmount(() => { window.removeEventListener('scroll',positionMention,true
   <NuxtLink to="/dashboard-skills" class="creation-pill" style="flex-shrink:0;margin:12px 0 0 auto;width:fit-content">＋ 创建技能</NuxtLink>
 </template>
       <template v-else-if="popover === 'model'">
-        <div class="creation-filter creation-model-tabs" role="tablist" aria-label="模型分类"><button v-for="section in modelSections" :key="section.kind" role="tab" :class="{active:modelKind===section.kind}" :aria-selected="modelKind===section.kind" :disabled="!modelGroups.some(group=>group.kind===section.kind)" @click="scrollModelGroup(section.kind)"><UIcon :name="section.icon"/>{{section.label}}</button></div>
+        <!-- 只在确实能够跨类型选择时展示分类；节点或专项能力不显示无效的其他媒体入口。 -->
+        <div v-if="modelGroups.length>1" class="creation-filter creation-model-tabs" :style="{gridTemplateColumns:`repeat(${modelGroups.length},minmax(0,1fr))`}" role="tablist" aria-label="模型分类"><button v-for="section in modelGroups" :key="section.kind" role="tab" :class="{active:modelKind===section.kind}" :aria-selected="modelKind===section.kind" @click="scrollModelGroup(section.kind)"><UIcon :name="section.icon"/>{{section.label}}</button></div>
         <div ref="modelListRoot" class="creation-model-list" @scroll.passive="syncModelGroup">
           <section v-for="group in modelGroups" :key="group.kind" :data-model-kind="group.kind"><h4>{{group.label}}</h4>
             <button v-for="item in group.items" :key="item.code||group.kind" class="creation-menu-row creation-model-row" :class="{active:item.code===parameters.model&&(group.kind==='music'?isMusic:isVideo?group.kind==='video':group.kind==='image')}" @click="chooseModel(item.code,group.kind)">
@@ -635,6 +716,8 @@ onBeforeUnmount(() => { window.removeEventListener('scroll',positionMention,true
 <style scoped>
 /* 共享输入器的文本引用沿用现有附件容器；宽度受容器约束，节点和聊天不另建一套卡片。 */
 .creation-attachment.is-document-card{display:flex!important;align-items:center;gap:8px;width:min(240px,100%)!important;max-width:100%;height:auto!important;min-height:48px;padding:8px!important;background:var(--liv-account-raised);border-color:var(--ui-border);color:var(--ui-text)}
+/* 首帧容器独立于序号角标，避免全局attachment直接子span定位规则挤偏预览。 */
+.creation-reference-video{display:block;width:100%;height:100%;padding:0;overflow:hidden;border-radius:11px;cursor:pointer}
 .creation-attachment.is-document-card>.iconify{width:20px;height:20px;flex:none;color:var(--ui-text-muted)}
 .creation-document-copy{display:flex;flex:1;min-width:0;flex-direction:column;gap:4px}
 .creation-document-copy strong{font-size:14px;font-weight:500;line-height:1.5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -701,6 +784,14 @@ onBeforeUnmount(() => { window.removeEventListener('scroll',positionMention,true
 @container creation-composer (min-width:820px){
   .creation-composer.is-compact .creation-toolbar .creation-param{width:auto!important;max-width:180px;padding:5px 8px!important}
   .creation-composer.is-compact .creation-toolbar .creation-param .creation-tool-label{display:block!important}
+}
+/* 节点底栏没有技能/模板入口，480px已足够展示模型和风格，不能沿用聊天640px门槛。 */
+@container creation-composer (min-width:480px){
+  .creation-composer.is-compact.is-node-editor .creation-toolbar .creation-tool.creation-icon-tool{width:auto!important;max-width:none;flex:0 0 auto;padding:5px 8px!important;gap:6px}
+  .creation-composer.is-compact.is-node-editor .creation-toolbar .creation-tool.creation-icon-tool .creation-tool-label{display:block!important;white-space:nowrap}
+  .creation-composer.is-compact.is-node-editor .creation-toolbar .creation-selected-style{width:auto;max-width:160px;flex:0 1 auto}
+  .creation-composer.is-compact.is-node-editor .creation-toolbar .creation-selected-style-label{display:block}
+  .creation-composer.is-compact.is-node-editor .creation-toolbar .creation-selected-style-open{justify-content:flex-start;gap:6px;padding:4px 8px!important}
 }
 /* 输入框上方的轻量返回按钮，只显示向下箭头，不占输入框和消息排版。 */
 .creation-composer .liv-back-latest{position:absolute;top:-44px;right:12px;z-index:4;width:32px!important;height:32px!important;min-width:32px;min-height:32px!important;padding:0!important;border:1px solid var(--color-border-soft)!important;border-radius:50%!important;background:var(--liv-button-bg)!important;color:var(--liv-chat-assistant-text);box-shadow:0 2px 8px #0004}

@@ -13,3 +13,15 @@ export function groupConversation(messages:CreationMessage[],history:CreationRun
   }
   return rows.sort((a,b)=>a.time-b.time||a.key.localeCompare(b.key))
 }
+
+/** 仅服务端声明的自动接续连接到同一回答；新指令或缺失父轮不猜测合并。 */
+export function continuousAnswers(rows:ReturnType<typeof groupConversation>){
+  const groups:Array<{key:string;rows:typeof rows}>=[]
+  for(const row of rows){
+    const previous=groups.at(-1)
+    const parent=row.run?.auto_continuation?.parent_id
+    if(parent&&previous?.rows.some(item=>item.run?.id===parent))previous.rows.push(row)
+    else groups.push({key:row.key,rows:[row]})
+  }
+  return groups
+}

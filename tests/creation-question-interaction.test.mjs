@@ -7,7 +7,13 @@ import ts from 'typescript'
 const read=path=>readFileSync(new URL('../'+path,import.meta.url),'utf8')
 const module={exports:{}}
 runInNewContext(ts.transpileModule(read('features/creation/questionInteraction.ts'),{compilerOptions:{module:ts.ModuleKind.CommonJS}}).outputText,{module,exports:module.exports})
-const {questionNeedsText}=module.exports
+const {questionNeedsText,multipleQuestionAnswer}=module.exports
+test('多选勾选与补充统一提交，取消选项不吞补充文字，空答案不可提交',()=>{
+  assert.equal(multipleQuestionAnswer(['审批','考勤'],'  具体名称：测试OA  '),'审批、考勤、具体名称：测试OA')
+  assert.equal(multipleQuestionAnswer(['审批'],'具体名称：测试OA'),'审批、具体名称：测试OA')
+  assert.equal(multipleQuestionAnswer([],''),'')
+  assert.equal(multipleQuestionAnswer(['审批','审批'],''),'审批')
+})
 test('只有选项时无输入框，明确编辑或纯文字问题才展示',()=>{
   assert.equal(questionNeedsText({options:['生成视频','生成图片'],kind:'text'}),false)
   assert.equal(questionNeedsText({options:['建议一'],requires_input:true}),true)
@@ -17,12 +23,16 @@ test('只有选项时无输入框，明确编辑或纯文字问题才展示',()=
 })
 test('灰色选项无外层卡片，单选直接回答，多选仍显式发送',()=>{
   const source=read('features/creation/components/CreationStudio.vue')
-  const handler=source.slice(source.indexOf('function chooseAnswer'),source.indexOf('async function previousQuestion'))
+  const handler=source.slice(source.indexOf('function chooseAnswer'),source.indexOf('const historyElement'))
   assert.ok(handler.includes('else void answerPlanning(option)'))
   assert.ok(handler.includes("kind==='multiple'"))
   assert.ok(source.includes('class="liv-question-options"'))
   assert.ok(source.includes('v-if="questionNeedsInput" v-model="answerText"'))
   assert.ok(source.includes("v-if=\"questionNeedsInput || planning.question?.kind==='multiple'\""))
+  assert.ok(source.includes('<UCheckbox v-if="planning.question?.kind===\'multiple\'"'))
+  assert.ok(source.includes('@submit.prevent="answerPlanning(questionSubmission)"'))
+  assert.ok(source.includes("planning.question?.kind==='multiple'?'确定':'发送'"))
+  assert.ok(!handler.includes("answerText.value=selectedAnswers.value.join"))
 })
 
 test('选项具备悬停键盘反馈和按需展开的手动回答出口',()=>{
@@ -50,14 +60,11 @@ test('卡片免确认按媒体类型保存同会话规则，不触发提交；�
   assert.ok(source.includes(':max="100000" :step="1"'))
 })
 
-test('仅待答阶段可修改上一答案，问题编辑不污染底部草稿或执行长文',()=>{
+test('问答卡外不显示回退入口，多题内部上一步与原服务能力保留',()=>{
   const source=read('features/creation/components/CreationStudio.vue')
-  assert.ok(source.includes("planning.value?.status==='waiting'&&!!planning.value.answers.length&&!proposalSubmitted.value"))
-  assert.ok(source.includes('<LivButton v-if="canReviseQuestion" variant="secondary"'))
-  const back=source.slice(source.indexOf('async function previousQuestion'),source.indexOf('const historyElement'))
-  assert.ok(back.includes('answerText.value=value.restored_answer'))
-  assert.ok(!back.includes('setText('))
-  assert.ok(back.includes("confirmation.value=null;quotedProposalKey='';proposalQuoteError.value='';error.value=''"))
+  assert.ok(!source.includes('修改上一答案')&&!source.includes('canReviseQuestion'))
+  assert.ok(read('features/creation/components/CreationQuestionPages.vue').includes('上一步'))
+  assert.ok(read('shared/api/services/creationService.ts').includes('previousQuestion'))
   assert.ok(source.includes("assistantDraft=JSON.stringify({...answerDraft,prompt:answerDraft.prompt===answer?'':answerDraft.prompt})"))
 })
 

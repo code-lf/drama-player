@@ -3,10 +3,11 @@ import {readFileSync} from 'node:fs'
 import {test} from 'node:test'
 import assert from 'node:assert/strict'
 import ts from 'typescript'
+import {computed,ref} from 'vue'
 const studio=readFileSync('features/creation/components/CreationStudio.vue','utf8')
 const compile=code=>ts.transpileModule(code,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText
 
-test('只为真实可用图片自动展开原工具，重复选择不重建；草案/失败及视频不误打开',async()=>{
+test('可用图片、视频和成片选中即展开工具，草案和失败状态不展开',async()=>{
   const code=compile(studio.slice(studio.indexOf('async function selectGraphNode('),studio.indexOf('/** 对话方案卡只定位')))
   for(const status of ['reference','succeeded','completed','draft','failed','status_unavailable']){
     const opened=[],state={imagePlanEditorNodeId:{value:''},graphToolsOpen:{value:false},graphToolNode:{value:null}}
@@ -15,18 +16,74 @@ test('只为真实可用图片自动展开原工具，重复选择不重建；�
     await select(node);await select(node)
     assert.deepEqual(opened,['reference','succeeded','completed'].includes(status)?['image-real']:[])
     await select({...node,id:'video',data:{...node.data,kind:'video'}})
-    assert.ok(!opened.includes('video'))
+    await select({...node,id:'compose',data:{...node.data,kind:'compose'}})
+    assert.deepEqual(opened,['reference','succeeded','completed'].includes(status)?['image-real','video','compose']:[])
   }
 })
 
-test('节点图片不显示重复版本选择，辅助操作并入原工具一排，原工作台/全屏仍保留',()=>{
+test('节点图片不显示重复版本选择，辅助操作并入原工具一排，旧合成入口不常驻',()=>{
   const canvas=readFileSync('features/creation/components/CreationResultCanvas.vue','utf8')
-  assert.ok(canvas.includes('<header v-if="!compactImageTools"'))
+  assert.ok(canvas.includes('<header v-else-if="!compactImageTools"'))
   assert.ok(canvas.includes('<div v-if="compactImageTools&&!annotating" class="canvas-node-utilities">'))
   assert.ok(canvas.includes('.canvas-footer.is-node-image-tools{flex-direction:row;align-items:center'))
   assert.ok(canvas.includes('const compactImageTools=computed(()=>!!props.inlineNode&&!fullscreen.value'))
   assert.ok(canvas.includes('aria-label="下载作品"'))
-  assert.ok(studio.includes('v-if="compositionSources.length&&!graphToolsOpen"'))
+  assert.ok(!studio.includes('v-if="compositionSources.length&&!graphToolsOpen"'))
+  assert.ok(studio.includes('@compose="compositionOpen=true"'))
+})
+
+test('视频节点完整入口仅一条横栏，未接通能力明确反馈开发中，旧工具保留在更多',()=>{
+  const canvas=readFileSync('features/creation/components/CreationResultCanvas.vue','utf8')
+  const nav=canvas.match(/<nav v-if="compactVideoTools&&version"[\s\S]*?<\/nav>/)?.[0]
+  assert.ok(nav)
+  for(const label of ['视频作品工具','一键替换素材','裁剪','标签','下载作品','更多视频工具'])assert.ok(nav.includes(label),label)
+  for(const label of ['视频高清','爆款复刻','反推提示词','片段重拍','深度提取','保存截帧','引用续作','适应窗口','全屏画布'])assert.ok(canvas.includes(label),label)
+  assert.ok(nav.includes('name="video-actions"'))
+  assert.ok(nav.includes('name="top-actions"'))
+  assert.match(canvas,/<footer v-if="version&&!pending&&!failed&&!compactVideoTools/)
+  assert.match(canvas,/\.canvas-node-video-toolbar\{[^}]*flex-wrap:nowrap[^}]*overflow-x:auto/)
+  assert.ok(nav.includes('v-for="item in developingVideoTools"'))
+  assert.ok(nav.includes('creative-image-tools-menu'))
+})
+test('开发中入口仅发送提示；片段截取与更多沿用原来源，切换或忙碌时拒绝迟到动作',()=>{
+  const canvas=readFileSync('features/creation/components/CreationResultCanvas.vue','utf8')
+  const code=compile(canvas.slice(canvas.indexOf('const developingVideoTools='),canvas.indexOf('/** MV只接受')))
+  const current={kind:'video',url:'/owned.mp4',source:{kind:'video',id:'task',result_id:'fixed'}}
+  const calls=[],state={computed,version:ref(current),working:ref(false),props:{saveBusy:false},canCapture:ref(true),emit:(...args)=>calls.push(args),capture:()=>calls.push(['capture']),fitCanvas:()=>calls.push(['fit']),toggleFullscreen:()=>calls.push(['fullscreen']),ai:(action)=>calls.push(['ai',action])}
+  const api=new Function('state',`const {${Object.keys(state).join(',')}}=state;${code};return {developingVideoTools,developingVideoTool,videoCutItems,videoMoreItems}`)(state)
+  assert.deepEqual(api.developingVideoTools.map(item=>item.label),['视频高清','爆款复刻','反推提示词','片段重拍','深度提取'])
+  for(let i=0;i<7;i++)api.developingVideoTool()
+  assert.deepEqual(calls,Array.from({length:7},()=>['notice','正在开发中，敬请期待']))
+  calls.length=0
+  const cut=api.videoCutItems.value[0][0]
+  cut.onSelect();assert.deepEqual(calls,[['editVideo',current.source]])
+  calls.length=0
+  api.videoCutItems.value[0][1].onSelect();assert.deepEqual(calls,[['notice','正在开发中，敬请期待']])
+  const more=api.videoMoreItems.value[0];calls.length=0
+  more[0].onSelect();more[1].onSelect();assert.deepEqual(calls,[['capture'],['ai','video_reference']])
+  calls.length=0;state.working.value=true;cut.onSelect();more[0].onSelect();assert.deepEqual(calls,[])
+  state.working.value=false;state.version.value={...current,source:{kind:'video',id:'another'}}
+  cut.onSelect();more[1].onSelect();assert.deepEqual(calls,[])
+})
+test('剪辑入口核对当前节点来源，只打开原工作台且不创建媒体任务',()=>{
+  const code=compile(studio.slice(studio.indexOf('function openGraphVideoEditor('),studio.indexOf('/** 复用原画布轻量通知')))
+  for(const outcome of ['same','stale','closed','busy']){
+    const state={graphToolsOpen:{value:outcome!=='closed'},graphToolNode:{value:{data:{source:{kind:'video',id:'task',result_id:'one'}}}},busy:{value:outcome==='busy'},graphPreparing:{value:false},error:{value:''},editingWorkspaceOpen:{value:false}}
+    const fn=new Function('state',`const {${Object.keys(state).join(',')}}=state;${code};return openGraphVideoEditor`)(state)
+    fn({result_id:'one',id:outcome==='stale'?'other':'task',kind:'video'})
+    assert.equal(state.editingWorkspaceOpen.value,outcome==='same')
+    if(outcome==='stale')assert.ok(state.error.value)
+  }
+})
+test('视频工具进入剪辑先预览点击素材，开发中提示不被旧模式错误永久遮住',()=>{
+  const workspace=readFileSync('features/creation/components/CreationEditingWorkspace.vue','utf8')
+  assert.ok(workspace.includes("const selected=ref(props.initialAssetKey||'')"))
+  assert.ok(studio.includes(':initial-asset-key="graphToolsOpen?editingAssets.find(item=>item.url===graphToolNode?.data.url)?.key:undefined"'))
+  const code=compile(studio.slice(studio.indexOf('const canvasNoticeText='),studio.indexOf('/** 只重试原读取或草稿保存')))
+  const state={computed,sessionLoading:ref(false),sessionError:ref(''),draftProblemText:ref(''),error:ref(''),preferenceError:ref('原读取失败'),notice:ref('正在开发中，敬请期待')}
+  const value=new Function('state',`const {${Object.keys(state).join(',')}}=state;${code};return canvasNoticeText`)(state)
+  assert.equal(value.value,'正在开发中，敬请期待')
+  state.notice.value='';assert.equal(value.value,'原读取失败')
 })
 test('作品工具为节点slot，不再挂全屏模态；下方输入复用共享组件和批注预览',()=>{
   assert.ok(studio.includes('<template #media-editor="{node,toolTarget}">'))

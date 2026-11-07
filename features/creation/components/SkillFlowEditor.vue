@@ -71,16 +71,16 @@ function backToStepList(){selected.value='';notice.value=''}
         <UButton class="mobile-back" color="neutral" variant="ghost" icon="i-lucide-arrow-left" @click="backToStepList">返回步骤列表</UButton>
         <template v-for="(step,index) in modelValue?.steps||[]" :key="step.id">
           <div v-if="selected===step.id" class="flow-fields">
-            <label>步骤名称<UInput :model-value="step.title" :maxlength="120" @update:model-value="update(step.id,{title:String($event)})"/></label>
+            <label>步骤名称<UInput placeholder="例如：编写产品口播与分镜" :model-value="step.title" :maxlength="120" @update:model-value="update(step.id,{title:String($event)})"/></label>
             <label>能力类型<LivSelect :model-value="step.type" aria-label="能力类型" @update:model-value="changeType(step,String($event))"><option v-for="item in types" :key="item.value" :value="item.value">{{item.label}}</option></LivSelect></label>
             <label v-if="step.type==='unsupported'">计划能力<LivSelect :model-value="step.planned_type||''" aria-label="计划能力" @update:model-value="changePlannedType(step,String($event))"><option value="">请选择计划能力</option><option v-for="item in types.filter(item=>item.value!=='unsupported')" :key="item.value" :value="item.value">{{item.label}}</option></LivSelect></label>
-            <label>执行要求<UTextarea :model-value="step.instructions" :maxlength="4000" :rows="7" @update:model-value="update(step.id,{instructions:String($event)})"/></label>
+            <label>执行要求<UTextarea placeholder="例如：根据已确认的真实卖点编写口播，每段注明时长；缺少关键资料时先询问用户。" :model-value="step.instructions" :maxlength="4000" :rows="7" @update:model-value="update(step.id,{instructions:String($event)})"/></label>
             <div v-if="['generate_image','generate_video'].includes(fieldType(step))" class="flow-style-fields">
               <span class="field-label">{{fieldType(step)==='generate_image'?'生图风格':'视频风格'}}</span>
               <button type="button" class="flow-style-trigger" aria-label="从风格库选择" @click="openStyle(step)"><img v-if="styleFor(step)?.cover_url" :src="styleFor(step)!.cover_url" alt=""/><span v-else class="style-swatch"><UIcon name="i-lucide-palette"/></span><span>{{styleFor(step)?.display_name||'从风格库选择'}}</span><UIcon name="i-lucide-chevron-down"/></button>
               <UButton v-if="step.style_id" color="neutral" variant="ghost" class="clear-style" @click="update(step.id,{style_id:''})">取消风格绑定</UButton>
               <p v-if="step.style_id && !styleFor(step)" role="status">已绑定风格当前不在目录中，请核对或重新选择。</p>
-              <label>自定义风格要求<UTextarea :model-value="step.style_prompt||''" :maxlength="1000" :rows="2" placeholder="补充本步骤的色调、光影与画面风格" @update:model-value="update(step.id,{style_prompt:String($event)})"/></label>
+              <label>自定义风格要求<UTextarea :model-value="step.style_prompt||''" :maxlength="1000" :rows="2" placeholder="例如：冷灰蓝色调、柔和自然光、简洁商务风格。" @update:model-value="update(step.id,{style_prompt:String($event)})"/></label>
             </div>
             <template v-if="fieldType(step).startsWith('generate_')">
               <div class="flow-models">
@@ -93,9 +93,9 @@ function backToStepList(){selected.value='';notice.value=''}
             <!-- 音乐使用文字曲风而不是视觉风格库，保留 AI 转换时写入的节奏要求。 -->
             <label v-if="fieldType(step)==='generate_music'">音乐风格与节奏<UTextarea :model-value="step.style_prompt||''" :maxlength="1000" :rows="2" placeholder="例如电子、舒缓、节奏与情绪变化" @update:model-value="update(step.id,{style_prompt:String($event)})"/></label>
             <!-- 提示词模板是每个步骤都可用的草稿字段，不能只限生成阶段。 -->
-            <label class="flow-prompt-template">{{templateLabel(step)}}<UTextarea :model-value="step.prompt_template||''" :maxlength="4000" :rows="5" @update:model-value="update(step.id,{prompt_template:String($event)})"/></label>
+            <label class="flow-prompt-template">{{templateLabel(step)}}<UTextarea placeholder="例如：围绕 {{产品名称}} 的 {{核心卖点}}，按已确认时长设计独立镜头，保持参考素材的外观一致。" :model-value="step.prompt_template||''" :maxlength="4000" :rows="5" @update:model-value="update(step.id,{prompt_template:String($event)})"/></label>
             <label v-if="index>0">{{inputLabel(step)}}<LivSelect :model-value="step.inputs" multiple :aria-label="inputLabel(step)" @update:model-value="update(step.id,{inputs:$event as string[]})"><option v-for="item in modelValue!.steps.slice(0,index)" :key="item.id" :value="item.id">{{item.title}}</option></LivSelect></label>
-            <label v-if="step.type==='unsupported'">未支持原因<UInput :model-value="step.unavailable_reason||''" :maxlength="300" @update:model-value="update(step.id,{unavailable_reason:String($event)})"/></label>
+            <label v-if="step.type==='unsupported'">未支持原因<UInput placeholder="例如：当前尚未接通此能力，需先补齐对应执行服务。" :model-value="step.unavailable_reason||''" :maxlength="300" @update:model-value="update(step.id,{unavailable_reason:String($event)})"/></label>
             <UButton class="remove-step" color="neutral" variant="soft" @click="remove(step.id)">删除此步骤</UButton>
           </div>
         </template>

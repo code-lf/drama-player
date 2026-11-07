@@ -1,7 +1,8 @@
 export interface ResponseTiming{status:string;response_started_at?:string|null;response_finished_at?:string|null;response_elapsed_ms?:number|null}
 /** 活跃回复随真实起点增长，终态使用服务器冻结值，历史没有计时数据就不显示。 */
 export function responseElapsedMs(run:ResponseTiming,now:number){
-  if(run.status!=='planning')return typeof run.response_elapsed_ms==='number'&&Number.isFinite(run.response_elapsed_ms)?Math.max(0,run.response_elapsed_ms):null
+  // 服务端冻结时间优先于迟到的planning投影，避免已结束的模型轮次继续累计。
+  if(run.status!=='planning'||run.response_finished_at)return typeof run.response_elapsed_ms==='number'&&Number.isFinite(run.response_elapsed_ms)?Math.max(0,run.response_elapsed_ms):null
   const start=Date.parse(run.response_started_at||'')
   return Number.isFinite(start)?Math.max(0,now-start):null
 }

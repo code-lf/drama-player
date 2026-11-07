@@ -34,3 +34,11 @@ test('首页和原非简洁会话仍使用原骨架，不扩大到短剧/后台�
  const page=readFileSync('pages/dashboard.vue','utf8')
  assert.ok(page.includes(':simple="activeWorkspaceView===\'console\'&&!!route.query.session"'))
 })
+
+test('节点双球使用小尺寸，页面加载保留原最大尺寸及无障碍降动态',()=>{
+ const css=readFileSync('assets/css/liv-loading-dots.css','utf8')
+ assert.match(css,/\.creative-node \.workspace-loading-dots\{--loading-dot-max:10px;--loading-dot-min:4px/)
+ assert.match(css,/--loading-dot-max:clamp\(12px,2cqw,20px\)/)
+ assert.ok(css.includes('--loading-dot-x:6px;--loading-dot-y:3px;width:24px;height:18px'))
+ assert.ok(css.includes('prefers-reduced-motion:reduce'))
+})

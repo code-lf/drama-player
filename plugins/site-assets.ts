@@ -12,16 +12,24 @@ export default defineNuxtPlugin(async () => {
     raster_extension: '.webp'
   }))
 
-  try {
-    // SSR 使用后端内部地址，浏览器使用同源 /api；这样首屏 HTML 直接携带 OSS 地址，
-    // 不会先请求本地大图再在 hydration 后切换，真正减少首次加载流量。
-    const baseUrl = import.meta.server
-      ? String(runtimeConfig.apiServerBase || '')
-      : String(runtimeConfig.public.apiBase || '/api')
-    state.value = await $fetch<SiteAssetConfig>(`${baseUrl}/config/site-assets`)
-  } catch (error) {
-    // OSS 配置接口不可用时保留 public 本地路径，避免配置故障导致整站图片全部裂开。
-    console.warn('[livliv] 站点素材配置读取失败，暂时使用本地静态资源。', error)
+  async function loadSiteAssets() {
+    try {
+      // SSR 使用内部地址把 OSS 配置带入 HTML，CSR 使用同源代理异步补齐公开配置。
+      const baseUrl = import.meta.server
+        ? String(runtimeConfig.apiServerBase || '')
+        : String(runtimeConfig.public.apiBase || '/api')
+      // 配置故障最多等待五秒，不反复重试；页面本身不受该请求阻塞。
+      state.value = await $fetch<SiteAssetConfig>(`${baseUrl}/config/site-assets`, { timeout: 5000, retry: 0 })
+    } catch (error) {
+      // OSS 配置接口不可用时保留 public 本地路径，避免配置故障导致整站图片全部裂开。
+      console.warn('[livliv] 站点素材配置读取失败，暂时使用本地静态资源。', error)
+    }
+  }
+  // SSR保留首屏地址；CSR不让公共素材配置阻塞Vue挂载，配置到达后响应式更新地址。
+  // SSR已注入有效配置时直接复用，避免hydration再次读取相同公开目录。
+  if (!state.value.asset_base_url) {
+    if (import.meta.server) await loadSiteAssets()
+    else void loadSiteAssets()
   }
 
   const siteAsset = (rawPath: string): string => {

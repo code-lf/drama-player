@@ -1,0 +1,95 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 650" role="img" aria-labelledby="title description">
+  <title id="title">骑自行车的鹈鹕</title>
+  <desc id="description">一只白色鹈鹕迎着微风骑蓝色自行车，经过阳光明媚的海边。</desc>
+  <defs>
+    <!-- 天空、羽毛和金属的渐变用于增强画面的层次感。 -->
+    <linearGradient id="sky" x2="0" y2="1">
+      <stop offset="0" stop-color="#bceaf5"/>
+      <stop offset="1" stop-color="#f6f4dc"/>
+    </linearGradient>
+    <linearGradient id="feathers" x2="0" y2="1">
+      <stop offset="0" stop-color="#fffef3"/>
+      <stop offset="1" stop-color="#e1e8dc"/>
+    </linearGradient>
+    <linearGradient id="pouch" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffc966"/>
+      <stop offset="1" stop-color="#ee8d51"/>
+    </linearGradient>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="9"/>
+    </filter>
+  </defs>
+
+  <!-- 远景与地面为主体留出清晰的轮廓。 -->
+  <rect width="900" height="650" fill="url(#sky)"/>
+  <circle cx="739" cy="109" r="55" fill="#fff1ab"/>
+  <path d="M0 355 Q160 331 300 349 T600 350 T900 338 L900 449 L0 449Z" fill="#95d4d9" opacity=".7"/>
+  <path d="M0 407 Q260 386 458 410 T900 394 L900 650 L0 650Z" fill="#e8d5a8"/>
+  <path d="M0 472 Q191 451 368 474 T900 460 L900 650 L0 650Z" fill="#f3e3bc"/>
+  <path d="M0 558 Q450 535 900 558" fill="none" stroke="#d5bb8e" stroke-width="5" stroke-linecap="round" stroke-dasharray="25 30" opacity=".65"/>
+  <ellipse cx="452" cy="564" rx="327" ry="22" fill="#aa8e72" opacity=".25" filter="url(#shadow)"/>
+
+  <!-- 车轮、辐条及车架均采用矢量路径，放大时仍保持清晰。 -->
+  <g stroke-linecap="round" stroke-linejoin="round">
+    <g fill="none">
+      <circle cx="231" cy="492" r="103" stroke="#273e4a" stroke-width="18"/>
+      <circle cx="231" cy="492" r="88" stroke="#f9f4de" stroke-width="4"/>
+      <circle cx="678" cy="492" r="103" stroke="#273e4a" stroke-width="18"/>
+      <circle cx="678" cy="492" r="88" stroke="#f9f4de" stroke-width="4"/>
+      <g stroke="#8ba9aa" stroke-width="2.5" opacity=".85">
+        <path d="M231 398V586 M137 492H325 M165 426L297 558 M165 558L297 426 M678 398V586 M584 492H772 M612 426L744 558 M612 558L744 426"/>
+      </g>
+    </g>
+    <g fill="none" stroke="#328b9c" stroke-width="17">
+      <path d="M231 492L387 492L314 359L231 492 M387 492L507 365L314 359 M387 492L678 492L507 365"/>
+      <path d="M678 492L630 342"/>
+    </g>
+    <g fill="none" stroke="#214d61" stroke-width="11">
+      <path d="M620 342L669 336L689 354"/>
+      <path d="M313 358L305 337"/>
+    </g>
+    <path d="M268 335Q306 325 351 335" fill="none" stroke="#273e4a" stroke-width="15"/>
+    <circle cx="387" cy="492" r="23" fill="#f8d06f" stroke="#244957" stroke-width="8"/>
+    <path d="M387 492L423 523 M387 492L350 460" fill="none" stroke="#244957" stroke-width="9"/>
+    <path d="M410 524H444 M330 458H362" fill="none" stroke="#244957" stroke-width="9"/>
+  </g>
+
+  <!-- 骑行的脚和身体有意与车架交叠，使姿势自然。 -->
+  <g stroke-linecap="round" stroke-linejoin="round">
+    <path d="M415 346Q401 393 394 435L424 467" fill="none" stroke="#eaa456" stroke-width="23"/>
+    <path d="M424 467L445 477" fill="none" stroke="#eaa456" stroke-width="18"/>
+    <path d="M355 350Q344 388 347 417L324 447" fill="none" stroke="#eaa456" stroke-width="21"/>
+    <path d="M324 447L302 454" fill="none" stroke="#eaa456" stroke-width="17"/>
+
+    <path d="M305 285Q273 313 286 357Q320 382 398 369Q459 353 478 319Q471 270 420 245Q350 233 305 285Z" fill="url(#feathers)" stroke="#344d55" stroke-width="5"/>
+    <path d="M338 287Q351 325 411 330Q441 331 461 310" fill="none" stroke="#d0dbd3" stroke-width="7"/>
+    <path d="M286 309Q245 292 236 323Q257 341 292 344" fill="url(#feathers)" stroke="#344d55" stroke-width="5"/>
+
+    <!-- 伸向车把的翅膀与手柄形成明确的骑行动作。 -->
+    <path d="M422 263Q496 271 560 333Q585 352 619 346" fill="none" stroke="#344d55" stroke-width="50"/>
+    <path d="M422 263Q496 271 560 333Q585 352 619 346" fill="none" stroke="url(#feathers)" stroke-width="42"/>
+    <path d="M506 312Q531 322 552 344 M524 296Q549 308 566 325" fill="none" stroke="#cfd8d0" stroke-width="5"/>
+    <path d="M618 344Q631 336 641 344Q647 353 634 359" fill="#f2ae67" stroke="#344d55" stroke-width="4"/>
+
+    <!-- 鹈鹕的长颈、头、长喙和橙色喉囊是识别主体的关键。 -->
+    <path d="M352 286Q376 243 389 200Q393 168 362 151Q332 140 319 166Q321 188 350 195Q351 219 317 262" fill="none" stroke="#344d55" stroke-width="58"/>
+    <path d="M352 286Q376 243 389 200Q393 168 362 151Q332 140 319 166Q321 188 350 195Q351 219 317 262" fill="none" stroke="url(#feathers)" stroke-width="50"/>
+    <path d="M326 151Q337 122 370 126Q394 130 394 158Q387 187 352 189Q317 186 326 151Z" fill="url(#feathers)" stroke="#344d55" stroke-width="5"/>
+    <path d="M365 172Q442 176 550 187Q538 199 510 203L365 189Z" fill="#f5b84f" stroke="#a55c38" stroke-width="4"/>
+    <path d="M376 189Q412 257 483 256Q523 247 534 199Q477 211 376 189Z" fill="url(#pouch)" stroke="#a55c38" stroke-width="4"/>
+    <path d="M406 207Q452 244 496 231" fill="none" stroke="#ffd785" stroke-width="5" opacity=".75"/>
+    <circle cx="368" cy="155" r="7" fill="#283d45"/>
+    <circle cx="370" cy="153" r="2" fill="#fff"/>
+    <path d="M354 137Q366 130 380 137" fill="none" stroke="#344d55" stroke-width="4"/>
+  </g>
+
+  <!-- 少量海边装饰赋予画面速度感，同时不遮挡主体。 -->
+  <g fill="none" stroke="#fff9e8" stroke-width="5" stroke-linecap="round" opacity=".9">
+    <path d="M78 215q18-13 36 0q18-13 36 0 M731 260q13-10 26 0q13-10 26 0"/>
+    <path d="M63 327h81 M86 344h46 M767 386h62"/>
+  </g>
+  <g fill="#80a97e" opacity=".75">
+    <path d="M92 544q-13-20-11-36q18 11 11 36 M99 545q3-21 17-31q1 22-17 31"/>
+    <path d="M806 552q-12-20-9-36q17 12 9 36 M813 551q5-20 18-29q0 22-18 29"/>
+  </g>
+</svg>

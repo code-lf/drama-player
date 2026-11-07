@@ -5,15 +5,17 @@ import type {LibraryReference} from '~/entities/library/types'
 export interface CompositionAudioTrack {
   id:string;role:'narration'|'bgm';reference:LibraryReference
   trim_start_ms:number;trim_end_ms:number;start_ms:number;volume:number
+  /** 明确循环BGM才设置；源裁切区间与成片铺设时长独立，旁白不循环。 */
+  repeat_mode?:'none'|'loop';play_duration_ms?:number|null
 }
 
 /** 一个成片的片段清单，不把片段数量当独立成片数量。 */
-export interface CompositionClip {
-  id:string;task_id:string;result_id:string;trim_start_ms:number;trim_end_ms:number;keep_audio:boolean
-}
+export type CompositionClip = {
+  id:string;trim_start_ms:number;trim_end_ms:number;keep_audio:boolean
+} & ({task_id:string;result_id:string;reference?:never}|{reference:LibraryReference;task_id?:never;result_id?:never})
 /** 首版只开放真实存在的直切、留边、25fps 能力，不提供虚假转场开关。 */
 export interface CompositionPlan {
-  schema_version:1;revision:number;clips:CompositionClip[]
+  schema_version:1|2;revision:number;clips:CompositionClip[]
   output:{width:number;height:number;fps:25;fit:'contain';transition:'cut'}
   audio_tracks?:CompositionAudioTrack[]
 }

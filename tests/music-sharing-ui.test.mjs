@@ -26,7 +26,7 @@ test('隐藏播放器暂停且保留进度，恢复不续播，迟到play与卸�
  const ended=new Function('props','document','playing','pausePlayback','shuffle','trackIndex','changeTrack','emit',`${endedCode};return ended`)({playbackEnabled:false,tracks:[{key:'a'},{key:'b'}]}, {hidden:false},playing,()=>pausedEnd++,{value:false},{value:0},()=>selected++,()=>selected++)
  ended();assert.equal(pausedEnd,1);assert.equal(selected,0)
  const studio=read('features/creation/components/CreationStudio.vue')
- assert.ok(studio.includes(':playback-enabled="!compositionOpen&&!rulesOpen&&!showMusicTools&&(floatingChat||desktopWorkspace||mobilePane===\'canvas\')"'))
+ assert.ok(studio.includes(':playback-enabled="!editingWorkspaceOpen&&!compositionOpen&&!rulesOpen&&!showMusicTools&&(floatingChat||desktopWorkspace||mobilePane===\'canvas\')"'))
  assert.ok(read('features/creation/components/CreationResultCanvas.vue').includes(':playback-enabled="playbackEnabled"'))
 })
 test('单曲节点显示真实来源序号，紧凑/沉浸继续共用同一音频',()=>{

@@ -21,6 +21,7 @@ import {hasCompleteResults} from './resultCatalog'
 import {resultReadState,shouldRefreshTaskBalance} from './workflowState'
 import { createCreditHint } from './creditHint'
 import { imageQualityError } from './imageQuality'
+import { runParameterSnapshot } from './runParameterSnapshot'
 
 /** 入口、报价及会话使用同一冻结草稿，防止报价后改参数而错扣点。 */
 export function useCreationWorkspace(options:{beforeSubmit?:()=>Promise<()=>Promise<void>>;beforeScopeChange?:()=>Promise<void>;beforeExecute?:()=>Promise<void>;entryPath?:()=>string}={}) {
@@ -318,6 +319,8 @@ export function useCreationWorkspace(options:{beforeSubmit?:()=>Promise<()=>Prom
   }
   async function restore(id: string) {
     if(!requireLogin())return
+    // 多个入口同时恢复同一会话时复用在途读取，避免中断重发和重复触发限流。
+    if(sessionLoading.value&&pendingSession.value===id&&restoreController&&!restoreController.signal.aborted)return
     rememberSessionDraft()
     const current = ++restoreRevision
     ++revision
@@ -344,7 +347,7 @@ export function useCreationWorkspace(options:{beforeSubmit?:()=>Promise<()=>Prom
         if (saved || latest) {
           entry.value = saved?.entry ?? latest!.draft.entry
           skill.value = saved?.skill ?? latest!.draft.skill
-          conversationParameters = structuredClone(saved?.parameters ?? latest!.draft.parameters)
+          conversationParameters = structuredClone(saved?.parameters ?? runParameterSnapshot(latest!))
         }
       }
       if (last) {
@@ -372,7 +375,9 @@ export function useCreationWorkspace(options:{beforeSubmit?:()=>Promise<()=>Prom
       // 刷新同会话时保留已选视频深链；主动切换其他会话不能携带旧作品选择。
       const videoQuery=route.query.session===id&&typeof route.query.videoRun==='string'&&typeof route.query.videoItem==='string'
         ?{videoRun:route.query.videoRun,videoItem:route.query.videoItem}:{}
-      await router.replace({ path: '/dashboard', query: { session: id,...videoQuery } })
+      // 恢复指定方案时保留本人运行深链，避免云草稿误取会话中另一条最新运行。
+      const runQuery=route.query.session===id&&typeof route.query.run==='string'?{run:route.query.run}:{}
+      await router.replace({ path: '/dashboard', query: { session: id,...videoQuery,...runQuery } })
     } catch (cause) { if(!stale()){session.value=null;messages.value=[];sessionError.value=sessionErrorText(cause)} }
     finally { if(!stale()){busy.value = false;sessionLoading.value=false} }
   }
@@ -446,7 +451,8 @@ export function useCreationWorkspace(options:{beforeSubmit?:()=>Promise<()=>Prom
   function imagePayload(value: CreationDraft, id: string): ProductImageGeneratePayload {
     const p = value.parameters
     const base=catalog.value?.skills.find(row=>row.id===value.skill)?.base_code || value.skill
-    return { batchId: id, prompt: value.prompt, sourcePrompt: (value.original_prompt ?? value.prompt).slice(0,2000), model: p.model, templateId: p.templateId.startsWith('image:') ? p.templateId.slice(6) : '',
+    // 完整原话随签名合同传递；长度由API明确校验，不在前端静默裁切尾部约束。
+    return { batchId: id, prompt: value.prompt, sourcePrompt: (value.original_prompt ?? value.prompt), model: p.model, templateId: p.templateId.startsWith('image:') ? p.templateId.slice(6) : '',
       count: p.count, splitSellingPoints: false, aspectRatio: p.aspectRatio, resolution: p.resolution, quality: p.quality, background: 'auto', outputFormat: 'png', style: p.style,
       workspaceMode: base === 'product' ? 'product' : base === 'poster' ? 'poster' : base === 'edit' ? 'edit' : 'free',
       creationMethod: 'single', referenceImages: [], libraryRefs: value.references, inputOrder: value.references.map((_, index) => `library:${index}`) }
@@ -692,6 +698,9 @@ export function useCreationWorkspace(options:{beforeSubmit?:()=>Promise<()=>Prom
   }
   onMounted(async () => {
     explicitLogout.value=false
+    // 资料库交接只接收固定编号；素材权限重新读取，不相信路由里的文件地址。
+    const assetId=typeof route.query.asset==='string'?route.query.asset:''
+    const assetVersion=typeof route.query.assetVersion==='string'?route.query.assetVersion:''
     try {
       let initial: CreationEntryType = route.path === '/dashboard-product' ? 'commerce' : route.path === '/dashboard-product-video' ? 'commerce' : route.path === '/dashboard-music' ? 'music' : ['free', 'drama', 'commerce', 'marketing', 'music', 'image'].includes(String(route.query.entry)) ? route.query.entry as CreationEntryType : 'free'
       // 清理旧版游客文字缓存，不读取或复活其中内容；会话恢复仍走原流程。
@@ -700,6 +709,24 @@ export function useCreationWorkspace(options:{beforeSubmit?:()=>Promise<()=>Prom
       // 深链会话独立恢复，目录或侧栏请求失败不能阻止会话错误和重试入口展示。
       if (typeof route.query.session === 'string' && requireLogin()) await restore(route.query.session)
       else { await loadCatalog(); if (!catalog.value?.skills.some(item => item.id === skill.value)) setSkill(defaultSkills[entry.value]) }
+      if(assetId&&assetVersion&&auth.session.loggedIn&&!route.query.session){
+        const owner=auth.session.user?.id
+        const handoff=useState<null|{owner:string;itemId:string;versionId:string;prompt:string}>('library-canvas-handoff',()=>null)
+        try{
+          const item=await libraryService.detail(assetId),version=item.versions.find(row=>row.id===assetVersion)
+          if(!version?.preview_url)throw new Error('选定素材版本不可用，请返回资料库重新选择。')
+          const saved=handoff.value
+          const text=saved?.owner===owner&&saved.itemId===assetId&&saved.versionId===assetVersion?saved.prompt:(await libraryService.creationContext(assetId,assetVersion)).prompt
+          if(owner!==auth.session.user?.id)return
+          // 带入内容仅形成可编辑草稿，不调用报价、任务提交或自动生成。
+          setText(text,text?[{type:'text',text}]:[])
+          references.value=[]
+          addReference({item_id:item.id,version_id:version.id,purpose:item.media_type==='video'?'reference_video':'reference',name:item.name,media_type:item.media_type,preview_url:libraryService.previewUrl(version.preview_url)})
+          handoff.value=null
+          const query={...route.query};delete query.asset;delete query.assetVersion
+          await router.replace({path:route.path,query})
+        }catch(cause){error.value=message(cause)}
+      }
       try { await refreshSessions() } catch { if(!sessionError.value)error.value='会话列表暂时不可用，请稍后刷新。' }
     } catch { if(!sessionError.value)error.value='创作服务暂时不可用，请稍后重试。' }
   })

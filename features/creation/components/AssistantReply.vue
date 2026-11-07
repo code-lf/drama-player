@@ -1,16 +1,25 @@
 <script setup lang="ts">
 import {computed,defineComponent,h,Fragment} from 'vue'
 import {replyBlocks,replyInline} from '../assistantRichText'
-const props=defineProps<{text:string}>()
+const props=defineProps<{text:string;variant?:'default'|'skill'}>()
 /** 同一回复组件供制造机与画布复用；富文本只渲染白名单结构，所有内容仍为转义文本。 */
 const blocks=computed(()=>replyBlocks(props.text))
 const InlineText=defineComponent({props:{text:{type:String,default:''}},setup:input=>()=>h(Fragment,replyInline(input.text).map(part=>part.kind==='text'?part.text:h(part.kind,part.text)))})
 </script>
-<template><div class="liv-assistant-reply"><template v-for="(block,index) in blocks" :key="index"><component :is="(block.level||3)<=2?'h3':'h4'" v-if="block.kind==='heading'"><InlineText :text="block.text"/></component><component :is="block.ordered?'ol':'ul'" v-else-if="block.kind==='list'"><li v-for="(line,row) in block.items" :key="row"><InlineText :text="line"/></li></component><blockquote v-else-if="block.kind==='quote'"><InlineText :text="block.text"/></blockquote><pre v-else-if="block.kind==='code'"><code>{{block.text}}</code></pre><hr v-else-if="block.kind==='divider'"><div v-else-if="block.kind==='table'" class="reply-table"><table><thead><tr><th v-for="(cell,column) in block.rows?.[0]" :key="column"><InlineText :text="cell"/></th></tr></thead><tbody><tr v-for="(row,rowIndex) in block.rows?.slice(1)" :key="rowIndex"><td v-for="(cell,column) in row" :key="column"><InlineText :text="cell"/></td></tr></tbody></table></div><p v-else><InlineText :text="block.text"/></p></template></div></template>
+<template><div class="liv-assistant-reply" :class="{'liv-assistant-reply--skill':variant==='skill'}"><template v-for="(block,index) in blocks" :key="index"><component :is="(block.level||3)<=2?'h3':'h4'" v-if="block.kind==='heading'"><InlineText :text="block.text"/></component><component :is="block.ordered?'ol':'ul'" v-else-if="block.kind==='list'"><li v-for="(line,row) in block.items" :key="row"><InlineText :text="line"/></li></component><blockquote v-else-if="block.kind==='quote'"><InlineText :text="block.text"/></blockquote><pre v-else-if="block.kind==='code'"><code>{{block.text}}</code></pre><hr v-else-if="block.kind==='divider'"><div v-else-if="block.kind==='table'" class="reply-table"><table><thead><tr><th v-for="(cell,column) in block.rows?.[0]" :key="column"><InlineText :text="cell"/></th></tr></thead><tbody><tr v-for="(row,rowIndex) in block.rows?.slice(1)" :key="rowIndex"><td v-for="(cell,column) in row" :key="column"><InlineText :text="cell"/></td></tr></tbody></table></div><p v-else><InlineText :text="block.text"/></p></template></div></template>
 <style scoped>
 /* 富文本负责自己的排版，不能继承旧聊天容器的 pre-wrap，把模板换行当成可见空白。 */
 .liv-assistant-reply{white-space:normal;min-width:0;display:flow-root}
 .liv-assistant-reply>:last-child{margin-bottom:0}
 .liv-assistant-reply li{white-space:pre-wrap}
 .liv-assistant-reply{font-size:var(--liv-chat-font);line-height:1.8;overflow-wrap:anywhere}.liv-assistant-reply p{white-space:pre-wrap;margin:0 0 12px}.liv-assistant-reply h3,.liv-assistant-reply h4{font-size:16px;line-height:1.6;font-weight:700;margin:20px 0 10px}.liv-assistant-reply h3{font-size:17px}.liv-assistant-reply>:first-child{margin-top:0}.liv-assistant-reply ul,.liv-assistant-reply ol{padding-left:21px;margin:0 0 14px}.liv-assistant-reply li{margin:7px 0}.liv-assistant-reply :deep(strong){font-weight:650}.liv-assistant-reply :deep(code){padding:2px 5px;border-radius:5px;background:var(--liv-skill-category-selected);font-size:.92em;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;box-decoration-break:clone;white-space:pre-wrap}.liv-assistant-reply pre{margin:12px 0;padding:12px;border:1px solid var(--liv-account-border);border-radius:12px;background:var(--liv-skill-card-selected);white-space:pre-wrap}.liv-assistant-reply pre code{background:none;padding:0}.liv-assistant-reply blockquote{margin:12px 0;padding:8px 12px;border-left:3px solid var(--liv-account-border);color:var(--color-text-muted);white-space:pre-wrap}.liv-assistant-reply hr{border:0;border-top:1px solid var(--liv-account-border);margin:18px 0}.reply-table{max-width:100%;overflow-x:auto;margin:12px 0}.reply-table table{border-collapse:collapse;font-size:13px;min-width:100%}.reply-table th,.reply-table td{padding:8px 10px;text-align:left;border:1px solid var(--liv-account-border)}.reply-table th{background:var(--liv-skill-card-selected);font-weight:600}
+/* 技能决定信息结构，组件统一紧凑排版；放在基础样式后，避免同权重规则覆盖。 */
+.liv-assistant-reply--skill{line-height:var(--liv-chat-line);color:var(--liv-chat-assistant-text)}
+.liv-assistant-reply--skill p{margin-bottom:var(--liv-chat-copy-gap)}
+.liv-assistant-reply--skill h3,.liv-assistant-reply--skill h4{font-size:var(--liv-chat-font);line-height:var(--liv-chat-line);margin:var(--liv-chat-section-gap) 0 var(--liv-chat-copy-gap);font-weight:650}
+.liv-assistant-reply--skill ul,.liv-assistant-reply--skill ol{margin-bottom:var(--liv-chat-copy-gap)}
+.liv-assistant-reply--skill li{margin:3px 0}
+.liv-assistant-reply--skill hr{margin:var(--liv-chat-section-gap) 0}
+.liv-assistant-reply--skill blockquote{color:inherit}
+.liv-assistant-reply--skill>:first-child{margin-top:0}.liv-assistant-reply--skill>:last-child{margin-bottom:0}
 </style>
