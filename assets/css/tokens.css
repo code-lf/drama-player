@@ -11,6 +11,9 @@
   --liv-project-cover-surface: #282828;
   --liv-project-card-surface: #1b1b1b;
   --liv-project-placeholder-mark: #363636;
+  /* 项目批量选择采用白框/白底深色勾，独立于卡片的靛紫选中描边。 */
+  --liv-project-selection-color: #ffffff;
+  --liv-project-selection-check: #111111;
   /* 画布居中通知采用固定中性灰表面，与业务错误颜色和右上角全站通知隔离。 */
   --liv-canvas-notice-bg: #333333;
   --liv-canvas-notice-border: #494949;
@@ -36,6 +39,23 @@
   --liv-builder-resource-selected-border: #999999;
   /* 创作画布统一尺寸：媒体节点按文件比例，输入区固定屏幕尺寸不随画布缩放。 */
   --liv-graph-node-width: 280px;
+  /* 节点、普通分组和短剧生产分组统一使用参考图的中性描边。 */
+  --liv-graph-frame-border: #353535;
+  /* 剧本是可阅读的文稿卡，宽度约为普通画布节点的两倍。 */
+  --liv-graph-script-width: 528px;
+  --liv-graph-script-preview-height: 752px;
+  --liv-graph-script-surface: #262626;
+  --liv-graph-script-ink: #a3a3a3;
+  --liv-graph-script-action: #414141;
+  /* 全屏剧本阅读专用中性阶，不继承 Nuxt 通用软按钮的蓝灰底色。 */
+  --liv-script-reader-bg: #0e0e0e;
+  --liv-script-reader-light: #181818;
+  --liv-script-reader-panel: #202020;
+  --liv-script-reader-control: #252525;
+  --liv-script-reader-hover: #343434;
+  --liv-script-reader-ink: #c2c2c2;
+  --liv-script-reader-muted: #9a9a9a;
+  --liv-script-reader-edge: #303030;
   --liv-graph-media-height: 420px;
   --liv-graph-editor-width: 680px;
   /* 图片节点“更多”统一紧凑菜单宽度，传送层与旋转子菜单复用。 */
@@ -207,10 +227,16 @@
   --liv-workspace-height: calc(100dvh - 80px);
   /* 顶栏左右一级入口同高；头像与内部图标另计，不随文字或余额撑高。 */
   --liv-topbar-control-height: 40px;
+  /* 首页和画布页头共用行高，40px 标题卡上下各留 12px。 */
+  --liv-desktop-topbar-height: 64px;
   --liv-topbar-icon-size: 18px;
   /* 桌面会话导航独立加高15px，账户入口维持原大小；工作区同步扣除新增高度。 */
   --liv-session-nav-height: 55px;
   --liv-session-header-height: 71px;
+  /* 主页与会话共用紧凑账户控件，不改变中央导航行高。 */
+  --liv-workbench-account-control-height: 32px;
+  --liv-canvas-header-title-height: 40px;
+  --liv-drama-header-title-width: 300px;
   --liv-session-nav-title-size: 16px;
   --liv-session-nav-icon-size: 20px;
   /* 音乐为固定深色媒体舞台，封面氛围与玻璃面板不随明暗主题反转。 */

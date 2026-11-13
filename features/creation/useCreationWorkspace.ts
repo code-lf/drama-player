@@ -58,7 +58,14 @@ export function useCreationWorkspace(options:{beforeSubmit?:()=>Promise<()=>Prom
   }
   // 首页游客文字也只保留在本页内存；不再写入浏览器持久缓存。
   const selectedSkill = computed(() => catalog.value?.skills.find(item => item.id === skill.value))
-  const target = computed<CreationTarget>(() => entry.value === 'drama' ? 'drama' : (selectedSkill.value?.base_code || skill.value) === 'free' ? parameters.value.output === 'auto' ? 'image' : parameters.value.output : selectedSkill.value?.target || 'image')
+  const textPlanningOnly=computed(()=>selectedSkill.value?.target==='text'||skill.value==='drama-storyboard')
+  // target 为既有媒体工作区类型；文字规划不使用其候选、计价或执行动作。
+  const target = computed<CreationTarget>(() => {
+    if(entry.value==='drama')return 'drama'
+    if((selectedSkill.value?.base_code||skill.value)==='free')return parameters.value.output==='auto'?'image':parameters.value.output
+    const skillTarget=selectedSkill.value?.target
+    return !skillTarget||skillTarget==='text'?'image':skillTarget
+  })
   const profile = computed(() => catalog.value?.profiles[target.value === 'video' ? 'product_video' : 'product_image'])
   const modelSchema = computed<Record<string, any>>(() => {
     const bound=catalog.value?.skill_models?.[`${skill.value}:${target.value}`]?.find(item=>item.code===parameters.value.model)
@@ -67,7 +74,7 @@ export function useCreationWorkspace(options:{beforeSubmit?:()=>Promise<()=>Prom
     return selected?.input_schema || profile.value?.input_schema || {}
   })
   const models = computed(() => {
-    if (['drama', 'music'].includes(target.value)) return []
+    if (textPlanningOnly.value||['drama', 'music'].includes(target.value)) return []
     const resolved=catalog.value?.skill_models?.[`${skill.value}:${target.value}`]
     if(resolved)return resolved
     const value = profile.value
@@ -92,7 +99,7 @@ export function useCreationWorkspace(options:{beforeSubmit?:()=>Promise<()=>Prom
     if (!previous || values[0] !== previous[0] || values[1] !== previous[1]) confirmation.value = null
     // 尚无本次费用的导演／短剧阶段不显示占位文案，实际阶段报价仍由确认卡提供。
     creditHint.refresh()
-    if (!['image','video'].includes(target.value) || parameters.value.workflow === 'director') return
+    if (textPlanningOnly.value || !['image','video'].includes(target.value) || parameters.value.workflow === 'director') return
     // 游客只查不含私人素材的公开预算；本人素材仍走登录后的权限校验，不能降成无参考图价格。
     if (!auth.session.loggedIn && (references.value.length || scriptFile.value)) return
     if (!models.value.some(item=>item.code===parameters.value.model)) return
@@ -156,6 +163,7 @@ export function useCreationWorkspace(options:{beforeSubmit?:()=>Promise<()=>Prom
   }
   /** 模型切换只使用后端能力白名单，非法旧参数被收敛到当前默认值。 */
   function applyCapabilities() {
+    if(textPlanningOnly.value)return
     // 后台限制允许流程时同步收敛前端选项，不能继续选择已停用的导演/直接模式。
     if (selectedSkill.value?.workflows?.length && !selectedSkill.value.workflows.includes(parameters.value.workflow)) parameters.value.workflow = selectedSkill.value.workflows[0]!
     if (target.value === 'drama') {
@@ -205,11 +213,13 @@ export function useCreationWorkspace(options:{beforeSubmit?:()=>Promise<()=>Prom
       return {...item,cover_url:option?.image?option.image.startsWith('http')?option.image:siteAsset(option.image):undefined}
     })}
   }
-  async function loadCatalog() {
+  async function loadCatalog(beforeApply?: Promise<unknown>) {
     const current = ++revision
     loading.value = true
     try {
       const value = await (auth.session.loggedIn ? creationService.catalog(entry.value,session.value?.id) : creationService.publicCatalog(entry.value))
+      // 恢复时目录可提前请求，但规格归一化必须等参考素材恢复，避免覆盖用户原参数。
+      if (beforeApply) await beforeApply
       if (disposed || current !== revision) return
       catalog.value = catalogWithCovers(value); applyCapabilities()
       // 仅音乐入口或需要音频来源的技能读取曲目，避免普通聊天反复请求音乐目录。
@@ -328,7 +338,8 @@ export function useCreationWorkspace(options:{beforeSubmit?:()=>Promise<()=>Prom
     const signal = restoreController.signal
     const stale = () => disposed || current !== restoreRevision
     pendingSession.value=id;sessionLoading.value=true;sessionError.value=''
-    busy.value = true; error.value = '';confirmation.value=null
+    busy.value = true; loading.value=true; error.value = '';confirmation.value=null
+    let restored=false
     // 立即隐藏旧会话，防止加载失败后把上一份作品误标成目标会话。
     session.value=null;messages.value=[];taskActivity.value={};focusedMessage.value='';references.value=[];prompt.value='';segments.value=[]
     director.value=null;directorAccepted.value=false;scriptFile.value=null
@@ -336,9 +347,13 @@ export function useCreationWorkspace(options:{beforeSubmit?:()=>Promise<()=>Prom
       const value = await creationService.session(id, signal)
       if (stale()) return
       session.value = value; messages.value = value.messages || []; entry.value = value.entry;skill.value=value.skill;parameters.value=defaultParameters()
+      // 会话身份已核权即可挂载正文和当前Agent；目录、素材恢复只锁住编辑/执行，不再遮住整页。
+      // busy保持到恢复结束，draftReady另受loading约束，防止默认规格被拿去核价或生成。
+      sessionLoading.value=false
       const last = messages.value[messages.value.length - 1]
       // 尚未生成媒体的会话没有 CreationMessage；必须从真实运行快照恢复入口参数，不能回落到“标准”。
       let conversationParameters: CreationParameterState | undefined
+      let catalogRead: Promise<void> | undefined
       if (!last) {
         const runs = await creationService.runs(id)
         if (stale()) return
@@ -358,28 +373,51 @@ export function useCreationWorkspace(options:{beforeSubmit?:()=>Promise<()=>Prom
         segments.value = savedDraft?.segments ?? (last.task_id ? [] : last.content.segments)
         scriptFile.value = savedDraft?.file ?? null
         references.value = []
-        for (const reference of (savedDraft?.references ?? (last.task_id ? [] : last.content.references))) {
+        // 同一素材的多个固定版本共用一次详情读取；不同素材并行取回，最终仍按引用原序恢复。
+        const itemReads=new Map<string,Promise<LibraryItem>>()
+        const referencesRead=Promise.all((savedDraft?.references ?? (last.task_id ? [] : last.content.references)).map(async reference=>{
           try {
-            const item = await request<LibraryItem>(`/library/${reference.item_id}`, {signal})
-            if (stale()) return
+            let itemRead=itemReads.get(reference.item_id)
+            if(!itemRead){itemRead=request<LibraryItem>(`/library/${reference.item_id}`,{signal});itemReads.set(reference.item_id,itemRead)}
+            const item = await itemRead
             const version = item.versions.find(version => version.id === reference.version_id)
-            if (version) addReference({ ...reference, name: item.name, media_type: item.media_type, preview_url: libraryService.previewUrl(version.preview_url) })
-          } catch { if(stale())return;error.value = '部分原素材已归档，历史结果仍可查看；继续创作可重新选择素材。' }
-        }
+            return version?{...reference,name:item.name,media_type:item.media_type,preview_url:libraryService.previewUrl(version.preview_url)}:null
+          } catch { return null }
+        }))
+        // 请求并行，但目录应用仍等素材入状态后进行，保持原有规格校验顺序。
+        const referencesApplied=referencesRead.then(restoredReferences=>{
+          if(stale())return
+          for(const reference of restoredReferences)if(reference)addReference(reference)
+          if(restoredReferences.some(reference=>!reference))error.value='部分原素材已归档，历史结果仍可查看；继续创作可重新选择素材。'
+        })
+        catalogRead = loadCatalog(referencesApplied)
+        await referencesApplied
+        if(stale())return
         focusedMessage.value = last.id
       }
-      await loadCatalog(); if(stale())return
+      await (catalogRead ?? loadCatalog()); if(stale())return
       // 目录先就绪再校验原始规格，避免旧入口的能力监听器提前覆盖新会话的质量与画幅。
       if (conversationParameters) { parameters.value = { ...defaultParameters(), ...conversationParameters }; applyCapabilities() }
-      await refreshResults(); if(stale())return
       // 刷新同会话时保留已选视频深链；主动切换其他会话不能携带旧作品选择。
       const videoQuery=route.query.session===id&&typeof route.query.videoRun==='string'&&typeof route.query.videoItem==='string'
         ?{videoRun:route.query.videoRun,videoItem:route.query.videoItem}:{}
       // 恢复指定方案时保留本人运行深链，避免云草稿误取会话中另一条最新运行。
       const runQuery=route.query.session===id&&typeof route.query.run==='string'?{run:route.query.run}:{}
-      await router.replace({ path: '/dashboard', query: { session: id,...videoQuery,...runQuery } })
+      // 只保留同一会话显式请求的画布落点，不影响其他会话的默认聊天页。
+      const paneQuery=route.query.session===id&&route.query.pane==='canvas'?{pane:'canvas'}:{}
+      await router.replace({ path: '/dashboard', query: { session: id,...videoQuery,...runQuery,...paneQuery } })
+      if(stale())return
+      restored=true
     } catch (cause) { if(!stale()){session.value=null;messages.value=[];sessionError.value=sessionErrorText(cause)} }
-    finally { if(!stale()){busy.value = false;sessionLoading.value=false} }
+    finally {
+      if(!stale()){
+        busy.value = false;sessionLoading.value=false
+        // 会话/运行读取在目录开始前失败时也必须结束配置加载，保留原错误与显式重试。
+        if(!restored)loading.value=false
+        // 历史任务结果独立只读同步，不能阻塞画布初次挂载；保留原会话隔离、失败及轮询逻辑。
+        if(restored)void refreshResults().catch(()=>{})
+      }
+    }
   }
   const resultReadAttempts=new Map<string,number>()
   // 限流冷却属于只读查询，不创建任务；即使手点刷新也不能持续撞同一个窗口。
@@ -490,6 +528,7 @@ export function useCreationWorkspace(options:{beforeSubmit?:()=>Promise<()=>Prom
   }
   async function prepare(quoteOnly=false, proposalDraft?:CreationDraft) {
     if (!requireLogin()) return
+    if(proposalDraft?.skill==='drama-storyboard'||(!proposalDraft&&textPlanningOnly.value)){error.value='文字分镜请发送给创作助手，无需准备媒体报价。';return}
     if (busy.value) return
     // 已显示的报价对应当前输入才可点击即提交，过期或修改后的报价必须重新显示。
     if (quoteOnly!==true && confirmation.value?.fingerprint === canonical(draft()) && Date.now() - (confirmation.value.createdAt || 0) < 540000) { await submit(); return }
@@ -578,6 +617,8 @@ export function useCreationWorkspace(options:{beforeSubmit?:()=>Promise<()=>Prom
     if(!requireLogin())return
     const confirmed = confirmation.value
     if (!confirmed || busy.value || !confirmed.sufficient) return
+    // 首次创建会话会替换当前路由；保留用户进入时选定的短剧视图。
+    const dramaMode = confirmed.target === 'drama' && route.query.dramaMode === 'canvas' ? 'canvas' : undefined
     busy.value = true; error.value = ''
     try {
       const clearSubmittedDraft=await options.beforeSubmit?.()
@@ -605,7 +646,7 @@ export function useCreationWorkspace(options:{beforeSubmit?:()=>Promise<()=>Prom
       const saved = await creationService.message(session.value.id, confirmed.requestId, confirmed.draft)
       if (!messages.value.some(item => item.id === saved.id)) messages.value.push(saved)
       focusedMessage.value = saved.id
-      await router.replace({ path: '/dashboard', query: { session: session.value.id } })
+      await router.replace({ path: '/dashboard', query: { session: session.value.id, dramaMode } })
       let taskId = saved.task_id
       if (!taskId) {
         if (confirmed.target === 'image') {
@@ -633,7 +674,8 @@ export function useCreationWorkspace(options:{beforeSubmit?:()=>Promise<()=>Prom
         const extra={...parameters.value.extra};delete extra.workspace_tool;parameters.value={...parameters.value,extra}
       }
       await refreshSessions(); await refreshResults()
-      if (confirmed.target === 'drama') await router.push(`/drama/${taskId}`)
+      // 短剧画布只改变进入项目时的视图，继续复用原项目及解析任务。
+      if (confirmed.target === 'drama') await router.push({path: `/drama/${taskId}`, query: dramaMode ? {mode: dramaMode} : {}})
       void account.refreshProfile().catch(() => {})
     } catch (cause) {
       error.value = message(cause)
@@ -752,9 +794,14 @@ export function useCreationWorkspace(options:{beforeSubmit?:()=>Promise<()=>Prom
       try{localStorage.removeItem('liv-workbench-guest-draft')}catch{/* 清理失败不影响真实账户登录。 */}
       const resume=(!draftOwner||draftOwner===owner)?pendingReferences:[]
       draftOwner=owner;pendingReferences=[]
-      await loadCatalog();await refreshSessions()
-      if(!previous&&typeof route.query.session==='string'&&!prompt.value.trim())await restore(route.query.session)
-      else for(const ref of resume){try{const item=await libraryService.detail(ref.item_id),version=item.versions.find(value=>value.id===ref.version_id);if(version&&auth.session.user?.id===owner)addReference({...ref,name:item.name,media_type:item.media_type,preview_url:libraryService.previewUrl(version.preview_url)})}catch{/* 失效素材不恢复为有效附件，历史任务仍保留。 */}}
+      if(!previous&&typeof route.query.session==='string'&&!prompt.value.trim()){
+        // 深链恢复自己会按真实会话入口加载目录；不先串行加载默认目录与会话列表，避免重复请求并阻塞画布。
+        await restore(route.query.session)
+        if(auth.session.user?.id===owner)try{await refreshSessions()}catch{if(!sessionError.value)error.value='会话列表暂时不可用，请稍后刷新。'}
+      }else{
+        await loadCatalog();await refreshSessions()
+        for(const ref of resume){try{const item=await libraryService.detail(ref.item_id),version=item.versions.find(value=>value.id===ref.version_id);if(version&&auth.session.user?.id===owner)addReference({...ref,name:item.name,media_type:item.media_type,preview_url:libraryService.previewUrl(version.preview_url)})}catch{/* 失效素材不恢复为有效附件，历史任务仍保留。 */}}
+      }
     }else await loadCatalog()
   })
   onBeforeUnmount(() => { disposed = true; creditHint.dispose(); uploads.value.forEach(item => { if(item.preview)URL.revokeObjectURL(item.preview) }); restoreController?.abort(); if (pollTimer) clearTimeout(pollTimer) })

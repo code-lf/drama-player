@@ -7,6 +7,58 @@ new Function('exports',ts.transpileModule(readFileSync('features/creation/canvas
 const {groupBounds,groupMembers,moveGroup,arrangeGroup}=module.exports
 const boxes=[{id:'a',x:10,y:20,width:280,height:300},{id:'b',x:450,y:100,width:480,height:240}]
 
+test('固定资产、分镜和成片按展开宽高避让，重复恢复不改已修复布局',()=>{
+  const {placeFixedDramaBlocks,PRODUCTION_GROUP_SIZE}=module.exports
+  const block=(id,x,y,width,height,sources=[])=>({id,x,y,width,height,sources,members:[{id,x,y,width,height}]})
+  const {width,height}=PRODUCTION_GROUP_SIZE
+  const blocks=[block('script',80,80,528,860),block('assets',200,80,width,height,['script']),
+    block('shots',430,80,width,height,['assets']),block('render',900,80,280,300,['shots'])]
+  const obstacles=[block('manual',710,150,280,300)]
+  const moved=placeFixedDramaBlocks(blocks,obstacles)
+  assert.deepEqual(Object.keys(moved),['assets','shots','render'])
+  assert.equal(moved.assets.x,1070)
+  assert.equal(moved.shots.x,1070+width+80)
+  assert.equal(moved.render.x,1070+2*(width+80))
+  const repaired=blocks.map(row=>moved[row.id]?{...row,...moved[row.id],members:row.members.map(member=>({...member,...moved[row.id]}))}:row)
+  assert.deepEqual(placeFixedDramaBlocks(repaired,obstacles),{})
+})
+
+test('资产组到每集分镜及成片只绘制一条真实来源线',()=>{
+  const edges=[['script','role'],['script','scene'],['role','shot1'],['scene','shot1'],['scene','shot2'],['shot1','final'],['shot2','final']]
+    .map(([source,target])=>({source,target,data:{lineage:true}}))
+  edges.push({source:'role',target:'fake',data:{lineage:false}})
+  const groups=[{id:'assets',members:['role','scene'],collapsed:true},{id:'shots',members:['shot1','shot2']}]
+  assert.deepEqual(module.exports.productionBoundaryLinks(edges,groups).map(({source,target})=>[source,target]),
+    [['script','assets'],['assets','shots'],['shots','final']])
+})
+
+test('同一项目的分镜按集固定归组，单镜头也保留分镜组',()=>{
+  const layout={}
+  const nodes=[1,1,2].map((episodeNo,index)=>({id:`shot:${index}`,data:{productionShot:{projectId:'p',episodeNo}}}))
+  assert.equal(module.exports.syncAssetDefinitionGroup(layout,nodes),true)
+  assert.deepEqual(layout.groups.map(group=>[group.title,group.members]),[['第 1 集 · 分镜',['shot:0','shot:1']],['第 2 集 · 分镜',['shot:2']]])
+  assert.equal(module.exports.syncAssetDefinitionGroup(layout,nodes),false)
+})
+
+test('真实资产设定进入同一组，重读不重复、解组不复活，不抢手工组成员',()=>{
+  const nodes=['role','scene','prop'].map((category,index)=>({id:`asset:${index}`,data:{productionAsset:{extractionId:'extract-one',category}}}))
+  const layout={groups:[{id:'group:manual',title:'人工分组',members:['asset:2']}],auto_group_keys:[]}
+  assert.equal(module.exports.syncAssetDefinitionGroup(layout,nodes),true)
+  assert.deepEqual(layout.groups[1].members,['asset:0','asset:1'])
+  assert.equal(module.exports.syncAssetDefinitionGroup(layout,nodes),false)
+  layout.groups=layout.groups.slice(0,1)
+  assert.equal(module.exports.syncAssetDefinitionGroup(layout,nodes),false)
+})
+
+test('折叠仅隐藏实际成员，保留原布局与真实业务身份',()=>{
+  const layout={groups:[{id:'group:a',members:['a','b'],collapsed:true},{id:'group:c',members:['c']}]}
+  const before=structuredClone(layout)
+  assert.deepEqual([...module.exports.collapsedGroupMembers(layout)],['a','b'])
+  assert.deepEqual(layout,before)
+  layout.groups[0].collapsed=false
+  assert.equal(module.exports.collapsedGroupMembers(layout).size,0)
+})
+
 test('拖出自动组保留另一成员且刷新不吸回，拖入目标后边界容纳完整节点',()=>{
   const {dropGroupMembers,syncAutomaticGroups}=module.exports
   const layout={groups:[{id:'group:auto-one',title:'分镜视频',members:['a','b']},{id:'group:target',title:'素材',members:['c']}]}

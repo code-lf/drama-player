@@ -6,7 +6,7 @@ import {parse,compileScript,compileTemplate} from 'vue/compiler-sfc'
 const read=file=>readFileSync(new URL('../'+file,import.meta.url),'utf8')
 test('等待公开结果时显示正在思考扫光，正文和终态停止，不展示内部推理',()=>{
   const filename='features/creation/components/CreationThinkingIndicator.vue',source=read(filename)
-  assert.match(source,/run.status==='planning' && !run.stream_text/)
+  assert.match(source,/run.status==='planning' && \(run.response_phase==='thinking'\|\|!run.stream_text\)/)
   assert.match(source,/&& !toolProcessing/)
   assert.match(source,/runProcessEvents\(props.run\)/)
   assert.match(source,/<span class="is-thinking">正在思考…<\/span>/)

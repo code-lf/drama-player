@@ -1014,7 +1014,9 @@ async function continueEntryCreation(): Promise<void> {
       query: {
         aspectRatio: selectedAspectRatio.value,
         style: effectiveVisualStyle.value,
-        entryIntent: selectedCreativeIntent.value
+        entryIntent: selectedCreativeIntent.value,
+        // 两个入口使用同一项目和原报价确认，模式仅传到详情视图。
+        mode: route.query.dramaMode === 'canvas' ? 'canvas' : undefined
       }
     })
   } catch (error) {
@@ -1044,7 +1046,7 @@ async function handleEntryPrimaryAction(): Promise<void> {
 async function openEntryProjectDraft(): Promise<void> {
   if (!entryProjectId.value) return
   isEntryFailureOpen.value = false
-  await router.push(`/drama/${entryProjectId.value}`)
+  await router.push({path: `/drama/${entryProjectId.value}`, query: route.query.dramaMode === 'canvas' ? {mode: 'canvas'} : {}})
 }
 
 

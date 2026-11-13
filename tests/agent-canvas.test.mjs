@@ -21,6 +21,121 @@ const resultCode=ts.transpileModule(readFileSync('features/creation/resultCatalo
 const {batchImageResults}=await import(`data:text/javascript;base64,${Buffer.from(resultCode).toString('base64')}`)
 const base=()=>({messages:[],runs:[],results:[],references:[],previews:{},tasks:{}})
 
+test('已保存的独立分镜在无正式项目时投影固定卡片，刷新保留镜头与组身份',async()=>{
+  const groupCode=ts.transpileModule(readFileSync('features/creation/canvasGroups.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ESNext}}).outputText
+  const {syncAssetDefinitionGroup}=await import(`data:text/javascript;base64,${Buffer.from(groupCode).toString('base64')}`)
+  const shots=Array.from({length:4},(_,i)=>({id:`s${i}`,title:`镜头 ${i+1}`,scene:'站台',visual:'雨水',camera:'固定近景',duration_ms:4000,reference_ids:[]}))
+  const run={id:'run',status:'replied',draft:{references:[]},card:{type:'reply',text:'分镜',storyboard:{id:'g1',title:'雨夜车站',skill_id:'drama-storyboard',source:{kind:'request',id:'run'},shots}}}
+  const layout=emptyCreativeLayout(),graph=projectCreativeGraph({...base(),runs:[run]},layout)
+  assert.deepEqual(graph.nodes.map(node=>node.id),shots.map(shot=>`standalone-shot:${shot.id}`))
+  assert.ok(graph.nodes.every(node=>!node.draggable&&node.data.standaloneShot&&!node.data.url&&!node.data.productionShot))
+  assert.deepEqual(graph.edges,[])
+  assert.ok(syncAssetDefinitionGroup(layout,graph.nodes))
+  assert.deepEqual(layout.groups.map(group=>[group.id,group.title,group.members.length]),[['group:auto-storyboard-g1','雨夜车站',4]])
+  const refreshed=projectCreativeGraph({...base(),runs:[structuredClone(run)]},layout)
+  assert.equal(syncAssetDefinitionGroup(layout,refreshed.nodes),false)
+  assert.deepEqual(refreshed.nodes,graph.nodes)
+  assert.deepEqual(projectCreativeGraph({...base(),runs:[{...run,status:'planning'}]}).nodes,[])
+})
+
+test('共享分镜仅在已绑定项目内投影，沿用镜头身份和真实预演图',()=>{
+  const productionShots=[{id:'shot',episode_no:2,shot_no:3,duration_sec:4,scene_description:'公交站',previsualization_url:'/shot.png'}]
+  assert.equal(projectCreativeGraph({...base(),productionShots}).nodes.length,0)
+  const graph=projectCreativeGraph({...base(),productionShots,productionWorkspace:{project_id:'project',assets:[]}})
+  const shot=graph.nodes.find(row=>row.id==='production-shot:shot')
+  assert.equal(shot.data.productionShot.rowId,'shot')
+  assert.equal(shot.data.productionShot.episodeNo,2)
+  assert.equal(shot.data.productionShot.projectId,'project')
+  assert.equal(shot.data.cover,'/shot.png')
+  assert.ok(graph.edges.some(edge=>edge.source==='production:project'&&edge.target===shot.id&&edge.data.lineage))
+})
+
+test('分镜保留选版视频，成片刷新按固定任务恢复且不伪造历史来源',()=>{
+  const productionShots=[{id:'shot',episode_no:1,shot_no:1,duration_sec:4,scene_description:'公交站',
+    previsualization_url:'/first.png',video_url:'/selected.mp4',video_mock:true}]
+  const productionEpisodes=[{id:'job',episode_no:1,cut_version:2,status:'completed',progress:100,
+    duration_ms:4000,output_url:'/episode.mp4',source_shot_ids:['shot']}]
+  const workspace={project_id:'project',assets:[]}
+  const graph=projectCreativeGraph({...base(),productionShots,productionEpisodes,productionWorkspace:workspace})
+  const shot=graph.nodes.find(row=>row.id==='production-shot:shot'),result=graph.nodes.find(row=>row.id==='production-episode:job')
+  assert.equal(shot.data.url,'/selected.mp4')
+  assert.equal(shot.data.productionShot.mockVideo,true)
+  assert.equal(result.data.url,'/episode.mp4')
+  assert.equal(result.data.readonly,true)
+  assert.ok(graph.edges.some(edge=>edge.source===shot.id&&edge.target===result.id&&edge.data.lineage))
+  productionEpisodes[0].source_shot_ids=[]
+  const next=projectCreativeGraph({...base(),productionShots,productionEpisodes,productionWorkspace:workspace})
+  assert.ok(next.nodes.some(row=>row.id===result.id))
+  assert.ok(!next.edges.some(edge=>edge.target===result.id))
+})
+
+test('直接导入的文稿接入生产图，镜头只连接服务端返回的同版本资产身份',()=>{
+  const scriptDocument={revision:1,document:{id:'doc',title:'剧本',source_text:'末班车',requirements:''}}
+  const productionWorkspace={project_id:'p',assets:[{id:'role',asset_type:'role',name:'乘客',versions:[]}]}
+  const productionShots=[{id:'s',episode_no:1,shot_no:1,duration_sec:4,source_profile_ids:['role','missing']}]
+  const input={...base(),scriptDocument,productionWorkspace,productionShots}
+  const first=projectCreativeGraph({...input,productionDocumentIsSource:true})
+  assert.ok(first.edges.some(edge=>edge.source==='script:doc'&&edge.target==='production:p'))
+  assert.deepEqual(first.edges.filter(edge=>edge.target==='production-shot:s').map(edge=>edge.source),['production-asset:role'])
+  assert.ok(!projectCreativeGraph(input).edges.some(edge=>edge.source==='script:doc'))
+})
+
+test('共享生产档案使用同一资产身份和当前选中版本，缺失选中版本不借用旧图',()=>{
+  const assets=[{id:'role-1',asset_type:'role',name:'阿远',selected_asset_id:'current',data:{appearance:'短发'},
+    versions:[{id:'old',image_url:'/old.png'},{id:'current',image_url:'/current.png'}],production_status:'locked'}]
+  const input={...base(),productionWorkspace:{project_id:'project',source_script_version:'v2',assets}}
+  const graph=projectCreativeGraph(input)
+  const asset=graph.nodes.find(node=>node.id==='production-asset:role-1')
+  assert.equal(asset.data.cover,'/current.png')
+  assert.equal(asset.data.productionAsset.profileId,'role-1')
+  assert.ok(graph.edges.some(edge=>edge.source==='production:project'&&edge.target===asset.id))
+  assets[0].selected_asset_id='missing'
+  assert.equal(projectCreativeGraph(input).nodes.find(node=>node.id===asset.id).data.cover,undefined)
+})
+
+test('未保存剧本没有假节点，已保存文稿保持稳定身份且原文不被布局覆盖',()=>{
+  assert.equal(projectCreativeGraph(base()).nodes.length,0)
+  const input={...base(),scriptDocument:{revision:3,session_id:'session',document:{id:'doc',title:'我的剧本',source_text:'原文\n对白',requirements:'16:9'}}}
+  const layout=emptyCreativeLayout();layout.overrides={'script:doc':{title:'伪标题',prompt:'覆盖剧情'}}
+  const node=projectCreativeGraph(input,layout).nodes[0]
+  assert.equal(node.id,'script:doc');assert.equal(node.data.prompt,'原文\n对白');assert.equal(node.data.scriptDocument.requirements,'16:9')
+  assert.equal(node.data.readonly,true)
+})
+
+test('资产索引仅按匹配的已保存剧本投影，原文出处与补充建议分开，不显示生图完成',()=>{
+  const scriptDocument={revision:1,session_id:'session',document:{id:'doc',title:'剧本',source_text:'阿远在站台。',requirements:''}}
+  const assetExtraction={id:'extract',document_id:'doc',document_revision:1,status:'succeeded',assets:[{id:'asset-one',key:'a',category:'role',name:'阿远',evidence:[{quote:'阿远在站台',fact:'在站台等候'}],design_suggestions:['可考虑深色外套']}]}
+  const graph=projectCreativeGraph({...base(),scriptDocument,assetExtraction})
+  const node=graph.nodes.find(node=>node.id==='asset:asset-one')
+  assert.ok(node);assert.equal(node.data.kind,'text');assert.equal(node.data.url,undefined)
+  assert.match(node.data.prompt,/出处：「阿远在站台」/);assert.match(node.data.prompt,/非原文事实/)
+  assert.ok(graph.edges.some(edge=>edge.source==='script:doc'&&edge.target===node.id))
+  for(const changed of [{...assetExtraction,status:'running'},{...assetExtraction,document_revision:2}]){
+    assert.equal(projectCreativeGraph({...base(),scriptDocument,assetExtraction:changed}).nodes.length,1)
+  }
+})
+
+test('独立画布素材使用固定身份恢复，失效时不沿用旧预览地址',()=>{
+  const layout=emptyCreativeLayout();layout.asset_references=[{item_id:'item',version_id:'version'}]
+  const available=projectCreativeGraph({...base(),canvasAssets:[{item_id:'item',version_id:'version',available:true,name:'窗帘',media_type:'image',preview_url:'/fresh'}]},layout)
+  assert.equal(available.nodes[0].data.url,'/fresh');assert.equal(available.nodes[0].data.status,'reference')
+  const revoked=projectCreativeGraph({...base(),canvasAssets:[{item_id:'item',version_id:'version',available:false}]},layout)
+  assert.equal(revoked.nodes[0].id,'reference:version');assert.equal(revoked.nodes[0].data.status,'unavailable');assert.equal(revoked.nodes[0].data.url,'')
+  assert.equal(base().references.length,0)
+})
+
+test('画布素材同时存在聊天与运行引用时，仍以最新授权结果覆盖旧预览',()=>{
+  const layout=emptyCreativeLayout();layout.asset_references=[{item_id:'item',version_id:'version'}]
+  const ref={item_id:'item',version_id:'version',purpose:'reference',name:'旧名称',media_type:'image',preview_url:'/expired'}
+  const run={id:'run',status:'replied',draft:{parameters:{},references:[ref]}}
+  const input={...base(),references:[ref],runs:[run],canvasAssets:[{item_id:'item',version_id:'version',available:false}]}
+  const node=projectCreativeGraph(input,layout).nodes.find(row=>row.id==='reference:version')
+  assert.equal(node.data.status,'unavailable');assert.equal(node.data.url,'');assert.equal(node.data.reference.preview_url,'')
+  input.canvasAssets=[{item_id:'item',version_id:'version',available:true,name:'新名称',media_type:'image',preview_url:'/fresh'}]
+  const updated=projectCreativeGraph(input,layout).nodes.find(row=>row.id==='reference:version')
+  assert.equal(updated.data.url,'/fresh');assert.equal(updated.data.title,'新名称')
+})
+
 test('取消未提交媒体方案隐藏画布节点，不隐藏已经提交的批次',()=>{
   const run={id:'stopped',status:'cancelled',draft:{parameters:{},references:[]},creative_plan:{status:'draft',selected_ids:['v'],items:[{id:'v',title:'视频',prompt:'杯子',parameters:{},references:[]}]}}
   assert.ok(!projectCreativeGraph({...base(),runs:[run]}).nodes.some(node=>node.data.runId==='stopped'))

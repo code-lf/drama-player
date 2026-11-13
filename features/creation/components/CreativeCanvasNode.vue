@@ -2,7 +2,9 @@
 import {Handle,Position} from '@vue-flow/core'
 import {computed,onBeforeUnmount,onMounted,ref,watch} from 'vue'
 import type {CreativeNodeData} from '../agentCanvas'
-import MusicPlayer from '../../music/components/MusicPlayer.vue'
+import {defineWorkspaceComponent} from '~/features/dashboard/asyncWorkspace'
+// 音频节点出现时才加载播放器，图片和视频画布不为未使用的音频能力付首屏成本。
+const MusicPlayer=defineWorkspaceComponent(()=>import('../../music/components/MusicPlayer.vue'))
 const props=defineProps<{id:string;data:CreativeNodeData;selected?:boolean;playbackEnabled?:boolean;busy?:boolean;editing?:boolean;creationItems?:Array<{label:string;icon?:string;disabled?:boolean;description?:string;onSelect:()=>unknown}>}>()
 const emit=defineEmits<{uploadAudio:[file:File];tools:[id:string];focus:[id:string];toggleSelection:[id:string,event:MouseEvent];retry:[id:string];refreshFile:[id:string]}>()
 // 菜单展开后保持加号可见，鼠标移入传送层不会让触发入口消失；键盘/触屏使用同一菜单。
@@ -47,11 +49,11 @@ function fileFailed(event:Event){if(event.target!==imageElement.value&&event.tar
 /** 重新加载只重建同一媒体文件的播放器，不发送需求、创建任务或扣点。 */
 function retryFile(){pauseMedia();failed.value=false;ratio.value=1;reload.value++;emit('refreshFile',props.id)}
 const isDocument=computed(()=>props.data.reference?.media_type==='document')
-const icon=computed(()=>isDocument.value?'i-lucide-file-text':({text:'i-lucide-type',image:'i-lucide-image',video:'i-lucide-film',audio:'i-lucide-music',compose:'i-lucide-clapperboard'}[props.data.kind]))
+const icon=computed(()=>isDocument.value||props.data.scriptDocument?'i-lucide-file-text':({text:'i-lucide-type',image:'i-lucide-image',video:'i-lucide-film',audio:'i-lucide-music',compose:'i-lucide-clapperboard'}[props.data.kind]))
 const pending=computed(()=>['planning','queued','pending','submitting','running','rendering','in_progress','processing','result_pending'].includes(props.data.status))
 // 待确认是已经存在的方案，不计入生成中；动画仅提示等待用户确认。
 const awaitingConfirmation=computed(()=>props.data.status==='ready'&&props.data.kind!=='text'&&!props.data.url)
-const status=computed(()=>props.data.inherited?'原片 · 待重新生成':props.data.phase==='planning'&&props.data.status==='failed'?'整理未完成':props.data.phase==='planning'&&props.data.status==='cancelled'?'已停止整理':props.data.phase==='composition'&&props.data.status==='failed'?'合成失败':({ready:'待确认',replied:'已回复',draft:'草案',waiting:'等待补充',planning:'正在整理',queued:'排队中',pending:'排队中',submitting:'正在提交',running:'生成中',rendering:'合成中',in_progress:'生成中',processing:'生成中',result_pending:'正在读取结果',result_error:'结果待核对',succeeded:'已完成',completed:'已完成',failed:'生成失败',needs_review:'待核对',status_unavailable:'状态待同步',reference:'参考素材',unavailable:'素材不可用',cancelled:'已停止'}[props.data.status]||'待核对'))
+const status=computed(()=>props.data.productionAsset?'设定已提取':props.data.inherited?'原片 · 待重新生成':props.data.phase==='planning'&&props.data.status==='failed'?'整理未完成':props.data.phase==='planning'&&props.data.status==='cancelled'?'已停止整理':props.data.phase==='composition'&&props.data.status==='failed'?'合成失败':({ready:'待确认',replied:'已回复',draft:'草案',waiting:'等待补充',planning:'正在整理',queued:'排队中',pending:'排队中',submitting:'正在提交',running:'生成中',rendering:'合成中',in_progress:'生成中',processing:'生成中',result_pending:'正在读取结果',result_error:'结果待核对',succeeded:'已完成',completed:'已完成',failed:'生成失败',needs_review:'待核对',status_unavailable:'状态待同步',reference:'参考素材',unavailable:'素材不可用',cancelled:'已停止'}[props.data.status]||'待核对'))
 /** 只使用文件元数据决定展示比例，不把规划画幅当成真实结果尺寸。 */
 function imageMetadata(event:Event){
   const image=event.target as HTMLImageElement
@@ -84,8 +86,8 @@ function protectInlineControls(event:Event){
 }
 </script>
 <template>
-  <article class="creative-node" :class="{'is-selected':selected,'is-pending':pending,'is-creation-hovered':creationHovered,'is-editing':editing}" :aria-label="`${data.title} · ${status}`" @click.capture="modifierClick" @dblclick="doubleClick" @pointerenter="enterCreationRegion" @pointerleave="leaveCreationRegion" @pointermove="moveCreationEntry">
-    <header v-if="data.kind!=='audio'||!data.url||failed" class="creative-node-heading"><UIcon :name="icon"/><span class="creative-node-title" :title="data.title">{{data.title}}</span><span v-if="dimensions&&!failed" class="creative-node-dimensions">{{dimensions}}</span><span v-else-if="!data.url||failed" class="creative-node-state">{{status}}</span></header>
+  <article class="creative-node" :class="{'is-selected':selected,'is-pending':pending,'is-creation-hovered':creationHovered,'is-editing':editing,'is-script-document':!!data.scriptDocument}" :aria-label="`${data.title} · ${data.scriptDocument?'剧本已保存':status}`" @click.capture="modifierClick" @dblclick="doubleClick" @pointerenter="enterCreationRegion" @pointerleave="leaveCreationRegion" @pointermove="moveCreationEntry">
+    <header v-if="!data.scriptDocument&&(data.kind!=='audio'||!data.url||failed)" class="creative-node-heading"><UIcon :name="icon"/><span class="creative-node-title" :title="data.title">{{data.title}}</span><span v-if="dimensions&&!failed" class="creative-node-dimensions">{{dimensions}}</span><span v-else-if="!data.url||failed" class="creative-node-state">{{status}}</span></header>
     <Handle type="target" :position="Position.Left" :is-connectable="!!data.manual"/>
     <div class="creative-node-body" :class="{'is-text':data.kind==='text','is-audio':data.kind==='audio'&&!!data.url&&!failed}">
       <!-- 图片普通预览仍由Vue Flow拖动整个节点；批注/裁剪等实际控件由内联编辑器自行隔离。 -->
@@ -97,6 +99,11 @@ function protectInlineControls(event:Event){
         <small v-if="data.status==='failed'" :title="data.detail">生成失败 · 可上传新音频</small>
       </div>
       <div v-else-if="isDocument" class="creative-node-placeholder"><UIcon :name="icon"/><span>{{data.status==='unavailable'?'文档不可用':data.detail}}</span><span v-if="data.reference?.start!=null&&data.reference?.end!=null">已选 {{data.reference.end-data.reference.start}} 字原文</span></div>
+      <section v-else-if="data.scriptDocument" class="creative-script-preview nowheel" aria-label="剧本原文预览">
+        <header><h2>我的剧本</h2></header>
+        <div class="creative-script-excerpt"><p class="creative-node-text">{{data.prompt}}</p></div>
+        <footer><slot name="script-view"/></footer>
+      </section>
       <p v-else-if="data.kind==='text'" class="creative-node-text" :class="{'is-placeholder':!data.prompt?.trim()}">{{data.prompt?.trim()?data.prompt:'选择节点，填写文本内容'}}</p>
       <img v-else-if="data.kind==='image'&&data.url&&!failed" :key="reload" ref="imageElement" :src="data.url" :alt="data.title" draggable="false" @load="imageMetadata" @error="fileFailed"/>
       <video v-else-if="(data.kind==='video'||data.kind==='compose')&&data.url&&!failed" :key="reload" ref="mediaElement" :class="canPlay?'nodrag nopan nowheel':'creative-static-video'" :src="data.url" :poster="data.cover" :style="{aspectRatio:ratio}" :controls="canPlay" :muted="!canPlay" playsinline preload="metadata" @play="played" @loadedmetadata="metadata" @error="fileFailed"/>
@@ -106,6 +113,7 @@ function protectInlineControls(event:Event){
       <!-- 文本节点也需要展示真实整理错误，不能只让媒体占位分支显示失败原因。 -->
       <p v-if="data.kind==='text'&&!isDocument&&['failed','needs_review','status_unavailable','result_error'].includes(data.status)&&data.detail" class="creative-node-detail" role="status">{{data.detail}}</p>
     </div>
+    <slot name="document-actions"/>
     <Handle type="source" :position="Position.Right"/>
     <!-- 加号与拖线端口分开：保留原端口连线能力，点击菜单只创建相连草案，不执行采购。 -->
     <div v-if="creationItems?.length" class="creative-node-create nodrag nopan" :class="{'is-open':creationOpen}" @pointerdown.stop @click.stop>

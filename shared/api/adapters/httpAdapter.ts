@@ -30,6 +30,9 @@ import type {
   StoryboardContinuationPolicy,
   StoryboardContinuityState,
   StoryboardDirectorSegment,
+  StoryboardMediaSampleEstimate,
+  StoryboardMediaSampleKind,
+  StoryboardMediaSampleReceipt,
   StoryboardMicroEdit,
   StoryboardMicroEditEstimate,
   StoryboardMicroEditReference,
@@ -208,6 +211,7 @@ interface BackendStoryboardRow {
   risk_reasons?: string[]
   previsualization_status?: string
   previsualization_url?: string
+  previsualization_mock?: boolean
   audio_intent?: BackendStoryboardAudioIntent
   director_segments?: BackendStoryboardDirectorSegment[]
   selected_take_id?: string
@@ -1036,6 +1040,7 @@ interface BackendStoryboardVideoBatchResponse {
 
 interface BackendStoryboardWorkspaceResponse {
   project_id: string
+  media_execution_mode?: 'live' | 'mock'
   episode_no: number
   source_title: string
   source_summary: string
@@ -1887,6 +1892,7 @@ function mapStoryboardRows(projectId: string, nodeId: string, rows: BackendStory
     riskReasons: row.risk_reasons || [],
     previsualizationStatus: row.previsualization_status || 'not_required',
     previsualizationUrl: row.previsualization_url || '',
+    previsualizationMock: Boolean(row.previsualization_mock),
     audioIntent: {
       speakers: row.audio_intent?.speakers || [],
       dialogueLines: (row.audio_intent?.dialogue_lines || []).map(item => ({
@@ -1957,6 +1963,7 @@ function mapStoryboardWorkspace(raw: BackendStoryboardWorkspaceResponse): Storyb
   const latestBatch = raw.latest_batch || {}
   return {
     projectId: raw.project_id,
+    mediaExecutionMode: raw.media_execution_mode || 'live',
     episodeNo: Number(raw.episode_no || 1),
     sourceTitle: raw.source_title || '',
     sourceSummary: raw.source_summary || '',
@@ -3521,16 +3528,18 @@ export const httpAdapter: ApiAdapter = {
     return ok(response)
   },
 
-  async estimateDramaAssetGeneration(projectId: string, targets: string[]) {
+  async estimateDramaAssetGeneration(projectId: string, targets: string[], retryFailed = false) {
     const response = await request<DramaAssetGenerationEstimate>(`/drama/projects/${projectId}/assets/generation/estimate`, {
-      method: 'POST', body: { targets },
+      method: 'POST', body: { targets, ...(retryFailed ? { retry_failed: true } : {}) },
     })
     return ok(response)
   },
 
-  async generateDramaWorkspaceAssets(projectId: string, targets: string[], overwrite = false, compileHashes: Record<string, string> = {}, retryFailed = false) {
+  async generateDramaWorkspaceAssets(projectId: string, targets: string[], overwrite = false, compileHashes: Record<string, string> = {}, retryFailed = false, fixtureToken?: string) {
     const response = await request<DramaAssetGenerationRun>(`/drama/projects/${projectId}/assets/generate`, {
-      method: 'POST', body: { targets, overwrite, compile_hashes: compileHashes, retry_failed: retryFailed },
+      // 普通真实任务保持原请求，测试稿必须回传估价时的确认凭据。
+      method: 'POST', body: { targets, overwrite, compile_hashes: compileHashes, retry_failed: retryFailed,
+        ...(fixtureToken ? { fixture_token: fixtureToken } : {}) },
     })
     return ok(response)
   },
@@ -4080,6 +4089,19 @@ export const httpAdapter: ApiAdapter = {
       method: 'POST'
     })
     return ok(mapStoryboardWorkspace(response))
+  },
+
+  async estimateStoryboardMediaSample(projectId: string, kind: StoryboardMediaSampleKind, episodeNo: number, rowIds: string[]) {
+    return ok(await request<StoryboardMediaSampleEstimate>(`/drama/projects/${projectId}/storyboard-media-samples/${kind}/estimate`, {
+      method: 'POST', body: { episode_no: episodeNo, row_ids: rowIds },
+    }))
+  },
+
+  async confirmStoryboardMediaSample(projectId: string, estimate: StoryboardMediaSampleEstimate) {
+    // 不重新拼装确认参数；原样提交服务端刚返回的固定镜头快照。
+    return ok(await request<StoryboardMediaSampleReceipt>(`/drama/projects/${projectId}/storyboard-media-samples/${estimate.kind}/confirm`, {
+      method: 'POST', body: estimate.command,
+    }))
   },
 
   async uploadStoryboardFrameReference(projectId: string, rowId: string, slot: 'first' | 'last', file: File) {

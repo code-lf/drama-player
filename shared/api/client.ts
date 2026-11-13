@@ -1,17 +1,17 @@
 import { useRuntimeConfig } from '#imports'
 import { httpAdapter } from '~/shared/api/adapters/httpAdapter'
-import { mockAdapter } from '~/shared/api/adapters/mockAdapter'
 import { ApiClientError } from '~/shared/api/errors'
 import type { ApiAdapter, ApiResponse } from '~/shared/api/types'
 
 const failureCounter = new Map<string, number>()
 
-function pickAdapter(): ApiAdapter {
+async function pickAdapter(): Promise<ApiAdapter> {
   const config = useRuntimeConfig()
 
   // 适配器切换只依赖 runtime config，页面层不关心 mock / real 的差异。
   if (config.public.apiAdapter === 'mock') {
-    return mockAdapter
+    // 前端模拟适配器仅在显式配置 mock 时下载；后端媒体 mock 与此配置无关。
+    return (await import('~/shared/api/adapters/mockAdapter')).mockAdapter
   }
 
   return httpAdapter
@@ -106,7 +106,7 @@ export function getApiErrorMessage(error: unknown, fallback = '操作失败，�
 }
 
 export async function callApi<T>(endpoint: string, task: (adapter: ApiAdapter) => Promise<ApiResponse<T>>): Promise<T> {
-  const adapter = pickAdapter()
+  const adapter = await pickAdapter()
 
   try {
     const response = await task(adapter)

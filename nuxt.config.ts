@@ -29,6 +29,8 @@ const devAllowedHosts = (process.env.NUXT_DEV_ALLOWED_HOSTS || '7f40049f.r33.cpo
   .filter(Boolean)
 
 export default defineNuxtConfig({
+  // 不同本地实例使用独立buildDir；其他实例的生成文件不能重新进入页面/组件扫描。
+  ignore: ['**/.nuxt*/**', '**/.output/**'],
   // Nuxt UI v4 需要 Nuxt 4，但现有项目仍采用 Nuxt 3 的根目录结构。
   // 显式保留 Nuxt 3 目录约定，避免 Nuxt 4 默认从 app/ 目录读取并退回欢迎页。
   future: {

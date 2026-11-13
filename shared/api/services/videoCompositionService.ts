@@ -1,5 +1,6 @@
 import {request} from '~/shared/api/adapters/httpAdapter'
 import type {LibraryReference} from '~/entities/library/types'
+import type {EditingDraft} from '~/features/editing/types'
 
 /** 用户明确选择的独立旁白/BGM；不携带URL，不触发音频生成。 */
 export interface CompositionAudioTrack {
@@ -20,7 +21,7 @@ export interface CompositionPlan {
   audio_tracks?:CompositionAudioTrack[]
 }
 export interface CompositionJob {
-  id:string;status:'queued'|'rendering'|'succeeded'|'failed';attempt:number;plan:CompositionPlan
+  id:string;status:'queued'|'rendering'|'succeeded'|'failed';attempt:number;plan:CompositionPlan|EditingDraft
   error_message:string;required_credits:number
   output:{public_url?:string;duration_ms?:number;frame_count?:number;size_bytes?:number;mime_type?:string}
 }

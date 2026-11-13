@@ -7,7 +7,16 @@ test('资产入口与实际卡片共用网格行高，音色横向列表不受�
  const asset=read('features/library/components/AssetLibraryPanel.vue')
  assert.ok(asset.includes('.asset-list:not(.voices){align-items:stretch}'))
  assert.match(asset,/\.asset-list:not\(\.voices\)>\.upload-card\{aspect-ratio:auto;align-self:stretch/)
- assert.ok(asset.includes('>.asset-card>img{display:block;flex-shrink:0}'))
+ assert.ok(asset.includes('>.asset-card>.asset-visual{flex-shrink:0}'))
+ assert.match(asset,/\.asset-visual>img\{display:block;width:100%;aspect-ratio:4\/3/)
+})
+test('画布放置使用封面蒙层和授权图片预览，其他选择入口不变',()=>{
+ const asset=read('features/library/components/AssetLibraryPanel.vue')
+ assert.match(asset,/v-if="canvasPlacement&&\['image','video','audio'\]/)
+ assert.match(asset,/<UTooltip v-if="item\.media_type==='image'/)
+ assert.match(asset,/class="asset-canvas-overlay"[^>]*@click\.stop="emit\('placeCanvas',item\)"/)
+ assert.match(asset,/asset-canvas-overlay:focus-visible/)
+ assert.match(asset,/@media \(hover:none\)/)
 })
 test('技能菜单加宽20像素，四行高度固定且列表内滚动',()=>{
  const tokens=read('assets/css/tokens.css'),composer=read('features/creation/components/CreationComposer.vue')

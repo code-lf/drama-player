@@ -9,6 +9,14 @@ const require=createRequire(import.meta.url),vueRequire=createRequire(require.re
 const {parse,compileScript}=vueRequire('@vue/compiler-sfc')
 const source=readFileSync(new URL('../features/projects/components/ProjectDirectoryPanel.vue',import.meta.url),'utf8')
 
+test('批量选择白色主题与状态避让局限项目目录，不影响业务状态',()=>{
+  // 静态回归只守样式合同，真实位置与计算颜色另外通过浏览器验收。
+  assert.match(source,/data-batch-selecting=true\] \.project-card__cover>\.project-status\{left:12px;right:auto/)
+  assert.match(source,/border:1px solid var\(--liv-project-selection-color\)/)
+  assert.match(source,/data-state=checked/)
+  assert.match(source,/color:var\(--liv-project-selection-check\)/)
+})
+
 /** 内存宿主只验证 Vue 生命周期、模板分支和事件，不提供浏览器尺寸或 CSS 计算。 */
 function hostRenderer(){
   const node=(tag,text='')=>({tag,text,props:{},children:[],parent:null,style:{}})
@@ -235,7 +243,8 @@ async function mountUnified({list=async()=>({items:[card('drama:one',{projectId:
     if(name.endsWith('/LivButton.vue'))return {default:passthrough}
     if(name==='./ProjectDirectoryPanel.vue')return {default:panelStub}
     if(name==='./ProjectTrashPanel.vue')return {default:passthrough}
-    if(name==='~/composables/useProjectRecycleBin')return {useProjectRecycleBin:()=>({remove:async item=>{deletes.push([item.projectId]);return remove([item.projectId])}})}
+    // 控制器已统一汇总通知；测试替身补齐通知方法，不改变删除服务的真实断言。
+    if(name==='~/composables/useProjectRecycleBin')return {useProjectRecycleBin:()=>({notifyRemoved:()=>{},remove:async item=>{deletes.push([item.projectId]);return remove([item.projectId])}})}
     if(name==='~/shared/api/services/creationProjectService')return {creationProjectService:{list:async(...args)=>{calls.push(args);return list(...args)}}}
     if(name==='~/shared/api/services/dramaService')return {dramaService:{deleteProject:async id=>{deletes.push([id]);return remove([id])},batchDeleteProjects:async ids=>{deletes.push(ids);return remove(ids)}}}
     if(name==='../types')return {projectDestination:item=>item.sessions.length?`/dashboard?session=${item.sessions[0].id}`:`/drama/${item.projectId}?from=dashboard-projects`}

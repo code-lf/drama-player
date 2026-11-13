@@ -4,7 +4,7 @@ import {creationService,type ImageCreativePlan,type CreationRun} from '~/shared/
 import CreationResultCard from './CreationResultCard.vue'
 import CreationConfirmationCard from './CreationConfirmationCard.vue'
 import {batchImageResults} from '../resultCatalog'
-import {imagePlanNeedsPolling} from '../imagePlanState'
+import {imagePlanNeedsPolling,imagePlanDeliveryLabel} from '../imagePlanState'
 import type {WorkspacePreview} from '../types'
 /** 对话只显示逐张名称/规格与画布入口，完整画面内容在对应节点统一输入区查看。 */
 const props=defineProps<{runId:string;resultTarget?:string;plan:ImageCreativePlan;referencePreviews?:Record<string,WorkspacePreview>;busy?:boolean;readonly?:boolean;history?:boolean;quickQuote?:boolean;draftDirty?:boolean;beforeCommand?:()=>Promise<boolean>}>()
@@ -14,6 +14,8 @@ const local=ref(props.plan),selected=ref([...props.plan.selected_ids]),working=r
 let alive=true,epoch=0,timer:ReturnType<typeof setInterval>|undefined,receipt:{key:string;id:string}|null=null
 const rootElement=ref<HTMLElement|null>(null),visible=ref(!props.history)
 let statusTimer:ReturnType<typeof setTimeout>|undefined,statusReading=false,observer:IntersectionObserver|undefined
+// 每份过期报价只自动更新一次，网络故障不得形成后台无限重试或任何生成授权。
+const refreshedQuotes=new Set<string>()
 let confirmationReceipt:{key:string;prepared:boolean;command:{expected_revision:number;quote_id:string;request_id:string}}|null=null
 // 首次报价由后端随规划交付；挂载/刷新只读取，不能再由页面重复发起报价。
 const dirty=computed(()=>JSON.stringify(local.value.items.filter(item=>selected.value.includes(item.id)).map(item=>item.id))!==JSON.stringify(local.value.selected_ids))
@@ -23,7 +25,8 @@ const pendingCommand=computed(()=>{const pending=local.value.flow_runtime?.pendi
 const locked=computed(()=>!!props.readonly||!!props.busy||working.value||conflict.value||!!pendingCommand.value||local.value.status!=='draft')
 const confirmable=computed(()=>!locked.value&&!dirty.value&&!props.draftDirty&&local.value.batch_supported&&quote.value?.sufficient&&!expired.value&&quote.value.plan_revision===local.value.revision&&JSON.stringify(quote.value.item_ids)===JSON.stringify(local.value.selected_ids))
 const completedResults=computed(()=>batchImageResults([{id:props.runId,image_plan:local.value}]))
-const showingConfirmation=computed(()=>!props.readonly&&local.value.status==='draft'&&!local.value.batch&&!!quote.value&&!expired.value&&local.value.batch_supported)
+// 报价过期仍留在最终确认卡；更新只取价格，不进入准备或生成提交。
+const showingConfirmation=computed(()=>!props.readonly&&local.value.status==='draft'&&!local.value.batch&&!pendingCommand.value&&!!quote.value&&local.value.batch_supported)
 const confirmationRequests=computed(()=>local.value.items.filter(item=>selected.value.includes(item.id)).map(item=>({id:item.id,model:item.parameters.model||'图片',spec:[item.parameters.aspectRatio,item.parameters.resolution,item.parameters.quality].filter(Boolean).join(' · ')})))
 /** 稍等通过服务端取消原运行，只隐藏尚未提交方案，不撤销已有任务。 */
 async function stopBatch(){
@@ -71,16 +74,19 @@ async function openRetry(itemId:string){
 function restore(plan:ImageCreativePlan){local.value=plan;selected.value=[...plan.selected_ids];conflict.value=false;error.value='';receipt=null}
 watch(()=>props.plan,plan=>{
   if(plan.revision===local.value.revision&&plan.quote?.id===local.value.quote?.id&&plan.status===local.value.status&&plan.quote_delivery===local.value.quote_delivery&&plan.quote_error===local.value.quote_error&&JSON.stringify(plan.batch)===JSON.stringify(local.value.batch)&&JSON.stringify(plan.flow_runtime)===JSON.stringify(local.value.flow_runtime))return
-  if(dirty.value||working.value){conflict.value=true;error.value='图片计划已更新，本机选择保留，请读取最新计划核对。'}
+  // 写操作自行核对响应身份、报价与修订；父级回填自己的操作不制造第二个冲突。
+  if(working.value)return
+  if(dirty.value){conflict.value=true;error.value='图片计划已更新，本机选择保留，请读取最新计划核对。'}
   else restore(plan)
 })
 onMounted(()=>{
-  timer=setInterval(()=>{now.value=Date.now()},1000)
+  timer=setInterval(()=>{now.value=Date.now();void refreshExpiredQuote()},1000)
   // 历史长会话只读取视口附近的活动卡；隐藏标签页不发请求。
   if(props.history&&rootElement.value&&typeof IntersectionObserver!=='undefined'){
     observer=new IntersectionObserver(entries=>{visible.value=!!entries[0]?.isIntersecting},{rootMargin:'200px'});observer.observe(rootElement.value)
   }else visible.value=true
   scheduleStatus()
+  void refreshExpiredQuote()
 })
 onBeforeUnmount(()=>{alive=false;epoch++;clearInterval(timer);clearTimeout(statusTimer);observer?.disconnect()})
 /** 轮询仅GET已有任务；写操作/本机改稿期间不覆盖草稿，旧会话迟到响应作废。 */
@@ -100,6 +106,14 @@ async function pollStatus(){
   finally{statusReading=false;scheduleStatus()}
 }
 watch(()=>[local.value.batch,local.value.quote_delivery],()=>scheduleStatus())
+/** 可见且未改稿的待确认卡自动续价；历史、在途原命令、冲突和用户编辑均不得触发。 */
+async function refreshExpiredQuote(){
+  if(!alive||!visible.value||!showingConfirmation.value||!expired.value||locked.value||dirty.value||props.draftDirty||(typeof document!=='undefined'&&document.hidden))return
+  const key=JSON.stringify([props.runId,local.value.revision,quote.value?.id])
+  if(refreshedQuotes.has(key))return
+  refreshedQuotes.add(key)
+  await command('quote')
+}
 /** 勾选只更新本机意图，不减少总需求、不扣点；保存成功才改变服务端本次选择。 */
 function choose(id:string,checked:boolean){if(locked.value)return;selected.value=local.value.items.filter(item=>item.id===id?checked:selected.value.includes(item.id)).map(item=>item.id)}
 async function command(action:'save'|'quote'){
@@ -111,7 +125,8 @@ async function command(action:'save'|'quote'){
     if(!alive||current!==epoch)return
     if(conflict.value||props.plan.revision!==revision||props.plan.quote?.id!==originalQuote)throw new Error('图片计划已变化，请先核对最新方案。')
     const ids=local.value.items.filter(item=>selected.value.includes(item.id)).map(item=>item.id)
-    const key=JSON.stringify([action,local.value.revision,ids])
+    // 已成功的旧报价过期后使用新身份；同一次断网重试仍复用请求号。
+    const key=JSON.stringify([action,local.value.revision,ids,...(action==='quote'?[local.value.quote?.id??null]:[])])
     if(!receipt||receipt.key!==key)receipt={key,id:crypto.randomUUID()}
     const base={expected_revision:local.value.revision,request_id:receipt.id}
     const plan=action==='save'?await creationService.saveImagePlan(id,{...base,selected_ids:ids,items:[]}):await creationService.quoteImagePlan(id,base)
@@ -200,7 +215,7 @@ async function reload(){
     </div>
     <template v-if="local.batch">
       <!-- 提交后是独立媒体任务，保留真实加载状态；不因对话结束或停止把它画成已完成。 -->
-      <p role="status" class="creation-image-delivery"><UIcon :name="imagePlanNeedsPolling(local)?'i-lucide-loader-circle':local.batch.failed||local.batch.unknown?'i-lucide-circle-alert':'i-lucide-check-circle-2'" :class="{'image-delivery-spin':imagePlanNeedsPolling(local)}"/><span>{{imagePlanNeedsPolling(local)?'正在处理图片任务':local.batch.completed===local.batch.selected_count?'图片已生成':'图片任务结果'}}（{{local.batch.completed??0}}/{{local.batch.selected_count??local.batch.items.length}}）</span></p>
+      <p role="status" class="creation-image-delivery"><UIcon :name="imagePlanNeedsPolling(local)?'i-lucide-loader-circle':local.batch.failed||local.batch.unknown?'i-lucide-circle-alert':'i-lucide-check-circle-2'" :class="{'image-delivery-spin':imagePlanNeedsPolling(local)}"/><span>{{imagePlanDeliveryLabel(local)}}（{{local.batch.completed??0}}/{{local.batch.selected_count??local.batch.items.length}}）</span></p>
       <p v-if="local.batch.items.length&&local.batch.items.every(item=>item.mock)" class="text-muted text-sm">开发 mock：使用已有样本，不调用生图供应商、不收取媒体积分。</p>
       <p v-if="local.batch.unknown" class="text-muted text-sm">{{local.batch.unknown}} 张提交状态待核对，不会自动重复提交。</p>
       <UButton v-if="local.batch.items.some(item=>['unknown','result_error'].includes(item.delivery_status))" class="creation-image-plan-action" icon="i-lucide-refresh-cw" color="neutral" variant="soft" :loading="working" @click="reload">重新读取原任务</UButton>
@@ -213,10 +228,10 @@ async function reload(){
     <p v-if="local.quote_delivery==='pending'&&!quote&&!dirty&&!draftDirty" role="status">正在准备费用确认…</p>
     <UButton v-if="pendingCommand" color="neutral" variant="outline" :loading="working" :disabled="working||busy||draftDirty||dirty" @click="resumePending">恢复原{{pendingCommand.action==='confirm'?'提交':'准备'}}状态</UButton>
     <UButton v-if="conflict" color="neutral" variant="outline" :disabled="working" @click="reload">放弃本机选择，读取最新计划</UButton>
-    <CreationConfirmationCard v-if="showingConfirmation" model="" spec="" target="image" :requests="confirmationRequests" :credits="quote!.total_credits" has-quote :sufficient="!!quote!.sufficient" :quoting="false" :busy="working||!!busy||!confirmable" @confirm="confirmBatch" @cancel="stopBatch" @inspect="emit('open',$event)"/>
-    <div v-else-if="!readonly&&local.status==='draft'&&(local.quote_delivery!=='pending'||dirty||draftDirty)" class="liv-plan-actions">
+    <CreationConfirmationCard v-if="showingConfirmation" model="" spec="" target="image" :requests="confirmationRequests" :credits="quote!.total_credits" has-quote :sufficient="!!quote!.sufficient" :quoting="false" :quote-expired="expired" :busy="working||!!busy" :confirmation-disabled="!confirmable" @confirm="confirmBatch" @cancel="stopBatch" @inspect="emit('open',$event)"/>
+    <div v-else-if="!readonly&&!pendingCommand&&local.status==='draft'&&(local.quote_delivery!=='pending'||dirty||draftDirty)" class="liv-plan-actions">
       <!-- 选择或改稿后仍是确认本轮方案，不用“更新”暗示只保存；真正生成由后续确认执行授权。 -->
-      <UButton color="primary" class="liv-plan-primary liv-plan-confirm" :loading="working" :disabled="locked||draftDirty||!selected.length" @click="confirmPlan">{{local.quote_error?'重试准备':'确认方案'}}</UButton>
+      <UButton color="primary" class="liv-plan-primary liv-plan-confirm" :loading="working" :disabled="locked||draftDirty||!selected.length" @click="confirmPlan">{{local.quote_error?'重试准备':local.review_required===false?'准备费用确认':'确认方案'}}</UButton>
     </div>
     <p class="text-muted text-sm">{{local.batch?imagePlanNeedsPolling(local)?'已确认本次生成任务。停止对话不会中止生成，结果会回填原节点。':completedResults.length?'可以点击图片卡查看效果，继续告诉我想修改的细节。':'原任务已保留，请根据上方实际状态处理。':local.batch_supported?'在画布查看与编辑完整内容；只有确认执行才提交。':'在画布查看与编辑完整内容；此运行未开放图片批次执行。'}}</p>
   </section>

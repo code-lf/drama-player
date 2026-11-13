@@ -4,6 +4,9 @@ export interface StoredQuestionAnswer {
   timeline_id?:string
   /** 实际提交的固定图片版本，用于旧视觉记录的可信关联，不解析回答文案猜素材。 */
   reference_versions?:string[]
+  /** 只展示服务端确认的目录版本或个人风格名称，不根据答案文字猜测。 */
+  visual_style?:{style_id:string;style_version:number;display_name:string}
+  personal_style?:{name:string;version_id:string}
   question:string
   answer:string
   field_answers?:Record<string,string>

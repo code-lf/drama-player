@@ -312,6 +312,7 @@ export interface StoryboardRow {
   riskReasons: string[]
   previsualizationStatus: string
   previsualizationUrl: string
+  previsualizationMock?: boolean
   audioIntent: StoryboardAudioIntent
   directorSegments: StoryboardDirectorSegment[]
   selectedTakeId: string
@@ -356,6 +357,8 @@ export interface StoryboardVideoBatchSummary {
 
 export interface StoryboardWorkspace {
   projectId: string
+  /** 冻结的测试策略由服务端返回，不作为客户端采购开关。 */
+  mediaExecutionMode?: 'live' | 'mock'
   episodeNo: number
   sourceTitle: string
   sourceSummary: string
@@ -403,4 +406,27 @@ export interface StoryboardWorkspace {
     errorMessage: string
     updatedAt: string
   }
+}
+
+/** 两种确认使用同一份服务端快照，调用方只原样回传。 */
+export type StoryboardMediaSampleKind = 'previsualization' | 'video'
+export interface StoryboardMediaSampleEstimate {
+  kind: StoryboardMediaSampleKind
+  command: {
+    project_id: string
+    document_revision: number
+    token: string
+    episode_no: number
+    plan_id: string
+    shot_tokens: Record<string, string>
+  }
+  rows: { shot_no: number; duration_sec?: number }[]
+  required_credits: number
+  notice: string
+}
+export interface StoryboardMediaSampleReceipt {
+  mock: true
+  dispatch: 'sent' | 'unknown'
+  receipt?: string
+  batch_id?: string
 }

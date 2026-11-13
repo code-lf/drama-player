@@ -274,8 +274,14 @@ function openProject(project: CreationProjectCard): void {
 /* 多选时增强未选卡片的中性描边，选中卡片仍保留主题紫色。 */
 .project-card[data-batch-selecting=true][data-selected=false]{border-color:rgba(255,255,255,.24)}
 .project-card[data-batch-selecting=true][data-selected=false]:hover,.project-card[data-batch-selecting=true][data-selected=false]:focus-visible{border-color:rgba(255,255,255,.38)}
-.project-directory .project-selection{left:auto;right:10px;top:10px;padding:0;background:transparent}
-.project-selection :deep([role=checkbox]){border-radius:5px}
+.project-directory .project-selection{left:auto;right:12px;top:12px;padding:0;background:transparent}
+/* 复用Nuxt复选框，仅覆盖本目录的视觉；未选白框、选中白底深勾，保留原键盘和事件。 */
+.project-selection :deep([role=checkbox]){border-radius:5px;border:1px solid var(--liv-project-selection-color)!important;background:transparent!important;box-shadow:none!important}
+.project-selection :deep([role=checkbox][data-state=checked]),.project-selection :deep([role=checkbox][data-state=indeterminate]){background:var(--liv-project-selection-color)!important;color:var(--liv-project-selection-check)!important}
+.project-selection :deep([data-slot=indicator]),.project-selection :deep([data-slot=icon]){color:var(--liv-project-selection-check)!important}
+/* Nuxt将选中底色画在indicator层，必须一起覆盖，避免白框里仍残留紫底深色勾。 */
+.project-selection :deep([data-slot=indicator]){background:var(--liv-project-selection-color)!important}
+.project-selection :deep([role=checkbox]:focus-visible){outline:2px solid var(--liv-project-selection-color);outline-offset:3px}
 .project-directory-controls{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-top:34px;margin-bottom:22px}.project-kind-tabs{display:flex;align-items:center;gap:16px;flex-wrap:wrap}.project-kind-tabs button,.project-kind-tabs a{height:36px;font-size:18px!important;font-weight:600;padding:0;color:var(--liv-project-muted);display:inline-flex;align-items:center;border-radius:0;background:transparent!important}.project-kind-tabs button[aria-pressed=true]{color:var(--liv-project-text);box-shadow:none}
 .project-card-links{display:flex;gap:8px;flex-wrap:wrap;margin-top:4px;font-size:var(--liv-font-caption)}.project-card-links a{color:var(--liv-ui-primary-foreground);padding:4px 0}.project-card-links a:hover{text-decoration:underline}
 .project-directory__header{display:flex;align-items:center;justify-content:space-between;gap:24px}
@@ -303,6 +309,8 @@ function openProject(project: CreationProjectCard): void {
 .project-cover-image{object-fit:cover}.project-cover-fallback{display:grid;place-content:center;width:100%;height:100%;background:var(--liv-project-cover-surface);color:var(--liv-project-placeholder-mark)}
 .project-cover-fallback>span{font-size:28px;font-weight:800;letter-spacing:-1px;user-select:none}.project-list-row__cover .project-cover-fallback>span{font-size:16px}
 .project-card__cover>.project-status{position:absolute;top:12px;right:12px;font-size:var(--liv-font-caption);font-weight:500;max-width:calc(100% - 24px)}
+/* 批量状态与选择框各占一侧，给右侧16px选择框及间距预留空间，不隐藏真实制作状态。 */
+.project-card[data-batch-selecting=true] .project-card__cover>.project-status{left:12px;right:auto;max-width:calc(100% - 52px)}
 .project-card__body{padding:10px 12px;flex:1;min-width:0;min-height:64px;box-sizing:border-box}
 .project-card__body h2,.project-list-row__main h2{font-size:14px;font-weight:500;line-height:1.5;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;margin:0}
 .project-card__body>p,.project-list-row__main>p,.project-list-row time{font-size:var(--liv-font-caption);line-height:1.7;color:var(--color-text-muted);margin:4px 0 0}

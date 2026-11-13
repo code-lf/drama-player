@@ -30,6 +30,9 @@ import type {
   StoryboardContinuationPolicy,
   StoryboardContinuityState,
   StoryboardDirectorSegment,
+  StoryboardMediaSampleEstimate,
+  StoryboardMediaSampleKind,
+  StoryboardMediaSampleReceipt,
   StoryboardMicroEdit,
   StoryboardMicroEditEstimate,
   StoryboardMicroEditMode,
@@ -598,6 +601,8 @@ export interface DramaAssetProfile {
 }
 
 export interface DramaAssetWorkspace {
+  // 固定测试项目的失败项需要先核对样本，普通项目维持原免费重试路径。
+  media_execution_mode?: 'live' | 'mock'
   project_id: string
   source_script_version: string
   production_version_id?: string
@@ -802,6 +807,10 @@ export interface DramaAssetGenerationEstimate {
   }>
   blocked_targets: string[]
   compile_hashes: Record<string, string>
+  /** 后端冻结的测试策略；只展示和回传凭据，前端不能选择执行模式。 */
+  execution_mode?: 'live' | 'mock'
+  fixture_token?: string | null
+  sample_notice?: string
 }
 
 export interface DramaAssetRepairEstimate {
@@ -824,6 +833,8 @@ export interface DramaAssetGenerationRun {
   run_id: string
   status: string
   target_count: number
+  /** 回执未知只查看既有任务，不能自动重新提交。 */
+  dispatch?: 'sent' | 'unknown' | null
 }
 
 export interface ApiAdapter {
@@ -892,8 +903,8 @@ export interface ApiAdapter {
   confirmDramaAssetVisualPrompt?(projectId: string, assetType: DramaWorkspaceAssetType, assetKey: string, payload: { prompt: string; base_hash: string }): Promise<ApiResponse<DramaAssetVisualPromptDraft>>
   deleteDramaAssetProfile?(projectId: string, assetType: DramaWorkspaceAssetType, assetKey: string): Promise<ApiResponse<DramaAssetWorkspace>>
   uploadDramaAssetReference?(projectId: string, assetType: DramaWorkspaceAssetType, assetKey: string, file: File): Promise<ApiResponse<DramaAssetWorkspace>>
-  estimateDramaAssetGeneration?(projectId: string, targets: string[]): Promise<ApiResponse<DramaAssetGenerationEstimate>>
-  generateDramaWorkspaceAssets?(projectId: string, targets: string[], overwrite?: boolean, compileHashes?: Record<string, string>, retryFailed?: boolean): Promise<ApiResponse<DramaAssetGenerationRun>>
+  estimateDramaAssetGeneration?(projectId: string, targets: string[], retryFailed?: boolean): Promise<ApiResponse<DramaAssetGenerationEstimate>>
+  generateDramaWorkspaceAssets?(projectId: string, targets: string[], overwrite?: boolean, compileHashes?: Record<string, string>, retryFailed?: boolean, fixtureToken?: string): Promise<ApiResponse<DramaAssetGenerationRun>>
   lockDramaWorkspaceAsset?(projectId: string, assetType: DramaWorkspaceAssetType, assetKey: string, locked: boolean): Promise<ApiResponse<DramaAssetWorkspace>>
   batchLockDramaWorkspaceAssets?(projectId: string, targets: string[], locked: boolean): Promise<ApiResponse<DramaAssetWorkspace>>
   estimateDramaAssetConsistency?(projectId: string, assetType: DramaWorkspaceAssetType, assetKey: string): Promise<ApiResponse<DramaAssetConsistencyEstimate>>
@@ -939,6 +950,8 @@ export interface ApiAdapter {
   updateStoryboardDirectorSegments(projectId: string, rowId: string, payload: StoryboardDirectorSegmentsPayload): Promise<ApiResponse<StoryboardWorkspace>>
   tuneStoryboardShot(projectId: string, rowId: string, payload: StoryboardShotTuningPayload): Promise<ApiResponse<StoryboardWorkspace>>
   generateStoryboardPrevisualization(projectId: string, rowId: string): Promise<ApiResponse<StoryboardWorkspace>>
+  estimateStoryboardMediaSample?(projectId: string, kind: StoryboardMediaSampleKind, episodeNo: number, rowIds: string[]): Promise<ApiResponse<StoryboardMediaSampleEstimate>>
+  confirmStoryboardMediaSample?(projectId: string, estimate: StoryboardMediaSampleEstimate): Promise<ApiResponse<StoryboardMediaSampleReceipt>>
   /** 上传/替换分镜的首帧或尾帧参考图，返回刷新后的完整工作区。 */
   uploadStoryboardFrameReference(projectId: string, rowId: string, slot: 'first' | 'last', file: File): Promise<ApiResponse<StoryboardWorkspace>>
   /** 仅解除当前槽位绑定，历史素材仍由后端保留用于审计。 */

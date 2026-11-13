@@ -25,6 +25,16 @@ export function imagePlanNeedsPolling(plan:ImageCreativePlan){
   // 异步报价尚未创建批次时也要只读同步，不能让确认卡永久停在准备状态。
   return (plan.status==='draft'&&plan.quote_delivery==='pending')||(plan.status==='submitted'&&!!plan.batch?.items.some(item=>['queued','processing','pending','submitting','result_pending'].includes(item.delivery_status)))
 }
+/** 排队不冒充已开始生成；混合批次只要有实际执行项，就显示生成中。 */
+export function imagePlanDeliveryLabel(plan:ImageCreativePlan){
+  const states=(plan.batch?.items||[]).map(item=>item.delivery_status)
+  if(states.some(state=>['processing','result_pending'].includes(state)))return '图片生成中'
+  if(states.includes('submitting'))return '正在提交图片任务'
+  if(states.some(state=>['queued','pending'].includes(state)))return '图片任务排队中'
+  if(plan.batch?.unknown)return '图片任务待核对'
+  if(plan.batch?.failed)return '图片任务结果'
+  return plan.batch?.completed===plan.batch?.selected_count?'图片已生成':'图片任务结果'
+}
 /** 刷新可恢复已提交的图片批次，不重新取得费用许可。 */
 export function hasSubmittedImagePlan(run:{image_plan?:ImageCreativePlan}){
   return run.image_plan?.status==='submitted'&&!!run.image_plan.batch

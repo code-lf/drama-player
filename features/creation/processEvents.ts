@@ -5,12 +5,24 @@ import type {StoredQuestionAnswer} from './answeredQuestions'
 type PromptPair = {id:string;title:string;zh:string;en:string;executionLanguage:'zh'|'en'}
 
 /** 仅展示真实服务状态；待核对不等于失败，也不能由展示触发重试。 */
-export interface ProcessEvent {id:string;title:string;kind?:'assistant_text'|'skill_context'|'continuation'|'business_record'|'answer';answer?:StoredQuestionAnswer;description?:string;summary?:string;feedback?:string;promptPairs?:PromptPair[];status:'processing'|'succeeded'|'failed'|'needs_revision'|'unknown'|'stopped'}
+export interface ProcessEvent {id:string;title:string;kind?:'assistant_text'|'skill_context'|'continuation'|'business_record'|'answer'|'proposal_preview';answer?:StoredQuestionAnswer;description?:string;summary?:string;feedback?:string;promptPairs?:PromptPair[];status:'queued'|'processing'|'succeeded'|'failed'|'needs_revision'|'unknown'|'stopped'}
 
 /** 说明仅来自本轮模型公开正文，不是内部推理；工具参数及资源原文不进入收据。 */
-export interface CanvasToolEvent {id:string;tool?:string;origin?:'agent'|'runtime';answer_timeline_id?:string;source_fingerprint?:string;/** 仅来自服务端授权目录或本次读取回包，不按用户文字/最终所选技能倒推。 */skill?:{id:string;label:string;version?:number};kind?:'assistant_text'|'skill_context'|'image_understanding';text?:string;description?:string;summary?:string;status:'started'|'returned'|'rejected'|'failed'}
+export interface CanvasToolEvent {id:string;tool?:string;origin?:'agent'|'runtime';answer_timeline_id?:string;source_fingerprint?:string;/** 仅来自服务端授权目录或本次读取回包，不按用户文字/最终所选技能倒推。 */skill?:{id:string;label:string;version?:number};kind?:'assistant_text'|'skill_context'|'image_understanding'|'proposal_preview';text?:string;description?:string;summary?:string;/** 服务端专门生成的用户可见结果，不使用私有技术摘要。 */feedback?:string;status:'started'|'returned'|'rejected'|'failed'}
 
 const scopeOf=(id:string)=>/^canvas-agent-([a-f0-9]{32})-/.exec(id)?.[1]
+
+/** 仅为历史双语展示识别明确字符组成，不翻译、不交换执行字段，不据此决定业务动作。 */
+function obviousPromptLanguage(text:string):'zh'|'en'|undefined{
+  let han=0,latin=0
+  for(const char of text){
+    if((char>='\u3040'&&char<='\u30ff')||(char>='\uac00'&&char<='\ud7af'))return
+    if(char>='\u4e00'&&char<='\u9fff')han++
+    else if(char.toLowerCase()>='a'&&char.toLowerCase()<='z')latin++
+  }
+  if(han>=8&&han/Math.max(1,han+latin)>=.2)return 'zh'
+  if(!han&&latin>=40)return 'en'
+}
 
 /** 老会话仅在真实提问成功且边界数和答案数一致时恢复顺序，不把普通再次处理当作回答。 */
 function legacyAnswerScopes(events:CanvasToolEvent[],answers:StoredQuestionAnswer[]){
@@ -31,7 +43,9 @@ function legacyAnswerScopes(events:CanvasToolEvent[],answers:StoredQuestionAnswe
 /** 同一工具调用的开始/结束合并为一张收据，旧运行没有记录时不补造阶段。 */
 export function runProcessEvents(value:{status:string;error?:string;answers?:StoredQuestionAnswer[];superseded_by?:unknown;image_plan?:{status?:string;public_summary?:string;public_summary_version?:number;items?:Pick<ImagePlanItem,'id'|'title'|'prompt'|'prompt_translation'>[]};creative_plan?:{public_summary?:string;public_summary_version?:number};skill_agent_events?:CanvasToolEvent[];flow_runtime?:{events?:ProcessEvent[]}}):ProcessEvent[]{
   // 路由与专项读取来自真实Agent工具事件，不创建虚构的独立子Agent或生成进度。
-  const titles:Record<string,string>={read_skill:'读取技能指导',list_creation_skills:'查找适用技能',read_creation_skill:'读取创作技能',read_resource:'读取方法资源',read_creation_progress:'读取创作进度',prepare_image_sources:'准备已采用素材',read_composition_sources:'读取可合成素材',prepare_audio_sources:'固定已选配乐',prepare_composition:'准备合成计划',list_capabilities:'核对可用能力',ask_user:'提供补充问题',generate_response:'整理创作方案',denied:'阻止未授权工具'}
+  const titles:Record<string,string>={read_skill:'读取技能指导',list_creation_skills:'查找适用技能',read_creation_skill:'读取创作技能',read_resource:'读取方法资源',read_creation_progress:'读取创作进度',read_drama_production:'读取短剧制作进度',prepare_drama_stage:'准备短剧制作阶段',prepare_image_sources:'准备已采用素材',read_composition_sources:'读取可合成素材',prepare_audio_sources:'固定已选配乐',prepare_composition:'准备合成计划',list_capabilities:'核对可用能力',ask_user:'提供补充问题',generate_response:'整理创作方案',denied:'阻止未授权工具'}
+  // 只显示模型实际发起的剧本与风格工具，不为旧的手动提取补造记录。
+  Object.assign(titles,{read_canvas_script:'读取剧本全文',prepare_drama_project:'准备短剧项目',search_visual_styles:'查找匹配风格',read_visual_style:'读取风格指导',request_visual_style:'请你选择风格'})
   const calls=new Map<string,ProcessEvent>()
   const answers=value.answers||[]
   const indexedAnswers=new Map(answers.flatMap(answer=>answer.timeline_id?[[answer.timeline_id,answer] as const]:[]))
@@ -64,11 +78,21 @@ export function runProcessEvents(value:{status:string;error?:string;answers?:Sto
     // 聊天只投影AI实际动作；系统喂入的上下文仍保留审计，但不能画成AI已读取成功。
     // 老读取记录缺少可信发起来源，宁可不显示，也不根据固定句子猜测是模型动作。
     if((event.origin==='runtime'&&event.kind!=='image_understanding')||(event.origin!=='agent'&&
-      (event.kind==='skill_context'||event.tool==='read_skill'||event.tool==='read_creation_progress')))continue
+      (event.kind==='skill_context'||event.tool==='read_skill'||event.tool==='read_creation_progress'||event.tool==='read_canvas_script')))continue
     // 同一运行续答有独立收据范围；明确分轮，不把真实的再次核对误画成一次调用重复返回。
     if(scope&&scope!==previousScope){
       if(previousScope&&!answer)calls.set(`turn:${scope}`,{id:`turn:${scope}`,kind:'continuation',title:'继续处理',status:'succeeded'})
       previousScope=scope
+    }
+    if(event.kind==='proposal_preview'){
+      // 预览只在未交付时显示；正式方案到达后由已校验正文接替，不重复出现两份提示词。
+      if(!['planning','failed','cancelled'].includes(value.status)||!event.text?.trim())continue
+      if(value.status!=='planning'&&(value.image_plan?.public_summary||value.creative_plan?.public_summary))continue
+      const failed=event.status==='failed'||value.status==='failed'
+      calls.set(event.id,{id:event.id,kind:'proposal_preview',title:'',description:event.text,
+        status:failed?'failed':value.status==='cancelled'?'stopped':'processing',
+        feedback:failed?'方案未完成，以上仅为未确认预览，未提交生成。':value.status==='cancelled'?'已停止，以上仅为未确认预览。':event.status==='rejected'?'正在修正方案，暂不能提交。':'正在整理'})
+      continue
     }
     if(event.kind==='image_understanding'){
       // 同一运行补答携带相同素材并不是新成果；只折合已成功理解过的同源提示，不隐藏失败。
@@ -97,7 +121,14 @@ export function runProcessEvents(value:{status:string;error?:string;answers?:Sto
     if(!event.tool||!Object.prototype.hasOwnProperty.call(titles,event.tool))continue
     // 能力目录是内部配置校验，不占正常对话步骤；失败仍按真实收据解释，不掩盖异常。
     if(event.tool==='list_capabilities'&&['started','returned'].includes(event.status))continue
-    // 候选交付的校验与自修复是内部工作，等待时用通用思考态；真实交付或异常仍保留。
+    // 真实交付调用显示紧凑进行态；不暴露未校验JSON，也不模拟逐字输出。
+    if(event.tool==='generate_response'&&event.status==='started'&&value.status==='planning'){
+      // 增量预览存在时由预览状态行表达同一次进行中，避免两个旋转提示挤在一起。
+      if((value.skill_agent_events||[]).some(item=>item.kind==='proposal_preview'&&!!item.text?.trim()))continue
+      calls.set(event.id,{id:`agent:${event.id}`,title:'正在整理',status:'processing'})
+      continue
+    }
+    // 内部定向修正不堆失败行；运行结束后不遗留进行中状态。
     if(event.tool==='generate_response'&&(['started','rejected'].includes(event.status)||
       event.status==='failed'&&value.status==='failed'&&!!value.error)){
       calls.delete(event.id)
@@ -115,7 +146,8 @@ export function runProcessEvents(value:{status:string;error?:string;answers?:Sto
     const skillLabel=event.origin==='agent'&&event.tool==='read_creation_skill'&&typeof event.skill?.label==='string'?event.skill.label.trim():''
     const title=skillLabel?`读取${skillLabel}`:reusingSkill?'沿用技能指导':titles[event.tool]
     // 历史固定成功摘要仍保留审计字段，但正文只展示模型真实说明，不重复套话。
-    calls.set(event.id,{id:`agent:${event.id}`,title,status,...(description?{description}:{}),...(summary?{summary}:{})})
+    const feedback=event.status==='returned'&&event.tool==='read_creation_skill'&&typeof event.feedback==='string'?event.feedback:undefined
+    calls.set(event.id,{id:`agent:${event.id}`,title,status,...(description?{description}:{}),...(summary?{summary}:{}),...(feedback?{feedback}:{})})
   }
   // 编排图的规划阶段与真实generate_response是同一工作，不再额外叠一张同名待核对卡。
   const hasAgent=(value.skill_agent_events||[]).length>0
@@ -149,8 +181,11 @@ export function runProcessEvents(value:{status:string;error?:string;answers?:Sto
       (value.image_plan?.items||[]).flatMap(item=>{
         const alternate=item.prompt_translation
         if(!alternate?.text?.trim()||!item.prompt?.trim()||!['zh','en'].includes(alternate.execution_language))return []
-        const chinese=alternate.execution_language==='zh'
-        return [{id:item.id,title:item.title,zh:chinese?item.prompt:alternate.text,en:chinese?alternate.text:item.prompt,executionLanguage:alternate.execution_language}]
+        // 旧候选可能把text的语言误填成执行语言；仅两段明确互为中英时纠正展示，绝不回写计划或报价。
+        const actual=obviousPromptLanguage(item.prompt),translated=obviousPromptLanguage(alternate.text)
+        const executionLanguage=actual&&translated&&actual!==translated?actual:alternate.execution_language
+        const chinese=executionLanguage==='zh'
+        return [{id:item.id,title:item.title,zh:chinese?item.prompt:alternate.text,en:chinese?alternate.text:item.prompt,executionLanguage}]
       })
     const narration:ProcessEvent={id:'accepted-plan-narration',kind:'assistant_text',title:'',status:'succeeded',description:summary,...(promptPairs.length?{promptPairs}:{})}
     // 仅挂到最后一次成功规划回包之后，不附在失败或尚未返回的工具下面。

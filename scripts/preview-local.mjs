@@ -5,7 +5,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 
 /** 仅覆盖本次子进程，不修改.env、发布配置或服务器环境。 */
 export function localPreviewEnv(env = process.env) {
-  return { ...env, HOST: '127.0.0.1', NUXT_PUBLIC_API_BASE: '/api',
+  // Nitro 优先读取 NITRO_*；两套变量同时固定，避免继承其他终端的端口或监听地址。
+  return { ...env, HOST: '127.0.0.1', NITRO_HOST: '127.0.0.1', PORT: '3000', NITRO_PORT: '3000', NUXT_PUBLIC_API_BASE: '/api',
     NUXT_API_SERVER_BASE: 'http://127.0.0.1:8000/api', NUXT_PUBLIC_API_ADAPTER: 'http' }
 }
 

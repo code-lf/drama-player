@@ -37,6 +37,7 @@ import type {
 } from '~/shared/api/types'
 import type { EpisodeCutSavePayload } from '~/entities/drama/episodeCutTypes'
 import type { DramaProjectDetail } from '~/entities/drama/types'
+import type { StoryboardMediaSampleEstimate, StoryboardMediaSampleKind } from '~/entities/storyboard/types'
 
 // 最近项目卡片悬停时可提前拉取详情；短 TTL 且只供下一次打开消费，避免复用陈旧项目快照。
 const projectDetailPrefetches = new Map<string, { promise: Promise<DramaProjectDetail>; expiresAt: number }>()
@@ -175,12 +176,13 @@ export const dramaService = {
     return callApi('drama/uploadAssetReference', (adapter) => adapter.uploadDramaAssetReference!(projectId, assetType, assetKey, file))
   },
 
-  async estimateAssetGeneration(projectId: string, targets: string[]) {
-    return callApi('drama/estimateAssetGeneration', (adapter) => adapter.estimateDramaAssetGeneration!(projectId, targets))
+  async estimateAssetGeneration(projectId: string, targets: string[], retryFailed = false) {
+    return callApi('drama/estimateAssetGeneration', (adapter) => adapter.estimateDramaAssetGeneration!(projectId, targets, retryFailed))
   },
 
-  async generateWorkspaceAssets(projectId: string, targets: string[], overwrite = false, compileHashes: Record<string, string> = {}, retryFailed = false) {
-    return callApi('drama/generateWorkspaceAssets', (adapter) => adapter.generateDramaWorkspaceAssets!(projectId, targets, overwrite, compileHashes, retryFailed))
+  async generateWorkspaceAssets(projectId: string, targets: string[], overwrite = false, compileHashes: Record<string, string> = {}, retryFailed = false, fixtureToken?: string) {
+    // 标准与画布最终确认共用后端固定样本凭据，不重新计算或修改模式。
+    return callApi('drama/generateWorkspaceAssets', (adapter) => adapter.generateDramaWorkspaceAssets!(projectId, targets, overwrite, compileHashes, retryFailed, fixtureToken))
   },
 
   async lockWorkspaceAsset(projectId: string, assetType: DramaWorkspaceAssetType, assetKey: string, locked: boolean) {
@@ -358,6 +360,20 @@ export const dramaService = {
 
   async generateStoryboardPrevisualization(projectId: string, rowId: string) {
     return callApi('drama/generateStoryboardPrevisualization', adapter => adapter.generateStoryboardPrevisualization(projectId, rowId))
+  },
+
+  async estimateStoryboardMediaSample(projectId: string, kind: StoryboardMediaSampleKind, episodeNo: number, rowIds: string[]) {
+    return callApi('drama/estimateStoryboardMediaSample', adapter => {
+      if (!adapter.estimateStoryboardMediaSample) throw new Error('当前连接不支持短剧样本确认。')
+      return adapter.estimateStoryboardMediaSample(projectId, kind, episodeNo, rowIds)
+    })
+  },
+
+  async confirmStoryboardMediaSample(projectId: string, estimate: StoryboardMediaSampleEstimate) {
+    return callApi('drama/confirmStoryboardMediaSample', adapter => {
+      if (!adapter.confirmStoryboardMediaSample) throw new Error('当前连接不支持短剧样本确认。')
+      return adapter.confirmStoryboardMediaSample(projectId, estimate)
+    })
   },
 
   async uploadStoryboardFrameReference(projectId: string, rowId: string, slot: 'first' | 'last', file: File) {

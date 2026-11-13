@@ -10,6 +10,17 @@ const helperModule={exports:{}}
 new Function('exports',ts.transpileModule(read('features/creation/homeShowcase.ts'),{compilerOptions:{module:ts.ModuleKind.CommonJS}}).outputText)(helperModule.exports)
 const helper=helperModule.exports
 
+test('技能详情去掉参考长提示，点击播放不强制静音或自动播放',()=>{
+  const source=read('features/creation/components/CreationSkillDetail.vue')
+  assert.doesNotMatch(source,/liv-skill-media-source|临时参考媒体|十秒静音预览/)
+  const video=source.match(/<video\b[^>]*>/)?.[0]
+  assert.ok(video)
+  assert.match(video,/controls playsinline preload="metadata"/)
+  assert.doesNotMatch(video,/\bmuted\b|\bautoplay\b/)
+  const {descriptor}=parse(source),script=compileScript(descriptor,{id:'skill-detail-audio'})
+  assert.deepEqual(compileTemplate({source:descriptor.template.content,filename:'CreationSkillDetail.vue',id:'skill-detail-audio',compilerOptions:{bindingMetadata:script.bindings}}).errors,[])
+})
+
 test('批量上架后快捷区最多八项，完整瀑布流不被截断',()=>{
   const rows=Array.from({length:53},(_,index)=>({id:`skill-${index}`,entries:['commerce'],recommended_entries:['commerce'],home_showcase:{category:'design'}}))
   assert.equal(helper.quickRecommendedSkills(rows,'commerce').length,8)

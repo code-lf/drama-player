@@ -2,10 +2,10 @@
 import {computed} from 'vue'
 import {hasValidGenerationQuote} from '../confirmationRules'
 /** 只展示服务端真实报价；确认与取消由工作台沿用原授权和幂等链路。 */
-const props=defineProps<{model:string;spec:string;target:string;credits?:number;hasQuote:boolean;sufficient:boolean;quoting:boolean;busy:boolean;cancelling?:boolean;error?:string;skipConfirmation?:boolean;rulesReady?:boolean;rulesBusy?:boolean;rulesError?:string;requests?:Array<{id:string;model:string;spec:string}>}>()
+const props=defineProps<{model:string;spec:string;target:string;credits?:number;hasQuote:boolean;sufficient:boolean;quoting:boolean;busy:boolean;cancelling?:boolean;error?:string;skipConfirmation?:boolean;rulesReady?:boolean;rulesBusy?:boolean;rulesError?:string;requests?:Array<{id:string;model:string;spec:string}>;actionName?:string;warning?:string;noCharge?:boolean;hideRules?:boolean;confirmationDisabled?:boolean;/** 报价过期只允许重新核算，不触发确认执行。 */quoteExpired?:boolean}>()
 defineEmits<{confirm:[];cancel:[];retry:[];settings:[];rule:[enabled:boolean];inspect:[id:string]}>()
 const targetLabel=computed(()=>( {image:'图片',video:'视频',music:'音频',drama:'短剧'} as Record<string,string>)[props.target]||'作品')
-const validQuote=computed(()=>hasValidGenerationQuote(props.hasQuote,props.credits))
+const validQuote=computed(()=>props.noCharge ? props.hasQuote : hasValidGenerationQuote(props.hasQuote,props.credits))
 </script>
 <template>
   <!-- 报价完整前只展示读取状态，不提前发出“请确认”或显示缺价确认卡。 -->
@@ -14,21 +14,23 @@ const validQuote=computed(()=>hasValidGenerationQuote(props.hasQuote,props.credi
     <template v-else-if="error"><p class="liv-confirm-note">{{error}}</p><UButton v-if="!error.includes('需求或来源已改变')" :disabled="busy" variant="soft" @click="$emit('retry')">重试核算</UButton></template>
   </div>
   <section v-else class="liv-generation-confirmation" aria-label="生成确认" :aria-busy="busy||cancelling">
-    <p class="liv-confirm-heading">请确认本次 {{requests?.length||1}} 个{{targetLabel}}生成任务：</p>
+    <p class="liv-confirm-heading">{{actionName ? `请确认：${actionName}` : `请确认本次 ${requests?.length||1} 个${targetLabel}生成任务：`}}</p>
     <template v-if="requests?.length"><button v-for="(request,index) in requests" :key="request.id" class="liv-confirm-request liv-confirm-inspect" :disabled="busy||cancelling" @click="$emit('inspect',request.id)"><span class="liv-confirm-task-copy">{{index+1}}. {{request.model}}（{{request.spec}}）</span><UIcon name="i-lucide-focus"/></button></template>
-    <div v-else class="liv-confirm-request"><span class="liv-confirm-task-copy">1. {{model}}（{{spec}}）</span></div>
+    <div v-else class="liv-confirm-request"><span class="liv-confirm-task-copy">{{actionName ? spec : `1. ${model}（${spec}）`}}</span></div>
+    <slot/>
     <!-- 提交前明确不可中途取消；稍等一下只停止尚未提交的当前方案。 -->
-    <p class="liv-confirm-execution-warning">确认后将立即提交生成，执行期间无法取消，请确认内容与积分。</p>
-    <p class="liv-confirm-quote">本次预计消耗 <span class="liv-confirm-price"><strong>{{credits}} 积分</strong></span></p>
+    <p class="liv-confirm-execution-warning">{{warning||'确认后将立即提交生成，执行期间无法取消，请确认内容与积分。'}}</p>
+    <p v-if="!noCharge" class="liv-confirm-quote">本次预计消耗 <span class="liv-confirm-price"><strong>{{credits}} 积分</strong></span></p>
     <p v-if="requests?.length" class="liv-confirm-note">剩余 {{requests.length}} 个待确认</p>
     <!-- 固定媒体报价与后台采购估值分开，不能向用户承诺每单采购毛利。 -->
-    <p v-if="validQuote&&!sufficient" class="liv-confirm-note" role="alert">积分不足，请充值后继续。</p>
+    <p v-if="validQuote&&!sufficient&&!quoteExpired" class="liv-confirm-note" role="alert">积分不足，请充值后继续。</p>
     <p v-if="error&&validQuote" class="liv-confirm-note" role="alert">{{error}}</p>
     <div class="liv-confirm-actions">
-      <UButton class="liv-confirm-primary" color="primary" variant="solid" :loading="busy" :disabled="busy||cancelling||!sufficient" @click="$emit('confirm')">确认执行</UButton>
+      <!-- 最终确认操作始终保持同一含义；失效报价由业务层自动更新，禁止借旧报价提交。 -->
+      <UButton class="liv-confirm-primary" color="primary" variant="solid" :loading="busy" :disabled="busy||cancelling||quoteExpired||!sufficient||confirmationDisabled" @click="$emit('confirm')">{{noCharge?'确认版本':'确认执行'}}</UButton>
       <UButton class="liv-confirm-cancel" color="neutral" variant="outline" :loading="cancelling" :disabled="busy||quoting||cancelling" title="停止本次待确认方案，保留草稿" @click="$emit('cancel')">{{cancelling?'正在停止':'稍等一下'}}</UButton>
     </div>
-    <div class="liv-confirm-footer">
+    <div v-if="!hideRules" class="liv-confirm-footer">
       <UCheckbox :model-value="!!skipConfirmation" :disabled="!rulesReady||rulesBusy||busy" :label="`本会话后续的${targetLabel}生成任务，不再二次确认`" @update:model-value="$emit('rule',$event===true)"/>
       <p class="liv-confirm-note">超过积分阈值或无法可靠报价时，仍会要求确认。</p>
       <p v-if="rulesError" class="liv-confirm-note" role="alert">{{rulesError}}</p>

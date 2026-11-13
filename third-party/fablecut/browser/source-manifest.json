@@ -1,0 +1,39 @@
+{
+  "version": "1.18.0",
+  "integrity": "sha512-Rh7lYJ95EiFPSbrwn3ZE/sQQDFtYyGioLRBrkxepRjEsYIP8wcx9T+steWs3upy3xZBOeUdWhIzyT2d638CF2g==",
+  "hashes": {
+    "loudness.js": "943e5bab6b8815c14df16aa4e10cee62aa1df1c29f4a96e51619603734448b2d",
+    "ducking.js": "288bfba5a37dd363270b624ff18acf09adc09e439fb96cb16b8580292ed76be1",
+    "silence.js": "5b8807c8923292634eed4809c957ff3cffd75f2288b7d430656ab607adf8a66a",
+    "beats.js": "acc31419efe9f9f3e6a2e84c849b10981822eb02ab59df2c98775f11dbe3e485",
+    "transcribe.js": "5fd39fbe972b94bb0f8cedd41950ee3bb5524da222eaacda5c51c722b04eb36d",
+    "captions.js": "1431f419d0dbc493f1cba8b6fc999499637d87419e1a7302888ee8d0965bd31e",
+    "audio-fx.js": "f9912efcfdcb3cce7cfac28aefc10d668c7f7d76473237efd2153be654b16b63",
+    "mask.js": "75cc8ceae8064002132fac3387550c0f3fec74eb10660b9e80772e779763013e",
+    "tracker.js": "df710fec18c0320d85eb8d8817ba4338192a9bdcb4f8efb54e8bd0feb506f10f",
+    "reframe.js": "361039d8cfc46c9bad948598970c1febfeabfa65096f495a7fe3b74fea29b0b3",
+    "highlights.js": "9aa64db8db4df346195b523dced5ec6699187dfdf333d5d381af3a925ee9861b",
+    "motion.js": "1dea84a783767cd1b4a3593eb92d3e26c2f56087e251271df9abc07f5a937249",
+    "color.js": "3b4094f277bdf9682b95b56cbe0987490849a07bdaadb24aa12c5389ffab0d80",
+    "edit-ops.js": "c3da300b5cdf1924f30e0a3ec16c8b76544af390e9f429de097ac25408385fbe",
+    "comp.js": "eab6deddbe14132414813f569b5adab1eefb3d15aa83ad2f85e8fc427c321307",
+    "sequences.js": "447e48c4d4b0b33be5cd021e56aab5ecf56e26aa46297fb179f6db7053873ebc",
+    "templates.js": "250309bbcbe685960e550d2e150d06a5872d5a2b82e15b8da423a99d14fd9261",
+    "media-lib.js": "f22721ebd943b9460dc833aeccb5775815ff8326485579d26d253e8aad13408e",
+    "delivery.js": "47169608fe1df566381042d10589f843938e9e11b339f79200dc9c76f8bba61f",
+    "app.js": "53da23f7a11116eb12ea5cd45564ec8ac1918bb025b2f20f8fab6149c186b34e"
+  },
+  "disabledFunctions": [
+    "connectServer",
+    "syncFromServer",
+    "scheduleSave",
+    "saveNow",
+    "pushUndo",
+    "undo",
+    "redo",
+    "loadLibraryFonts",
+    "runExportJobFromUrl"
+  ],
+  "persistence": "platform-only",
+  "productionEnabled": false
+}

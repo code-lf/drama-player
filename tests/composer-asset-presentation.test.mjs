@@ -3,7 +3,7 @@ import {readFileSync} from 'node:fs'
 import {test} from 'node:test'
 import assert from 'node:assert/strict'
 import ts from 'typescript'
-import {computed,ref} from 'vue'
+import {computed,ref,reactive,watch,nextTick} from 'vue'
 const source=readFileSync('features/creation/components/CreationComposer.vue','utf8')
 const body=source.match(/function referenceNode\([\s\S]*?\n}\n/)[0]
 class Element{
@@ -42,7 +42,26 @@ test('资产大面板点击即加入，没有多选确认条，风格入口仍�
   assert.ok(source.includes('v-if="showParameterControl"'))
   assert.ok(source.includes("if(!props.parameters.model)return false"))
   const library=readFileSync('features/library/components/AssetLibraryPanel.vue','utf8')
-  assert.ok(library.includes('v-if="selectable&&!immediate"'))
+  assert.ok(library.includes('v-if="selectable&&!immediate&&!canvasPlacement"'))
+})
+
+test('资产面板与资料选择器按需加载，首次以打开状态挂载仍初始化目录',async()=>{
+  const studio=readFileSync('features/creation/components/CreationStudio.vue','utf8')
+  const picker=readFileSync('features/library/components/LibraryPicker.vue','utf8')
+  assert.match(source,/AssetLibraryPanel=defineWorkspaceComponent\(\(\)=>import/)
+  assert.match(source,/<AssetLibraryPanel v-if="assetsOpen"/)
+  assert.match(studio,/LibraryPicker=defineWorkspaceComponent\(\(\)=>import/)
+  assert.match(studio,/<LibraryPicker v-if="pickerMounted"/)
+  assert.match(studio,/<LibraryPicker v-if="stagePickerMounted"/)
+  const body=picker.slice(picker.indexOf('watch(() => props.open'),picker.indexOf('watch([scope, category, mediaFilter]'))
+  const props=reactive({open:true,initialCategory:'product',homepage:false})
+  const state={selected:ref(['old']),page:ref(4),category:ref(''),documentDraft:ref(null),documentBusy:ref(false),error:ref(''),categories:ref([])}
+  let loads=0
+  // 执行选择器实际 watcher，覆盖异步组件首屏已打开而非先挂载再打开的时序。
+  const run=new Function('watch','props','state','libraryService','load',`let documentRevision=0;const {selected,page,category,documentDraft,documentBusy,error,categories}=state;${body}`)
+  run(watch,props,state,{configuration:async()=>({categories:[{code:'product'}]})},async()=>{loads++})
+  await nextTick();await Promise.resolve()
+  assert.equal(loads,1);assert.equal(state.category.value,'product');assert.deepEqual(state.selected.value,[])
 })
 
 test('资产入口沿用其他工具的紧凑图标与宽布局文字规则',()=>{

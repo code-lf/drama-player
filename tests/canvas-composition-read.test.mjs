@@ -11,7 +11,7 @@ const method=compile(source.slice(source.indexOf('async function readGraphCompos
 function fixture(){
   const jobs=[{id:'job',status:'succeeded',output:{},plan:{clips:[]}}],calls=[],timers=[]
   const state={session:{value:{id:'session'}},draftOwner:{value:'owner'},entry:{value:'free'},graphCompositions:{value:[]},graphCompositionFileReads:new Map(),advanceCompositionReads:stateModule.exports.advanceCompositionReads,document:{hidden:false},videoCompositionService:{canvasOutputs:async id=>{calls.push(['directory',id]);return {outputs:[{id:'output',title:'商品短片',canvas_node_id:'draft:compose'}]}},outputJobs:async(...args)=>{calls.push(['jobs',...args]);return jobs}},setTimeout:(fn,ms)=>{timers.push({fn,ms});return timers.length},clearTimeout:()=>{}}
-  const fn=new Function('state',`const {${Object.keys(state).join(',')}}=state;const graphRuns={value:[]};let graphCompositionEpoch=0,graphCompositionTimer;${method};return readGraphCompositions`)(state)
+  const fn=new Function('state',`const {${Object.keys(state).join(',')}}=state;const graphRuns={value:[]};let graphCompositionEpoch=0,graphCompositionTimer,graphCompositionSchedule;${method};return readGraphCompositions`)(state)
   return {state,jobs,calls,timers,fn}
 }
 
@@ -41,4 +41,18 @@ test('迟到目录不跨账号或会话回填，也不污染新上下文的文�
     assert.equal(ui.state.graphCompositions.value[0].title,'新上下文保留')
     assert.equal(ui.state.graphCompositionFileReads.size,0);assert.equal(ui.timers.length,0)
   }
+})
+
+test('同一事件波次合并目录刷新，隐藏页面不读取且旧响应立即失效',()=>{
+  const scheduler=compile(source.slice(source.indexOf('function scheduleGraphCompositionRead()'),source.indexOf('watch(()=>[session.value?.id,draftOwner.value]')))
+  let next=0,reads=0;const timers=new Map(),document={hidden:false}
+  const setTimer=fn=>{const id=++next;timers.set(id,fn);return id},clearTimer=id=>timers.delete(id)
+  const api=new Function('setTimeout','clearTimeout','document','readGraphCompositions',`let graphCompositionEpoch=0,graphCompositionTimer,graphCompositionSchedule;${scheduler};return {scheduleGraphCompositionRead,getEpoch:()=>graphCompositionEpoch}`)(setTimer,clearTimer,document,()=>reads++)
+  api.scheduleGraphCompositionRead();api.scheduleGraphCompositionRead();api.scheduleGraphCompositionRead()
+  assert.equal(api.getEpoch(),3);assert.equal(timers.size,1)
+  for(const fn of timers.values())fn()
+  assert.equal(reads,1)
+  timers.clear();document.hidden=true;api.scheduleGraphCompositionRead()
+  for(const fn of timers.values())fn()
+  assert.equal(reads,1)
 })

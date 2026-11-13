@@ -34,7 +34,9 @@ const sendDisabledReason=computed(()=>{
 watch(()=>props.run.image_plan,value=>{
   if(!value||(value.revision===plan.value.revision&&value.status===plan.value.status))return
   // 其他页面/选择卡的修订不能覆盖当前未保存正文，必须显式重读核对。
-  if(dirty.value||saving.value){conflict.value=true;error.value='图片计划已更新，当前输入保留。请先核对最新计划。'}
+  // 本机保存中的回填交给save响应核对修订；不能把自己的成功回包标成外部冲突。
+  if(saving.value)return
+  if(dirty.value){conflict.value=true;error.value='图片计划已更新，当前输入保留。请先核对最新计划。'}
   else restore(value)
 })
 onBeforeUnmount(()=>{alive=false;epoch++})

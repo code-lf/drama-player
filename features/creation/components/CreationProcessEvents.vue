@@ -6,8 +6,8 @@ const props=defineProps<{events:ProcessEvent[]}>()
 const toolEvents=computed(()=>props.events.filter(event=>event.kind!=='business_record'))
 const businessEvents=computed(()=>props.events.filter(event=>event.kind==='business_record'))
 // 状态仅来自服务端收据；组件不推断进度、不触发业务请求。
-const icons={processing:'i-lucide-loader-circle',succeeded:'i-lucide-check-circle-2',failed:'i-lucide-circle-alert',needs_revision:'i-lucide-pencil-line',unknown:'i-lucide-clock-3',stopped:'i-lucide-circle-stop'}
-const labels={processing:'处理中',succeeded:'成功',failed:'失败',needs_revision:'方案需修正',unknown:'待核对',stopped:'已停止'}
+const icons={queued:'i-lucide-clock-3',processing:'i-lucide-loader-circle',succeeded:'i-lucide-check-circle-2',failed:'i-lucide-circle-alert',needs_revision:'i-lucide-pencil-line',unknown:'i-lucide-clock-3',stopped:'i-lucide-circle-stop'}
+const labels={queued:'等待执行',processing:'处理中',succeeded:'成功',failed:'失败',needs_revision:'方案需修正',unknown:'待核对',stopped:'已停止'}
 </script>
 <template>
   <div v-if="events.length" class="process-events" aria-label="处理记录">
@@ -16,6 +16,7 @@ const labels={processing:'处理中',succeeded:'成功',failed:'失败',needs_re
       <p v-if="event.kind==='continuation'" class="process-continuation">{{event.title}}</p>
       <slot v-else-if="event.kind==='answer' && event.answer" name="answer" :answer="event.answer"/>
       <template v-else>
+        <p v-if="event.kind==='proposal_preview'" class="process-preview-state" role="status"><UIcon :name="icons[event.status]" :class="{'animate-spin':event.status==='processing'}"/>{{event.feedback}}<span v-if="event.status==='processing'" class="sr-only">，内容尚未确认</span></p>
         <AssistantReply v-if="event.description" :text="event.description" variant="skill" class="process-description"/>
         <!-- 纯文本保留完整提示词和换行；折叠仅改变展示，不影响任务内容或报价。 -->
         <div v-for="pair in event.promptPairs" :key="pair.id" class="process-prompt-pair">
@@ -30,14 +31,14 @@ const labels={processing:'处理中',succeeded:'成功',failed:'失败',needs_re
           </UCollapsible>
         </div>
         <!-- 进行中由左侧旋转图标表达，不在右侧重复状态文字；异常和待核对仍明确提示。 -->
-        <div v-if="!event.kind" class="process-event" :role="event.status==='processing'?'status':undefined"><UIcon :name="icons[event.status]" :class="{'animate-spin':event.status==='processing'}" :aria-label="labels[event.status]"/><span>{{event.title}}</span><small v-if="!['succeeded','processing'].includes(event.status)">{{labels[event.status]}}</small></div>
-        <p v-if="event.feedback" class="process-feedback">{{event.feedback}}</p>
+        <div v-if="!event.kind" class="process-event" :role="event.status==='processing'?'status':undefined"><UIcon :name="icons[event.status]" :class="{'animate-spin':event.status==='processing'}" :aria-label="labels[event.status]"/><span>{{event.title}}</span><small v-if="!['succeeded','processing','queued'].includes(event.status)">{{labels[event.status]}}</small></div>
+        <p v-if="event.feedback&&event.kind!=='proposal_preview'" class="process-feedback">{{event.feedback}}</p>
       </template>
     </section>
     <!-- 业务操作同样直接展示真实状态，不再藏在折叠记录中。 -->
     <div v-if="businessEvents.length" class="process-business">
       <section v-for="event in businessEvents" :key="event.id">
-        <div class="process-event" :role="event.status==='processing'?'status':undefined"><UIcon :name="icons[event.status]" :class="{'animate-spin':event.status==='processing'}" :aria-label="labels[event.status]"/><span>{{event.title}}</span><small v-if="!['succeeded','processing'].includes(event.status)">{{labels[event.status]}}</small></div>
+        <div class="process-event" :role="event.status==='processing'?'status':undefined"><UIcon :name="icons[event.status]" :class="{'animate-spin':event.status==='processing'}" :aria-label="labels[event.status]"/><span>{{event.title}}</span><small v-if="!['succeeded','processing','queued'].includes(event.status)">{{labels[event.status]}}</small></div>
         <p v-if="event.description" class="process-feedback">{{event.description}}</p>
       </section>
     </div>
@@ -48,6 +49,7 @@ const labels={processing:'处理中',succeeded:'成功',failed:'失败',needs_re
 .process-events{display:grid;gap:6px;margin:8px 0 12px}.process-event{display:flex;align-items:center;gap:8px;padding:2px 0;border:0;background:none;font-size:var(--liv-chat-font);font-weight:400;line-height:var(--liv-chat-line);color:var(--color-text-muted)}.process-event .iconify{width:16px;height:16px;flex:none}.process-event span{flex:1;min-width:0}.process-event small{color:var(--color-text-muted);font-size:inherit;flex:none}
 @media(prefers-reduced-motion:reduce){.animate-spin{animation:none}}
 .process-description{margin:0 0 6px;font-size:var(--liv-chat-font);line-height:var(--liv-chat-line);overflow-wrap:anywhere}
+.process-preview-state{display:flex;align-items:center;gap:8px;margin:4px 0;color:var(--color-text-muted);font-size:var(--liv-chat-font);line-height:var(--liv-chat-line)}
 .process-prompt-pair{display:grid;gap:var(--liv-chat-copy-gap);margin:var(--liv-chat-section-gap) 0;font-size:var(--liv-chat-font);line-height:var(--liv-chat-line);color:var(--liv-chat-assistant-text)}
 .process-prompt-copy{white-space:pre-wrap;overflow-wrap:anywhere}
 .process-business{display:grid;gap:6px}

@@ -8,7 +8,8 @@ const toolProcessing=computed(()=>runProcessEvents(props.run).some(event=>event.
   (!event.kind||event.kind==='business_record'||event.kind==='assistant_text')))
 </script>
 <template>
-  <p v-if="run.status==='planning' && !run.stream_text && !toolProcessing" class="liv-thinking-indicator" role="status">
+  <!-- 已有上轮公开文字不代表模型不再思考；以当前响应阶段退出，不能被旧stream_text永久遮蔽。 -->
+  <p v-if="run.status==='planning' && (run.response_phase==='thinking'||!run.stream_text) && !toolProcessing" class="liv-thinking-indicator" role="status">
     <UIcon name="i-lucide-loader-circle" class="animate-spin" aria-hidden="true"/>
     <span class="is-thinking">正在思考…</span>
   </p>

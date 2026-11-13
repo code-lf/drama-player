@@ -7,9 +7,11 @@ import {parse,compileScript} from 'vue/compiler-sfc'
 
 // 编译并挂载真实 SFC，图形库仅替换为事件驱动夹具；不会发真实模型或媒体请求。
 function moduleOf(path,deps={}){
+  // 新画布提取状态使用正式组合函数，HTTP 仍由主组件夹具注入，不能跳过迟到响应隔离。
+  if(path.endsWith('CreationAgentCanvas.vue'))deps={...deps,'../drama/useCanvasAssetExtraction':moduleOf('features/creation/drama/useCanvasAssetExtraction.ts')}
   const raw=readFileSync(path,'utf8'),source=path.endsWith('.vue')?compileScript(parse(raw).descriptor,{id:'canvas-test',inlineTemplate:true}).content:raw
   const output=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ESNext}}).outputText,module={exports:{}}
-  new Function('require','exports','module',output)(name=>name==='vue'?vue:name==='./CreationMediaPreview.vue'?{default:{render:()=>null}}:name==='~/components/liv-ui/LivDialog.vue'?{default:{props:['open'],setup:(p,{slots})=>()=>p.open?vue.h('dialog',[slots.default?.(),slots.footer?.()]):null}}:name==='~/components/liv-ui/LivButton.vue'?{default:{setup:(_,{slots,attrs})=>()=>vue.h('button',attrs,slots.default?.())}}:name==='../canvasViewport'?viewportGeometry:name==='../canvasGroups'?groupGeometry:name==='./CreationImageLightbox.vue'?{default:{props:['node'],setup:p=>()=>vue.h('image-lightbox',{'data-node':p.node.id})}}:deps[name]||{},module.exports,module)
+  new Function('require','exports','module',output)(name=>name==='vue'?vue:name==='~/shared/api/services/libraryService'?{libraryService:{previewUrl:url=>url}}:name==='./CreationMediaPreview.vue'?{default:{render:()=>null}}:name==='./CreationWorkspaceNotice.vue'?moduleOf('features/creation/components/CreationWorkspaceNotice.vue'):name==='~/components/liv-ui/LivDialog.vue'?{default:{props:['open'],setup:(p,{slots})=>()=>p.open?vue.h('dialog',[slots.default?.(),slots.footer?.()]):null}}:name==='~/components/liv-ui/LivButton.vue'?{default:{setup:(_,{slots,attrs})=>()=>vue.h('button',attrs,slots.default?.())}}:name==='../canvasViewport'?viewportGeometry:name==='../canvasGroups'?groupGeometry:name==='./CreationImageLightbox.vue'?{default:{props:['node'],setup:p=>()=>vue.h('image-lightbox',{'data-node':p.node.id})}}:deps[name]||{},module.exports,module)
   return module.exports
 }
 const media=moduleOf('features/creation/videoWorkbenchMedia.ts')
@@ -21,20 +23,24 @@ const storage=new Map()
 globalThis.localStorage={getItem:key=>storage.get(key)||null,setItem:(key,value)=>storage.set(key,value)}
 const tick=async()=>{for(let i=0;i<8;i++)await vue.nextTick()}
 function mount({saved=null,failSave=false,requestHandler,results=[],messages=[],tasks={},references=[],leftInset=0,runs=[],compositions=[],beforeSelect}={}){
-  const calls=[],events=[],selections=[],activity=[],toolActions=[],cameraCalls=[],viewport=vue.ref({x:0,y:0,zoom:1}),flowNodes=vue.ref([])
+  const calls=[],scriptCalls=[],events=[],selections=[],activity=[],toolActions=[],cameraCalls=[],panelEvents=[],viewport=vue.ref({x:0,y:0,zoom:1}),flowNodes=vue.ref([])
   const flow={viewport,getNodes:flowNodes,findNode:id=>{const node=flowNodes.value.find(node=>node.id===id);return node?{...node,dimensions:{width:280,height:360}}:undefined},project:value=>value,setViewport:async value=>{cameraCalls.push({...value});viewport.value={...value}},fitView:async()=>{},zoomIn:async()=>{viewport.value={...viewport.value,zoom:viewport.value.zoom+.1}},zoomOut:async()=>{viewport.value={...viewport.value,zoom:viewport.value.zoom-.1}}}
-  const request=async(url,options)=>{calls.push({url,options});if(requestHandler)return requestHandler(url,options);if(options?.method==='PUT'){if(failSave)throw new Error('测试保存失败');return {revision:1}}return {revision:saved?1:0,content:saved}}
+  // 新文稿读取与布局交互分别记录，原布局断言仍能查出任何额外写入；文稿专项断言核对 scriptCalls。
+  const request=async(url,options)=>{if(url.endsWith('/production-workspace'))return requestHandler?requestHandler(url,options):{workspace:null};(url.endsWith('/script-document')?scriptCalls:calls).push({url,options});if(requestHandler)return requestHandler(url,options);if(url.endsWith('/script-document'))return {revision:0,document:null,session_id:'session-test'};if(options?.method==='PUT'){if(failSave)throw new Error('测试保存失败');return {revision:1}}return {revision:saved?1:0,content:saved}}
   // 真实父组件把逐节点菜单交给节点；夹具保留节点身份，不能再靠编辑器底栏的旧菜单测试派生。
   const nodeProbe={props:['id','selected','creationItems'],setup:p=>()=>vue.h('menu',{'data-node':p.id,selected:p.selected,items:p.creationItems})}
-  const component=moduleOf('features/creation/components/CreationAgentCanvas.vue',{'@vue-flow/core':{useVueFlow:()=>flow,VueFlow:{props:['nodes','edges'],setup:(props,{slots})=>()=>{flowNodes.value=props.nodes;return vue.h('flow',{nodes:props.nodes,edges:props.edges},props.nodes.map(node=>slots['node-creative']?.(node)))}}},'@vue-flow/minimap':{MiniMap:{render:()=>null}},'../agentCanvas':model,'../canvasTaskNotices':noticeGeometry,'~/shared/api/adapters/httpAdapter':{request},'~/composables/useActionDialog':{useActionDialog:()=>({confirm:async()=>true})},'./CreativeCanvasNode.vue':{default:nodeProbe},'./CreativeCanvasEdge.vue':{default:{render:()=>null}},'./CreativeCompositionEditor.vue':{default:{render:()=>null}}})
+  const scriptProbe={props:['open','document','busy','error'],emits:['save','update:open'],setup:(p,{emit})=>()=>vue.h('script-dialog',{...p,onSave:document=>emit('save',document)})}
+  const component=moduleOf('features/creation/components/CreationAgentCanvas.vue',{'@vue-flow/core':{useVueFlow:()=>flow,VueFlow:{props:['nodes','edges','nodesDraggable','nodesConnectable','panOnDrag'],setup:(props,{slots})=>()=>{flowNodes.value=props.nodes;return vue.h('flow',{nodes:props.nodes,edges:props.edges,nodesDraggable:props.nodesDraggable,nodesConnectable:props.nodesConnectable,panOnDrag:props.panOnDrag},props.nodes.map(node=>slots['node-creative']?.(node)))}}},'@vue-flow/minimap':{MiniMap:{render:()=>null}},'../agentCanvas':model,'../canvasTaskNotices':noticeGeometry,'~/shared/api/adapters/httpAdapter':{request},'~/composables/useActionDialog':{useActionDialog:()=>({confirm:async()=>true})},'./CreativeCanvasNode.vue':{default:nodeProbe},'./CreativeCanvasEdge.vue':{default:{render:()=>null}},'./CreativeCompositionEditor.vue':{default:{render:()=>null}},'../drama/components/CanvasScriptDialog.vue':{default:scriptProbe},'../drama/components/CanvasProductionIntake.vue':{default:{render:()=>null}}})
   // 常驻空任务头不等于整块画布，按真实紧凑尺寸测量遮挡，避免夹具把所有落点挤出视口。
   const node=(type,text='')=>({type,text,children:[],props:{},parent:null,getBoundingClientRect(){return this.props.class?.includes('creative-task-list')?{left:1036,top:732,width:248,height:54}:{left:100,top:50,width:1200,height:800}}})
   const renderer=vue.createRenderer({createElement:node,createText:text=>node('text',text),createComment:text=>node('comment',text),setText:(el,text)=>el.text=text,setElementText:(el,text)=>{el.text=text;el.children=[]},patchProp:(el,key,_,value)=>el.props[key]=value,insert:(el,parent,anchor)=>{if(el.parent){const i=el.parent.children.indexOf(el);if(i>=0)el.parent.children.splice(i,1)}el.parent=parent;const index=anchor?parent.children.indexOf(anchor):-1;if(index<0)parent.children.push(el);else parent.children.splice(index,0,el)},remove:el=>{if(el.parent)el.parent.children=el.parent.children.filter(value=>value!==el)},parentNode:el=>el.parent,nextSibling:el=>el.parent?.children[el.parent.children.indexOf(el)+1]})
-  const app=renderer.createApp(component.default,{sessionId:'session-test',ownerId:'owner-test',runs,messages,results,references,previews:{},tasks,leftInset,compositions,beforeSelect,onSelect:value=>selections.push(value.id),onTools:(node,action)=>toolActions.push({nodeId:node.id,action}),onActivity:value=>activity.push(value),onGenerate:(...value)=>events.push(value)})
+  const app=renderer.createApp(component.default,{sessionId:'session-test',ownerId:'owner-test',runs,messages,results,references,previews:{},tasks,leftInset,compositions,beforeSelect,onSelect:value=>selections.push(value.id),onTools:(node,action)=>toolActions.push({nodeId:node.id,action}),onActivity:value=>activity.push(value),onGenerate:(...value)=>events.push(value),onAssets:()=>panelEvents.push('assets'),onCloseAssets:()=>panelEvents.push('closeAssets'),onEditWorkspace:()=>panelEvents.push('editWorkspace')})
   app.component('UButton',{setup:(_,{slots,attrs})=>()=>vue.h('button',attrs,slots.default?.())})
   app.component('UTooltip',{props:['text'],setup:(_,{slots})=>()=>slots.default?.()})
   app.component('UModal',{props:['open'],setup:(p,{slots})=>()=>p.open?vue.h('dialog',[slots.body?.(),slots.footer?.()]):null})
   app.component('UInput',{props:['modelValue'],emits:['update:modelValue'],setup:(p,{emit})=>()=>vue.h('input',{value:p.modelValue,onInput:value=>emit('update:modelValue',value)})})
+  // 测试渲染器没有 Nuxt 自动注册，显式提供选择器，避免把缺少夹具误认为组件错误。
+  app.component('USelect',{props:['modelValue'],setup:(p,{attrs})=>()=>vue.h('select',{...attrs,value:p.modelValue})})
   app.component('UDropdownMenu',{props:['items'],setup:(props,{slots})=>()=>vue.h('menu',{items:props.items},slots.default?.())})
   app.component('UContextMenu',{props:['items'],setup:(props,{slots})=>()=>vue.h('context-menu',{items:props.items},slots.default?.())})
   app.component('UTextarea',{props:['modelValue','readonly'],emits:['update:modelValue'],setup:(props,{emit})=>()=>vue.h('textarea',{value:props.modelValue,readonly:props.readonly,onInput:value=>emit('update:modelValue',value)})})
@@ -46,8 +52,258 @@ function mount({saved=null,failSave=false,requestHandler,results=[],messages=[],
   const text=el=>el.text+el.children.map(text).join('')
   const click=async label=>{const el=find(el=>el.type==='button'&&(text(el)===label||el.props['aria-label']===label));assert.ok(el,`缺少${label}`);await el.props.onClick();await tick()}
   const create=async kind=>{const deriving=kind.startsWith('派生'),label=deriving?kind.slice(2)||'派生':kind;const menu=find(el=>el.type==='menu'&&(deriving?el.props['data-node']===selections.at(-1):!el.props['data-node'])&&el.props.items?.some(item=>item.label===label));assert.ok(menu,`缺少${kind}菜单`);await menu.props.items.find(item=>item.label===label).onSelect();await tick()}
-  return {app,instance,calls,events,selections,activity,toolActions,cameraCalls,find,text,click,create,flow}
+  return {app,instance,calls,scriptCalls,events,selections,activity,toolActions,cameraCalls,panelEvents,find,text,click,create,flow}
 }
+
+test('已保存剧本在现有画布恢复为真实文本节点，读取不写稿或生成',async()=>{
+  storage.clear()
+  const ui=mount({requestHandler:async url=>url.endsWith('/script-document')?{revision:2,session_id:'session-test',document:{id:'script-real',title:'末班车',source_text:'第一场\n女孩：还没来？',requirements:'保留原对白'}}:{revision:0,content:null}})
+  await tick()
+  const saved=ui.flow.getNodes.value.find(node=>node.id==='script:script-real')
+  assert.ok(saved);assert.equal(saved.data.prompt,'第一场\n女孩：还没来？')
+  assert.equal(saved.data.scriptDocument.revision,2);assert.equal(saved.data.readonly,true)
+  assert.equal(saved.draggable,false)
+  assert.ok(ui.find(el=>el.props['aria-label']==='短剧画布定位'))
+  assert.equal(ui.scriptCalls.length,1);assert.equal(ui.scriptCalls[0].options,undefined)
+  assert.equal(ui.events.length,0);ui.app.unmount()
+})
+
+test('真实提取结果在现有画布形成一个分类资产框，筛选不删节点或改业务关系',async()=>{
+  storage.clear()
+  const document={id:'doc',title:'末班车',source_text:'阿远在站台拿着手机。',requirements:''}
+  const extraction={id:'test-extract',document_id:'doc',document_revision:1,status:'succeeded',summary:'设定已提取',assets:['role','scene','prop'].map((category,index)=>({id:`a${index}`,key:`k${index}`,category,name:['阿远','站台','手机'][index],evidence:[{quote:'阿远在站台拿着手机',fact:'来自原文'}],design_suggestions:[]}))}
+  // 复现历史错误坐标：整组覆盖不可移动的剧本。读取后应整体右移且保留原业务身份。
+  const oldLayout={schema_version:1,positions:{'script:doc':{x:80,y:80},'asset:a0':{x:260,y:130},'asset:a1':{x:600,y:130},'asset:a2':{x:940,y:130}},drafts:[],edges:[],hidden:[],viewport:{x:40,y:60,zoom:.8}}
+  const ui=mount({requestHandler:async(url,options)=>url.endsWith('/script-document')?{revision:1,session_id:'session-test',document}:url.endsWith('/asset-extraction')?{extraction}:options?.method==='PUT'?{revision:2,content:options.body.content}:url.endsWith('/canvas')?{revision:1,content:oldLayout}:{revision:0,content:null}})
+  await tick()
+  assert.equal(ui.flow.getNodes.value.filter(node=>node.data.productionAsset).length,0)
+  const frame=ui.find(el=>el.type==='section'&&el.props.class?.includes('creative-group-frame'))
+  assert.ok(frame);assert.ok(ui.find(el=>el.props['aria-label']==='资产分类'))
+  const assetX=(parseFloat(frame.props.style.left)-ui.flow.viewport.value.x)/ui.flow.viewport.value.zoom
+  const scriptX=ui.flow.getNodes.value.find(node=>node.id==='script:doc').position.x
+  assert.ok(assetX>=scriptX+528+80-.01,`资产组 ${assetX}，剧本 ${scriptX}`)
+  assert.equal(ui.find(el=>el.props.class==='creative-group-grip'),undefined)
+  const sceneShortcut=ui.find(el=>el.type==='button'&&ui.text(el)==='场景')
+  assert.ok(sceneShortcut);await sceneShortcut.props.onClick();await tick()
+  assert.equal(ui.find(el=>el.type==='button'&&ui.text(el)==='场景（1）').props['aria-pressed'],true)
+  assert.equal(ui.find(el=>el.props['aria-label']==='节点提示词编辑区'),undefined)
+  const role=ui.find(el=>el.type==='button'&&ui.text(el)==='角色（1）')
+  assert.ok(role);await role.props.onClick({stopPropagation(){}});await tick()
+  assert.equal(ui.find(el=>el.type==='button'&&ui.text(el)==='角色（1）').props['aria-pressed'],true)
+  // 生产组只有一个面板和一条来源线；切分类不会暴露内部可拖节点。
+  assert.equal(ui.flow.getNodes.value.filter(node=>node.data.productionAsset&&!node.hidden).length,0)
+  assert.ok(ui.find(el=>el.type==='button'&&el.props.class?.includes('creative-production-card')&&ui.text(el).includes('阿远')))
+  assert.equal(ui.find(el=>el.type==='button'&&ui.text(el)==='全部（3）'),undefined)
+  const scene=ui.find(el=>el.type==='button'&&ui.text(el)==='场景（1）')
+  await scene.props.onClick({stopPropagation(){}});await tick()
+  assert.ok(ui.find(el=>el.type==='button'&&el.props.class?.includes('creative-production-card')&&ui.text(el).includes('站台')))
+  assert.ok(ui.find(el=>el.type==='svg'&&el.props.class==='creative-production-links'))
+  assert.equal(ui.flow.getNodes.value.length,1)
+  assert.deepEqual(ui.find(el=>el.type==='flow').props.edges,[])
+  assert.equal(ui.events.length,0)
+  assert.ok(ui.calls.every(call=>!call.options||call.options.method==='PUT'))
+  ui.app.unmount()
+})
+
+test('生产镜头点击后默认可播放，生产连线只进入组边框',async()=>{
+  storage.clear()
+  const ui=mount({requestHandler:async url=>{
+    if(url.endsWith('/production-workspace'))return {
+      workspace:{project_id:'p',source_script_version:'v1.1',assets:[]},
+      storyboards:[{id:'s',episode_no:1,shot_no:1,duration_sec:4,video_url:'/shot.mp4',video_status:'success'}],
+      episode_renders:[{id:'r',episode_no:1,cut_version:1,status:'completed',progress:100,duration_ms:4000,output_url:'/final.mp4',source_shot_ids:['s']}],
+    }
+    return {revision:0,content:null}
+  }})
+  await tick()
+  assert.ok(ui.find(el=>el.type==='svg'&&el.props.class==='creative-production-links'))
+  assert.deepEqual(ui.find(el=>el.type==='flow').props.edges,[])
+  const card=ui.find(el=>el.type==='button'&&el.props.class?.includes('creative-production-card')&&ui.text(el).includes('镜头 1'))
+  assert.ok(card);await card.props.onClick({stopPropagation(){}});await tick()
+  const player=ui.find(el=>el.type==='video'&&el.props['aria-label']==='已选镜头视频')
+  assert.equal(player?.props.src,'/shot.mp4')
+  assert.equal(ui.events.length,0)
+  ui.app.unmount()
+})
+
+test('导入剧本只有保存回执成功才创建节点，保存失败保留原文并复用请求号',async()=>{
+  storage.clear();let state={revision:0,session_id:'session-test',document:null},fail=true
+  const ui=mount({requestHandler:async(url,options)=>{
+    if(!url.endsWith('/script-document'))return {revision:0,content:null}
+    if(options?.method==='PUT'){
+      if(fail)throw new Error('测试断网，本地保留')
+      state={revision:1,session_id:'session-test',document:{id:'doc',...options.body.document}}
+    }
+    return state
+  }})
+  await tick();await ui.create('导入剧本')
+  assert.equal(ui.flow.getNodes.value.length,0)
+  const document={title:'新剧本',source_text:'角色：你好。',requirements:'原对白'}
+  await ui.find(el=>el.type==='script-dialog').props.onSave(document);await tick()
+  assert.equal(ui.flow.getNodes.value.length,0)
+  assert.match(ui.find(el=>el.type==='script-dialog').props.error,/测试断网/)
+  fail=false;await ui.find(el=>el.type==='script-dialog').props.onSave(document);await tick()
+  assert.ok(ui.flow.getNodes.value.some(node=>node.id==='script:doc'))
+  assert.equal(ui.find(el=>el.type==='script-dialog'),undefined)
+  const writes=ui.scriptCalls.filter(call=>call.options?.method==='PUT')
+  assert.equal(writes[0].options.body.request_id,writes[1].options.body.request_id)
+  assert.equal(ui.events.length,0);ui.app.unmount()
+})
+
+test('画布列表与资料库切换时请求关闭对侧面板，不生成任务',async()=>{
+  storage.clear();const ui=mount();await tick()
+  await ui.click('画布列表');assert.ok(ui.find(el=>el.props['aria-label']==='画布列表'&&el.type==='aside'))
+  await ui.click('打开资料库');assert.equal(ui.find(el=>el.props['aria-label']==='画布列表'&&el.type==='aside'),undefined)
+  assert.deepEqual(ui.panelEvents,['closeAssets','assets']);assert.equal(ui.events.length,0)
+  ui.app.unmount()
+})
+
+test('资产独立放上画布只保存固定版本，预览重新读取且不触发生成',async()=>{
+  storage.clear();let saved=null,revision=0
+  const ui=mount({requestHandler:async(url,options)=>{
+    if(options?.method==='PUT'){saved=structuredClone(options.body.content);return {revision:++revision}}
+    if(url.endsWith('/canvas/assets'))return {items:[{item_id:'item',version_id:'version',available:true,name:'参考图',media_type:'image',preview_url:'/private-preview'}]}
+    return {revision,content:saved}
+  }})
+  await tick()
+  assert.equal(await ui.instance.placeLibraryAsset({id:'item',media_type:'image',versions:[{id:'version'}]}),true)
+  const write=ui.calls.find(call=>call.options?.method==='PUT')
+  assert.deepEqual(write.options.body.content.asset_references,[{item_id:'item',version_id:'version'}])
+  assert.equal(JSON.stringify(write.options.body.content).includes('/private-preview'),false)
+  assert.equal(ui.events.length,0);assert.ok(ui.calls.some(call=>call.url.endsWith('/canvas/assets')))
+  ui.app.unmount();storage.clear()
+})
+
+test('上画布保存失败不显示成功、不读取预览或提交生成',async()=>{
+  storage.clear()
+  const ui=mount({requestHandler:async(url,options)=>{if(options?.method==='PUT')throw new Error('测试保存失败');if(url.endsWith('/canvas/assets'))return {items:[]};return {revision:0,content:null}}})
+  await tick()
+  assert.equal(await ui.instance.placeLibraryAsset({id:'item',media_type:'image',versions:[{id:'version'}]}),false)
+  assert.ok(ui.find(el=>ui.text(el).includes('测试保存失败')))
+  assert.equal(ui.calls.filter(call=>call.url.endsWith('/canvas/assets')).length,1)
+  assert.equal(ui.events.length,0);ui.app.unmount();storage.clear()
+})
+
+test('素材上画布保存失败后重试成功，自动重新核权读取预览',async()=>{
+  storage.clear();let failed=true,stored=null,revision=0
+  const ui=mount({requestHandler:async(url,options)=>{
+    if(options?.method==='PUT'){if(failed)throw new Error('暂时断网');stored=structuredClone(options.body.content);return {revision:++revision}}
+    if(url.endsWith('/canvas/assets'))return {items:[{item_id:'item',version_id:'version',available:true,name:'参考图',media_type:'image',preview_url:'/fresh'}]}
+    return {revision,content:stored}
+  }})
+  await tick();assert.equal(await ui.instance.placeLibraryAsset({id:'item',media_type:'image',versions:[{id:'version'}]}),false)
+  failed=false;await ui.click('重试画布保存');await tick()
+  const node=ui.flow.getNodes.value.find(row=>row.id==='reference:version')
+  assert.equal(node?.data.status,'reference');assert.equal(node.data.url,'/fresh')
+  assert.equal(ui.find(el=>el.props.role==='alert'),undefined)
+  assert.equal(ui.events.length,0);ui.app.unmount();storage.clear()
+})
+
+test('旧服务忽略素材字段时保留本机修改，不误报已上画布',async()=>{
+  storage.clear();let revision=0
+  const ui=mount({requestHandler:async(url,options)=>options?.method==='PUT'?{revision:++revision}:url.endsWith('/canvas/assets')?{items:[]}:{revision,content:model.emptyCreativeLayout()}})
+  await tick()
+  assert.equal(await ui.instance.placeLibraryAsset({id:'item',media_type:'image',versions:[{id:'version'}]}),false)
+  assert.ok(ui.find(el=>ui.text(el).includes('素材引用未能确认保存')))
+  assert.equal(ui.events.length,0);ui.app.unmount();storage.clear()
+})
+
+test('旧服务缺少画布素材接口时不发送保存请求',async()=>{
+  storage.clear()
+  const ui=mount({requestHandler:async(url)=>{
+    if(url.endsWith('/canvas/assets'))throw Object.assign(new Error('Not Found'),{statusCode:404})
+    return {revision:0,content:null}
+  }})
+  await tick();assert.equal(await ui.instance.placeLibraryAsset({id:'item',media_type:'image',versions:[{id:'version'}]}),false)
+  assert.ok(ui.find(el=>ui.text(el).includes('当前服务尚未支持画布素材')))
+  assert.equal(ui.calls.filter(call=>call.options?.method==='PUT').length,0)
+  assert.equal(ui.events.length,0);ui.app.unmount();storage.clear()
+})
+
+test('重开画布重新读取固定版本，权限失效时保留节点但不使用旧地址',async()=>{
+  storage.clear();const saved=model.emptyCreativeLayout()
+  saved.asset_references=[{item_id:'item',version_id:'version'}]
+  const ui=mount({requestHandler:async(url)=>url.endsWith('/canvas/assets')
+    ?{items:[{item_id:'item',version_id:'version',available:false}]}
+    :{revision:1,content:saved}})
+  await tick()
+  const flow=ui.find(el=>el.type==='flow')
+  const node=flow.props.nodes.find(row=>row.id==='reference:version')
+  assert.equal(node?.data.status,'unavailable');assert.equal(node.data.url,'')
+  assert.equal(ui.events.length,0);ui.app.unmount();storage.clear()
+})
+
+test('上画布等待离开确认时页面关闭，不保存到已离开的会话',async()=>{
+  storage.clear();let finish
+  const ui=mount({beforeSelect:()=>new Promise(resolve=>{finish=resolve})});await tick()
+  const operation=ui.instance.placeLibraryAsset({id:'item',media_type:'image',versions:[{id:'version'}]})
+  await tick();ui.app.unmount();finish(true)
+  assert.equal(await operation,false)
+  assert.equal(ui.calls.filter(call=>call.options?.method==='PUT').length,0)
+  assert.equal(ui.events.length,0);storage.clear()
+})
+
+test('画布冲突选择云端后重新核权素材，不沿用冲突前的预览',async()=>{
+  storage.clear();const local=model.emptyCreativeLayout(),remote=model.emptyCreativeLayout()
+  local.drafts=[{id:'draft:local',kind:'text',title:'本机',prompt:'修改'}]
+  remote.asset_references=[{item_id:'item',version_id:'version'}]
+  storage.set('liv-creative-canvas-v1:owner-test:session-test',JSON.stringify({revision:0,layout:local,dirty:true,inputs:{}}))
+  let reads=0
+  const ui=mount({requestHandler:async(url)=>url.endsWith('/canvas/assets')
+    ?{items:[{item_id:'item',version_id:'version',available:true,name:'素材',media_type:'image',preview_url:`/fresh-${++reads}`}]}
+    :{revision:1,content:remote}})
+  await tick();assert.equal(reads,1);await ui.click('使用云端画布')
+  assert.equal(reads,2)
+  assert.equal(ui.flow.getNodes.value.find(row=>row.id==='reference:version')?.data.url,'/fresh-2')
+  assert.equal(ui.events.length,0);ui.app.unmount();storage.clear()
+})
+
+test('从画布移除独立素材只移除引用与连线，撤销可恢复，不删除素材或生成',async()=>{
+  storage.clear();const saved=model.emptyCreativeLayout()
+  saved.asset_references=[{item_id:'item',version_id:'version'}]
+  saved.drafts=[{id:'draft:target',kind:'image',title:'草案',prompt:'画面'}]
+  saved.edges=[{id:'edge',source:'reference:version',target:'draft:target'}]
+  let revision=1
+  const ui=mount({requestHandler:async(url,options)=>{
+    if(options?.method==='PUT')return {revision:++revision}
+    if(url.endsWith('/canvas/assets'))return {items:[{item_id:'item',version_id:'version',available:true,name:'参考图',media_type:'image',preview_url:'/fresh'}]}
+    return {revision:1,content:saved}
+  }})
+  await tick();assert.equal(await ui.instance.focus('reference:version'),true);await tick()
+  await ui.click('从画布移除节点');await ui.click('删除节点')
+  assert.equal(ui.flow.getNodes.value.some(row=>row.id==='reference:version'),false)
+  await new Promise(resolve=>setTimeout(resolve,700));await tick()
+  let content=ui.calls.filter(call=>call.options?.method==='PUT').at(-1).options.body.content
+  assert.deepEqual(content.asset_references,[]);assert.deepEqual(content.edges,[])
+  await ui.click('撤销画布编辑');await new Promise(resolve=>setTimeout(resolve,700));await tick()
+  content=ui.calls.filter(call=>call.options?.method==='PUT').at(-1).options.body.content
+  assert.deepEqual(content.asset_references,[{item_id:'item',version_id:'version'}]);assert.equal(content.edges.length,1)
+  assert.equal(ui.events.length,0);assert.equal(ui.calls.some(call=>call.options?.method==='DELETE'),false)
+  ui.app.unmount();storage.clear()
+})
+
+test('新增菜单打开现有剪辑工作台，不创建草稿或提交任务',async()=>{
+  storage.clear();const ui=mount();await tick()
+  const menu=ui.find(el=>el.type==='menu'&&el.props.items?.some(item=>item.label==='AI 剪辑'))
+  assert.ok(menu);assert.equal(menu.props.items.find(item=>item.label==='AI 剪辑').disabled,false)
+  menu.props.items.find(item=>item.label==='AI 剪辑').onSelect();await tick()
+  assert.deepEqual(ui.panelEvents,['editWorkspace']);assert.equal(ui.events.length,0)
+  assert.equal(ui.calls.filter(call=>call.options?.method==='PUT').length,0)
+  ui.app.unmount()
+})
+
+test('切换手型时暂停节点拖动和连线，切回选择工具恢复',async()=>{
+  storage.clear();const ui=mount();await tick()
+  const flow=()=>ui.find(el=>el.type==='flow')
+  const menu=()=>ui.find(el=>el.type==='menu'&&el.props.items?.some(item=>item.label.includes('手型工具')))
+  assert.equal(flow().props.nodesDraggable,true);assert.equal(flow().props.nodesConnectable,true)
+  menu().props.items.find(item=>item.label.includes('手型工具')).onSelect();await tick()
+  assert.equal(flow().props.nodesDraggable,false);assert.equal(flow().props.nodesConnectable,false)
+  assert.deepEqual(flow().props.panOnDrag,[0,1])
+  menu().props.items.find(item=>item.label.includes('选择工具')).onSelect();await tick()
+  assert.equal(flow().props.nodesDraggable,true);assert.equal(flow().props.nodesConnectable,true)
+  assert.equal(ui.events.length,0);ui.app.unmount()
+})
 
 // 用真实SFC验证跨页面修订冲突，未保存正文不能被刷新时的云端投影清空。
 test('另一标签覆盖共享备份后，本页刷新仍以私有副本核对未保存正文',async()=>{
@@ -666,9 +922,13 @@ test('点击已完成作品可保存当前提示词编辑稿，不改写原文�
 
 test('缩放按钮显式保存用户视口，不依赖图形库提供原生event',async()=>{
   storage.clear();const ui=mount();await tick()
+  ui.flow.viewport.value={...ui.flow.viewport.value,zoom:1.096}
+  await tick()
   await ui.click('缩小画布');await new Promise(resolve=>setTimeout(resolve,700));await tick()
   const put=ui.calls.find(call=>call.options?.method==='PUT')
-  assert.ok(put);assert.ok(Math.abs(put.options.body.content.viewport.zoom-.7)<.001)
+  assert.ok(put);assert.equal(put.options.body.content.viewport.zoom,1)
+  await ui.click('放大画布');assert.equal(ui.flow.viewport.value.zoom,1.1)
+  await ui.click('缩放重置为100%');assert.equal(ui.flow.viewport.value.zoom,1)
   assert.equal(ui.events.length,0);ui.app.unmount()
 })
 

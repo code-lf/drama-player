@@ -1,0 +1,25 @@
+{
+  "name": "fablecut",
+  "version": "1.18.0",
+  "license": "MIT",
+  "tarball": "https://registry.npmjs.org/fablecut/-/fablecut-1.18.0.tgz",
+  "integrity": "sha512-Rh7lYJ95EiFPSbrwn3ZE/sQQDFtYyGioLRBrkxepRjEsYIP8wcx9T+steWs3upy3xZBOeUdWhIzyT2d638CF2g==",
+  "files": {
+    "edit-ops.js": "c3da300b5cdf1924f30e0a3ec16c8b76544af390e9f429de097ac25408385fbe"
+  },
+  "patches": [
+    {
+      "file": "edit-ops.js",
+      "find": "const MIN_DUR = 0.05;",
+      "replace": "const MIN_DUR = 0.04;",
+      "reason": "平台固定25fps，最短视觉片段是一帧40ms；不能沿用上游50ms门槛。"
+    },
+    {
+      "file": "edit-ops.js",
+      "find": "if (!(t > c.start + MIN_DUR && t < clipEnd(c) - MIN_DUR)) return null;",
+      "replace": "if (!(t >= c.start + MIN_DUR - 1e-9 && t <= clipEnd(c) - MIN_DUR + 1e-9)) return null;",
+      "reason": "允许首尾恰好一帧；浮点容差仅消除秒投影误差，平台层仍严格校验40ms。"
+    }
+  ],
+  "production_enabled": false
+}

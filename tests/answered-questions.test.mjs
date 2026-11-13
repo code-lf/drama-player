@@ -79,8 +79,8 @@ test('当前和历史完整问题直接展示，旧回复可展开，提交中�
   const activeAnswerCard=studio.indexOf('<CreationProcessEvents :events="runProcessEvents(planning)">')
   assert.ok(activeAnswerCard>=0)
   assert.ok(activeAnswerCard<studio.indexOf('<p v-if="planning.status===\'cancelled\'"'))
-  assert.ok(activeAnswerCard<studio.indexOf('<CreationImagePlanCard v-else-if="planning.image_plan"'))
-  assert.ok(activeAnswerCard<studio.indexOf('<CreationVideoPlanCard v-else-if="planning.creative_plan'))
+  assert.ok(activeAnswerCard<studio.indexOf('v-else-if="planning.image_plan"'))
+  assert.ok(activeAnswerCard<studio.indexOf('v-else-if="planning.creative_plan'))
   // 转为历史轮后仍显示原问答，不因已有成果或取消状态而丢失。
   const historyAnswerCard=studio.indexOf('<CreationProcessEvents :events="runProcessEvents(row.run)">')
   assert.ok(historyAnswerCard>=0)

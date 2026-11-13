@@ -155,6 +155,8 @@ const showEstimate = ref(false)
 const estimate = ref<DramaAssetGenerationEstimate | null>(null)
 // 生成确认必须冻结本次估价对应的目标，避免用户在弹窗开启后改变勾选导致错生成或不生成。
 const estimatedGenerationTargets = ref<string[]>([])
+// 失败样本的报价和确认共用同一个目标集合，不能切回首次生成。
+const estimatedRetryFailed = ref(false)
 // 记录本次估价的操作范围，让“生成全部资产”和“生成选中资产”在确认弹窗中可被清楚区分。
 const generationScopeLabel = ref('选中资产')
 const generationMode = ref<'generate' | 'repair'>('generate')
@@ -452,6 +454,7 @@ const generationSubmitLabel = computed(() => {
   if (actionBusy.value === 'generate') return '正在提交…'
   if (blockedAuditDetails.value.length) return '请先修正生成资料'
   if (!estimate.value?.sufficient) return '点数不足'
+  if (estimate.value?.execution_mode === 'mock') return estimate.value.fixture_token ? '确认使用测试图片' : '请重新核对测试配置'
   if (generationMode.value === 'repair') {
     return `消耗 ${estimate.value.required_credits} 点积分 · ${repairMode.value === 'system_repair' ? '系统修正' : '生成优化版本'}`
   }
@@ -1246,16 +1249,21 @@ async function chooseVersion(versionId: string): Promise<void> {
   }
 }
 
-async function requestEstimate(targets = selectionTargets.value, scopeLabel = '选中资产'): Promise<void> {
+async function requestEstimate(targets = selectionTargets.value, scopeLabel = '选中资产', retryFailed = false): Promise<void> {
   if (!targets.length) return
   actionBusy.value = 'estimate'
   generationErrorMessage.value = ''
   try {
     generationMode.value = 'generate'
     repairTarget.value = null
+    const quote = await dramaService.estimateAssetGeneration(props.projectId, targets, retryFailed)
+    if (retryFailed && (quote.execution_mode !== 'mock' || !quote.fixture_token)) {
+      throw new Error('未取得有效的失败样本确认凭据，未提交任务。')
+    }
     estimatedGenerationTargets.value = [...targets]
+    estimatedRetryFailed.value = retryFailed
     generationScopeLabel.value = scopeLabel
-    estimate.value = await dramaService.estimateAssetGeneration(props.projectId, targets)
+    estimate.value = quote
     showEstimate.value = true
   } catch (error: any) {
     // 估价失败时不能静默吞掉，否则用户会误认为“生成全部资产”无响应。
@@ -1267,9 +1275,15 @@ async function requestEstimate(targets = selectionTargets.value, scopeLabel = '�
 
 async function startGeneration(targets = selectionTargets.value, overwrite = false): Promise<void> {
   if (!targets.length) return
+  // 样本说明与凭据必须来自同一份报价；缺失时不让界面回落普通生成。
+  const quote = estimate.value
+  const retryFailed = estimatedRetryFailed.value && generationMode.value === 'generate'
+  if (quote?.execution_mode === 'mock' && !quote.fixture_token) return
   actionBusy.value = 'generate'
   submittingGenerationTargets.value = [...new Set([...submittingGenerationTargets.value, ...targets])]
   generationErrorMessage.value = ''
+  let generationNotice = `已提交 ${targets.length} 项资产生成任务，每项会独立执行和重试。`
+  let noticeTone: 'success' | 'error' = 'success'
   try {
     if (generationMode.value === 'repair' && repairTarget.value) {
       await dramaService.repairAssetConsistency(
@@ -1284,10 +1298,17 @@ async function startGeneration(targets = selectionTargets.value, overwrite = fal
       )
     } else {
       // 回传估价时的编译哈希，后端会在扣点前再次校验资料是否被修改。
-      await dramaService.generateWorkspaceAssets(props.projectId, targets, overwrite, estimate.value?.compile_hashes || {})
+      const receipt = await dramaService.generateWorkspaceAssets(props.projectId, targets, overwrite,
+        quote?.compile_hashes || {}, retryFailed, quote?.fixture_token || undefined)
+      if (receipt.status === 'failed') {
+        generationNotice = '这次确认对应的任务已失败，已恢复原任务记录，没有重复生成；请查看失败原因。'
+        noticeTone = 'error'
+      } else if (receipt.dispatch === 'unknown') generationNotice = '任务已保存，提交回执待核对；请查看现有进度，不要重复提交。'
+      else if (receipt.status === 'success') generationNotice = '已恢复这次确认对应的完成结果，没有重复生成。'
+      else if (quote?.execution_mode === 'mock') generationNotice = '测试图片任务已提交，使用固定样本，不扣媒体积分。'
     }
     showEstimate.value = false
-    showGlobalNotice(`已提交 ${targets.length} 项资产生成任务，每项会独立执行和重试。`)
+    showGlobalNotice(generationNotice, noticeTone)
     await loadWorkspace(true)
   } catch (error: any) {
     // 以前异常被 finally 静默吞到控制台，用户只能看到按钮恢复，误以为点击无效。
@@ -1301,6 +1322,11 @@ async function startGeneration(targets = selectionTargets.value, overwrite = fal
 
 async function retryFailedAssets(targets: string[]): Promise<void> {
   if (!targets.length) return
+  // 样本重试复用原确认框；未知回执不进入失败分支，不自动补投。
+  if (workspace.value?.media_execution_mode === 'mock') {
+    await requestEstimate(targets, '失败资产', true)
+    return
+  }
   actionBusy.value = 'retry-failed'
   submittingGenerationTargets.value = [...new Set([...submittingGenerationTargets.value, ...targets])]
   generationErrorMessage.value = ''
@@ -2086,7 +2112,7 @@ onBeforeUnmount(() => {
                   <span class="more-button"><BaseMenu :items="assetMenuItems(profile)" @select="handleAssetMenu(profile, $event)"><template #trigger><UIcon name="i-lucide-ellipsis" class="size-4" /></template></BaseMenu></span>
                 </div>
                 <div class="card-content">
-                  <div class="card-title"><h3>{{ profile.name }}</h3><span v-if="profile.is_required">主要</span></div>
+                  <div class="card-title"><h3>{{ profile.name }}</h3><span v-if="selectedVersion(profile)?.meta?.mock === true">测试样本</span><span v-if="profile.is_required">主要</span></div>
                   <div v-if="cardFacts(profile).length" class="card-facts" :title="dataText(profile)">
                     <span v-for="fact in cardFacts(profile)" :key="fact.label" :title="`${fact.label}：${fact.value}`"><b>{{ fact.label }}</b><em>{{ fact.value }}</em></span>
                   </div>
@@ -2189,7 +2215,7 @@ onBeforeUnmount(() => {
               <div class="media-version-grid">
                 <button v-for="version in selectedProfile.versions" :key="version.id" class="media-version" :class="{ active: version.id === selectedProfile.selected_asset_id }" @click="chooseVersion(version.id)">
                   <img :src="version.image_url" :alt="`${selectedProfile.name}图片版本`" />
-                  <span>{{ version.id === selectedProfile.selected_asset_id ? '当前版本' : '历史版本' }}</span>
+                  <span>{{ version.id === selectedProfile.selected_asset_id ? '当前版本' : '历史版本' }}{{ version.meta?.mock === true ? ' · 测试样本' : '' }}</span>
                   <Check v-if="version.id === selectedProfile.selected_asset_id" :size="13" />
                 </button>
                 <button class="media-version create-version" @click="requestEstimate([profileTarget(selectedProfile)])"><Plus :size="22" /><span>生成新版本</span></button>
@@ -2444,12 +2470,12 @@ onBeforeUnmount(() => {
       </template>
     </LivDialog>
 
-    <LivDialog v-if="estimate" :open="showEstimate" :title="generationMode === 'repair' ? (repairMode === 'system_repair' ? '确认系统修正' : '确认生成优化版本') : `确认生成${generationScopeLabel}`" :description="generationMode === 'repair' ? '系统会创建一个新图片版本，原图、原始生成要求与旧报告都会保留。' : `本次将生成 ${estimate.target_count} 项资产，生成后自动进行一次质量检测。`" width="sm" @update:open="showEstimate = $event">
+    <LivDialog v-if="estimate" :open="showEstimate" :title="estimate.execution_mode === 'mock' ? (estimatedRetryFailed ? '确认重试测试图片' : '确认使用测试图片') : generationMode === 'repair' ? (repairMode === 'system_repair' ? '确认系统修正' : '确认生成优化版本') : `确认生成${generationScopeLabel}`" :description="estimate.execution_mode === 'mock' ? estimate.sample_notice : generationMode === 'repair' ? '系统会创建一个新图片版本，原图、原始生成要求与旧报告都会保留。' : `本次将生成 ${estimate.target_count} 项资产，生成后自动进行一次质量检测。`" width="sm" @update:open="showEstimate = $event">
       <div class="cost-box"><div><span>预计消耗</span><CreditAmount :value="estimate.required_credits" size="md" tone="accent" :show-unit="true" /></div><div><span>当前余额</span><CreditAmount :value="estimate.current_balance" size="md" tone="default" :show-unit="true" /></div></div>
       <ul v-if="estimate.warnings.length" class="liv-modal-warning-list"><li v-for="item in estimate.warnings" :key="item">{{ item }}</li></ul>
       <div v-if="blockedAuditDetails.length" class="prompt-audit-blocked"><div class="prompt-audit-title"><AlertTriangle :size="16" /><strong>以下资产的生成资料需要先确认</strong></div><div v-for="item in blockedAuditDetails" :key="item.target" class="prompt-audit-item"><b>{{ item.name }}</b><span>{{ item.reasons.join('；') || '存在硬性生成要求冲突' }}</span></div></div>
       <div v-if="generationErrorMessage" class="generation-submit-error"><AlertTriangle :size="15" />{{ generationErrorMessage }}</div>
-      <template #footer><LivButton variant="secondary" @click="showEstimate = false">取消</LivButton><LivButton variant="primary" :loading="actionBusy === 'generate'" :disabled="!estimate.sufficient" @click="startGeneration(generationMode === 'repair' && repairTarget ? [profileTarget(repairTarget)] : estimatedGenerationTargets)"><template #icon><CreditIcon size="md" class="button-credit-icon" /></template>{{ generationSubmitLabel }}</LivButton></template>
+      <template #footer><LivButton variant="secondary" @click="showEstimate = false">取消</LivButton><LivButton variant="primary" :loading="actionBusy === 'generate'" :disabled="!estimate.sufficient || (estimate.execution_mode === 'mock' && !estimate.fixture_token)" @click="startGeneration(generationMode === 'repair' && repairTarget ? [profileTarget(repairTarget)] : estimatedGenerationTargets)"><template #icon><CreditIcon size="md" class="button-credit-icon" /></template>{{ generationSubmitLabel }}</LivButton></template>
     </LivDialog>
 
     <LivDialog v-if="consistencyEstimate" :open="showConsistencyEstimate" title="确认图片质量检测" :description="consistencyEstimate.free_retry ? '本次属于检测服务异常后的0积分重新检测。' : '检测将使用真实图片理解模型，并返回可核验的预期、实际差异与修正方向。'" width="sm" @update:open="showConsistencyEstimate = $event">

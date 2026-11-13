@@ -37,7 +37,8 @@ test('短剧使用真实三项互斥页签，切换保留文字，广告不再�
   assert.match(source,/<UTabs v-if="entry==='drama'"/)
   assert.match(source,/value:'file',label:'上传剧本'/);assert.match(source,/value:'script',label:'粘贴剧本'/);assert.match(source,/value:'idea',label:'描述想法'/)
   assert.match(source,/disabled:busy/)
-  assert.match(source,/<div v-if="baseSkill === 'story'" class="creation-workflow">/)
+  // 故事也取消旧流程按钮，仍由技能与受控生产动作提供原能力。
+  assert.doesNotMatch(source,/class="creation-workflow"/)
   assert.doesNotMatch(source,/广告导演制作/)
 })
 test('模板高亮文字与底色至少达到 WCAG 正文对比度',()=>{

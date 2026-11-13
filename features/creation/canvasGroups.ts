@@ -1,5 +1,47 @@
 import type {CreativeLayout,CreativeNode,CreativeEdge} from './agentCanvas'
 
+/** 收起只隐藏成员和相连的线，保留真实节点、业务状态及原坐标；展开不重建任务。 */
+export function collapsedGroupMembers(layout:Pick<CreativeLayout,'groups'>){
+  return new Set((layout.groups||[]).filter(group=>group.collapsed).flatMap(group=>group.members))
+}
+
+/** 用组框替换生产成员端点，再去重；折叠或切换资产分类不改变真实来源。 */
+export function productionBoundaryLinks(edges:CreativeEdge[],groups:ReadonlyArray<{id:string;members:string[]}>){
+  const memberGroup=new Map(groups.flatMap(group=>group.members.map(member=>[member,group.id] as const)))
+  const unique=new Map<string,{id:string;source:string;target:string}>()
+  for(const edge of edges){
+    if(!edge.data?.lineage||!memberGroup.has(edge.source)&&!memberGroup.has(edge.target))continue
+    const source=memberGroup.get(edge.source)||edge.source,target=memberGroup.get(edge.target)||edge.target
+    if(source===target)continue
+    const id=`${source}:${target}`
+    unique.set(id,{id,source,target})
+  }
+  return [...unique.values()]
+}
+
+/** 生产资产与按集分镜共用原画布组框，保留各自业务身份。 */
+export function syncAssetDefinitionGroup(layout:CreativeLayout,nodes:CreativeNode[]){
+  const candidates=new Map<string,CreativeNode[]>()
+  for(const node of nodes){
+    const {productionAsset,productionShot,standaloneShot}=node.data
+    const id=productionAsset?`group:auto-assets-${productionAsset.extractionId}`:productionShot?`group:auto-shots-${productionShot.projectId}-${productionShot.episodeNo}`:standaloneShot?`group:auto-storyboard-${standaloneShot.groupId}`:''
+    if(id)candidates.set(id,[...(candidates.get(id)||[]),node])
+  }
+  let changed=false
+  const seen=new Set(layout.auto_group_keys||[]),occupied=new Set((layout.groups||[]).flatMap(group=>group.members))
+  for(const [id,items] of candidates){
+    const group=layout.groups?.find(item=>item.id===id)
+    if(!group&&seen.has(id))continue // 用户明确解组后不自动吸回。
+    const members=items.map(item=>item.id).filter(key=>!group?.excluded_members?.includes(key)&&(!occupied.has(key)||group?.members.includes(key)))
+    if(!members.length||members.length>200)continue
+    if(group){for(const key of members)if(!group.members.includes(key)){group.members.push(key);occupied.add(key);changed=true}}
+    else if((layout.groups||[]).length<100){const {productionShot,standaloneShot}=items[0]!.data;(layout.groups||=[]).push({id,title:standaloneShot?.groupTitle||(productionShot?`第 ${productionShot.episodeNo} 集 · 分镜`:'资产'),members});members.forEach(key=>occupied.add(key));changed=true}
+    if(!seen.has(id)&&layout.groups?.some(group=>group.id===id)){seen.add(id);changed=true}
+  }
+  if(changed)layout.auto_group_keys=[...seen]
+  return changed
+}
+
 /** 历史自动组的泛化类型名仅作回退；优先展示真实成片/首项名称，手工组名不改写。 */
 export function canvasGroupLabel(group:{id:string;title:string;members:string[]},nodes:CreativeNode[]){
   if(!group.id.startsWith('group:auto-')||!['分镜图片','分镜视频','音乐素材','视频与成片'].includes(group.title))return group.title
@@ -41,6 +83,44 @@ export function syncAutomaticGroups(layout:CreativeLayout,nodes:CreativeNode[],e
 
 export interface GroupMemberBox{id:string;x:number;y:number;width:number;height:number}
 export interface GroupDropFrame{id:string;x:number;y:number;width:number;height:number}
+/** 固定生产组统一预留四列四行；折叠只是视觉状态，排版仍保留展开空间。 */
+export const PRODUCTION_GROUP_SIZE={width:1136,height:1088}
+
+/** 在世界坐标中排布不可拖动的生产块；普通节点保留原位，组员按相同位移更新。 */
+export function placeFixedDramaBlocks(
+  blocks:ReadonlyArray<GroupDropFrame&{members:GroupMemberBox[];sources:string[]}>,
+  obstacles:ReadonlyArray<GroupDropFrame>,
+){
+  const gap=80,limit=100000
+  const occupied=[...obstacles],placed=new Map<string,GroupDropFrame>()
+  const positions:CreativeLayout['positions']={}
+  for(const block of blocks){
+    // 已连接的上游必须在组框左侧；不依赖缩放比例、可见卡片数量或折叠高度。
+    const sourceRight=block.sources.reduce((right,id)=>{
+      const source=placed.get(id)
+      return source?Math.max(right,source.x+source.width+gap):right
+    },block.x)
+    const candidate={...block,x:sourceRight}
+    const overlaps=(other:GroupDropFrame)=>candidate.x<other.x+other.width+gap&&
+      candidate.x+candidate.width+gap>other.x&&candidate.y<other.y+other.height+gap&&
+      candidate.y+candidate.height+gap>other.y
+    const anchorX=candidate.x
+    // 优先向右错开。接近坐标上限时改用下方空间，避免写入无效布局。
+    for(let i=0;i<=occupied.length;i++){
+      const hits=occupied.filter(overlaps)
+      if(!hits.length)break
+      const right=Math.max(...hits.map(other=>other.x+other.width+gap))
+      if(right+candidate.width<=limit)candidate.x=right
+      else{candidate.x=Math.min(anchorX,limit-candidate.width);candidate.y=Math.max(...hits.map(other=>other.y+other.height+gap))}
+    }
+    const dx=candidate.x-block.x,dy=candidate.y-block.y
+    if((dx||dy)&&!occupied.some(overlaps)&&block.members.every(node=>Math.abs(node.x+dx)<=limit&&Math.abs(node.y+dy)<=limit)){
+      for(const node of block.members)positions[node.id]={x:node.x+dx,y:node.y+dy}
+      placed.set(block.id,candidate);occupied.push(candidate)
+    }else{placed.set(block.id,block);occupied.push(block)}
+  }
+  return positions
+}
 /** 松手时按拖动开始前的组框判断归属；不能用随成员拉大的框判断，否则永远拖不出去。 */
 export function dropGroupMembers(layout:CreativeLayout,moved:GroupMemberBox[],frames:GroupDropFrame[]){
   let changed=false

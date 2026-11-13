@@ -14,10 +14,12 @@ function seekFrame(event:Event){const video=event.target as HTMLVideoElement;if(
     <img v-if="kind==='image'&&url&&!imageFailed" :src="url" alt="" :width="stableThumbnail?40:undefined" :height="stableThumbnail?40:undefined" :loading="stableThumbnail?'eager':'lazy'" :decoding="stableThumbnail?'sync':'async'" @error="imageFailed=true">
     <img v-else-if="kind!=='image'&&cover&&!coverFailed" :src="cover" alt="" :width="stableThumbnail?40:undefined" :height="stableThumbnail?40:undefined" :loading="stableThumbnail?'eager':'lazy'" :decoding="stableThumbnail?'sync':'async'" @error="coverFailed=true">
     <video v-else-if="kind==='video'&&url&&!videoFailed" :src="url" muted playsinline preload="metadata" aria-hidden="true" tabindex="-1" @loadedmetadata="seekFrame" @error="videoFailed=true"/>
-    <UIcon v-else :name="kind==='image'?'i-lucide-image':kind==='video'?'i-lucide-film':'i-lucide-music'"/>
+    <UIcon v-else class="liv-media-preview-icon" :name="kind==='image'?'i-lucide-image':kind==='video'?'i-lucide-film':'i-lucide-music'"/>
   </span>
 </template>
 <style scoped>
 .liv-media-preview{display:grid;place-items:center;overflow:hidden;min-width:0;min-height:0;width:100%;height:100%;pointer-events:none}
 .liv-media-preview>img,.liv-media-preview>video{width:100%;height:100%;object-fit:cover}
+/* Nuxt图标以span渲染，直接限定图标尺寸，避免依赖并不存在的svg子元素。 */
+.liv-media-preview-icon{width:1.5rem;height:1.5rem;flex-shrink:0}
 </style>

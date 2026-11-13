@@ -42,6 +42,8 @@ import type {
   StoryboardAssetGap,
   StoryboardMicroEdit,
   StoryboardMicroEditEstimate,
+  StoryboardMediaSampleEstimate,
+  StoryboardMediaSampleKind,
   StoryboardQualityPolicy,
   StoryboardRow,
   StoryboardTake,
@@ -104,6 +106,8 @@ const continuityTooltipUi = {
 }
 
 const workspace = ref<StoryboardWorkspace | null>(null)
+const fixtureMedia = computed(() => workspace.value?.mediaExecutionMode === 'mock')
+const fixtureEstimate = ref<StoryboardMediaSampleEstimate | null>(null)
 /** 版本摘要先展示，用户选中某个版本后再按需载入镜头，避免打开页面时额外拉取全部历史。 */
 const planHistoryVisible = ref(false)
 const planHistoryLoading = ref(false)
@@ -596,11 +600,14 @@ const selectedGenerationRows = computed(() => {
   return selectableRows.value.filter(row => selected.has(row.id))
 })
 const batchPanelShotCount = computed(() => (
-  batchPanelEstimate.value?.eligibleRowIds.length
+  fixtureMedia.value ? (selectionMode.value ? selectedGenerationRows.value : overviewEligibleGenerationRows.value).length
+  : batchPanelEstimate.value?.eligibleRowIds.length
   ?? (selectionMode.value ? selectedGenerationRows.value.length : 0)
 ))
 const batchPanelDurationSec = computed(() => (
-  batchPanelEstimate.value?.totalDurationSec
+  fixtureMedia.value ? (selectionMode.value ? selectedGenerationRows.value : overviewEligibleGenerationRows.value)
+    .reduce((total, row) => total + Number(row.durationSec || 0), 0)
+  : batchPanelEstimate.value?.totalDurationSec
   ?? (selectionMode.value
     ? selectedGenerationRows.value.reduce((total, row) => total + Number(row.durationSec || 0), 0)
     : 0)
@@ -1289,6 +1296,7 @@ function timingContractText(row: StoryboardRow): string {
 }
 
 function generationPlanHint(row: StoryboardRow): string {
+  if (fixtureMedia.value) return '本项目只使用授权测试样本，不提交真实生成。'
   if (row.planStatus === 'stale') return '时长已变更，导演节奏需要重新编排'
   if (['queued', 'running', 'pending'].includes(row.videoStatus)) return '生成任务已提交，完成后会自动刷新视频版本'
   if (row.planStatus === 'confirmed') return row.videoUrl ? '当前方案已确认，可生成新版本' : '当前方案已确认，可以生成视频'
@@ -1305,10 +1313,14 @@ function canPrepareWorkbenchGeneration(row: StoryboardRow): boolean {
   if (row.planStatus === 'stale') return false
   if (timingContractFor(row)?.splitRequired) return false
   if (['queued', 'running', 'pending'].includes(row.videoStatus)) return false
+  if (fixtureMedia.value) return row.planStatus === 'confirmed' && ['idle', 'failed'].includes(row.videoStatus)
+    && !row.videoUrl && !row.selectedTakeId
   return true
 }
 
 async function ensureOverviewEstimate(force = false): Promise<void> {
+  // 固定测试稿不请求正式报价；实际样本须在用户选择镜头后逐项校验。
+  if (fixtureMedia.value) return
   const rows = overviewGenerationRows.value
   const signature = estimateSignature(rows)
   if (!rows.length) {
@@ -1489,7 +1501,7 @@ async function inheritAdjacentFrameReferences(): Promise<void> {
 }
 
 async function ensureRowEstimate(row: StoryboardRow): Promise<void> {
-  if (rowEstimateCache.value[row.id]) return
+  if (fixtureMedia.value || rowEstimateCache.value[row.id]) return
   try {
     const estimate = await dramaService.estimateStoryboardVideoBatch(props.projectId, {
       episodeNo: currentEpisodeNo.value,
@@ -1788,6 +1800,10 @@ function handleOverviewCardClick(row: StoryboardRow): void {
 
 async function prepareGeneration(rowIds: string[]): Promise<void> {
   if (!rowIds.length) return
+  if (fixtureMedia.value) {
+    await prepareFixtureMedia('video', rowIds)
+    return
+  }
   actionBusy.value = 'estimate-batch'
   try {
     generationMode.value = 'full'
@@ -1813,6 +1829,49 @@ async function prepareGeneration(rowIds: string[]): Promise<void> {
     batchConfirmVisible.value = true
   } catch (error) {
     showNotice(actionErrorMessage(error, '生成预估失败，请稍后重试。'), 'error')
+  } finally {
+    actionBusy.value = ''
+  }
+}
+
+function canPrepareFixtureFrame(row: StoryboardRow): boolean {
+  // 首帧已有有效结果或存在未结束任务时，不提供重复提交入口。
+  return fixtureMedia.value && row.planStatus === 'confirmed' && !row.videoUrl
+    && ['idle', 'failed'].includes(row.videoStatus)
+    && ['not_required', 'required', 'failed', 'stale'].includes(row.previsualizationStatus)
+}
+
+async function prepareFixtureMedia(kind: StoryboardMediaSampleKind, rowIds: string[]): Promise<void> {
+  if (!fixtureMedia.value || actionBusy.value || !rowIds.length) return
+  const projectId = props.projectId
+  const episodeNo = currentEpisodeNo.value
+  actionBusy.value = kind === 'video' ? 'estimate-batch' : 'estimate-fixture-frame'
+  try {
+    const quote = await dramaService.estimateStoryboardMediaSample(projectId, kind, episodeNo, rowIds)
+    if (props.projectId === projectId && currentEpisodeNo.value === episodeNo) fixtureEstimate.value = quote
+  } catch (error) {
+    showNotice(actionErrorMessage(error, '无法核对测试样本，未提交任务。'), 'error')
+  } finally {
+    actionBusy.value = ''
+  }
+}
+
+async function confirmFixtureMedia(): Promise<void> {
+  const quote = fixtureEstimate.value
+  if (actionBusy.value || !fixtureMedia.value || !quote || quote.command.project_id !== workspace.value?.projectId
+    || quote.command.episode_no !== currentEpisodeNo.value) return
+  actionBusy.value = 'confirm-fixture-media'
+  try {
+    const receipt = await dramaService.confirmStoryboardMediaSample(props.projectId, quote)
+    fixtureEstimate.value = null
+    if (receipt.dispatch === 'unknown') {
+      toast.add({ title: '任务已保存，回执待核对', description: '请查看当前镜头进度，不要重复提交。', color: 'warning' })
+    } else {
+      showNotice('测试样本任务已确认，可查看当前镜头进度。')
+    }
+    await loadWorkspace(true)
+  } catch (error) {
+    showNotice(actionErrorMessage(error, '测试样本未确认，请核对后重试。'), 'error')
   } finally {
     actionBusy.value = ''
   }
@@ -1927,6 +1986,13 @@ async function retryFailedBatch(): Promise<void> {
   const failedCount = failedBatchCount.value
   if (!batchId || failedCount <= 0) {
     retryFailedPopoverOpen.value = false
+    return
+  }
+  if (fixtureMedia.value) {
+    // 样本失败从当前分镜重新核对，不调用旧的正式供应商重试接口。
+    retryFailedPopoverOpen.value = false
+    const rowIds = workspace.value?.rows.filter(row => row.videoStatus === 'failed').map(row => row.id) || []
+    await prepareFixtureMedia('video', rowIds)
     return
   }
   actionBusy.value = 'retry-failed-batch'
@@ -2541,6 +2607,7 @@ function syncRealtimeTracking(): void {
 }
 
 watch(currentEpisodeNo, () => {
+  fixtureEstimate.value = null
   selectedIds.value = []
   loadWorkspace()
 })
@@ -3042,7 +3109,7 @@ function startMicroEditPolling(editId: string): void {
               <span class="icon-box"><Film :size="19" /></span>
               <div>
                 <strong>批量生成任务</strong>
-                <small>仅统计当前已确认且可提交的镜头</small>
+                <small>{{ fixtureMedia ? '统计已确认的候选镜头，提交前核对固定样本' : '仅统计当前已确认且可提交的镜头' }}</small>
               </div>
               <span class="batch-panel__total-duration">
                 全片总时长 <b>{{ formatDuration(workspace.summary.estimatedDurationSec) }}</b>
@@ -3059,7 +3126,8 @@ function startMicroEditPolling(editId: string): void {
               </span>
               <span class="batch-credit">
                 <em>预计消耗</em>
-                <CreditAmount v-if="batchPanelCredits > 0" :value="batchPanelCredits" size="sm" tone="inherit" show-unit />
+                <em v-if="fixtureMedia">测试样本 · 零媒体积分</em>
+                <CreditAmount v-else-if="batchPanelCredits > 0" :value="batchPanelCredits" size="sm" tone="inherit" show-unit />
                 <em v-else>确认方案后估算</em>
               </span>
             </div>
@@ -3074,7 +3142,7 @@ function startMicroEditPolling(editId: string): void {
             >
               <LoaderCircle v-if="actionBusy === 'estimate-batch'" :size="15" class="spin" />
               <CreditIcon v-else size="md" class="button-credit-icon" />
-              {{ workspace?.rows.some(row => row.videoStatus === 'success') ? '继续生成剩余可制作镜头' : '生成全部可制作视频片段' }}
+              {{ fixtureMedia ? '核对本集视频样本' : workspace?.rows.some(row => row.videoStatus === 'success') ? '继续生成剩余可制作镜头' : '生成全部可制作视频片段' }}
             </button>
           </div>
         </header>
@@ -3244,6 +3312,8 @@ function startMicroEditPolling(editId: string): void {
                 <span>{{ timingContractText(row) }}</span>
               </div>
               <div class="shot-statuses">
+                <span v-if="row.previsualizationMock" class="status-chip">首帧测试样本</span>
+                <span v-if="row.takes.some(take => take.id === row.selectedTakeId && take.qc?.mock === true)" class="status-chip">视频测试样本</span>
                 <span class="status-chip status-chip--plan">{{ planStatusText(row) }}</span>
                 <span class="status-chip" :class="`status-chip--${row.videoStatus}`">{{ videoStatusText(row) }}</span>
                 <span v-if="qaStatusText(row)" class="status-chip" :class="`status-chip--qa-${qaStatusClass(row)}`">{{ qaStatusText(row) }}</span>
@@ -3578,7 +3648,10 @@ function startMicroEditPolling(editId: string): void {
               <div class="asset-gap-panel__action"><CheckCircle2 :size="14" />{{ selectedAssetGap.recommendedAction || '补齐资产后，仅重新复核当前镜头' }}</div>
             </section>
 
-            <section class="detail-section">
+            <section v-if="selectedTakeQc.mock === true" class="detail-section">
+              <div class="section-heading"><div><strong>视频测试样本</strong><span>固定样本不执行连续性质检。</span></div></div>
+            </section>
+            <section v-else class="detail-section">
         <div class="section-heading"><div><div class="section-heading__title-row"><strong>连续性检查</strong><span v-if="selectedRow.riskReasons.includes('包含原生对白')" class="native-dialogue-badge"><Volume2 :size="13" />包含原生对白</span></div><span>根据前后镜头状态、已确认资产与生成视频检查</span></div><span class="qc-status" :class="`qc-status--${String(selectedTakeQc.status || 'pending')}`">{{ qcStatusText(selectedTakeQc.status) }}</span></div>
               <div class="continuity-grid">
                 <div class="continuity-check" :class="`continuity-check--${continuityCheckState('role')}`">
@@ -3641,9 +3714,16 @@ function startMicroEditPolling(editId: string): void {
                   <div>
                     <strong>生成当前视频片段</strong>
                     <small>{{ generationPlanHint(selectedRow) }}</small>
+                    <small v-if="fixtureMedia && ['queued', 'running', 'failed', 'stale'].includes(selectedRow.previsualizationStatus)">
+                      {{ ['queued', 'running'].includes(selectedRow.previsualizationStatus) ? '首帧样本处理中' : selectedRow.previsualizationStatus === 'stale' ? '镜头已修改，首帧样本需要重新核对' : '首帧样本失败，可以重新核对' }}
+                    </small>
+                    <small v-else-if="selectedRow.previsualizationMock">首帧测试样本</small>
                   </div>
                 </div>
                 <div class="generation-actions">
+                  <LivButton v-if="canPrepareFixtureFrame(selectedRow)" variant="secondary"
+                    :loading="actionBusy === 'estimate-fixture-frame'" :disabled="Boolean(actionBusy)"
+                    @click="prepareFixtureMedia('previsualization', [selectedRow.id])">核对首帧样本</LivButton>
                   <LivButton
                     class="generation-primary-action"
                     variant="primary"
@@ -3651,7 +3731,7 @@ function startMicroEditPolling(editId: string): void {
                     :disabled="!canPrepareWorkbenchGeneration(selectedRow)"
                     @click="prepareWorkbenchGeneration"
                   >
-                    <template #icon><CreditIcon size="lg" class="generation-credit-icon" /></template>生成当前视频片段
+                    <template v-if="!fixtureMedia" #icon><CreditIcon size="lg" class="generation-credit-icon" /></template>{{ fixtureMedia ? '核对视频样本' : '生成当前视频片段' }}
                   </LivButton>
                 </div>
               </div>
@@ -3860,8 +3940,24 @@ function startMicroEditPolling(editId: string): void {
         <template #footer><LivButton variant="secondary" :disabled="actionBusy === 'save-segments'" @click="segmentEditorVisible = false">取消</LivButton><LivButton variant="primary" :loading="actionBusy === 'save-segments'" @click="saveSegments"><template #icon><Check :size="16" /></template>保存方案</LivButton></template>
       </LivDrawer>
 
+      <LivDialog v-if="fixtureEstimate" :open="true"
+        :title="fixtureEstimate.kind === 'video' ? '确认视频样本' : '确认首帧样本'"
+        :description="fixtureEstimate.notice" width="sm"
+        @update:open="value => !value && !actionBusy && (fixtureEstimate = null)"
+      >
+        <ul>
+          <li v-for="row in fixtureEstimate.rows" :key="row.shot_no">
+            镜头 {{ row.shot_no }}<template v-if="row.duration_sec"> · {{ row.duration_sec }} 秒</template>
+          </li>
+        </ul>
+        <template #footer>
+          <LivButton variant="secondary" :disabled="Boolean(actionBusy)" @click="fixtureEstimate = null">取消</LivButton>
+          <LivButton variant="primary" :loading="actionBusy === 'confirm-fixture-media'" @click="confirmFixtureMedia">确认使用样本</LivButton>
+        </template>
+      </LivDialog>
+
       <LivDialog
-        v-if="batchEstimate"
+        v-if="batchEstimate && !fixtureMedia"
         v-model:open="batchConfirmVisible"
         :title="batchEstimate.eligibleRowIds.length ? generationMode === 'sample' ? '确认试做正式样片' : '确认生成视频' : '暂时无法生成视频'"
         :description="batchEstimate.eligibleRowIds.length ? '确认本次视频片段、总时长与点数。提交后会进入后台队列，排队、生成和完成状态均会在顶部提示。' : '请先处理下方问题，再重新点击生成视频。'"
@@ -4167,7 +4263,7 @@ function startMicroEditPolling(editId: string): void {
               <div class="micro-edit-panel__heading"><div><strong>编辑方式</strong><span>本地处理免费，内容修改走 AI 视频编辑模型。</span></div></div>
               <div class="micro-edit-mode-grid">
                 <button type="button" :class="{ active: microEditMode === 'local_trim' }" :disabled="microEditSubmitting" @click="microEditMode = 'local_trim'; estimateMicroEdit()"><Film :size="16" /><span>截取片段<small>本地 FFmpeg · 0 点</small></span></button>
-                <button type="button" :class="{ active: microEditMode === 'ai_edit' }" :disabled="microEditSubmitting" @click="microEditMode = 'ai_edit'; estimateMicroEdit()"><WandSparkles :size="16" /><span>AI 智能修改<small>人物、道具、画面内容</small></span></button>
+                <button v-if="!fixtureMedia" type="button" :class="{ active: microEditMode === 'ai_edit' }" :disabled="microEditSubmitting" @click="microEditMode = 'ai_edit'; estimateMicroEdit()"><WandSparkles :size="16" /><span>AI 智能修改<small>人物、道具、画面内容</small></span></button>
               </div>
             </section>
 

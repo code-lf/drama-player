@@ -6,26 +6,39 @@ import LivDialog from '~/components/liv-ui/LivDialog.vue'
 import LivButton from '~/components/liv-ui/LivButton.vue'
 import {VueFlow,useVueFlow,type Connection} from '@vue-flow/core'
 import {MiniMap} from '@vue-flow/minimap'
-import {groupBounds,groupMembers,moveGroup,arrangeGroup,syncAutomaticGroups,canvasGroupLabel,dropGroupMembers,type GroupMemberBox,type GroupDropFrame} from '../canvasGroups'
+import {collapsedGroupMembers,groupBounds,groupMembers,moveGroup,arrangeGroup,syncAutomaticGroups,syncAssetDefinitionGroup,canvasGroupLabel,dropGroupMembers,productionBoundaryLinks,placeFixedDramaBlocks,PRODUCTION_GROUP_SIZE,type GroupMemberBox,type GroupDropFrame} from '../canvasGroups'
 import {canvasCompletionNotices} from '../canvasTaskNotices'
 import '@vue-flow/core/dist/style.css'
 import '@vue-flow/core/dist/theme-default.css'
 import '@vue-flow/minimap/dist/style.css'
-import {projectCreativeGraph,emptyCreativeLayout,canConnectCreative,creativeConnectionIssue,creativeInputs,sameCreativeLayout,creativeActivity,creativeRetryParameters,resultNodeId,type CreativeLayout,type CreativeNode,type CreativeNodeKind,type CreativeNodeParameters} from '../agentCanvas'
+import {projectCreativeGraph,isFixedDramaNode,emptyCreativeLayout,canConnectCreative,creativeConnectionIssue,creativeInputs,sameCreativeLayout,creativeActivity,creativeRetryParameters,resultNodeId,type CreativeLayout,type CreativeNode,type CreativeNodeKind,type CreativeNodeParameters,type CanvasAssetPreview} from '../agentCanvas'
 import type {CreationMessage,ComposerReference,WorkspacePreview,WorkspaceSource} from '../types'
 import type {CreationRun} from '~/shared/api/services/creationService'
 import type {SessionResult} from '../resultCatalog'
 import type {CompositionJob} from '~/shared/api/services/videoCompositionService'
 import {request} from '~/shared/api/adapters/httpAdapter'
+import {libraryService} from '~/shared/api/services/libraryService'
 import CreativeCanvasNode from './CreativeCanvasNode.vue'
 import CreationImageLightbox from './CreationImageLightbox.vue'
 import CreativeCanvasEdge from './CreativeCanvasEdge.vue'
 import CreativeCompositionEditor from './CreativeCompositionEditor.vue'
+import CanvasScriptDialog from '../drama/components/CanvasScriptDialog.vue'
+import CanvasScriptReader from '../drama/components/CanvasScriptReader.vue'
+import CanvasStandaloneShotEditor from '../drama/components/CanvasStandaloneShotEditor.vue'
+import type {StandaloneStoryboard} from '../drama/standaloneStoryboard'
+import CanvasProductionIntake from '../drama/components/CanvasProductionIntake.vue'
+import CanvasAssetExtractionControls from '../drama/components/CanvasAssetExtractionControls.vue'
+import {useCanvasAssetExtraction} from '../drama/useCanvasAssetExtraction'
+import type {AssetCategory,CanvasScriptDocument,CanvasScriptState} from '../drama/scriptDocument'
+import type {DramaAssetWorkspace} from '~/shared/api/types'
+import type {ProductionEpisodeCard,ProductionShotCard} from '../agentCanvas'
+import CanvasProductionBindingDialog from '../drama/components/CanvasProductionBindingDialog.vue'
 import {useActionDialog} from '~/composables/useActionDialog'
 import {creativeVisibleArea,creativeCameraHasVisibleNode,creativeFocusCamera,creativeFreePosition,creativeNearbyPosition,creativeVisibleNearbyPosition,creativePromptPosition,creativeCanvasPoint,creativeEstimatedNodeBounds,CREATIVE_MIN_ZOOM,type CreativeBounds} from '../canvasViewport'
 
-const props=defineProps<{sessionId:string;ownerId:string;runs:CreationRun[];messages:CreationMessage[];results:SessionResult[];references:ComposerReference[];previews:Record<string,WorkspacePreview>;tasks:Record<string,any>;activity?:Record<string,{progress?:number|null}>;compositions?:Array<{title:string;job:CompositionJob;nodeId?:string;resultUnavailable?:boolean}>;focusId?:string;toolNodeId?:string;busy?:boolean;audioEnabled?:boolean;leftInset?:number;bottomInset?:number;obstructions?:CreativeBounds[];playbackEnabled?:boolean;beforeSelect?:(node?:CreativeNode)=>Promise<boolean>}>()
-const emit=defineEmits<{select:[node:CreativeNode];tools:[node:CreativeNode,action?:'crop'];generate:[node:CreativeNode,inputs:CreativeNode[]];retry:[node:CreativeNode];refreshFile:[node:CreativeNode];compose:[];editWorkspace:[];compositionsChanged:[];upload:[];uploadAudio:[file:File];activity:[value:{running:number;unavailable:number}]}>()
+// Vue 会把未传入的布尔属性解释为 false；只有宿主明确禁用时才暂停画布播放。
+const props=withDefaults(defineProps<{sessionId:string;ownerId:string;runs:CreationRun[];messages:CreationMessage[];results:SessionResult[];references:ComposerReference[];previews:Record<string,WorkspacePreview>;tasks:Record<string,any>;activity?:Record<string,{progress?:number|null}>;compositions?:Array<{title:string;job:CompositionJob;nodeId?:string;resultUnavailable?:boolean}>;stageNavTarget?:string;focusId?:string;toolNodeId?:string;busy?:boolean;audioEnabled?:boolean;assetPanelOpen?:boolean;leftInset?:number;bottomInset?:number;obstructions?:CreativeBounds[];playbackEnabled?:boolean;beforeSelect?:(node?:CreativeNode)=>Promise<boolean>}>(),{playbackEnabled:true})
+const emit=defineEmits<{select:[node:CreativeNode];tools:[node:CreativeNode,action?:'crop'];generate:[node:CreativeNode,inputs:CreativeNode[]];retry:[node:CreativeNode];refreshFile:[node:CreativeNode];compose:[];editWorkspace:[];compositionsChanged:[];upload:[];assets:[];closeAssets:[];uploadAudio:[file:File];activity:[value:{running:number;unavailable:number}];canvasActivityChanged:[extractionId:string];discussScript:[description:string,title:string,revision:number]}>()
 const compositionEditor=ref<InstanceType<typeof CreativeCompositionEditor>|null>(null)
 const {confirm}=useActionDialog()
 // 每个会话拥有独立图实例；保留原 Vue Flow 依赖，不接入第三方执行器。
@@ -37,9 +50,12 @@ let toolDockObserver:ResizeObserver|undefined
 const layout=ref<CreativeLayout>(emptyCreativeLayout()),selectedId=ref(''),nodes=ref<CreativeNode[]>([]),ready=ref(false),saving=ref(false),error=ref(''),revision=ref(0)
 const minimap=ref(false),hand=ref(false),expanded=ref(false),taskOpen=ref(false),draftPrompt=ref(''),draftTitle=ref(''),saved=ref(false)
 const spacePan=ref(false),canvasHovered=ref(false),canvasListOpen=ref(false),canvasListQuery=ref(''),canvasListKind=ref('all')
-const filteredCanvasNodes=computed(()=>nodes.value.filter(node=>(canvasListKind.value==='all'||node.data.kind===canvasListKind.value)&&node.data.title.toLocaleLowerCase().includes(canvasListQuery.value.trim().toLocaleLowerCase())))
+// 成片也是视频，筛选时保留已有成片节点，不改变底层节点类型。
+const filteredCanvasNodes=computed(()=>nodes.value.filter(node=>(canvasListKind.value==='all'||node.data.kind===canvasListKind.value||(canvasListKind.value==='video'&&node.data.kind==='compose'))&&node.data.title.toLocaleLowerCase().includes(canvasListQuery.value.trim().toLocaleLowerCase())))
+// 目录只展示真实节点状态；未知状态保持待核对，不把内部英文枚举直接展示给用户。
+function canvasListStatus(node:CreativeNode){if(node.data.scriptDocument)return '剧本已保存';return ({ready:'待确认',replied:'已回复',draft:'草案',waiting:'等待补充',planning:'正在整理',queued:'排队中',pending:'排队中',submitting:'正在提交',running:'生成中',rendering:'合成中',in_progress:'生成中',processing:'生成中',result_pending:'正在读取结果',result_error:'结果待核对',succeeded:'已完成',completed:'已完成',failed:'处理失败',needs_review:'待核对',status_unavailable:'状态待同步',reference:'参考素材',unavailable:'素材不可用',cancelled:'已停止'} as Record<string,string>)[node.data.status]||'待核对'}
 // 空格只临时切换画布平移，不抢输入框、按钮或输入法；失焦时释放以防工具卡住。
-function canvasSpaceDown(event:KeyboardEvent){if(!canvasHovered.value||event.code!=='Space'||event.repeat||event.ctrlKey||event.metaKey||event.altKey||event.isComposing)return;const target=event.target as HTMLElement|null;if(target?.closest('input,textarea,button,select,[contenteditable=true],[role=textbox]'))return;spacePan.value=true;event.preventDefault()}
+function canvasSpaceDown(event:KeyboardEvent){if(!canvasHovered.value||scriptReaderOpen.value||event.code!=='Space'||event.repeat||event.ctrlKey||event.metaKey||event.altKey||event.isComposing)return;const target=event.target as HTMLElement|null;if(target?.closest('input,textarea,button,select,[contenteditable=true],[role=textbox]'))return;spacePan.value=true;event.preventDefault()}
 function canvasSpaceUp(event:KeyboardEvent){if(event.code==='Space')spacePan.value=false}
 function clearSpacePan(){spacePan.value=false}
 onMounted(()=>{if(typeof window==='undefined')return;window.addEventListener('keydown',canvasSpaceDown);window.addEventListener('keyup',canvasSpaceUp);window.addEventListener('blur',clearSpacePan)})
@@ -61,10 +77,24 @@ function memberBoxes(ids:string[]):GroupMemberBox[]{return ids.flatMap(id=>{
 })}
 // 节点独立拖动期间固定组框；整组移动仍沿成员实际位置同步更新。
 const nodeDropFrames=ref<GroupDropFrame[]|null>(null)
+// 分类筛选只是本次视图，不能把未选分类从分组成员或生产关系中删除。
+const assetGroupFilters=ref<Record<string,AssetCategory>>({})
+// 生产组内部是固定排版卡片，不参加普通节点拖动。
+const isStandaloneGroup=(id:string)=>id.startsWith('group:auto-storyboard-')
+const isProductionGroup=(id:string)=>id.startsWith('group:auto-assets-')||id.startsWith('group:auto-shots-')||isStandaloneGroup(id)
 let draggedNodeIds:string[]=[]
 const groupFrames=computed(()=>(layout.value.groups||[]).flatMap(group=>{
-  const members=memberBoxes(group.members),bounds=nodeDropFrames.value?.find(frame=>frame.id===group.id)||groupBounds(members)
-  return bounds?[{...group,...bounds,label:canvasGroupLabel(group,nodes.value),visibleCount:members.length}]:[]
+  const members=memberBoxes(group.members),frozen=nodeDropFrames.value?.find(frame=>frame.id===group.id)
+  let bounds=frozen||groupBounds(members)
+  // 折叠保留完整成员坐标供整组移动；缩小的仅是可见容器。
+  const assets=group.id.startsWith('group:auto-assets-')?nodes.value.filter(node=>group.members.includes(node.id)&&node.data.productionAsset):[]
+  const assetTabs=assets.length?(['role','scene','prop'] as const).map(key=>({key,label:{role:'角色',scene:'场景',prop:'道具'}[key],count:assets.filter(node=>node.data.productionAsset?.category===key).length})):[]
+  const category=assetGroupFilters.value[group.id]||assetTabs.find(tab=>tab.count)?.key
+  const shots=group.id.startsWith('group:auto-shots-')||isStandaloneGroup(group.id)?nodes.value.filter(node=>group.members.includes(node.id)&&(node.data.productionShot||node.data.standaloneShot)):[]
+  const cards=shots.length?shots:assets.filter(node=>node.data.productionAsset?.category===category)
+  // 固定世界尺寸：四列至少各 260px，纵向预留四张 236px 卡片和三道行距。
+  if(bounds&&(assets.length||shots.length))bounds={...bounds,...PRODUCTION_GROUP_SIZE}
+  return bounds?[{...group,...bounds,...(group.collapsed?{width:320,height:96}:{}),label:assets.length?'资产':canvasGroupLabel(group,nodes.value),visibleCount:isProductionGroup(group.id)?cards.length:members.length,assetTabs,category,cards}]:[]
 }))
 function frameStyle(frame:{x:number;y:number;width:number;height:number}){const v=flow.viewport.value;return {left:`${frame.x*v.zoom+v.x}px`,top:`${frame.y*v.zoom+v.y}px`,width:`${frame.width*v.zoom}px`,height:`${frame.height*v.zoom}px`}}
 const selectionToolbarStyle=computed(()=>{
@@ -99,7 +129,10 @@ function estimateNodeBounds(kind:CreativeNodeKind,aspectRatio?:string|number){
 /** 未测量节点按类型/画幅估算安全边界；已测量节点始终采用Vue Flow的实际尺寸。 */
 function nodeBounds(node:CreativeNode){
   const measured=flow.findNode(node.id)?.dimensions
-  const fallback=estimateNodeBounds(node.data.kind,node.data.aspectRatio||layout.value.node_parameters?.[node.id]?.aspectRatio)
+  // 文稿首次挂载尚未实测时，定位也要给大卡片和操作区预留空间。
+  const fallback=node.data.scriptDocument?{width:528,height:860}:estimateNodeBounds(node.data.kind,node.data.aspectRatio||layout.value.node_parameters?.[node.id]?.aspectRatio)
+  // Vue Flow 首次测量可能还沿用普通文本节点尺寸；固定剧本至少保留设计尺寸及底部操作区。
+  if(node.data.scriptDocument)return {width:Math.max(measured?.width||0,fallback.width),height:Math.max(measured?.height||0,fallback.height)}
   return {width:measured?.width||fallback.width,height:measured?.height||fallback.height}
 }
 /** 按稳定节点ID读取Vue Flow卡片DOM，避免预览器尺寸误当成画布节点尺寸。 */
@@ -115,11 +148,173 @@ function renderedNodeBounds(node:CreativeNode){
   const measured=element?.offsetWidth&&element?.offsetHeight?{width:element.offsetWidth,height:element.offsetHeight}:undefined
   return measured||nodeBounds(node)
 }
-const graph=computed(()=>projectCreativeGraph(props,layout.value))
+const canvasAssets=ref<CanvasAssetPreview[]>([])
+const scriptState=ref<CanvasScriptState>(),scriptOpen=ref(false),scriptReaderOpen=ref(false),scriptBusy=ref(false),scriptError=ref('')
+const readerRevision=ref<number>()
+const productionWorkspace=ref<DramaAssetWorkspace|null>(null),productionReadError=ref('')
+const productionShots=ref<ProductionShotCard[]>([])
+const productionEpisodes=ref<ProductionEpisodeCard[]>([])
+const productionDocumentIsSource=ref(false)
+const productionProjectId=ref('')
+const productionBindingOpen=ref(false)
+const productionReading=ref(false)
+let productionReadSerial=0
+let productionReadStartedAt=0
+/** 只读共享资产；旧会话的迟到响应不能覆盖当前画布。 */
+async function loadProductionWorkspace(){
+  const serial=++productionReadSerial,sessionId=props.sessionId,ownerId=props.ownerId
+  const isCurrent=()=>alive&&serial===productionReadSerial&&sessionId===props.sessionId&&ownerId===props.ownerId
+  productionReadStartedAt=Date.now();productionReading.value=true
+  try{
+    const value=await request<{project_id?:string;workspace:DramaAssetWorkspace|null;storyboards?:ProductionShotCard[];episode_renders?:ProductionEpisodeCard[];canvas_document_is_source?:boolean}>(`/creation/sessions/${sessionId}/production-workspace`)
+    if(isCurrent()){productionProjectId.value=value.project_id||value.workspace?.project_id||'';productionShots.value=value.storyboards||[];productionEpisodes.value=value.episode_renders||[];productionDocumentIsSource.value=value.canvas_document_is_source===true;productionWorkspace.value=value.workspace||null;productionReadError.value=''}
+  }catch{
+    if(isCurrent()){productionWorkspace.value=null;productionShots.value=[];productionEpisodes.value=[];productionDocumentIsSource.value=false;productionReadError.value='共享生产资料暂不可读，请核对项目绑定后重试。'}
+  }finally{if(isCurrent())productionReading.value=false}
+}
+/** 返回画布时同步标准工作台的变更；不常驻轮询，不触发任务。 */
+function refreshProductionOnReturn(){
+  if(document.visibilityState==='visible'&&productionProjectId.value&&!productionReading.value&&Date.now()-productionReadStartedAt>=5000)void loadProductionWorkspace()
+}
+// 仅浏览器订阅窗口事件，避免非 DOM 环境挂载时中断首次读取。
+onMounted(()=>{if(typeof window==='undefined'||typeof document==='undefined')return;document.addEventListener('visibilitychange',refreshProductionOnReturn);window.addEventListener('focus',refreshProductionOnReturn)})
+onBeforeUnmount(()=>{if(typeof window==='undefined'||typeof document==='undefined')return;document.removeEventListener('visibilitychange',refreshProductionOnReturn);window.removeEventListener('focus',refreshProductionOnReturn)})
+// 仅投影真实回执状态；没有图片时不展示已完成占位。
+const shotPreviewLabels:Record<string,string>={queued:'等待预演',running:'预演中',required:'待首帧预演',failed:'预演失败',outdated:'需重新核对预演'}
+const shotVideoLabels:Record<string,string>={queued:'镜头视频排队中',running:'镜头视频处理中',failed:'镜头视频处理失败',success:'镜头选版不可用'}
+const assetExtraction=useCanvasAssetExtraction({sessionId:()=>props.sessionId,document:()=>scriptState.value,active:()=>alive,request})
+// 复用文稿读取和提取轮询的真实状态，通知对话同步；无文稿时不额外读取历史。
+watch(()=>[scriptState.value?.revision,assetExtraction.extraction.value?.id,assetExtraction.extraction.value?.status,!!productionWorkspace.value] as const,([version,id,status,formal])=>{
+  if(version)emit('canvasActivityChanged',!formal&&status==='succeeded'?id||'':'')
+},{flush:'post'})
+// 读取不创建文稿，不阻塞普通节点加载；账号/会话变化后丢弃迟到结果。
+async function loadScriptDocument(current=epoch){
+  try{const value=await request<CanvasScriptState>(`/creation/sessions/${props.sessionId}/script-document`)
+    if(alive&&current===epoch&&value.session_id===props.sessionId){scriptState.value=value;scriptError.value=''}
+  }catch{if(alive&&current===epoch)scriptError.value='剧本文稿暂时无法读取，请重试；其他画布操作不受影响。'}
+}
+/** 保存成功才投影节点；失败保留弹窗原文，重试同一内容复用请求编号。 */
+let scriptRequest:{key:string;id:string}|undefined
+async function saveScriptDocument(document:Omit<CanvasScriptDocument,'id'>){
+  if(scriptBusy.value||!ready.value||conflict.value)return
+  if(!scriptState.value){scriptError.value='请先重新读取剧本文稿，再保存。';return}
+  const current=epoch,sessionId=props.sessionId,key=JSON.stringify([sessionId,scriptState.value.revision,document])
+  if(scriptRequest?.key!==key)scriptRequest={key,id:crypto.randomUUID()}
+  scriptBusy.value=true;scriptError.value=''
+  try{const value=await request<CanvasScriptState>(`/creation/sessions/${sessionId}/script-document`,{method:'PUT',body:{expected_revision:scriptState.value.revision,request_id:scriptRequest.id,document}})
+    if(!alive||current!==epoch)return
+    if(value.session_id!==sessionId||!value.document?.id||value.document.title!==document.title||value.document.source_text!==document.source_text||value.document.requirements!==document.requirements)throw new Error('保存结果尚未核对成功，本地原文已保留，请重试。')
+    scriptState.value=value;scriptOpen.value=false;scriptRequest=undefined
+    if(productionProjectId.value||productionReadError.value){productionWorkspace.value=null;void loadProductionWorkspace()}
+    // 用户曾移除的是展示而非文稿；明确再次保存时恢复同一节点，不新建副本。
+    if(layout.value.hidden.includes(`script:${value.document.id}`)){layout.value.hidden=layout.value.hidden.filter(id=>id!==`script:${value.document!.id}`);changed()}
+    await nextTick();if(value.document&&!scriptReaderOpen.value)await focusSelectedNode(`script:${value.document.id}`)
+  }catch(cause){if(alive&&current===epoch)scriptError.value=(cause as Error).message||'剧本保存失败，本地内容仍保留。'}
+  finally{if(alive&&current===epoch)scriptBusy.value=false}
+}
+async function openScriptDocument(version?:number){
+  if(!ready.value||conflict.value||scriptBusy.value)return
+  const current=epoch
+  if(!await confirmCompositionLeave()||(props.beforeSelect&&!await props.beforeSelect(undefined)))return
+  if(!alive||current!==epoch)return
+  // 打开前核对最新版本；打开后的保存错误不能自动覆盖本地文本。
+  await loadScriptDocument(current)
+  if(!alive||current!==epoch)return
+  if(scriptState.value?.document){readerRevision.value=version;scriptReaderOpen.value=true}
+  else if(version===undefined)scriptOpen.value=true
+}
+/** 只将修改意图带到当前会话，不自动发送或修改已保存文稿。 */
+function discussScript(description:string){
+  const state=scriptState.value
+  if(!state?.document)return
+  scriptReaderOpen.value=false;emit('discussScript',description,state.document.title,state.revision)
+}
+// 单镜保存回执比聊天轮询更及时，但更高修订的服务端记录始终优先。
+const storyboardReceipts=ref<Record<string,StandaloneStoryboard>>({})
+const graph=computed(()=>projectCreativeGraph({...props,runs:props.runs.map(run=>{
+  const receipt=storyboardReceipts.value[run.id]
+  const card=run.card as (NonNullable<CreationRun['card']>&{storyboard?:StandaloneStoryboard})|undefined
+  return receipt&&card?.storyboard&&receipt.revision>card.storyboard.revision?{...run,card:{...card,storyboard:receipt}}:run
+}),canvasAssets:canvasAssets.value,scriptDocument:scriptState.value,productionWorkspace:productionWorkspace.value,productionDocumentIsSource:productionDocumentIsSource.value,productionShots:productionShots.value,productionEpisodes:productionEpisodes.value,assetExtraction:productionReadError.value?null:assetExtraction.extraction.value},layout.value))
+/** 隐藏态是显示投影，不写回业务节点或参与任务恢复。 */
+function hiddenViewMembers(){
+  const hidden=collapsedGroupMembers(layout.value)
+  for(const group of layout.value.groups||[]){
+    if(isProductionGroup(group.id))for(const id of group.members)hidden.add(id)
+  }
+  return hidden
+}
+/** 生产卡片不注册为独立 Vue Flow 节点；交互回填只更新普通节点。 */
+const productionMemberIds=computed(()=>new Set((layout.value.groups||[]).filter(group=>isProductionGroup(group.id)).flatMap(group=>group.members)))
+const flowNodes=computed({
+  get:()=>productionMemberIds.value.size?nodes.value.filter(node=>!productionMemberIds.value.has(node.id)):nodes.value,
+  set:(visible:CreativeNode[])=>{
+    const fixed=nodes.value.filter(node=>productionMemberIds.value.has(node.id))
+    if(!fixed.length){nodes.value=visible;return}
+    const next=[...visible.filter(node=>!productionMemberIds.value.has(node.id)),...fixed]
+    if(next.length!==nodes.value.length||next.some((node,index)=>node!==nodes.value[index]))nodes.value=next
+  }
+})
 const edges=computed(()=>graph.value.edges)
-/** 业务编号幂等归组，保留用户位置与解组选择，不发起任务或移动历史作品。 */
+// 生产成员不注册到 Vue Flow；不能只标为隐藏，否则刷新时仍会校验不存在的端点。
+const viewEdges=computed(()=>{
+  const hidden=hiddenViewMembers(),fixed=productionMemberIds.value
+  return edges.value.filter(edge=>!fixed.has(edge.source)&&!fixed.has(edge.target))
+    .map(edge=>({...edge,hidden:hidden.has(edge.source)||hidden.has(edge.target)}))
+})
+/** 保留图形库节点身份以支持框选/拖动；仅更新改变的显示标记，不写业务合同。 */
+watch(()=>[JSON.stringify(layout.value.groups),nodes.value],()=>{
+  const hidden=hiddenViewMembers()
+  for(const node of nodes.value)if(Boolean(node.hidden)!==hidden.has(node.id))node.hidden=hidden.has(node.id)
+},{flush:'sync'})
+/** 来源关系原样保留；资产组、分镜组与成片之间只绘制一条外部线。 */
+const productionLinks=computed(()=>{
+  const groups=groupFrames.value.filter(group=>isProductionGroup(group.id)),v=flow.viewport.value
+  const bounds=new Map<string,CreativeBounds>(groups.map(group=>[group.id,group]))
+  for(const node of nodes.value)if(!node.hidden)bounds.set(node.id,{...nodeBounds(node),...node.position})
+  return productionBoundaryLinks(edges.value,groups).flatMap(({id,source,target})=>{
+    const from=bounds.get(source),to=bounds.get(target)
+    if(!from||!to)return []
+    const right=to.x+to.width/2>=from.x+from.width/2
+    const x1=(from.x+(right?from.width:0))*v.zoom+v.x,y1=(from.y+from.height/2)*v.zoom+v.y
+    const x2=(to.x+(right?0:to.width))*v.zoom+v.x,y2=(to.y+to.height/2)*v.zoom+v.y
+    const bend=Math.max(24,Math.abs(x2-x1)/2)*(right?1:-1)
+    return [{id,path:`M ${x1} ${y1} C ${x1+bend} ${y1}, ${x2-bend} ${y2}, ${x2} ${y2}`}]
+  })
+})
+/** 新生产结果和历史重叠共用一次避让；以组框为单位，不改变素材、分镜身份或连线。 */
+function repairFixedDramaLayout(){
+  const groups=(layout.value.groups||[]).filter(group=>isProductionGroup(group.id))
+  const grouped=new Set(groups.flatMap(group=>group.members))
+  const sources=productionBoundaryLinks(edges.value,groups)
+  const blocks:Array<GroupDropFrame&{members:GroupMemberBox[];sources:string[];rank:number}>=[]
+  const obstacles:GroupDropFrame[]=[]
+  for(const node of nodes.value){
+    if(grouped.has(node.id))continue
+    const member={id:node.id,...nodeBounds(node),...(layout.value.positions[node.id]||node.position)}
+    if(isFixedDramaNode(node))blocks.push({...member,members:[member],sources:sources.filter(edge=>edge.target===node.id).map(edge=>edge.source),rank:node.data.scriptDocument?0:node.data.productionEpisode?4:1})
+    else obstacles.push(member)
+  }
+  for(const group of layout.value.groups||[]){
+    const members=memberBoxes(group.members),bounds=groupBounds(members)
+    if(!bounds)continue
+    if(!isProductionGroup(group.id)){obstacles.push({id:group.id,...bounds});continue}
+    blocks.push({id:group.id,...bounds,...PRODUCTION_GROUP_SIZE,members,sources:sources.filter(edge=>edge.target===group.id).map(edge=>edge.source),rank:group.id.startsWith('group:auto-assets-')?2:3})
+  }
+  blocks.sort((a,b)=>a.rank-b.rank||a.y-b.y||a.x-b.x||a.id.localeCompare(b.id))
+  const moved=placeFixedDramaBlocks(blocks,obstacles)
+  if(!Object.keys(moved).length)return false
+  Object.assign(layout.value.positions,moved)
+  return true
+}
+
+/** 按稳定业务身份归组，真实冲突时才写位置；普通编辑与拖动不触发自动重排。 */
 watch(()=>[ready.value,conflict.value,nodes.value.map(n=>`${n.id}:${n.data.source?.id||''}`).join('|')],()=>{
-  if(ready.value&&!conflict.value&&syncAutomaticGroups(layout.value,nodes.value,edges.value))changed()
+  if(ready.value&&!conflict.value){
+    const ordinary=syncAutomaticGroups(layout.value,nodes.value,edges.value),assets=syncAssetDefinitionGroup(layout.value,nodes.value)
+    const repaired=repairFixedDramaLayout()
+    if(ordinary||assets||repaired)changed()
+  }
 },{flush:'post'})
 // 完成记录只投影既有结果；刷新不补发任务，显示真实批次而非重复完成卡。
 const completedNotices=computed(()=>canvasCompletionNotices(nodes.value))
@@ -234,19 +429,20 @@ function updateNodeParameters(value:CreativeNodeParameters){
 watch(()=>creativeActivity(nodes.value),value=>emit('activity',value),{immediate:true})
 const nodeTypes={creative:markRaw(CreativeCanvasNode)},edgeTypes={creative:markRaw(CreativeCanvasEdge)}
 // 大图总览保留一位小数，不能把0.1%显示成0%或用整数掩盖真实比例。
-const zoom=computed(()=>Math.round(flow.viewport.value.zoom*1000)/10)
+const zoom=computed(()=>Math.round(flow.viewport.value.zoom*100))
 /** 空白处右键的新增菜单沿用同一创建命令，并将画布坐标传给新草案定位。 */
 function createMenuItems(anchor?:{x:number;y:number}){
   const point=anchor?{...anchor}:undefined
   return [
     {label:'图片',icon:'i-lucide-image',onSelect:()=>createNode('image',undefined,point)},
     {label:'视频',icon:'i-lucide-film',onSelect:()=>createNode('video',undefined,point)},
-    {label:'文本',icon:'i-lucide-type',onSelect:()=>createNode('text',undefined,point)},
     // 仅在平台真实开通音乐生成时提供入口，不伪造语音或音色能力。
     ...(props.audioEnabled?[{label:'音频',icon:'i-lucide-audio-lines',onSelect:()=>createNode('audio',undefined,point)}]:[]),
+    {label:'文本',icon:'i-lucide-type',onSelect:()=>createNode('text',undefined,point)},
   ]
 }
-const newItems=computed(()=>[...createMenuItems(),{label:'添加素材',icon:'i-lucide-upload',onSelect:()=>emit('upload')}])
+// 剪辑只打开现有工作台；任务与导出仍需用户在工作台明确操作。
+const newItems=computed(()=>[...createMenuItems(),{label:'绑定短剧项目',icon:'i-lucide-link',disabled:!ready.value||conflict.value,onSelect:()=>{productionBindingOpen.value=true}},{label:scriptState.value?.document?'编辑剧本':'导入剧本',icon:'i-lucide-file-text',disabled:!ready.value||conflict.value||scriptBusy.value,onSelect:()=>openScriptDocument()},{label:'AI 剪辑',icon:'i-lucide-clapperboard',disabled:!ready.value||conflict.value||!!props.busy,onSelect:()=>emit('editWorkspace')},{label:'添加素材',icon:'i-lucide-upload',onSelect:()=>emit('upload')}])
 const contextNodeId=ref('')
 const contextPoint=ref<{x:number;y:number}|null>(null)
 /** 右键拖动只平移镜头；超过阈值才阻止右键菜单，普通右键仍能新增节点。 */
@@ -344,20 +540,41 @@ function stash(){
 }
 function snapshot(){history.push(cloneLayout());if(history.length>80)history.shift();future.length=0;undoCount.value=history.length;redoCount.value=0}
 function changed(){dirty++;saved.value=false;stash();clearTimeout(timer);timer=setTimeout(persist,600)}
+let assetReadSequence=0
+/** 只读取服务端已保存的固定引用；迟到预览不能覆盖新会话或更新请求。 */
+async function refreshCanvasAssets(current=epoch){
+  const sequence=++assetReadSequence
+  try{
+    const value=await request<{items:CanvasAssetPreview[]}>(`/creation/sessions/${props.sessionId}/canvas/assets`)
+    if(!alive||current!==epoch||sequence!==assetReadSequence)return false
+    canvasAssets.value=value.items.map(item=>({...item,preview_url:item.preview_url?libraryService.previewUrl(item.preview_url):''}))
+    if(actionError.value==='画布素材读取失败，请稍后重新读取画布。')actionError.value=''
+    return true
+  }catch{
+    if(alive&&current===epoch&&sequence===assetReadSequence){canvasAssets.value=[];actionError.value='画布素材读取失败，请稍后重新读取画布。'}
+    return false
+  }
+}
 async function persist(){
   if(!ready.value||saving.value||conflict.value||!dirty||!alive)return
   saving.value=true;const current=epoch,stamp=dirty,content=cloneLayout()
   try{
     const value=await request<{revision:number}>(`/creation/sessions/${props.sessionId}/canvas`,{method:'PUT',body:{revision:revision.value,content}})
     if(!alive||current!==epoch)return
-    revision.value=value.revision;error.value='';if(dirty===stamp){dirty=0;saved.value=true}stash()
+    revision.value=value.revision;error.value='';if(actionError.value==='画布尚未保存，请先处理保存错误。')actionError.value='';if(dirty===stamp){dirty=0;saved.value=true}stash()
+    // 保存重试或撤销后，新引用此前没有授权预览；保存成功才重新读取，不回传签名地址。
+    if((content.asset_references||[]).some(ref=>!canvasAssets.value.some(item=>item.item_id===ref.item_id&&item.version_id===ref.version_id)))void refreshCanvasAssets(current)
   }catch(cause){if(alive&&current===epoch){error.value=(cause as Error).message||'画布保存失败，修改保留在本机，请重试。';if((cause as {statusCode?:number}).statusCode===409){conflict.value=true;conflictLocal=cloneLayout();conflictRevision=revision.value;stash()}}}
   finally{if(alive&&current===epoch){saving.value=false;if(dirty&&dirty!==stamp){clearTimeout(timer);timer=setTimeout(persist,600)}}}
 }
 async function load(){
   // 手动重读前先备份当前输入；网络失败不能把正在编辑的正文换成旧缓存。
   if(ready.value)stash()
-  const current=++epoch;ready.value=false;error.value=''
+  const current=++epoch;ready.value=false;error.value='';canvasAssets.value=[];scriptState.value=undefined;scriptOpen.value=false;scriptReaderOpen.value=false;scriptBusy.value=false;scriptRequest=undefined
+  void loadScriptDocument(current)
+  productionWorkspace.value=null;productionShots.value=[];productionEpisodes.value=[];productionDocumentIsSource.value=false;productionReadError.value='';productionProjectId.value=''
+  productionBindingOpen.value=false
+  void loadProductionWorkspace()
   let backup:{revision:number;layout:CreativeLayout;dirty:boolean;inputs?:Record<string,{prompt:string;title:string}>}|null=null
   try{if(typeof sessionStorage!=='undefined')backup=JSON.parse(sessionStorage.getItem(cacheKey())||'null')}catch{/* 私有备份不可读时再检查原共享备份。 */}
   if(!backup)try{backup=JSON.parse(localStorage.getItem(cacheKey())||'null')}catch{/* 不恢复损坏备份。 */}
@@ -382,6 +599,7 @@ async function load(){
     if(backup?.dirty&&acceptedBackup){dirty=0;saved.value=true}
     else if(backup?.dirty&&backup.revision===value.revision){layout.value=backup.layout;dirty=1;resumeLayoutSave=true}
     else if(backup?.layout&&backup.revision!==value.revision&&!acceptedBackup&&(backup.dirty||pendingInputs)){conflict.value=true;conflictLocal=backup.layout;conflictRevision=backup.revision;conflictInputs=backupInputs;error.value='其他页面保存了新画布，本机修改仍保留。请先核对，不会自动覆盖。'}
+    if(layout.value.asset_references?.length){await refreshCanvasAssets(current);if(!alive||current!==epoch)return}
     await nextTick();await flow.setViewport(layout.value.viewport);if(!value.content&&!backup)await frameNodes();ready.value=true
     const selected=props.focusId||layout.value.selected_id;if(selected&&nodes.value.some(node=>node.id===selected)){await choose(selected,false);if(props.focusId){magnifiedNodeId.value=selected;await focusNode(selected)}}
     // 只修复完全看不到任何卡片的过期/错误镜头；只要有节点仍可见，就保留用户保存的平移和缩放。
@@ -409,6 +627,9 @@ async function resolveConflict(local:boolean){
     selectedId.value='';unsavedInputs.clear()
     if(local)for(const [id,input] of Object.entries(retainedInputs))unsavedInputs.set(id,input)
     revision.value=remote.revision;layout.value=local?retained:(remote.content||emptyCreativeLayout());dirty=0;conflict.value=false;conflictLocal=null;conflictInputs=null;error.value='';saved.value=!local
+    // 选择云端后重新核权其固定版本；保留本机时等该版本实际保存后再读取，不能借用冲突前的旧预览。
+    assetReadSequence++;canvasAssets.value=[]
+    if(!local&&layout.value.asset_references?.length){await refreshCanvasAssets(current);if(!alive||current!==epoch)return}
     await nextTick()
     const id=layout.value.selected_id
     if(id&&nodes.value.some(node=>node.id===id))await choose(id,false,true)
@@ -430,6 +651,7 @@ watch(graph,value=>{
     const camera=flow.viewport.value,visible=creativeVisibleArea(viewportArea())
     const occupied=nodes.value.filter(node=>!added.some(value=>value.id===node.id)).map(node=>node.position)
     for(const node of added){
+      if(isFixedDramaNode(node))continue // 固定节点由整块排版处理，不按普通小卡片放置。
       // 方案消失且真实任务受理时沿用该运行的方案位置，不把同一需求挪到另一列。
       const replacedPlan=node.id.startsWith('task:')&&node.data.runId?previousNodes.find(value=>value.id===`text:${node.data.runId}`):undefined
       if(replacedPlan||node.id.startsWith('task:')&&node.data.runId&&layout.value.positions[`text:${node.data.runId}`]){
@@ -470,7 +692,7 @@ async function frameBounds(boxes:Array<{x:number;y:number;width:number;height:nu
   const nextCamera=creativeFocusCamera(area,bounds,flow.viewport.value,false,.9,CREATIVE_MIN_ZOOM)
   await flow.setViewport(nextCamera)
   // 派生后的安全镜头也属于布局；刷新时恢复来源与新版本，不回到旧视角把结果留在画外。
-  layout.value.viewport={...nextCamera};changed()
+  if(ready.value&&!conflict.value){layout.value.viewport={...nextCamera};changed()}
   return true
 }
 /** 新任务与手动总览都在可见区域内取景，不将作品居中到悬浮聊天下方。 */
@@ -479,21 +701,23 @@ async function frameNodes(ids=nodes.value.map(node=>node.id),boundsOverrides:Rec
   if(!values.length||!canvasElement.value?.clientWidth||!canvasElement.value.clientHeight)return
   // 布局改动刚写入时节点投影可能还没刷新；取景先读持久布局坐标，避免用旧坐标把新结果留在画外。
   // 节点媒体尚未触发测量时用真实画幅尺寸拟合，避免新裁剪图暂时按旧方形占位而被遮住。
-  const boxes=values.map(node=>{
+  const production=groupFrames.value.filter(group=>isProductionGroup(group.id)&&group.members.some(id=>ids.includes(id)))
+  const boxes=values.filter(node=>!production.some(group=>group.members.includes(node.id))).map(node=>{
     const position=layout.value.positions[node.id]||node.position
     const size=boundsOverrides[node.id]||nodeBounds(node)
     // 尺寸估算器也包含默认原点；必须让真实世界坐标最后覆盖默认 x/y。
     return {...size,...position}
   })
-  await frameBounds(boxes)
+  await frameBounds([...boxes,...production])
 }
 /** 定位使用画布真实可见区域，扣除悬浮聊天与提示词区；不把整段历史缩成邮票。 */
 async function focusNode(id:string,keepCamera=false,persistCamera=false){
   await nextTick()
   const node=nodes.value.find(value=>value.id===id),el=canvasElement.value
   if(!node||!el?.clientWidth){await flow.fitView({nodes:[id],padding:.3,maxZoom:1});return}
-  const measured=flow.findNode(id),width=measured?.dimensions.width||280,height=measured?.dimensions.height||360
-  const camera=creativeFocusCamera(viewportArea(),{...node.position,width,height},flow.viewport.value,keepCamera)
+  const {width,height}=nodeBounds(node)
+  const production=groupFrames.value.find(group=>isProductionGroup(group.id)&&group.members.includes(id))
+  const camera=creativeFocusCamera(viewportArea(),production||{...node.position,width,height},flow.viewport.value,keepCamera)
   await flow.setViewport(camera)
   // 用户点击节点后若发生了安全区平移，持久化新的镜头；窗口/浮层临时避让仍不改历史镜头。
   const current=flow.viewport.value
@@ -506,6 +730,53 @@ async function focusSelectedNode(id=selectedId.value){
   if(!id)return
   if(id!==selectedId.value)await choose(id)
   if(id===selectedId.value){magnifiedNodeId.value=id;await focusNode(id)}
+}
+/** 顶部索引只列真实节点；定位不选中卡片，不打开详情。 */
+const locatedDramaStage=ref('')
+const dramaStages=computed(()=>{
+  const all=nodes.value
+  if(!all.some(isFixedDramaNode))return []
+  const sections=[{label:'总览',id:''}]
+  for(const [label,node] of [
+    ['剧本',all.find(n=>n.data.scriptDocument)],
+    ['角色',all.find(n=>n.data.productionAsset?.category==='role')],
+    ['场景',all.find(n=>n.data.productionAsset?.category==='scene')],
+    ['道具',all.find(n=>n.data.productionAsset?.category==='prop')],
+    ['分镜',all.find(n=>n.data.productionShot)],
+    ['成片',all.find(n=>n.data.productionEpisode)],
+  ] as const)if(node)sections.push({label,id:node.id})
+  return sections
+})
+const activeDramaStage=computed(()=>{
+  const node=nodes.value.find(n=>n.id===selectedId.value)
+  if(!node)return dramaStages.value.some(item=>item.id===locatedDramaStage.value)?locatedDramaStage.value:''
+  return dramaStages.value.find(item=>{
+    const target=nodes.value.find(n=>n.id===item.id)
+    return target&&(target.id===node.id||
+      !!target.data.productionAsset&&target.data.productionAsset.category===node.data.productionAsset?.category||
+      !!target.data.productionShot&&!!node.data.productionShot||
+      !!target.data.productionEpisode&&!!node.data.productionEpisode)
+  })?.id||''
+})
+async function jumpDramaStage(id:string){
+  if(!await choose(''))return
+  locatedDramaStage.value=id
+  if(!id){await fitAll();return}
+  const node=nodes.value.find(value=>value.id===id)
+  const group=layout.value.groups?.find(value=>isProductionGroup(value.id)&&value.members.includes(id))
+  if(group){
+    if(node?.data.productionAsset)assetGroupFilters.value[group.id]=node.data.productionAsset.category
+    if(group.collapsed&&!conflict.value){group.collapsed=false;changed()}
+  }
+  await frameNodes([id])
+}
+/** 历史回执只能定位自己的提取结果，不把旧修订指向当前资产。 */
+async function locateExtraction(id:string){
+  const group=groupFrames.value.find(value=>value.id===`group:auto-assets-${id}`)
+  if(!group?.members[0]||!await choose(''))return false
+  locatedDramaStage.value=group.members[0]
+  await frameNodes(group.members)
+  return true
 }
 /** 第一次双击只放大画布；同一节点再次双击才打开只读原图，绝不保存或生成。 */
 async function doubleClickNode(id:string){
@@ -575,6 +846,9 @@ async function choose(id:string,save=true,leaveApproved=false){
   if(!leaveApproved&&id!==selectedId.value&&!await confirmCompositionLeave())return false
   if(!leaveApproved&&props.beforeSelect&&!await props.beforeSelect(requested)){nodes.value.forEach(value=>{(value as CreativeNode&{selected?:boolean}).selected=value.id===selectedId.value});return false}
   if(selection!==selectionEpoch||!alive)return false
+  // 搜索定位折叠成员时显式展开所在组，不把焦点移向不可见节点。
+  if(id)for(const group of layout.value.groups||[])if(group.collapsed&&group.members.includes(id)){group.collapsed=false;if(ready.value)changed()}
+  if(requested?.data.productionAsset)for(const group of layout.value.groups||[])if(group.members.includes(id))assetGroupFilters.value[group.id]=requested.data.productionAsset.category
   multipleIds.value=[];selectedGroupId.value=''
   if(canEdit.value&&selected.value)unsavedInputs.set(selected.value.id,{prompt:draftPrompt.value,title:draftTitle.value})
   if(id!==selectedId.value)magnifiedNodeId.value=''
@@ -591,10 +865,49 @@ async function confirmCompositionLeave(){
 }
 /** 显式建立业务绑定前等待当前布局保存成功；失败或冲突时不能创建游离成片。 */
 async function ensureSaved(){clearTimeout(timer);if(saving.value)return false;await persist();return ready.value&&!dirty&&!conflict.value&&!saving.value}
+/** 单独上画布只保存资产和固定版本编号；读取预览时重新由服务端核权。 */
+async function placeLibraryAsset(item:{id:string;media_type:string;versions:Array<{id:string}>}){
+  const version=item.versions[0],current=epoch
+  if(!version||!['image','video','audio'].includes(item.media_type)){actionError.value='此素材没有可用的图片、视频或音频版本。';return false}
+  if(!ready.value||saving.value||conflict.value||props.busy){actionError.value='画布正在处理或存在保存冲突，请处理后再添加素材。';return false}
+  if(!await confirmCompositionLeave()||(props.beforeSelect&&!await props.beforeSelect(undefined)))return false
+  // 确认对话框等待期间可能切换账号或会话，旧操作不能落到新画布。
+  if(!alive||current!==epoch)return false
+  // 旧服务可能忽略新增字段并返回 200；先确认版本接口存在，避免写入后才发现无法恢复。
+  try{
+    const capability=await request<{items:CanvasAssetPreview[]}>(`/creation/sessions/${props.sessionId}/canvas/assets`)
+    if(!alive||current!==epoch)return false
+    if(!Array.isArray(capability.items))throw new Error('画布素材接口返回格式不正确。')
+  }catch(cause){
+    if(alive&&current===epoch)actionError.value=(cause as {statusCode?:number}).statusCode===404?'当前服务尚未支持画布素材，请更新服务后重试。':'画布素材服务暂不可用，请稍后重试。'
+    return false
+  }
+  if(!await ensureSaved()){actionError.value='画布尚未保存，请先处理保存错误。';return false}
+  if(!alive||current!==epoch)return false
+  const id=`reference:${version.id}`,existing=layout.value.asset_references||[]
+  if(!existing.some(row=>row.item_id===item.id&&row.version_id===version.id)&&existing.length>=200){actionError.value='画布素材已达到上限。';return false}
+  snapshot()
+  layout.value.asset_references=existing.some(row=>row.item_id===item.id&&row.version_id===version.id)?existing:[...existing,{item_id:item.id,version_id:version.id}]
+  layout.value.hidden=layout.value.hidden.filter(value=>value!==id)
+  changed()
+  if(!await ensureSaved()||!alive||current!==epoch)return false
+  try{
+    // 旧服务可能忽略新字段，必须读回确认固定版本真的落库，不能把普通 200 当作添加成功。
+    const stored=await request<{revision:number;content:CreativeLayout|null}>(`/creation/sessions/${props.sessionId}/canvas`)
+    if(!alive||current!==epoch)return false
+    if(stored.revision!==revision.value||!stored.content?.asset_references?.some(row=>row.item_id===item.id&&row.version_id===version.id)){
+      dirty++;saved.value=false;stash();actionError.value='素材引用未能确认保存，本机修改已保留，请检查服务版本或画布冲突。';return false
+    }
+    if(!await refreshCanvasAssets(current)||!alive||current!==epoch)return false
+    if(!canvasAssets.value.some(row=>row.item_id===item.id&&row.version_id===version.id&&row.available)){actionError.value='素材已保存到画布，但当前无法读取，请检查素材权限。';return false}
+    await nextTick();await choose(id,true,true);await focusNode(id)
+    return true
+  }catch{if(alive&&current===epoch)actionError.value='素材已保存到画布，但预览读取失败，请稍后重试。';return false}
+}
 const nodeDragActive=ref(false)
 /** 保存起始组框和本次移动集合，单节点与多选移动共用同一落点规则。 */
 function dragStart(value:{node?:CreativeNode;nodes?:CreativeNode[]}){
-  nodeDropFrames.value=groupFrames.value.map(({id,x,y,width,height})=>({id,x,y,width,height}))
+  nodeDropFrames.value=groupFrames.value.filter(group=>!isProductionGroup(group.id)).map(({id,x,y,width,height})=>({id,x,y,width,height}))
   draggedNodeIds=(value.nodes?.length?value.nodes:value.node?[value.node]:[]).map(node=>node.id)
   nodeDragActive.value=true
 }
@@ -636,7 +949,7 @@ async function applyMultiSelection(ids:string[]){
   if(!ready.value||conflict.value)return
   if(ids.length<2)return
   if(!await choose(''))return
-  multipleIds.value=ids.filter(id=>nodes.value.some(n=>n.id===id))
+  multipleIds.value=ids.filter(id=>nodes.value.some(n=>n.id===id&&!isFixedDramaNode(n)))
   nodes.value.forEach(n=>{(n as CreativeNode&{selected?:boolean}).selected=multipleIds.value.includes(n.id)})
 }
 function nodeClicked(value:{node:CreativeNode;event:MouseEvent}){
@@ -660,23 +973,34 @@ function createGroup(){
   selectedGroupId.value=id;multipleIds.value=[];changed()
 }
 async function selectGroup(id:string){if(!await choose('')||!layout.value.groups?.some(g=>g.id===id))return false;selectedGroupId.value=id;return true}
+/** 收起前走原编辑离开保护，避免隐藏尚未处理的提示词/合成编辑。 */
+async function toggleGroup(id:string){
+  if(!ready.value||conflict.value||!await selectGroup(id))return
+  const group=layout.value.groups?.find(value=>value.id===id);if(!group)return
+  snapshot();group.collapsed=!group.collapsed;changed()
+}
+/** 切换分类先处理当前节点编辑，不丢提示词，也不修改分组成员。 */
+async function filterAssetGroup(id:string,key:string){
+  if(!['role','scene','prop'].includes(key)||!await choose(''))return
+  assetGroupFilters.value[id]=key as AssetCategory
+}
 function ungroup(id:string){if(!ready.value||conflict.value)return;snapshot();layout.value.groups=(layout.value.groups||[]).filter(g=>g.id!==id);selectedGroupId.value='';changed()}
 function arrange(ids:string[],axis:'horizontal'|'vertical'){
   if(!ready.value||conflict.value)return
-  const positions=arrangeGroup(memberBoxes(ids),axis);if(!Object.keys(positions).length)return
+  const positions=arrangeGroup(memberBoxes(ids).filter(box=>!nodes.value.some(node=>node.id===box.id&&isFixedDramaNode(node))),axis);if(!Object.keys(positions).length)return
   snapshot();Object.assign(layout.value.positions,positions);changed()
 }
 // 移动以起始绝对位置和当前画布比例计算，组内相对位置不随轮询/缩放重复累加。
 let groupDrag:{id:string;x:number;y:number;zoom:number;members:GroupMemberBox[];active:boolean;moved:boolean;lastMove?:PointerEvent}|undefined
 async function startGroupDrag(event:PointerEvent,id:string){
-  if(event.button!==0||!ready.value||conflict.value)return
+  if(event.button!==0||!ready.value||conflict.value||isProductionGroup(id)&&!isStandaloneGroup(id))return
   const target=event.currentTarget as HTMLElement
   // 阻止兼容 mousedown 再启动画布手势，避免选中后马上被清空。
   event.preventDefault()
   const intent={id,x:event.clientX,y:event.clientY,zoom:flow.viewport.value.zoom,members:[] as GroupMemberBox[],active:false,moved:false}
   groupDrag=intent;target.setPointerCapture(event.pointerId)
   if(!await selectGroup(id)||groupDrag!==intent){if(groupDrag===intent)groupDrag=undefined;return}
-  intent.members=memberBoxes(layout.value.groups?.find(g=>g.id===id)?.members||[]);intent.active=true
+  intent.members=memberBoxes(layout.value.groups?.find(g=>g.id===id)?.members||[]).filter(box=>isStandaloneGroup(id)||!nodes.value.some(node=>node.id===box.id&&isFixedDramaNode(node)));intent.active=true
   // 等待离开编辑确认时可能已经移动，获准后补上最后一次位移。
   if(groupDrag.lastMove)moveGroupDrag(groupDrag.lastMove)
 }
@@ -707,6 +1031,23 @@ function startCanvasPointer(event:PointerEvent){
 function viewportEnd(value?:{event?:{sourceEvent?:unknown;type?:string}}){if(!ready.value||!value?.event)return;magnifiedNodeId.value='';layout.value.viewport={...flow.viewport.value};changed()}
 /** 缩放按钮属于明确用户操作，图形库的程序化事件可能不带原生event，需要主动保存视口。 */
 async function userViewport(action:()=>Promise<unknown>){magnifiedNodeId.value='';await action();if(ready.value&&!conflict.value){layout.value.viewport={...flow.viewport.value};changed()}}
+/** 加减吸附到十个百分点刻度；复位精确为 100%，缩放时保持鼠标或视口中心下的世界坐标。 */
+function stepCanvasZoom(direction:-1|0|1,anchor?:{x:number;y:number}){
+  const view=flow.viewport.value,current=view.zoom*100
+  const step=direction>0?Math.floor((current+1e-6)/10)*10+10:Math.ceil((current-1e-6)/10)*10-10
+  const next=direction===0?1:Math.max(CREATIVE_MIN_ZOOM,Math.min(2,step/100))
+  const area=creativeVisibleArea(viewportArea())
+  const point=anchor||{x:area.left+area.width/2,y:area.top+area.height/2}
+  const ratio=next/view.zoom
+  return userViewport(()=>flow.setViewport({zoom:next,x:point.x+(view.x-point.x)*ratio,y:point.y+(view.y-point.y)*ratio}))
+}
+/** 普通滚轮仍滚动画布或资产列表，仅 Ctrl/Command 滚轮接管缩放。 */
+function canvasZoomWheel(event:WheelEvent){
+  if((!event.ctrlKey&&!event.metaKey)||!event.deltaY)return
+  event.preventDefault();event.stopPropagation()
+  const rect=canvasElement.value?.getBoundingClientRect()
+  void stepCanvasZoom(event.deltaY<0?1:-1,rect?{x:event.clientX-rect.left,y:event.clientY-rect.top}:undefined)
+}
 function fitAll(){return userViewport(()=>frameNodes())}
 function connect(value:Connection){
   if(conflict.value)return
@@ -886,7 +1227,18 @@ async function removeNode(){
   if(id!==selectedId.value)return
   snapshot()
   if(selected.value?.data.manual){layout.value.drafts=layout.value.drafts.filter(value=>value.id!==id);layout.value.edges=layout.value.edges.filter(value=>value.source!==id&&value.target!==id);delete layout.value.positions[id]}
-  else layout.value.hidden=[...new Set([...layout.value.hidden,id])]
+  else {
+    const source=selected.value?.data.source
+    // 仅移除独立放置的画布引用，聊天引用、素材库和真实生成任务均不删除。
+    if(source?.kind==='reference'&&layout.value.asset_references?.some(row=>row.item_id===source.item_id&&row.version_id===source.id)){
+      layout.value.asset_references=layout.value.asset_references.filter(row=>row.item_id!==source.item_id||row.version_id!==source.id)
+      layout.value.edges=layout.value.edges.filter(edge=>edge.source!==id&&edge.target!==id)
+      // 作废进行中的预览回包，防止移除或撤销期间旧地址回写。
+      assetReadSequence++
+      canvasAssets.value=canvasAssets.value.filter(row=>row.item_id!==source.item_id||row.version_id!==source.id)
+    }
+    layout.value.hidden=[...new Set([...layout.value.hidden,id])]
+  }
   selectedId.value='';removeOpen.value=false;changed()
 }
 function undo(redo=false){const from=redo?future:history,to=redo?history:future,value=from.pop();if(!value)return;to.push(cloneLayout());layout.value=value;undoCount.value=history.length;redoCount.value=future.length;changed()}
@@ -894,6 +1246,7 @@ function keyboard(event:KeyboardEvent){
   // 共用正文包含只读textbox，复制/翻阅其中的文字不能触发画布删除或F定位。
   if(event.isComposing||(event.target as HTMLElement).closest('input,textarea,[contenteditable=true],[role=textbox]'))return
   const modifier=event.ctrlKey||event.metaKey,key=event.key.toLowerCase()
+  if(!modifier&&!event.altKey&&['+','=','-','1'].includes(key)){event.preventDefault();void stepCanvasZoom(key==='1'?0:key==='-'?-1:1);return}
   if(modifier&&key==='z'){event.preventDefault();undo(event.shiftKey);return}
   if(modifier&&key==='c'&&selectedId.value){event.preventDefault();copyNode(selectedId.value);return}
   if(modifier&&key==='d'&&selectedId.value){event.preventDefault();void duplicateNode(selectedId.value);return}
@@ -972,11 +1325,11 @@ async function placeDerivedFromSource(id:string,source:WorkspaceSource,aspectRat
   }
   return false
 }
-defineExpose({focus:async(id:string)=>{await choose(id);if(selectedId.value!==id)return false;if(id){magnifiedNodeId.value=id;await focusNode(id)}return true},reload:load,prepareMediaTool,prepareEditedNode,placeDerived,placeDerivedFromSource,submitEditedNode:async(id:string,prompt:string,parameters?:CreativeNodeParameters)=>{if(await prepareEditedNode(id,prompt,parameters))await generate()}})
+defineExpose({focus:async(id:string)=>{await choose(id);if(selectedId.value!==id)return false;if(id){magnifiedNodeId.value=id;await focusNode(id)}return true},viewScriptVersion:openScriptDocument,locateExtraction,reload:load,refreshProduction:loadProductionWorkspace,placeLibraryAsset,prepareMediaTool,prepareEditedNode,placeDerived,placeDerivedFromSource,submitEditedNode:async(id:string,prompt:string,parameters?:CreativeNodeParameters)=>{if(await prepareEditedNode(id,prompt,parameters))await generate()}})
 </script>
 <template>
   <!-- 画布始终全宽，遮挡值只移动空态/错误和镜头，不把聊天变成占位列。 -->
-  <section ref="canvasElement" class="creative-canvas" :style="{'--liv-graph-left-inset':`${Math.max(0,leftInset||0)}px`,'--liv-graph-camera-zoom':flow.viewport.value.zoom}" tabindex="0" aria-label="Agent 创作画布" @keydown="keyboard" @pointerenter="canvasHovered=true" @pointerleave="canvasHovered=false">
+  <section ref="canvasElement" class="creative-canvas" :style="{'--liv-graph-left-inset':`${Math.max(0,leftInset||0)}px`,'--liv-graph-camera-zoom':flow.viewport.value.zoom}" tabindex="0" aria-label="Agent 创作画布" @keydown="keyboard" @wheel.capture="canvasZoomWheel" @pointerenter="canvasHovered=true" @pointerleave="canvasHovered=false">
     <!-- 右键菜单复用Nuxt UI，菜单弹层自动避让屏幕；只包裹画布，不拦截输入框原生编辑菜单。 -->
     <UContextMenu :items="contextItems" :ui="contextMenuUi" :content="contextMenuContent"><div class="creative-context-surface" @contextmenu.capture="prepareContextMenu" @pointerdown.capture="startCanvasPointer" @pointermove="moveGroupDrag($event);moveRightPan($event)" @pointerup="endGroupDrag();endRightPan()" @pointercancel="endGroupDrag();endRightPan()" @lostpointercapture="endGroupDrag();endRightPan()">
     <!-- 宿主先于节点挂载，Teleport无需另建弹窗或全屏遮罩；下方仍只有统一输入。 -->
@@ -984,24 +1337,60 @@ defineExpose({focus:async(id:string)=>{await choose(id);if(selectedId.value!==id
     <!-- 普通滚轮纵向平移，Ctrl滚轮缩放；右键拖动独立处理，中键及手型左键继续兼容。 -->
     <!-- 实色组底在节点和连线下面，交互边框仍留在上层。 -->
     <div class="creative-group-backdrops" aria-hidden="true"><div v-for="group in groupFrames" :key="group.id" :style="frameStyle(group)"/></div>
-    <VueFlow :id="graphId" v-model:nodes="nodes" :edges="edges" :node-types="nodeTypes" :edge-types="edgeTypes" :min-zoom="CREATIVE_MIN_ZOOM" :max-zoom="2" :delete-key-code="null" :nodes-draggable="ready&&!spacePan" :nodes-connectable="ready" :pan-on-drag="hand||spacePan?[0,1]:[1]" :selection-on-drag="!hand&&!spacePan" :class="{'is-hand-tool':hand||spacePan}" :zoom-on-double-click="false" :zoom-on-scroll="false" :zoom-on-pinch="true" zoom-activation-key-code="Control" :pan-on-scroll="true" pan-on-scroll-mode="vertical" @nodes-initialized="nodesInitialized" @connect="connect" @node-click="nodeClicked" @node-drag-start="dragStart" @node-drag-stop="dragStop" @selection-end="collectSelection" @selection-drag-start="dragStart" @selection-drag-stop="dragStop" @move-end="viewportEnd" @pane-click="choose('')">
-      <template #node-creative="node"><CreativeCanvasNode v-bind="node" :editing="toolNodeId===node.id" :creation-items="nodeCreationItems(node.id)" :busy="busy" :playback-enabled="playbackEnabled!==false&&!removeOpen&&!previewNode" @upload-audio="file=>emit('uploadAudio',file)" @retry="retryPlanning" @refresh-file="refreshNodeFile" @focus="doubleClickNode" @toggle-selection="nodeModifierClicked" @tools="id=>{const item=nodes.find(value=>value.id===id);if(item)emit('tools',item)}"><template #media-editor><slot name="media-editor" :node="node" :tool-target="`#${nodeToolTargetId}`"/></template></CreativeCanvasNode></template>
+<VueFlow :id="graphId" v-model:nodes="flowNodes" :edges="viewEdges" :node-types="nodeTypes" :edge-types="edgeTypes" :min-zoom="CREATIVE_MIN_ZOOM" :max-zoom="2" :delete-key-code="null" :nodes-draggable="ready&&!hand&&!spacePan" :nodes-connectable="ready&&!hand&&!spacePan" :pan-on-drag="hand||spacePan?[0,1]:[1]" :selection-on-drag="!hand&&!spacePan" :class="{'is-hand-tool':hand||spacePan}" :zoom-on-double-click="false" :zoom-on-scroll="false" :zoom-on-pinch="true" zoom-activation-key-code="Control" :pan-on-scroll="true" pan-on-scroll-mode="vertical" @nodes-initialized="nodesInitialized" @connect="connect" @node-click="nodeClicked" @node-drag-start="dragStart" @node-drag-stop="dragStop" @selection-end="collectSelection" @selection-drag-start="dragStart" @selection-drag-stop="dragStop" @move-end="viewportEnd" @pane-click="choose('')">
+      <template #node-creative="node">
+        <CreativeCanvasNode v-bind="node" :editing="toolNodeId===node.id" :creation-items="node.data.scriptDocument||node.data.productionAsset?[]:nodeCreationItems(node.id)" :busy="busy" :playback-enabled="playbackEnabled!==false&&!removeOpen&&!previewNode&&!scriptReaderOpen" @upload-audio="file=>emit('uploadAudio',file)" @retry="retryPlanning" @refresh-file="refreshNodeFile" @focus="doubleClickNode" @toggle-selection="nodeModifierClicked" @tools="id=>{const item=nodes.find(value=>value.id===id);if(item)emit('tools',item)}">
+          <template #media-editor><slot name="media-editor" :node="node" :tool-target="`#${nodeToolTargetId}`"/></template>
+          <!-- 剧本卡仅有查看入口；点击正文只选中，不打开通用编辑面板。 -->
+          <template v-if="node.data.scriptDocument" #script-view><UButton class="nodrag nopan" color="neutral" variant="soft" trailing-icon="i-lucide-arrow-right" @click.stop="openScriptDocument()">查看</UButton></template>
+        </CreativeCanvasNode>
+      </template>
       <template #edge-creative="edge"><CreativeCanvasEdge v-bind="edge" @remove="removeEdge"/></template>
       <MiniMap v-if="minimap" pannable zoomable/>
     </VueFlow>
     </div></UContextMenu>
-    <!-- 标题和边框内侧顶部可拖动；不拦截组内节点、连线或框选。 -->
+    <!-- 桌面阶段索引挂到真实页头；窄屏保留画布内入口，避免挤占聊天/画布切换。 -->
+    <Teleport v-if="dramaStages.length" :to="stageNavTarget||'body'" :disabled="!stageNavTarget" defer>
+    <nav class="creative-drama-navigation" aria-label="短剧画布定位">
+      <UButton v-for="stage in dramaStages" :key="stage.label" color="neutral" variant="ghost" :aria-current="activeDramaStage===stage.id?'location':undefined" @click="jumpDramaStage(stage.id)">{{stage.label}}</UButton>
+    </nav>
+    </Teleport>
+    <!-- 普通组可拖动，生产组固定；分类和详情仍可操作。 -->
     <div class="creative-group-layer" aria-label="画布分组">
-      <section v-for="group in groupFrames" :key="group.id" class="creative-group-frame" :class="{'is-selected':selectedGroupId===group.id}" :style="frameStyle(group)" :aria-label="`${group.title}，${group.visibleCount}个可见节点`">
-        <div class="creative-group-grip" aria-hidden="true" @pointerdown.stop="startGroupDrag($event,group.id)" @pointermove.stop="moveGroupDrag" @pointerup.stop="endGroupDrag" @pointercancel="endGroupDrag" @lostpointercapture="endGroupDrag" @click.stop="selectGroup(group.id)"/>
+      <svg v-if="productionLinks.length" class="creative-production-links" aria-hidden="true"><path v-for="link in productionLinks" :key="link.id" :d="link.path"/></svg>
+      <section v-for="group in groupFrames" :key="group.id" class="creative-group-frame" :class="{'is-selected':selectedGroupId===group.id,'is-production':isProductionGroup(group.id)}" :style="frameStyle(group)" :aria-label="`${group.title}，${group.visibleCount}个可见节点`">
+        <div v-if="!isProductionGroup(group.id)" class="creative-group-grip" aria-hidden="true" @pointerdown.stop="startGroupDrag($event,group.id)" @pointermove.stop="moveGroupDrag" @pointerup.stop="endGroupDrag" @pointercancel="endGroupDrag" @lostpointercapture="endGroupDrag" @click.stop="selectGroup(group.id)"/>
         <!-- 名称是跟随画布缩放的小字，不让所有组的屏幕尺寸大标签挡住节点。 -->
-        <UButton class="creative-group-label" color="neutral" variant="link" :title="group.label" :style="{zoom:Math.min(1,flow.viewport.value.zoom)}" :aria-label="`移动${group.label}`" @pointerdown.stop="startGroupDrag($event,group.id)" @pointermove.stop="moveGroupDrag" @pointerup.stop="endGroupDrag" @pointercancel="endGroupDrag" @lostpointercapture="endGroupDrag" @click.stop="selectGroup(group.id)">{{group.label}}</UButton>
-        <header v-if="selectedGroupId===group.id" aria-label="选中分组操作">
+        <span v-if="isProductionGroup(group.id)&&!isStandaloneGroup(group.id)" class="creative-group-label" :style="{zoom:Math.min(1,flow.viewport.value.zoom)}">{{group.label}}</span>
+        <UButton v-else class="creative-group-label" color="neutral" variant="link" :title="group.label" :style="{zoom:Math.min(1,flow.viewport.value.zoom)}" :aria-label="`移动${group.label}`" @pointerdown.stop="startGroupDrag($event,group.id)" @pointermove.stop="moveGroupDrag" @pointerup.stop="endGroupDrag" @pointercancel="endGroupDrag" @lostpointercapture="endGroupDrag" @click.stop="selectGroup(group.id)">{{group.label}}</UButton>
+        <UButton v-if="group.collapsed" class="creative-group-summary" color="neutral" variant="ghost" icon="i-lucide-panels-top-left" :aria-label="`展开${group.label}`" @click.stop="toggleGroup(group.id)">{{group.visibleCount}} 项 · 点击展开</UButton>
+        <div v-if="!group.collapsed&&isProductionGroup(group.id)" class="creative-production-panel" :style="{width:`${group.width}px`,height:`${group.height}px`,zoom:flow.viewport.value.zoom}">
+          <nav v-if="group.assetTabs.length" class="creative-asset-group-tabs nodrag nopan" aria-label="资产分类" @pointerdown.stop @mousedown.stop>
+            <UButton v-for="tab in group.assetTabs" :key="tab.key" color="neutral" :variant="group.category===tab.key?'soft':'ghost'" :aria-pressed="group.category===tab.key" @click.stop="filterAssetGroup(group.id,tab.key)">{{tab.label}}（{{tab.count}}）</UButton>
+          </nav>
+          <span v-else class="creative-asset-group-tabs">{{group.cards.length}} 个镜头</span>
+          <div class="creative-production-scroll nowheel" @wheel.stop>
+          <div class="creative-production-grid">
+            <UButton v-for="card in group.cards" :key="card.id" type="button" color="neutral" variant="ghost" class="creative-production-card" draggable="false" :aria-pressed="selectedId===card.id" @pointerdown.stop @mousedown.stop @dragstart.prevent @click.stop="choose(card.id)">
+              <strong>{{card.data.title}}</strong>
+              <div class="creative-production-card-body">
+                <span class="creative-production-cover">
+                  <CreationMediaPreview kind="image" :url="card.data.cover||(!card.data.productionShot?card.data.url:'')||''"/>
+                  <span v-if="!card.data.cover" class="creative-production-placeholder">{{card.data.standaloneShot?'暂无预演图':card.data.productionShot?(card.data.url?'可播放镜头':shotPreviewLabels[card.data.productionShot.previewStatus||'']||'暂无预演图'):'暂无资产图'}}</span>
+                </span>
+                <span class="creative-production-card-details"><small>{{card.data.standaloneShot?`${card.data.standaloneShot.scene} · ${card.data.standaloneShot.durationMs/1000} 秒`:card.data.productionShot?(card.data.url?(card.data.productionShot.mockVideo?'视频测试样本':'镜头已选版'):shotVideoLabels[card.data.productionShot.videoStatus||'']||(card.data.productionShot.mockPreview?'首帧测试样本':'镜头说明')):'资产设定'}}</small><span class="creative-production-copy">{{card.data.prompt}}</span><span class="creative-production-detail-label">查看详情 →</span></span>
+              </div>
+            </UButton>
+            <p v-if="!group.cards.length">该分类没有已提取的设定。</p>
+          </div>
+          </div>
+        </div>
+        <header v-if="selectedGroupId===group.id&&!isProductionGroup(group.id)" aria-label="选中分组操作">
           <!-- 工具栏只展示已接通操作；组名和边缘继续负责拖动。 -->
           <UDropdownMenu :items="[{label:'水平排列',icon:'i-lucide-columns-3',onSelect:()=>arrange(group.members,'horizontal')},{label:'垂直排列',icon:'i-lucide-rows-3',onSelect:()=>arrange(group.members,'vertical')}]" :ui="{content:'creative-group-menu'}">
             <UButton color="neutral" variant="ghost" icon="i-lucide-grip" trailing-icon="i-lucide-chevron-down">排序</UButton>
           </UDropdownMenu>
-          <UDropdownMenu :items="[{label:'解组',icon:'i-lucide-ungroup',onSelect:()=>ungroup(group.id)}]" :ui="{content:'creative-group-menu'}">
+          <UDropdownMenu :items="[{label:group.collapsed?'展开':'收起',icon:group.collapsed?'i-lucide-unfold-vertical':'i-lucide-fold-vertical',onSelect:()=>toggleGroup(group.id)},{label:'解组',icon:'i-lucide-ungroup',onSelect:()=>ungroup(group.id)}]" :ui="{content:'creative-group-menu'}">
             <UButton color="neutral" variant="soft" icon="i-lucide-group" trailing-icon="i-lucide-chevron-down">编辑组</UButton>
           </UDropdownMenu>
           <UButton v-if="group.members.some(id=>compositionSourceIds([id]).length)" color="neutral" variant="ghost" icon="i-lucide-clapperboard" :disabled="!ready||conflict||busy||creatingNode" @click="emit('editWorkspace')">AI 剪辑</UButton>
@@ -1017,21 +1406,36 @@ defineExpose({focus:async(id:string)=>{await choose(id);if(selectedId.value!==id
     </nav>
     <!-- 正文的本机备份不等于云端保存，输入未提交时不能沿用旧布局的已保存提示。 -->
     <header class="creative-canvas-top"><span class="creative-save-state" role="status">{{saving?'保存中':inputChanged?'有未保存修改':saved?'已保存':''}}</span><span v-if="clipboardStatus" class="creative-copy-status" role="status">{{clipboardStatus}}</span></header>
-    <!-- 重试紧随对应错误，仍只重试画布读写；修订冲突继续要求用户明确选择。 -->
-    <!-- 布局保存、修订冲突与普通画布操作共用工作区通知，不再另画错误横条。 -->
+    <!-- 生产资料后台自动同步；实际读取失败时才显示共用通知，不在页头放刷新入口。 -->
+    <CreationWorkspaceNotice v-if="productionReadError&&!error&&!actionError" :text="productionReadError" error retry :busy="productionReading" retry-label="重试读取" @retry="loadProductionWorkspace"/>
+    <!-- 布局保存和普通画布操作使用原通知；修订冲突仍保留选择。 -->
     <CreationWorkspaceNotice :text="error||actionError" :error="!!error||!!actionError" :busy="saving" :retry-label="ready?'重试画布保存':'重试画布读取'" dismiss-label="关闭画布操作提示" :retry="!!error&&!conflict" :dismissible="!error&&!!actionError" @retry="ready?persist():load()" @dismiss="actionError=''"><template #actions><template v-if="conflict"><button type="button" :disabled="saving" @click="resolveConflict(false)">使用云端画布</button><button type="button" :disabled="saving" @click="resolveConflict(true)">保留本机画布</button></template></template></CreationWorkspaceNotice>
     <div v-if="!nodes.length" class="creative-canvas-empty"><UIcon name="i-lucide-workflow"/><span>参考素材、方案与生成作品会出现在这里</span><span>也可以新建节点，从一个想法开始</span></div>
     <!-- 右侧竖栏沿用画布已有操作：新增、总览、小地图和手型/选择，不加入未接通的外站功能。 -->
     <nav class="creative-create-tools" aria-label="画布工具栏">
       <UDropdownMenu :items="newItems" :ui="{content:'creative-node-create-menu creative-toolbar-menu'}" :content="{side:'left',align:'start',sideOffset:8}"><UButton class="creative-create-primary" icon="i-lucide-plus" square aria-label="创建节点" :disabled="!ready"/></UDropdownMenu>
-      <UTooltip text="画布列表"><UButton icon="i-lucide-panels-top-left" color="neutral" variant="ghost" square aria-label="画布列表" :aria-pressed="canvasListOpen" @click="canvasListOpen=!canvasListOpen"/></UTooltip>
-      <UTooltip text="打开资料库"><UButton icon="i-lucide-folder-heart" color="neutral" variant="ghost" square aria-label="打开资料库" @click="emit('upload')"/></UTooltip>
+      <UTooltip text="画布列表"><UButton icon="i-lucide-panels-top-left" color="neutral" variant="ghost" square aria-label="画布列表" :aria-pressed="canvasListOpen" @click="emit('closeAssets');canvasListOpen=!canvasListOpen"/></UTooltip>
+      <UTooltip text="打开资料库"><UButton icon="i-lucide-folder-heart" color="neutral" variant="ghost" square aria-label="打开资料库" :aria-pressed="assetPanelOpen" @click="canvasListOpen=false;emit('assets')"/></UTooltip>
       <span class="creative-create-tools-divider" aria-hidden="true"/>
       <UDropdownMenu :items="[{label:hand?'选择工具 · V':'✓ 选择工具 · V',icon:'i-lucide-mouse-pointer-2',onSelect:()=>hand=false},{label:hand?'✓ 手型工具 · 空格':'手型工具 · 空格',icon:'i-lucide-hand',onSelect:()=>hand=true}]" :ui="{content:'creative-node-create-menu creative-toolbar-menu'}" :content="{side:'left',align:'end',sideOffset:8}"><UButton :icon="hand?'i-lucide-hand':'i-lucide-mouse-pointer-2'" color="neutral" variant="ghost" square aria-label="切换画布操作工具" :aria-pressed="hand"/></UDropdownMenu>
     </nav>
-    <aside v-if="canvasListOpen" class="creative-canvas-list" aria-label="画布列表"><header><strong>画布列表</strong><UButton icon="i-lucide-x" square color="neutral" variant="ghost" aria-label="关闭画布列表" @click="canvasListOpen=false"/></header><div class="creative-canvas-list-filter"><USelect v-model="canvasListKind" :items="[{label:'全部',value:'all'},{label:'图片',value:'image'},{label:'视频',value:'video'},{label:'音频',value:'audio'},{label:'文本',value:'text'}]" aria-label="画布节点类型"/><UInput v-model="canvasListQuery" placeholder="搜索画布内节点" aria-label="搜索画布内节点" icon="i-lucide-search"/></div><div class="creative-canvas-list-items"><UButton v-for="node in filteredCanvasNodes" :key="node.id" color="neutral" variant="ghost" :aria-label="`定位节点：${node.data.title}`" @click="focusSelectedNode(node.id)"><img v-if="node.data.kind==='image'&&node.data.url" :src="node.data.url" alt=""/><UIcon v-else :name="node.data.kind==='image'?'i-lucide-image':node.data.kind==='video'?'i-lucide-film':node.data.kind==='audio'?'i-lucide-audio-lines':'i-lucide-type'"/><span>{{node.data.title}}</span></UButton><p v-if="!filteredCanvasNodes.length">暂无匹配节点</p></div></aside>
+    <aside v-if="canvasListOpen" class="creative-canvas-list" aria-label="画布列表">
+      <header><strong>画布列表</strong><UButton icon="i-lucide-x" square color="neutral" variant="ghost" aria-label="关闭画布列表" @click="canvasListOpen=false"/></header>
+      <div class="creative-canvas-list-filter"><USelect v-model="canvasListKind" :items="[{label:'全部',value:'all'},{label:'图片',value:'image'},{label:'视频',value:'video'},{label:'音频',value:'audio'},{label:'文本',value:'text'}]" aria-label="画布节点类型"/><UInput v-model="canvasListQuery" placeholder="搜索画布内节点" aria-label="搜索画布内节点" icon="i-lucide-search"/></div>
+      <div class="creative-canvas-list-items">
+        <UButton v-for="node in filteredCanvasNodes" :key="node.id" color="neutral" variant="ghost" :aria-label="`定位节点：${node.data.title}`" @click="focusSelectedNode(node.id)">
+          <span class="creative-canvas-list-preview">
+            <img v-if="node.data.cover || (node.data.kind==='image' && node.data.url)" :src="node.data.cover || node.data.url" alt="" loading="lazy"/>
+            <video v-else-if="(node.data.kind==='video' || node.data.kind==='compose') && node.data.url" :src="node.data.url" preload="metadata" muted playsinline aria-hidden="true"/>
+            <UIcon v-else :name="node.data.kind==='image'?'i-lucide-image':node.data.kind==='video'||node.data.kind==='compose'?'i-lucide-film':node.data.kind==='audio'?'i-lucide-audio-lines':'i-lucide-type'"/>
+          </span>
+          <span class="creative-canvas-list-copy"><span class="creative-canvas-list-title" :title="node.data.title">{{node.data.title}}</span><span class="creative-canvas-list-status">{{canvasListStatus(node)}}</span></span>
+        </UButton>
+        <p v-if="!filteredCanvasNodes.length">暂无匹配节点</p>
+      </div>
+    </aside>
     <!-- 完成提示与原任务列表共用真实节点，点击只定位，不重复提交或进入高级工作台。 -->
-    <div ref="viewToolsElement" class="creative-view-tools"><UButton icon="i-lucide-undo-2" square color="neutral" variant="ghost" aria-label="撤销画布编辑" :disabled="!undoCount" @click="undo()"/><UButton icon="i-lucide-redo-2" square color="neutral" variant="ghost" aria-label="重做画布编辑" :disabled="!redoCount" @click="undo(true)"/><UButton icon="i-lucide-scan" square color="neutral" variant="ghost" aria-label="适应全部节点" @click="fitAll"/><UButton icon="i-lucide-map" square color="neutral" variant="ghost" aria-label="切换小地图" :aria-pressed="minimap" @click="minimap=!minimap"/><UTooltip text="定位选中节点（F / 双击节点）"><UButton icon="i-lucide-focus" square color="neutral" variant="ghost" aria-label="定位选中节点" :disabled="!selectedId" @click="focusSelectedNode()"/></UTooltip><UButton icon="i-lucide-minus" square color="neutral" variant="ghost" aria-label="缩小画布" @click="userViewport(()=>flow.zoomOut())"/><span>{{zoom}}%</span><UButton icon="i-lucide-plus" square color="neutral" variant="ghost" aria-label="放大画布" @click="userViewport(()=>flow.zoomIn())"/></div>
+    <div ref="viewToolsElement" class="creative-view-tools"><UButton icon="i-lucide-undo-2" square color="neutral" variant="ghost" aria-label="撤销画布编辑" :disabled="!undoCount" @click="undo()"/><UButton icon="i-lucide-redo-2" square color="neutral" variant="ghost" aria-label="重做画布编辑" :disabled="!redoCount" @click="undo(true)"/><UButton icon="i-lucide-scan" square color="neutral" variant="ghost" aria-label="适应全部节点" @click="fitAll"/><UButton icon="i-lucide-map" square color="neutral" variant="ghost" aria-label="切换小地图" :aria-pressed="minimap" @click="minimap=!minimap"/><UTooltip text="定位选中节点（F / 双击节点）"><UButton icon="i-lucide-focus" square color="neutral" variant="ghost" aria-label="定位选中节点" :disabled="!selectedId" @click="focusSelectedNode()"/></UTooltip><UButton icon="i-lucide-minus" square color="neutral" variant="ghost" aria-label="缩小画布" @click="stepCanvasZoom(-1)"/><UButton color="neutral" variant="ghost" aria-label="缩放重置为100%" title="重置为 100%（1）" @click="stepCanvasZoom(0)">{{zoom}}%</UButton><UButton icon="i-lucide-plus" square color="neutral" variant="ghost" aria-label="放大画布" @click="stepCanvasZoom(1)"/></div>
     <!-- 任务列表定位同样等待离开确认，并扣除聊天/提示词遮挡，不能先移动镜头再判断取消。 -->
     <aside v-if="ready" ref="taskListElement" class="creative-task-list" aria-label="画布任务列表">
       <!-- 只有真实在途任务转圈；待核对不能无限转圈暗示仍在执行。 -->
@@ -1039,10 +1443,25 @@ defineExpose({focus:async(id:string)=>{await choose(id);if(selectedId.value!==id
       <div v-if="taskOpen&&running.length" class="creative-task-items"><UButton v-for="node in running" :key="node.id" color="neutral" variant="ghost" @click="focusSelectedNode(node.id)"><UIcon :name="node.data.kind==='video'?'i-lucide-film':node.data.kind==='image'?'i-lucide-image':'i-lucide-file-text'"/><span class="creative-task-copy"><strong>{{node.data.title}}</strong><small>{{taskCaption(node)}}</small></span></UButton></div>
       <UButton v-for="notice in (taskOpen?completedNotices:[])" :key="notice.node.id" class="creative-completion-notice" color="neutral" variant="ghost" :aria-label="`定位完成作品：${notice.node.data.title}`" @click="focusSelectedNode(notice.node.id)"><CreationMediaPreview stable-thumbnail :kind="notice.node.data.kind==='compose'?'video':notice.node.data.kind" :url="notice.node.data.url||''" :cover="notice.node.data.cover"/><strong>{{notice.label}}</strong></UButton>
     </aside>
-    <aside v-if="selected" ref="dockElement" class="creative-prompt-dock" :style="promptPosition" :class="{'is-expanded':expanded,'has-task-card':running.length,'has-node-tools':!!toolNodeId,'is-space-constrained':!expanded&&!!bottomInset}" aria-label="节点提示词编辑区">
+    <aside v-if="selected&&!selected.data.scriptDocument" ref="dockElement" class="creative-prompt-dock" :style="promptPosition" :class="{'is-expanded':expanded,'has-task-card':running.length,'has-node-tools':!!toolNodeId,'is-space-constrained':!expanded&&!!bottomInset}" aria-label="节点提示词编辑区">
       <!-- 作品工具只保留在节点上方；输入框标题栏仅保留编辑器自身的移除/展开/关闭。 -->
-      <header><span>{{selected.data.reference?.media_type==='document'?'文档参考':selected.data.kind==='compose'?'短片合成':'当前提示词'}}</span><span class="creative-dock-title">{{selected.data.title}}</span><UButton icon="i-lucide-trash-2" square color="neutral" variant="ghost" aria-label="从画布移除节点" :disabled="!ready" @click="removeOpen=true"/><UButton icon="i-lucide-maximize-2" square color="neutral" variant="ghost" aria-label="展开提示词输入框" @click="expanded=!expanded"/><UButton icon="i-lucide-x" square color="neutral" variant="ghost" aria-label="收起节点编辑器" @click="choose('')"/></header>
-      <template v-if="selected.data.kind==='compose'&&selected.data.manual">
+      <header><span>{{selected.data.productionAsset?'资产设定':selected.data.reference?.media_type==='document'?'文档参考':selected.data.kind==='compose'?'短片合成':'当前提示词'}}</span><span class="creative-dock-title">{{selected.data.title}}</span><UButton icon="i-lucide-trash-2" square color="neutral" variant="ghost" aria-label="从画布移除节点" :disabled="!ready" @click="removeOpen=true"/><UButton icon="i-lucide-maximize-2" square color="neutral" variant="ghost" aria-label="展开提示词输入框" @click="expanded=!expanded"/><UButton icon="i-lucide-x" square color="neutral" variant="ghost" aria-label="收起节点编辑器" @click="choose('')"/></header>
+      <template v-if="selected.data.standaloneShot">
+        <p class="creative-node-detail">{{selected.data.standaloneShot.scene}} · {{selected.data.standaloneShot.durationMs/1000}} 秒 · {{selected.data.standaloneShot.camera}}</p>
+        <CanvasStandaloneShotEditor v-if="selected.data.runId" :key="selected.id" :session-id="sessionId" :run-id="selected.data.runId" :shot-id="selected.data.standaloneShot.id" :revision="selected.data.standaloneShot.revision" :visual="selected.data.prompt" @saved="(runId,plan)=>storyboardReceipts[runId]=plan"/>
+      </template>
+      <template v-else-if="selected.data.productionShot">
+        <p class="creative-node-detail">第 {{selected.data.productionShot.episodeNo}} 集 · 当前分镜方案{{selected.data.productionShot.mockVideo?' · 视频测试样本':''}}</p>
+        <video v-if="selected.data.url&&playbackEnabled!==false" :key="selected.data.url" :src="selected.data.url" :poster="selected.data.cover" class="w-full max-h-56 rounded-lg" controls playsinline preload="metadata" aria-label="已选镜头视频"/>
+        <UTextarea :model-value="selected.data.prompt" readonly :rows="5" aria-label="镜头说明" class="w-full"/>
+      </template>
+      <template v-else-if="selected.data.productionEpisode">
+        <p class="creative-node-detail">第 {{selected.data.productionEpisode.episodeNo}} 集 · 剪辑稿 V{{selected.data.productionEpisode.cutVersion}} · {{selected.data.productionEpisode.durationMs/1000}} 秒{{selected.data.productionEpisode.containsMock?' · 含测试样本':''}}</p>
+        <UButton v-if="selected.data.url" :to="selected.data.url" download target="_blank" color="neutral" variant="soft" icon="i-lucide-download">下载成片</UButton>
+        <p v-else class="creative-node-detail">{{selected.data.detail||(selected.data.status==='status_unavailable'?'成片文件暂不可用。':'成片还未就绪。')}}</p>
+      </template>
+      <template v-else-if="selected.data.productionAsset"><p class="creative-node-detail">{{selected.data.productionAsset.profileId?'来自已绑定短剧项目的资产档案；封面使用项目当前选中的图片版本。':'已提取文本设定，尚未生成图片；下方原文出处与补充设计建议分别标明。'}}</p><UTextarea :model-value="selected.data.prompt" readonly :rows="10" aria-label="资产设定与出处" class="w-full"/></template>
+      <template v-else-if="selected.data.kind==='compose'&&selected.data.manual">
         <UDropdownMenu :items="compositionSourcesMenu"><UButton color="neutral" variant="outline" icon="i-lucide-link" :disabled="!compositionSourcesMenu.length||conflict" class="mb-2">连接已完成视频</UButton></UDropdownMenu>
         <CreativeCompositionEditor :key="selected.id" ref="compositionEditor" :session-id="sessionId" :owner-id="ownerId" :node-id="selected.id" :inputs="inputs" :before-save="ensureSaved" @changed="emit('compositionsChanged')"/>
       </template>
@@ -1071,6 +1490,17 @@ defineExpose({focus:async(id:string)=>{await choose(id);if(selectedId.value!==id
       </template>
     </aside>
     <slot name="tools"/>
+    <CanvasScriptDialog v-if="scriptOpen" :open="scriptOpen" :document="scriptState?.document||null" :busy="scriptBusy" :error="scriptError" @update:open="scriptOpen=$event" @save="saveScriptDocument"/>
+    <CanvasScriptReader v-if="scriptReaderOpen&&scriptState?.document" :key="readerRevision??'current'" :initial-revision="readerRevision" :state="scriptState" :busy="scriptBusy" :error="scriptError" :disabled="!ready||conflict" @close="scriptReaderOpen=false" @save="saveScriptDocument" @discuss="discussScript">
+      <template #production>
+        <!-- 能力由宿主真实目录决定；阅读卡仍只有“查看”，这里仅填入来源不自动调用模型。 -->
+        <slot name="storyboard-source-action" :source="{node_id:`script:${scriptState.document.id}`,revision:scriptState.revision}" :title="scriptState.document.title" :disabled="!ready||conflict||scriptBusy||busy" :close="()=>scriptReaderOpen=false"/>
+        <CanvasProductionIntake :key="sessionId" :session-id="sessionId" :revision="scriptState.revision" :production="scriptState.document.production" :style-label="scriptState.production_style_name" :disabled="!ready||conflict||scriptBusy" @linked="loadProductionWorkspace"/>
+        <CanvasAssetExtractionControls v-if="!productionWorkspace&&!productionReadError" :extraction="assetExtraction.extraction.value" :busy="assetExtraction.busy.value||conflict||!ready" :error="assetExtraction.error.value" @extract="assetExtraction.submit"/>
+        <UButton v-if="assetExtraction.error.value" color="neutral" variant="link" @click="assetExtraction.reload">重新读取提取状态</UButton>
+      </template>
+    </CanvasScriptReader>
+    <CanvasProductionBindingDialog v-if="productionBindingOpen" :session-id="sessionId" @close="productionBindingOpen=false" @bound="productionBindingOpen=false;loadProductionWorkspace()"/>
     <CreationImageLightbox v-if="previewNode" :node="previewNode" @close="previewNode=null"/>
     <LivDialog v-model:open="removeOpen" settings dark title="删除画布节点" description="只移除画布展示，不删除原媒体或任务。"><p>只移除此节点的画布展示或编辑草案，历史作品、素材和已提交任务保留。可以通过画布撤销恢复。</p><template #footer><!-- 操作组复用问题卡等宽胶囊规格，危险动作保留红字，不改删除范围。 --><div class="canvas-delete-actions"><LivButton settings block @click="removeOpen=false">取消</LivButton><LivButton settings block variant="danger" @click="removeNode">删除节点</LivButton></div></template></LivDialog>
   </section>

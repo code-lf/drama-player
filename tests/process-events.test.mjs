@@ -2,6 +2,49 @@
 import {test} from 'node:test'
 import assert from 'node:assert/strict'
 
+test('增量方案与交付工具进行中合并为一条正在整理，失败仍说明未确认',()=>{
+ const events=[{id:'delivery',tool:'generate_response',status:'started'},
+   {id:'preview',kind:'proposal_preview',status:'started',text:'雨夜车站方案'}]
+ const output=exports.runProcessEvents({status:'planning',skill_agent_events:events})
+ assert.equal(output.filter(item=>item.status==='processing').length,1)
+ assert.equal(output[0].feedback,'正在整理')
+ assert.match(exports.runProcessEvents({status:'failed',error:'失败',skill_agent_events:events})[0].feedback,/未确认/)
+})
+
+test('历史双语标记颠倒只纠正展示，不改实际执行字段',()=>{
+  const zh='写实摄影，一条红白相间的锦鲤跃起在雨后的水洼里，水花清晰，无文字。'
+  const en='Realistic nature photography of a red and white koi leaping in a rainy puddle. No text.'
+  for(const english of [false,true]){
+    const item={id:'image-1',title:'锦鲤',prompt:english?en:zh,prompt_translation:{execution_language:english?'zh':'en',text:english?zh:en}}
+    const original=JSON.stringify(item)
+    const pair=exports.runProcessEvents({status:'replied',image_plan:{public_summary:'图片方案',items:[item]}})[0].promptPairs[0]
+    assert.equal(pair.zh,zh);assert.equal(pair.en,en)
+    assert.equal(pair.executionLanguage,english?'en':'zh')
+    assert.equal(JSON.stringify(item),original)
+  }
+})
+
+test('增量方案仅为未确认预览，完成替换、失败停止可恢复且不伪装成功',()=>{
+  const event={id:'preview',kind:'proposal_preview',text:'雨中锦鲤',status:'started'}
+  const project=status=>exports.runProcessEvents({status,skill_agent_events:[event]})
+  assert.equal(project('planning')[0].description,'雨中锦鲤')
+  assert.equal(project('planning')[0].feedback,'正在整理')
+  assert.equal(project('replied').length,0)
+  assert.equal(project('failed')[0].status,'failed')
+  assert.match(project('failed')[0].feedback,/未提交生成/)
+  assert.equal(project('cancelled')[0].status,'stopped')
+  const completedThenStopped=exports.runProcessEvents({status:'cancelled',image_plan:{public_summary:'已校验创意',public_summary_version:3},skill_agent_events:[event]})
+  assert.ok(!completedThenStopped.some(item=>item.kind==='proposal_preview'))
+})
+
+test('原生技能加载仅在真实返回后显示公开版本回执，私有摘要不作反馈',()=>{
+  const call={id:'load',origin:'agent',tool:'read_creation_skill',skill:{id:'image-assistant',label:'图片创作助理',version:3},summary:'私有摘要',feedback:'已加载《图片创作助理》第3版指导。'}
+  const project=status=>exports.runProcessEvents({status:'planning',skill_agent_events:[{...call,status}]})[0]
+  assert.equal(project('started').feedback,undefined)
+  assert.equal(project('failed').feedback,undefined)
+  assert.equal(project('returned').feedback,call.feedback)
+})
+
 test('手动停止看图显示已停止，真正成功失败和未知媒体收据不改写',()=>{
   const value={status:'cancelled',skill_agent_events:[
     {id:'vision',kind:'image_understanding',origin:'runtime',status:'started'},
@@ -84,12 +127,21 @@ test('方案真实正文紧跟成功工具，隐藏报价和取消成功行，�
  assert.equal(failedQuote[0].status,'failed')
 })
 
-test('内部规划等待不叠加同名编排卡，报价成功仍不显示',()=>{
+test('真实规划调用显示进行中，不叠加编排卡或报价成功记录',()=>{
   const events=exports.runProcessEvents({status:'planning',skill_agent_events:[{id:'tool',tool:'generate_response',status:'started'}],
     flow_runtime:{events:[{id:'planning',title:'整理创作方案',status:'unknown'},{id:'quote',title:'核算真实费用',status:'succeeded'}]}})
   assert.equal(events.filter(item=>item.title==='整理创作方案').length,0)
-  assert.equal(events.length,0)
+  assert.equal(events.length,1)
+  assert.equal(events[0].title,'正在整理')
+  assert.equal(events[0].status,'processing')
   assert.ok(!events.some(item=>item.title==='核算真实费用'))
+})
+
+test('规划结束或拒绝后不会残留正在整理状态',()=>{
+  for(const status of ['replied','failed','cancelled']){
+    const result=exports.runProcessEvents({status,skill_agent_events:[{id:'tool',tool:'generate_response',status:'started'}]})
+    assert.ok(!result.some(event=>event.status==='processing'))
+  }
 })
 
 test('未调用规划工具时不提前显示根流程的计划待核对卡',()=>{

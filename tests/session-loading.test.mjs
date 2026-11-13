@@ -7,6 +7,16 @@ import * as vue from 'vue'
 import {renderToString} from 'vue/server-renderer'
 import ts from 'typescript'
 const source=readFileSync('components/DashboardSkeleton.vue','utf8')
+
+test('真实会话返回后先挂载正文，不等待能力目录；目录恢复前禁止草稿生效',()=>{
+ const workspace=readFileSync('features/creation/useCreationWorkspace.ts','utf8')
+ const restore=workspace.slice(workspace.indexOf('async function restore(id: string)'),workspace.indexOf('const resultReadAttempts'))
+ assert.ok(restore.indexOf('sessionLoading.value=false')>restore.indexOf('await creationService.session'))
+ assert.ok(restore.indexOf('sessionLoading.value=false')<restore.indexOf('await creationService.runs'))
+ assert.ok(restore.includes('loading.value=true'))
+ const studio=readFileSync('features/creation/components/CreationStudio.vue','utf8')
+ assert.match(studio,/draftReady=computed\(\(\)=>!!catalog.value&&!loading.value/)
+})
 const compiled=compileScript(parse(source).descriptor,{id:'session-loading',inlineTemplate:true})
 const output=ts.transpileModule(compiled.content,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText
 const module={exports:{}}

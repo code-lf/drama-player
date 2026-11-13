@@ -15,6 +15,14 @@ export function hiddenProposalOutput(run:Pick<CreationRun,'status'|'superseded_b
 /** 只保存可编辑创作规格；费用、素材地址与执行许可不能进入画布布局。 */
 export interface CreativeNodeParameters {model:string;style:string;styleId:string;aspectRatio:string;durationSec:number;resolution:string;quality:'low'|'medium'|'high';instrumental?:boolean;vocalGender?:''|'m'|'f'}
 export interface CreativeNodeData {
+  /** 仅已保存的剧本文稿使用此身份；编辑走独立文稿合同，不写普通提示词草案。 */
+  scriptDocument?:{revision:number;requirements:string}
+  /** 角色/场景/道具的真实文本设定，不能冒充生成完成的媒体。 */
+  productionAsset?:{extractionId:string;category:import('./drama/scriptDocument').AssetCategory;profileId?:string;productionStatus?:string}
+  productionShot?:{projectId:string;episodeNo:number;rowId:string;previewStatus?:string;mockPreview?:boolean;videoStatus?:string;mockVideo?:boolean}
+  /** 独立分镜只有文字和固定来源，不能借用正式镜头身份。 */
+  standaloneShot?:{id:string;revision:number;groupId:string;groupTitle:string;scene:string;camera:string;durationMs:number}
+  productionEpisode?:{episodeNo:number;cutVersion:number;durationMs:number;containsMock?:boolean}
   kind:CreativeNodeKind; title:string; prompt:string; status:string; url?:string; cover?:string
   source?:WorkspaceSource; reference?:ComposerReference; resultKey?:string; runId?:string; itemId?:string
   /** 图片计划不能走视频改稿链；媒体类型只标识业务合同，不授予执行权限。 */
@@ -24,7 +32,11 @@ export interface CreativeNodeData {
   phase?:'planning'|'generation'|'composition'
   parameters?:CreativeNodeParameters
 }
-export interface CreativeNode {id:string;type:'creative';position:{x:number;y:number};data:CreativeNodeData}
+export interface CreativeNode {id:string;type:'creative';position:{x:number;y:number};data:CreativeNodeData;draggable?:boolean}
+/** 短剧的业务节点固定，普通自由创作节点仍可自由布局。 */
+export function isFixedDramaNode(node:CreativeNode){
+  return !!(node.data.scriptDocument||node.data.productionAsset||node.data.productionShot||node.data.standaloneShot||node.data.productionEpisode||node.id.startsWith('production:'))
+}
 /** 节点展示与失败派生共用原业务规格，仅复制编辑白名单，不带价格、许可或任意extra。 */
 export function creativeRetryParameters(node:CreativeNode,runs:CreationRun[],messages:CreationMessage[],results:SessionResult[]=[],visited=new Set<string>()):CreativeNodeParameters|undefined{
   // 手动音频使用后台固定音乐引擎，模型代码可以为空，但节点自己的参数必须恢复。
@@ -62,15 +74,18 @@ export interface CreativeLayout {
   edges:Array<{id:string;source:string;target:string}>; hidden:string[]; viewport:{x:number;y:number;zoom:number};selected_id?:string;overrides?:Record<string,{title:string;prompt:string}>
   node_parameters?:Record<string,CreativeNodeParameters>
   /** 分组只管理布局；成员仍使用原业务身份和绝对坐标，不新增任务或引用线。 */
-  groups?:Array<{id:string;title:string;members:string[];excluded_members?:string[]}>
+  groups?:Array<{id:string;title:string;members:string[];excluded_members?:string[];collapsed?:boolean}>
   /** 已处理的自动分组编号；用户解组后刷新不重新强制成组。 */
   auto_group_keys?:string[]
+  /** 仅固定业务身份，不保存临时访问地址或对话附件。 */
+  asset_references?:Array<{item_id:string;version_id:string}>
 }
+export interface CanvasAssetPreview {item_id:string;version_id:string;available:boolean;name?:string;media_type?:'image'|'video'|'audio';preview_url?:string}
 export const emptyCreativeLayout=():CreativeLayout=>({schema_version:1,positions:{},drafts:[],edges:[],hidden:[],viewport:{x:40,y:60,zoom:.8}})
 /** JSONB会重排对象键；按结构比较已保存布局，兼容服务端补齐的可选默认值。 */
 export function sameCreativeLayout(left:CreativeLayout,right:CreativeLayout){
   const canonical=(value:any):any=>Array.isArray(value)?value.map(canonical):value&&typeof value==='object'?Object.fromEntries(Object.keys(value).sort().map(key=>[key,canonical(value[key])])):value
-  const normalized=(value:CreativeLayout)=>canonical({...value,selected_id:value.selected_id||'',overrides:value.overrides||{},node_parameters:value.node_parameters||{},groups:(value.groups||[]).map(group=>({...group,excluded_members:group.excluded_members||[]})),auto_group_keys:value.auto_group_keys||[]})
+  const normalized=(value:CreativeLayout)=>canonical({...value,selected_id:value.selected_id||'',overrides:value.overrides||{},node_parameters:value.node_parameters||{},groups:(value.groups||[]).map(group=>({...group,excluded_members:group.excluded_members||[],collapsed:!!group.collapsed})),auto_group_keys:value.auto_group_keys||[],asset_references:value.asset_references||[]})
   return JSON.stringify(normalized(left))===JSON.stringify(normalized(right))
 }
 /** 用真实业务身份构造稳定节点编号，刷新或任务轮询不会新增同一作品。 */
@@ -85,7 +100,9 @@ export function resultCanvasNodeId(result:SessionResult,messages:CreationMessage
   const primary=result.taskResultIndex===undefined?results.find(value=>value.messageId===message?.id)?.key===result.key:result.taskResultIndex===0
   return message&&primary?`task:${message.task_type}:${message.task_id}`:resultNodeId(result.source)
 }
-export function projectCreativeGraph(input:{messages:CreationMessage[];runs:CreationRun[];results:SessionResult[];previews:Record<string,WorkspacePreview>;references:ComposerReference[];tasks:Record<string,any>;activity?:Record<string,{progress?:number|null}>;compositions?:Array<{title:string;job:CompositionJob;nodeId?:string;resultUnavailable?:boolean}>},layout=emptyCreativeLayout()){
+export type ProductionShotCard={id:string;episode_no:number;shot_no:number;duration_sec:number;scene_description:string;action_desc:string;storyboard_prompt:string;source_profile_ids?:string[];previsualization_url:string;previsualization_status?:string;previsualization_mock?:boolean;video_status?:string;video_url?:string;video_cover?:string;video_mock?:boolean}
+export type ProductionEpisodeCard={id:string;episode_no:number;cut_version:number;status:string;progress:number;duration_ms:number;output_url:string;source_shot_ids:string[];contains_mock?:boolean}
+export function projectCreativeGraph(input:{productionDocumentIsSource?:boolean;productionShots?:ProductionShotCard[];productionEpisodes?:ProductionEpisodeCard[];productionWorkspace?:import('~/shared/api/types').DramaAssetWorkspace|null;assetExtraction?:import('./drama/scriptDocument').CanvasAssetExtraction|null;scriptDocument?:import('./drama/scriptDocument').CanvasScriptState;messages:CreationMessage[];runs:CreationRun[];results:SessionResult[];previews:Record<string,WorkspacePreview>;references:ComposerReference[];tasks:Record<string,any>;canvasAssets?:CanvasAssetPreview[];activity?:Record<string,{progress?:number|null}>;compositions?:Array<{title:string;job:CompositionJob;nodeId?:string;resultUnavailable?:boolean}>},layout=emptyCreativeLayout()){
   const nodes=new Map<string,CreativeNode>(),edges=new Map<string,CreativeEdge>()
   const add=(id:string,data:CreativeNodeData,column:number)=>{
     if(nodes.has(id)){if(data.readonly&&data.status==='reference')nodes.get(id)!.data=data;return}
@@ -93,6 +110,77 @@ export function projectCreativeGraph(input:{messages:CreationMessage[];runs:Crea
     nodes.set(id,{id,type:'creative',position:{x:80+column*400,y:80+row*480},data})
   }
   const link=(source:string,target:string,lineage=false)=>{if(source===target)return;const id=`auto:${source}:${target}`;edges.set(id,{id,source,target,type:'creative',data:{automatic:true,active:false,lineage}})}
+  const script=input.scriptDocument?.document
+  // 大剧本卡后留出连线空间；已保存的坐标仍由布局覆盖。
+  const scriptGutter=script?260:0
+  if(script)add(`script:${script.id}`,{kind:'text',title:script.title,prompt:script.source_text,status:'replied',readonly:true,
+    scriptDocument:{revision:input.scriptDocument!.revision,requirements:script.requirements}},0)
+  const extraction=input.assetExtraction
+  const workspace=input.productionWorkspace
+  if(workspace){
+    // 已绑定项目只投影原生产档案；不按名称猜测提取结果与生产档案的关系。
+    // 绑定只确认项目身份，不能把会话本地文稿冒充项目的确认剧本。
+    const root=`production:${workspace.project_id}`
+    add(root,{kind:'text',title:'短剧生产项目',prompt:`确认剧本：${workspace.source_script_version}`,status:'replied',readonly:true},0)
+    if(script)nodes.get(root)!.position.y=920
+    // 只有由这份文稿直接导入时才显示来源关系；手工绑定只证明项目身份。
+    if(script&&input.productionDocumentIsSource)link(`script:${script.id}`,root,true)
+    const categories={role:'角色',scene:'场景',prop:'道具'} as const
+    for(const asset of workspace.assets){
+      const category=asset.asset_type
+      if(category!=='role'&&category!=='scene'&&category!=='prop')continue
+      const selected=asset.versions.find(version=>version.id===asset.selected_asset_id)
+      const id=`production-asset:${asset.id}`
+      const facts=['identity','appearance','costume','description','personality','required_visible_elements'].flatMap(key=>{
+        const value=asset.data?.[key]
+        return typeof value==='string'?[value]:Array.isArray(value)?value.filter((item):item is string=>typeof item==='string'):[]
+      })
+      add(id,{kind:'text',title:`${categories[category]} · ${asset.name}`,prompt:facts.join('\n'),status:'replied',readonly:true,cover:selected?.image_url,
+        productionAsset:{extractionId:`project-${workspace.project_id}`,category,profileId:asset.id,productionStatus:asset.production_status}},1)
+      link(root,id,true)
+    }
+    for(const node of nodes.values())if(node.data.productionAsset)node.position.x+=scriptGutter
+    // 镜头按服务端顺序投影，保留原分镜身份；预演缺失时不拿资产图冒充。
+    for(const shot of input.productionShots||[]){
+      if(!shot.id)continue
+      const id=`production-shot:${shot.id}`
+      add(id,{kind:'text',title:`镜头 ${shot.shot_no} · ${shot.duration_sec} 秒`,prompt:[shot.scene_description,shot.action_desc,shot.storyboard_prompt].filter(Boolean).join('\n\n'),status:'replied',readonly:true,cover:shot.previsualization_url||shot.video_cover,url:shot.video_url,
+        productionShot:{projectId:workspace.project_id,episodeNo:shot.episode_no,rowId:shot.id,previewStatus:shot.previsualization_status,mockPreview:shot.previsualization_mock,videoStatus:shot.video_status,mockVideo:shot.video_mock}},2)
+      // 分镜组与资产面板留出独立列，剧集之间也不叠放。
+      nodes.get(id)!.position={x:1680+scriptGutter,y:80+(shot.episode_no-1)*1160}
+      const profiles=(shot.source_profile_ids||[]).map(profile=>`production-asset:${profile}`).filter(profile=>nodes.has(profile))
+      if(profiles.length)profiles.forEach(profile=>link(profile,id,true))
+      else link(root,id,true) // 旧分镜仍属于原项目，但不伪造素材依赖。
+    }
+    const episodes=[...(input.productionEpisodes||[])].reverse(),episodeRows=new Map<number,number>()
+    for(const item of episodes){
+      if(!item.id)continue
+      // 原任务编号一直稳定；失败、重新导出和切换镜头版本都不会覆盖旧作品。
+      const id=`production-episode:${item.id}`,column=episodeRows.get(item.episode_no)||0
+      episodeRows.set(item.episode_no,column+1)
+      const unavailable=item.status==='completed'&&!item.output_url
+      add(id,{kind:'compose',title:`第 ${item.episode_no} 集 · ${item.contains_mock?'测试成片':'成片'}`,prompt:'',readonly:true,phase:'composition',
+        status:unavailable?'status_unavailable':item.status,url:item.status==='completed'?item.output_url:'',
+        progress:item.progress,detail:item.status==='failed'||item.status==='blocked'?'成片未输出，原镜头和剪辑稿已保留。':undefined,
+        productionEpisode:{episodeNo:item.episode_no,cutVersion:item.cut_version,durationMs:item.duration_ms,containsMock:item.contains_mock}},7)
+      nodes.get(id)!.position={x:2920+scriptGutter+column*400,y:80+(item.episode_no-1)*1160}
+      for(const rowId of item.source_shot_ids){
+        const source=`production-shot:${rowId}`
+        if(nodes.has(source))link(source,id,true)
+      }
+    }
+  }else if(script&&extraction?.status==='succeeded'&&extraction.document_id===script.id&&extraction.document_revision===input.scriptDocument!.revision){
+    extraction.assets.forEach((asset,index)=>{
+      const id=`asset:${asset.id}`,category={role:'角色',scene:'场景',prop:'道具'}[asset.category]
+      const facts=asset.evidence.map(item=>`${item.fact}\n出处：「${item.quote}」`).join('\n\n')
+      const suggestions=asset.design_suggestions.length?'\n\n补充设计建议（非原文事实）：\n'+asset.design_suggestions.join('\n'):''
+      add(id,{kind:'text',title:`${category} · ${asset.name}`,prompt:facts+suggestions,status:'replied',readonly:true,
+        productionAsset:{extractionId:extraction.id,category:asset.category}},1)
+      // 首次按三列排布，不改变用户已保存的节点位置或原制作来源。
+      nodes.get(id)!.position={x:480+scriptGutter+(index%3)*340,y:80+Math.floor(index/3)*460}
+      link(`script:${script.id}`,id,true)
+    })
+  }
   const reference=(ref:any,preview?:WorkspacePreview)=>{
     const known=input.references.find(value=>value.version_id===ref.version_id&&(value.media_type!=='document'||value.start===ref.start&&value.end===ref.end))
     const view=preview||input.previews[ref.version_id]
@@ -110,6 +198,12 @@ export function projectCreativeGraph(input:{messages:CreationMessage[];runs:Crea
   }
   input.references.forEach(ref=>reference(ref))
   input.messages.forEach(message=>(message.content.references||[]).forEach(ref=>reference(ref)))
+  // 独立画布素材只采用当前鉴权结果；未知或失效时保留节点，不复用旧签名。
+  for(const ref of layout.asset_references||[]){
+    const preview=input.canvasAssets?.find(value=>value.item_id===ref.item_id&&value.version_id===ref.version_id)
+    const kind=preview?.media_type||'image',id=`reference:${ref.version_id}`
+    if(!nodes.has(id))add(id,{kind,title:preview?.name||'画布素材',prompt:'',status:preview?.available?'reference':'unavailable',url:preview?.available?preview.preview_url:'',source:{kind:'reference',id:ref.version_id,item_id:ref.item_id},reference:{...ref,purpose:'reference',name:preview?.name||'画布素材',media_type:kind,preview_url:preview?.available?preview.preview_url||'':''},readonly:true},0)
+  }
   // 同一个运行的最新状态优先，不让历史快照覆盖正在生成中的节点。
   const runs=[...new Map(input.runs.map(run=>[run.id,run])).values()]
   const boundResults=new Set<string>()
@@ -117,6 +211,23 @@ export function projectCreativeGraph(input:{messages:CreationMessage[];runs:Crea
     // 用户已停止的未提交草案不再投影节点；真实已提交批次及成果仍保留。
     if(hiddenProposalOutput(run)&&(run.creative_plan||run.image_plan||run.card?.type==='proposal'))continue
     const refs=(run.task_input?.references||run.draft.references||[]).map(ref=>reference(ref,run.reference_previews?.[ref.version_id]))
+    const storyboard=(run.card as (NonNullable<CreationRun['card']>&{storyboard?:import('./drama/standaloneStoryboard').StandaloneStoryboard})|undefined)?.storyboard
+    if(run.status==='replied'&&run.card?.type==='reply'&&storyboard?.skill_id==='drama-storyboard'){
+      // 各张卡共享布局锚点，由固定网格排版；刷新与轮询都沿用业务镜头 ID。
+      let anchor:{x:number;y:number}|undefined
+      for(const shot of storyboard.shots){
+        const id=`standalone-shot:${shot.id}`
+        add(id,{kind:'text',title:shot.title,prompt:shot.visual,status:'replied',readonly:true,runId:run.id,
+          standaloneShot:{id:shot.id,revision:storyboard.revision,groupId:storyboard.id,groupTitle:storyboard.title,scene:shot.scene,camera:shot.camera,durationMs:shot.duration_ms}},1)
+        const node=nodes.get(id)!
+        anchor ||= {...node.position}
+        node.position={...anchor}
+        for(const fixedId of shot.reference_ids){const source=`reference:${fixedId}`;if(nodes.has(source))link(source,id,true)}
+        const source=nodes.get(storyboard.source.id)
+        if(storyboard.source.kind==='canvas_text'&&source&&source.data.scriptDocument?.revision===storyboard.source.revision)link(source.id,id,true)
+      }
+      continue
+    }
     // 新根图中的独立镜头批次投影真实计划摘要，连线只追溯规划来源，不把整份方案传作图片提示词。
     const batchPlan=run.image_plan?.plan_type==='direct'?run.image_plan:run.creative_plan
     const batchRoot=run.flow_runtime?.version==='creation-flow-v2'&&batchPlan&&batchPlan.items.length>1?`batch-plan:${run.id}`:''
@@ -218,7 +329,9 @@ export function projectCreativeGraph(input:{messages:CreationMessage[];runs:Crea
     const detail=status==='result_error'?'成片文件暂未读取成功，请打开片段列表核对原任务。':job.error_message||undefined
     if(bound){boundCompositions.add(id);Object.assign(nodes.get(id)!.data,{status,url:file,source,phase:'composition',detail})}
     else add(id,{kind:'video',title,prompt:'按片段顺序合成的短片；原片段保留。',status,url:file,source,phase:'composition',detail,readonly:true},2)
-    if(!bound)job.plan.clips.forEach(clip=>{const source=[...nodes.values()].find(node=>node.data.source?.kind==='video'&&node.data.source.id===clip.task_id&&node.data.source.result_id===clip.result_id);if(source)link(source.id,id)})
+    // 第三版来源由固定引用给出，不能访问不存在的旧clips导致整张画布投影失败。
+    const origins=job.plan.schema_version===3?job.plan.visuals.flatMap(clip=>clip.source.type==='task'?[{kind:clip.kind,task_id:clip.source.task_id,result_id:clip.source.result_id}]:[]):job.plan.clips.map(clip=>({kind:'video',task_id:clip.task_id,result_id:clip.result_id}))
+    if(!bound)origins.forEach(clip=>{const source=[...nodes.values()].find(node=>node.data.source?.kind===clip.kind&&node.data.source.id===clip.task_id&&node.data.source.result_id===clip.result_id);if(source)link(source.id,id)})
   }
   // 成片也可能是截帧/批注来源，须在全部业务节点就绪后建立固定追溯线。
   // 同会话续作只使用服务端校验过的父运行身份；不存在的父节点不补造，也不继承旧媒体费用许可。
@@ -235,7 +348,7 @@ export function projectCreativeGraph(input:{messages:CreationMessage[];runs:Crea
     const draftId=String(run.draft.parameters?.extra?.canvas_node_id||'')
     if(!nodes.has(draftId))continue
     // Agent 由手动草案发起时，建立可追溯父子关系；不把草案本身伪装为已执行任务。
-    const targets=[...nodes.values()].filter(node=>node.data.runId===run.id||input.results.some(result=>resultCanvasNodeId(result,input.messages,input.results)===node.id&&input.messages.some(message=>message.id===result.messageId&&message.content.parameters?.extra?.creation_run_id===run.id)))
+    const targets=[...nodes.values()].filter(node=>!node.data.standaloneShot&&(node.data.runId===run.id||input.results.some(result=>resultCanvasNodeId(result,input.messages,input.results)===node.id&&input.messages.some(message=>message.id===result.messageId&&message.content.parameters?.extra?.creation_run_id===run.id))))
     targets.forEach(target=>link(draftId,target.id,true))
   }
   for(const edge of layout.edges)if(nodes.has(edge.source)&&nodes.has(edge.target))edges.set(edge.id,{...edge,type:'creative',data:{automatic:false}})
@@ -245,8 +358,16 @@ export function projectCreativeGraph(input:{messages:CreationMessage[];runs:Crea
     const override=layout.overrides?.[node.id]
     // 单媒体方案→受理任务沿用原方案坐标；旧任务有独立坐标时仍以原布局为准。
     const planPosition=node.id.startsWith('task:')&&node.data.runId?layout.positions[`text:${node.data.runId}`]:undefined
-    const data=override&&!node.data.readonly&&!node.data.itemId?{...node.data,...override,edited:true}:node.data
-    return {...node,position:layout.positions[node.id]||planPosition||node.position,data:{...data,...(layout.node_parameters?.[node.id]?{parameters:layout.node_parameters[node.id]}:{})}}
+    let data=override&&!node.data.readonly&&!node.data.itemId?{...node.data,...override,edited:true}:node.data
+    // 同一固定版本也可能出现在聊天记录；独立画布引用必须以后端本次核权结果为准，不能被旧聊天预览覆盖。
+    const fixed=(layout.asset_references||[]).find(ref=>node.id===`reference:${ref.version_id}`&&node.data.source?.item_id===ref.item_id)
+    if(fixed){
+      const preview=input.canvasAssets?.find(row=>row.item_id===fixed.item_id&&row.version_id===fixed.version_id)
+      const available=!!preview?.available,kind=preview?.media_type||node.data.kind
+      const name=available?preview?.name||'画布素材':'画布素材',url=available?preview?.preview_url||'':''
+      data={...data,kind,title:name,status:available?'reference':'unavailable',url,reference:{...fixed,purpose:'reference',name,media_type:kind,preview_url:url}}
+    }
+    return {...node,...(isFixedDramaNode(node)?{draggable:false}:{}),position:layout.positions[node.id]||planPosition||node.position,data:{...data,...(layout.node_parameters?.[node.id]?{parameters:layout.node_parameters[node.id]}:{})}}
   })
   const ids=new Set(visible.map(node=>node.id))
   return {nodes:visible,edges:[...edges.values()].filter(edge=>ids.has(edge.source)&&ids.has(edge.target)).map(edge=>({...edge,data:{...edge.data,active:['planning','pending','queued','running','rendering','in_progress','submitting','processing'].includes(nodes.get(edge.target)?.data.status||'')}}))}

@@ -14,6 +14,8 @@ node_modules
 !.env.example
 .nuxt-app
 .nuxt-build
+# 隔离验收与并行构建目录也是生成物，避免被Tailwind源码扫描和热更新再次收集。
+.nuxt-*/
 # 本机 pnpm 缓存和 Codex 视觉验收产物，不属于应用源代码。
 .pnpm-store/
 .codex/

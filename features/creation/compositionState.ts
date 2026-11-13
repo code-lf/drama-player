@@ -58,3 +58,11 @@ export function compositionErrors(plan:CompositionPlan):string[]{
 export function compositionStatus(job:Pick<CompositionJob,'status'>):string{
   return {queued:'等待合成',rendering:'正在合成',succeeded:'合成完成',failed:'合成失败'}[job.status]||'状态待确认'
 }
+/** 历史和新时间轴成片共用只读展示，不把第三版快照回写成旧合同。 */
+export function compositionDisplayClips(plan:import('~/shared/api/services/videoCompositionService').CompositionJob['plan']):Array<{id:string;task_id?:string;result_id?:string;reference?:{item_id:string;version_id:string}}>{
+  return plan.schema_version===3?plan.visuals.map(clip=>({id:clip.id,...(clip.source.type==='task'?{task_id:clip.source.task_id,result_id:clip.source.result_id}:{reference:{item_id:clip.source.item_id,version_id:clip.source.version_id}})})):plan.clips
+}
+/** 新合同固定画幅，旧合同仍用原像素比例，不凭文件是否就绪猜规格。 */
+export function compositionDisplayRatio(plan:import('~/shared/api/services/videoCompositionService').CompositionJob['plan']){
+  return plan.schema_version===3?({'16:9':16/9,'9:16':9/16,'1:1':1}[plan.aspect]):plan.output.width/plan.output.height
+}

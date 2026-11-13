@@ -13,6 +13,13 @@ const helperJs=ts.transpileModule(readFileSync('features/creation/resultCatalog.
 const resultHelpers=await import(`data:text/javascript;base64,${Buffer.from(helperJs).toString('base64')}`)
 const stateJs=ts.transpileModule(readFileSync('features/creation/imagePlanState.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ESNext}}).outputText
 const stateHelpers=await import(`data:text/javascript;base64,${Buffer.from(stateJs).toString('base64')}`)
+test('图片批次区分排队、提交和实际生成，不把混合排队批次误标完成',()=>{
+  const label=(...states)=>stateHelpers.imagePlanDeliveryLabel({batch:{items:states.map(delivery_status=>({delivery_status})),completed:0,selected_count:states.length}})
+  assert.equal(label('queued'),'图片任务排队中')
+  assert.equal(label('submitting'),'正在提交图片任务')
+  assert.equal(label('queued','processing'),'图片生成中')
+  assert.equal(label('result_pending'),'图片生成中')
+})
 // 挂载测试复用实际审核规则，防止自动核价误走采购提交。
 const reviewJs=ts.transpileModule(readFileSync('features/creation/planReview.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.ESNext}}).outputText
 const reviewHelpers=await import(`data:text/javascript;base64,${Buffer.from(reviewJs).toString('base64')}`)
@@ -54,7 +61,7 @@ test('已受理批次保留后台费用快照，成果区不重复展示价格�
 test('已确认图片在对话保持加载与明确提示，mock不冒充实际模型出图',async()=>{
   const plan={...fixture(),status:'submitted',batch:{completed:0,selected_count:1,items:[{item_id:'image-1',task_id:'one',delivery_status:'queued',mock:true,detail:'等待生成',results:[]}]}}
   const ui=mount({plan});await tick()
-  assert.ok(ui.text().includes('正在处理图片任务（0/1）'))
+  assert.ok(ui.text().includes('图片任务排队中（0/1）'))
   assert.ok(ui.text().includes('停止对话不会中止生成'))
   assert.ok(ui.text().includes('开发 mock：使用已有样本'))
   assert.ok(!ui.text().includes('已完成 0 / 1'))
@@ -90,7 +97,7 @@ test('活动图片只GET原批次，隐藏页暂停、完成后停止，过期�
     globalThis.document.hidden=false
     // 服务端旧响应即使修订相同也不能把已提交计划变回可编辑草案。
     response=fixture();queue.shift()();await tick()
-    assert.ok(ui.text().includes('正在处理图片任务（0/1）'));assert.ok(!ui.text().includes('统一核价'))
+    assert.ok(ui.text().includes('图片任务排队中（0/1）'));assert.ok(!ui.text().includes('统一核价'))
     response={...fixture(),status:'submitted',batch:{...batch,completed:1,items:[{...batch.items[0],status:'success',delivery_status:'completed',results:[{id:'f',status:'success',image_url:'/real.png'}]}]}}
     queue.shift()();await tick()
     assert.ok(ui.text().includes('图片已生成（1/1）'));assert.equal(queue.length,0)
@@ -165,8 +172,8 @@ test('图片统一确认稍等后隐藏计划，取消失败不伪造停止或�
   assert.deepEqual(rejected.calls.map(value=>value[0]),['cancel'])
   rejected.app.unmount()
 })
-function mount({plan=fixture(),quickQuote=false,referencePreviews,beforeCommand,quote,save,read,prepare,confirm,resume,retry,run,cancel}={}){
-  const props=vue.reactive({runId:'fixed-run',plan,quickQuote,referencePreviews,beforeCommand,busy:false,readonly:false}),calls=[],events=[]
+function mount({plan=fixture(),quickQuote=false,readonly=false,referencePreviews,beforeCommand,quote,save,read,prepare,confirm,resume,retry,run,cancel}={}){
+  const props=vue.reactive({runId:'fixed-run',plan,quickQuote,referencePreviews,beforeCommand,busy:false,readonly}),calls=[],events=[]
   const api={saveImagePlan:async(...args)=>{calls.push(['save',...args]);return save?save(...args):{...fixture(),revision:2,selected_ids:args[1].selected_ids}},quoteImagePlan:async(...args)=>{calls.push(['quote',...args]);return quote?quote(...args):priced(props.plan)},imagePlan:async(...args)=>{calls.push(['read',...args]);return read?read(...args):fixture()}}
   api.prepareImageBatch=async(...args)=>{calls.push(['prepare',...args]);return prepare?prepare(...args):{...props.plan,execution_available:true}}
   api.retryImageBatch=async(...args)=>{calls.push(['retry',...args]);return retry?retry(...args):{run_id:'retry-run'}}
@@ -203,6 +210,37 @@ test('后端交付费用卡，页面挂载与刷新不报价、不提交生成�
   assert.equal(restored.calls.length,0);restored.app.unmount()
 })
 
+test('过期报价自动更新，最终卡始终确认执行且不自动提交',async()=>{
+  const plan=priced({...fixture(),review_required:false,batch_supported:true})
+  plan.quote.expires_at=Date.now()/1000-1;plan.quote.expired=true
+  const ui=mount({plan,quote:()=>({...priced(plan),quote:{...priced(plan).quote,id:'renewed'}})})
+  await tick()
+  assert.ok(!ui.text().includes('确认方案'))
+  assert.deepEqual(ui.calls.map(call=>call[0]),['quote'])
+  assert.ok(ui.text().includes('确认执行'))
+  assert.ok(!ui.text().includes('重新核算'))
+  assert.ok(!ui.text().includes('确认方案'))
+  assert.ok(!ui.calls.some(call=>['prepare','confirm'].includes(call[0])))
+  ui.app.unmount()
+})
+
+test('自动续价失败不无限请求、不用旧价提交；只读历史不续价',async()=>{
+  const plan=priced({...fixture(),review_required:false,batch_supported:true})
+  plan.quote.expires_at=Date.now()/1000-1;plan.quote.expired=true
+  const ui=mount({plan,quote:()=>{throw new Error('费用暂时无法更新，请稍后重试。')}})
+  await tick()
+  assert.deepEqual(ui.calls.map(call=>call[0]),['quote'])
+  assert.ok(ui.text().includes('费用暂时无法更新'))
+  const buttonText=el=>el.text+el.children.map(buttonText).join('')
+  assert.ok(ui.find(el=>el.type==='button'&&buttonText(el)==='确认执行').props.disabled)
+  assert.ok(!ui.text().includes('重新核算'))
+  await ui.click('确认执行');await tick()
+  assert.deepEqual(ui.calls.map(call=>call[0]),['quote'])
+  ui.app.unmount()
+  const history=mount({plan,readonly:true});await tick()
+  assert.deepEqual(history.calls,[]);history.app.unmount()
+})
+
 test('后台核价失败保持方案可查看，显示原因与明确重试，不自动循环',async()=>{
   const ui=mount({plan:{...fixture(),quote_delivery:'failed',quote_error:'费用服务暂不可用'}});await tick()
   assert.ok(ui.text().includes('费用服务暂不可用')&&ui.text().includes('重试准备'))
@@ -214,7 +252,7 @@ test('同修订真实任务完成更新卡片，部分成功只显示已有成�
   const batch={items:[{item_id:'image-1',task_id:'one',status:'success',delivery_status:'completed',results:[{id:'file1',image_url:'/real.png',status:'success'}]},
     {item_id:'image-2',task_id:'two',status:'needs_review',delivery_status:'unknown',detail:'等待核对原请求',results:[]}],completed:1,selected_count:2,unknown:1}
   ui.props.plan={...fixture(),status:'submitted',batch};await tick()
-  assert.ok(ui.text().includes('图片任务结果（1/2）'));assert.ok(ui.text().includes('1 张提交状态待核对'))
+  assert.ok(ui.text().includes('图片任务待核对（1/2）'));assert.ok(ui.text().includes('1 张提交状态待核对'))
   assert.ok(!ui.text().includes('统一核价'));assert.equal(ui.calls.length,0)
   await ui.click('香水商品图1 已完成');await tick()
   assert.deepEqual(ui.events,[['open','image-1']]);assert.equal(ui.calls.length,0)

@@ -2,8 +2,10 @@
 // 积分不足仅打开全站充值弹窗，不丢失当前报价与草稿。
 const billingDialog=useBillingDialog()
 import {groupConversation,continuousAnswers} from '../conversationRows'
+import type {StoryboardSourceSelection} from '../drama/standaloneStoryboard'
 import CreationProcessEvents from './CreationProcessEvents.vue'
 import CreationQuestionPages from './CreationQuestionPages.vue'
+import CreationStyleQuestion from './CreationStyleQuestion.vue'
 import CreationAnsweredQuestionCard from './CreationAnsweredQuestionCard.vue'
 import CreationWorkspaceNotice from './CreationWorkspaceNotice.vue'
 import {hasAcceptedAnswerSince,repeatsSubmittedQuestion} from '../answeredQuestions'
@@ -30,29 +32,36 @@ import { defineWorkspaceComponent } from '~/features/dashboard/asyncWorkspace'
 // 首页只下载输入与展示组件，画布、剪辑和专项工具在实际显示时再加载。
 const SkillCenterPanel=defineWorkspaceComponent(()=>import('./SkillCenterPanel.vue'))
 import {replicaParameters,quickRecommendedSkills} from '../homeShowcase'
-import MvLyricAlignment from './MvLyricAlignment.vue'
+// 歌词时间轴只在音乐引用入口展示时加载，普通画布和首页不提前解析媒体编辑代码。
+const MvLyricAlignment=defineWorkspaceComponent(()=>import('./MvLyricAlignment.vue'))
 import {questionNeedsText,isQuestionUploadOption,questionNeedsReference,multipleQuestionAnswer} from '../questionInteraction'
 import {nextHistoryFollow} from '../chatScroll'
 import CreationTaskNotice from './CreationTaskNotice.vue'
 import {showTaskNotice} from '../taskPresentation'
-import CreationSafetyRepair from './CreationSafetyRepair.vue'
+// 安全修复仅在真实任务出现对应失败时加载，不放入所有会话的首屏依赖。
+const CreationSafetyRepair=defineWorkspaceComponent(()=>import('./CreationSafetyRepair.vue'))
 import {safetySubmissionMatches} from '../safetySubmission'
 import type {ImageSafetyRepair} from '~/entities/product-image/types'
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
-import MusicPlayer from '~/features/music/components/MusicPlayer.vue'
+// 音乐试听只在用户打开试听区域时加载，普通会话不提前下载播放器及波形依赖。
+const MusicPlayer=defineWorkspaceComponent(()=>import('~/features/music/components/MusicPlayer.vue'))
 import CreationComposer from './CreationComposer.vue'
+import CreationConversationPanel from './CreationConversationPanel.vue'
 import CreationNodeControls from './CreationNodeControls.vue'
 import {nodeParameterError} from '../nodeParameterValidation'
 import CreationConfirmationCard from './CreationConfirmationCard.vue'
 import CreationResultCard from './CreationResultCard.vue'
 import CreationRunTime from './CreationRunTime.vue'
 import CreationThinkingIndicator from './CreationThinkingIndicator.vue'
-import {sessionResults,processingResults,batchCompositionResults,batchImageResults,playableMusicSong,readyResult} from '../resultCatalog'
+import {sessionResults,processingResults,batchCompositionResults,batchImageResults,playableMusicSong,readyResult,type SessionResult} from '../resultCatalog'
 import {advanceCompositionReads} from '../compositionState'
 import {canAcceptRun,sameRunScope,appendResultKeys,unreadResultKeys,assistantInteraction,conversationEntry,awaitingCreationDecision} from '../workflowState'
 import {canShowGenerationConfirmation} from '../confirmationRules'
 import {runParameterSnapshot} from '../runParameterSnapshot'
 import AssistantReply from './AssistantReply.vue'
+import CanvasDramaActionCard from '../drama/components/CanvasDramaActionCard.vue'
+import CanvasDramaProgress from '../drama/components/CanvasDramaProgress.vue'
+import {dramaProgressRows} from '../drama/dramaProgress'
 import LivDialog from '~/components/liv-ui/LivDialog.vue'
 import LivButton from '~/components/liv-ui/LivButton.vue'
 import type {CanvasVersion,AnnotationDraft} from './CreationResultCanvas.vue'
@@ -60,7 +69,8 @@ const CreationResultCanvas=defineWorkspaceComponent(()=>import('./CreationResult
 import {useWorkspaceDraft} from '../useWorkspaceDraft'
 import {persistentDraft} from '../draftPersistence'
 import type {SystemSkill,CreationMessage,WorkspaceSource,CreationDraft,WorkspacePreview} from '../types'
-import LibraryPicker from '~/features/library/components/LibraryPicker.vue'
+// 资料选择器只在首次使用时加载；两个入口仍复用相同组件，已打开过后保留关闭动画及内部状态。
+const LibraryPicker=defineWorkspaceComponent(()=>import('~/features/library/components/LibraryPicker.vue'))
 const AssetLibraryPanel=defineWorkspaceComponent(()=>import('~/features/library/components/AssetLibraryPanel.vue'))
 const MusicWorkspacePanel=defineWorkspaceComponent(()=>import('~/features/music/components/MusicWorkspacePanel.vue'))
 const ProductVideoWorkspacePanel=defineWorkspaceComponent(()=>import('~/features/product-video/components/ProductVideoWorkspacePanel.vue'))
@@ -76,6 +86,9 @@ import { productImageService } from '~/shared/api/services/productImageService'
 import { productVideoService } from '~/shared/api/services/productVideoService'
 import { useAccountStore } from '~/features/billing/store/useAccountStore'
 import { creationService, type CreationRun, type VideoPlan, type ImageCreativePlan } from '~/shared/api/services/creationService'
+import {canvasScriptProductionOptions,type CanvasScriptState} from '../drama/scriptDocument'
+import {useCanvasActivity} from '../drama/canvasActivity'
+import CanvasConversationActivity from '../drama/components/CanvasConversationActivity.vue'
 import CreationVideoPlanCard from './CreationVideoPlanCard.vue'
 const CreationVideoWorkbench=defineWorkspaceComponent(()=>import('./CreationVideoWorkbench.vue'))
 const CreationEditingWorkspace=defineWorkspaceComponent(()=>import('./CreationEditingWorkspace.vue'))
@@ -88,7 +101,8 @@ import {planReferencePreviews} from '../planReferences'
 import {resultCanvasNodeId,creativeRetryParameters,hiddenProposalOutput,type CreativeNode,type CreativeNodeParameters} from '../agentCanvas'
 import {videoCompositionService,type CompositionJob} from '~/shared/api/services/videoCompositionService'
 import CreationFlowRecovery from './CreationFlowRecovery.vue'
-import CreationDeliveryPanel from './CreationDeliveryPanel.vue'
+// 成片合成面板及其素材选择器只在用户打开合成时加载，不阻塞普通画布进入。
+const CreationDeliveryPanel=defineWorkspaceComponent(()=>import('./CreationDeliveryPanel.vue'))
 import {hasUnsubmittedVideoPlan,hasSubmittedVideoPlan} from '../videoPlanState'
 
 import CreationReferenceQuestion from './CreationReferenceQuestion.vue'
@@ -272,7 +286,7 @@ async function selectArtifact(id:string){if(canvasRef.value&&!await canvasRef.va
 const attachmentDialog=ref<HTMLElement|null>(null)
 watch(attachmentPreview,async value=>{if(value){await nextTick();attachmentDialog.value?.focus()}})
 const draftScope=computed(()=>typeof route.query.session==='string'?`session:${route.query.session}`:`entry:${entry.value}`)
-const draftOwner=computed(()=>auth.session.user?.id),draftReady=computed(()=>!!catalog.value&&!sessionLoading.value&&!sessionError.value&&(!route.query.session||session.value?.id===route.query.session))
+const draftOwner=computed(()=>auth.session.user?.id),draftReady=computed(()=>!!catalog.value&&!loading.value&&!sessionLoading.value&&!sessionError.value&&(!route.query.session||session.value?.id===route.query.session))
 /** 云端只恢复固定版本编号；逐项复核访问权限，不能把保存过的地址当作授权。 */
 async function applyCloudDraft(value:CreationDraft,isCurrent=()=>true){
   // 兼容已有云端／本地首页备份：忽略旧文字，不删除历史会话内容。
@@ -285,7 +299,7 @@ async function applyCloudDraft(value:CreationDraft,isCurrent=()=>true){
     const rows=await creationService.runs(session.value.id)
     // 指定运行优先于会话最新轮次；从历史方案恢复不能被另一页面的新问题替换规格。
     const latest=typeof route.query.run==='string'?rows.find(row=>row.id===route.query.run):rows[rows.length-1]
-    if(latest && (['waiting','planning','ready'].includes(latest.status)||hasUnsubmittedVideoPlan(latest)||hasSubmittedVideoPlan(latest)||hasSubmittedImagePlan(latest)||hasUnsubmittedImagePlan(latest))){
+    if(latest && (['waiting','planning','ready'].includes(latest.status)||latest.drama_action?.status==='awaiting_confirmation'||latest.continuation?.enabled||hasUnsubmittedVideoPlan(latest)||hasSubmittedVideoPlan(latest)||hasSubmittedImagePlan(latest)||hasUnsubmittedImagePlan(latest))){
       const edited=new Set(Array.isArray(value.parameters.extra?.user_parameter_keys)?value.parameters.extra.user_parameter_keys:[])
       restoredParameters={...value.parameters}
       const snapshot=runParameterSnapshot(latest)
@@ -302,6 +316,88 @@ async function applyCloudDraft(value:CreationDraft,isCurrent=()=>true){
   if(!draftScope.value.startsWith('entry:'))setText(value.prompt,value.segments.filter(v=>v.type==='text'||valid.has(v.version_id)))
 }
 const cloudDraft=useWorkspaceDraft(draftOwner,draftScope,draftReady,()=>persistentDraft(draft(),draftScope.value),applyCloudDraft)
+const dramaMode=ref<'standard'|'canvas'>('standard')
+const dramaModeBusy=ref(false)
+const dramaModeOptions=[{label:'标准模式',value:'standard'},{label:'画布模式',value:'canvas'}] as const
+const allowChatScriptUpload=computed(()=>entry.value==='free'&&['','free','story'].includes(skill.value||''))
+let canvasEntryRequest:{owner:string;key:string;file:File|null;id:string;saveId:string;runId:string;preview?:{script:string;title:string}}|undefined
+/** 首页画布和聊天共用固定文稿发送；不会提交正式解析或媒体生成。 */
+async function submitDramaCanvas(fromChat=false){
+  if(dramaModeBusy.value||busy.value)return
+  const owner=draftOwner.value
+  if(!owner)return
+  const value=draft(), input=fromChat?'file':String(value.parameters.extra.director_input_mode||'file')
+  const file=input==='file'?scriptFile.value:null
+  if(input==='file'&&!file){error.value='请先上传剧本文件。';return}
+  if(input!=='file'&&!value.prompt.trim()){error.value=input==='idea'?'请先描述你的故事想法。':'请先粘贴剧本原文。';return}
+  if(file&&(file.size>20*1024*1024||!/\.(txt|docx|pdf)$/i.test(file.name))){error.value='剧本仅支持 20 MB 内的 TXT、DOCX 或 PDF。';return}
+  if(value.references.length||uploads.value.length){error.value='请先单独发送剧本，其他素材可在后续消息中添加。';return}
+  const sid=fromChat?session.value?.id:undefined
+  const key=JSON.stringify([sid,fromChat,value]), from=route.fullPath
+  const isCurrent=()=>owner===draftOwner.value&&from===route.fullPath&&key===JSON.stringify([sid,fromChat,draft()])&&(!file||file===scriptFile.value)
+  if(canvasEntryRequest?.owner!==owner||canvasEntryRequest.key!==key||canvasEntryRequest.file!==file){
+    canvasEntryRequest={owner,key,file,id:sid||crypto.randomUUID(),saveId:crypto.randomUUID(),runId:crypto.randomUUID()}
+  }
+  const attempt=canvasEntryRequest
+  dramaModeBusy.value=true;error.value=''
+  try{
+    // 聊天的生图比例不能当成短剧规格；首页明确选择的规格仍随文稿保存。
+    const production=fromChat?undefined:canvasScriptProductionOptions(value.parameters,catalog.value?.styles||[])
+    // 上传复用现有文件提取；想法明确发送后才起草剧本；粘贴原文不经模型改写。
+    // 不沿用标准模式预览编号，避免改写另一条尚待确认的导演草稿。
+    const previewInput={...value,parameters:{...value.parameters,extra:{...value.parameters.extra}}}
+    delete previewInput.parameters.extra.director_run_id
+    const preview=attempt.preview??(file?{...await creationService.readScriptFile(file),title:''}:input==='idea'?await creationService.director(previewInput,'general'):{script:value.prompt,title:''})
+    attempt.preview=preview
+    if(!isCurrent())return
+    if(!preview.script.trim()||Array.from(preview.script).length>20000)throw new Error('剧本不能为空，且本轮最多读取 20000 字；请按集拆分，原文未截断。')
+    const title=(file?.name.replace(/\.[^.]+$/,'')||(input==='idea'?preview.title:'')||preview.script.split(/\r?\n/).find(line=>line.trim())?.trim()||'我的剧本').slice(0,100)
+    const requirements=fromChat?'':[input==='idea'?value.prompt:'',`画幅：${value.parameters.aspectRatio}`,value.parameters.style?`风格：${value.parameters.style}`:''].filter(Boolean).join('\n')
+    const created=sid?{id:sid}:await creationService.create({id:attempt.id,entry:'free',skill:'free',title})
+    if(!isCurrent())return
+    // 固定提交标识；若保存回执丢失，重试同一文稿不会另建节点。
+    // 新上传不隐式覆盖此画布已有的剧本；相同请求号重试可恢复原保存回执。
+    const saved=await request<CanvasScriptState>(`/creation/sessions/${created.id}/script-document`,{method:'PUT',body:{expected_revision:0,request_id:attempt.saveId,document:{title,source_text:preview.script,requirements,production}}})
+    if(!isCurrent())return
+    if(!fromChat&&production?.style_id){
+      // 首页明确选择短剧画布和风格后只导入固定文稿；不报价、不确认、不投递生成。
+      // 服务端按会话幂等绑定项目，重试不会产生第二个项目。
+      await request(`/creation/sessions/${created.id}/production-intake`,{method:'POST',body:{
+        expected_document_revision:saved.revision,aspect_ratio:production.aspect_ratio,
+        resolution:production.resolution,style_id:production.style_id,
+      }})
+      if(!isCurrent())return
+    }
+    const configuredStyle=!!(production?.style_id||value.parameters.styleId||value.parameters.style)
+    const instruction=fromChat&&value.prompt.trim()?value.prompt:
+      `我要根据已上传的完整剧本制作短剧。请先读取剧本，简要说明剧情和各场内容。${configuredStyle?'保留已选风格，不再询问。':'请推荐合适的视觉风格并让我选择。'}随后依据实际项目状态准备角色、场景和道具；正式剧本确认、收费解析和图片生成均须等待我的明确确认，不得自行提交。`
+    const runDraft:CreationDraft={entry:'free',skill:fromChat?(value.skill||'free'):'free',
+      prompt:instruction,original_prompt:instruction,segments:[{type:'text',text:instruction}],
+      references:[],reference_names:{},
+      parameters:fromChat?{...value.parameters,extra:{user_parameter_keys:value.parameters.extra.user_parameter_keys}}:
+        {...defaultParameters(),style:value.parameters.style,styleId:value.parameters.styleId}}
+    const started=await creationService.startScriptRun(runDraft,attempt.runId,created.id,saved.revision)
+    if(!isCurrent())return
+    if(scriptFile.value===file)scriptFile.value=null
+    setText('',[])
+    canvasEntryRequest=undefined
+    if(session.value?.id===created.id){
+      planning.value=started
+      void reloadCanvasActivity()
+    }
+    await navigateTo({path:'/dashboard',query:{session:created.id,run:started.id,pane:'chat'}})
+    // 真正发送才启动本轮；打开已有文稿和刷新只是只读恢复。
+    try{
+      if(started.status==='planning'){
+        const result=await creationService.advanceRun(started.id)
+        if(route.query.run===started.id)applyAssistantState(result)
+      }
+    }catch{if(route.query.run===started.id)error.value='剧本已保存，助手暂未完成回复，请核对当前状态后重试。'}
+  }catch(cause){if(isCurrent()){
+    error.value=sid&&Number((cause as {statusCode?:number}).statusCode)===409?'此画布可能已有剧本，请从剧本卡编辑原文，或新开画布发送另一份剧本。':cause instanceof Error?cause.message:'剧本暂未保存，请重试。'
+  }}
+  finally{dramaModeBusy.value=false}
+}
 /** 仅工具栏的真实用户操作标记为参数改动，目录初始化和草稿恢复不冒充手动选择。 */
 function selectParameters(patch:Partial<CreationParameterState>){
   const prior=parameters.value.extra.user_parameter_keys
@@ -428,10 +524,12 @@ const compositionSources=computed(()=>[...new Map([
 const compositionMusicSources=computed(()=>allResults.value.filter(item=>item.kind==='audio'&&item.source.kind==='music'&&Number.isInteger(item.source.audio_index)))
 // 工作台读取整个会话的可预览结果和固定参考版本，不受选中组过滤。
 const editingAssets=computed(()=>{
-  const assets=[...allResults.value,...compositionSources.value]
-  const byUrl=new Map(assets.filter(item=>item.url).map(item=>[item.url,item as Pick<typeof item,'key'|'title'|'kind'|'url'|'cover'>]))
+  const assets=[...allResults.value,...compositionSources.value,...batchImageResults(graphRuns.value)]
+  const byUrl=new Map<string,Pick<SessionResult,'key'|'title'|'kind'|'url'|'cover'>&{source?:SessionResult['source']}>(assets.filter(item=>item.url).map(item=>[item.url,item]))
   for(const [key,item] of Object.entries(graphPreviews.value)){
-    if(item.available&&item.preview_url&&(item.media_type==='image'||item.media_type==='video'||item.media_type==='audio')&&!byUrl.has(item.preview_url))byUrl.set(item.preview_url,{key:`reference:${key}`,title:item.name,kind:item.media_type,url:item.preview_url})
+    // 直接关联已授权固定版本，不从文件名或临时URL反推素材身份。
+    const reference=graphReferences.value.find(ref=>ref.version_id===key)
+    if(item.available&&reference&&item.preview_url&&(item.media_type==='image'||item.media_type==='video'||item.media_type==='audio')&&!byUrl.has(item.preview_url))byUrl.set(item.preview_url,{key:`reference:${key}`,title:item.name,kind:item.media_type,url:item.preview_url,source:{kind:'reference',id:reference.version_id,item_id:reference.item_id}})
   }
   return [...byUrl.values()]
 })
@@ -496,7 +594,8 @@ function moveChatGesture(event:PointerEvent){
 function finishChatGesture(){chatPointer=null;chatGesture.value=null}
 const chatPanelElement=ref<HTMLElement|null>(null),canvasLeftInset=ref(0)
 // 进入手机或打开另一会话时默认聊天；切页签不卸载编辑器与任务实例。
-watch([mobileWorkspace,()=>session.value?.id],()=>{if(mobileWorkspace.value){chatCollapsed.value=false;mobilePane.value='chat';finishChatGesture()}},{flush:'post'})
+// 从短剧入口提交文稿时，窄屏优先打开画布而不是空白聊天。
+watch([mobileWorkspace,()=>session.value?.id],()=>{if(mobileWorkspace.value){chatCollapsed.value=false;mobilePane.value=route.query.pane==='canvas'?'canvas':'chat';finishChatGesture()}},{flush:'post'})
 let floatingChatObserver:ResizeObserver|undefined
 /** 以浮层真实边界告知画布遮挡，拖宽、收起与窗口变化不再把新节点放到聊天背后。 */
 function measureFloatingChat(){
@@ -575,11 +674,36 @@ function correctQuickComposition(){
   const text='请只修正失败的合成计划，复用本会话已完成的视频和音乐；根据实际素材容量修正后展示合成确认，不生成或购买新媒体。'
   setText(prompt.value.trim()?`${prompt.value}\n${text}`:text)
 }
+// 文稿采用是显式的一次发送意图；切换账号、会话或技能后不自动带入下一轮。
+const pendingStoryboardSource=ref<(StoryboardSourceSelection&{title:string})|null>(null)
+watch(()=>[draftOwner.value,session.value?.id,skill.value],()=>{pendingStoryboardSource.value=null},{flush:'sync'})
+/** 只填入真实已保存文稿身份，不复制正文、不自动请求模型或创建正式短剧项目。 */
+async function chooseCanvasStoryboardSource(source:StoryboardSourceSelection,title:string,close:()=>void){
+  if(workInProgress.value||entry.value!=='free'||!catalog.value?.skills.some(item=>item.id==='drama-storyboard'))return
+  selectUserSkill('drama-storyboard')
+  // 同技能换文稿也属于显式来源边界，不把上一故事的改稿上下文当成当前正文。
+  explicitSkillBoundary.value=true
+  pendingStoryboardSource.value={...source,title}
+  if(!prompt.value.trim())setText(`请把所选文稿《${title}》（V${source.revision}）规划成分镜。`)
+  close();toggleChat(false)
+  await nextTick();await composerRef.value?.focusInput()
+}
+/** 阅读页只追加待发送的修改说明，保留对话原有文字和素材引用。 */
+async function discussCanvasScript(description:string,title:string,revision:number){
+  const text=`请就剧本《${title}》（V${revision}）提供以下修改建议，不直接保存剧本或发起制作：\n${description}`
+  const previous=prompt.value,separator=previous?'\n\n':''
+  const existing=segments.value.length?segments.value:previous?[{type:'text' as const,text:previous}]:[]
+  setText(`${previous}${separator}${text}`,[...existing,{type:'text',text:separator+text}])
+  toggleChat(false)
+  await nextTick();await composerRef.value?.focusInput()
+}
 const graphCompositionFileReads=new Map<string,number>()
-let graphCompositionEpoch=0,graphCompositionTimer:ReturnType<typeof setTimeout>|undefined
+let graphCompositionEpoch=0,graphCompositionTimer:ReturnType<typeof setTimeout>|undefined,graphCompositionSchedule:ReturnType<typeof setTimeout>|undefined
 /** 合成节点只读取当前会话成片目录；恢复不触发 materialize、合成或重试。 */
 async function readGraphCompositions(reset=false){
   const sid=session.value?.id,owner=draftOwner.value,epoch=++graphCompositionEpoch
+  // 显式刷新已经接手时取消尚未触发的合并任务，避免同一目录紧接着读取两次。
+  clearTimeout(graphCompositionSchedule)
   clearTimeout(graphCompositionTimer)
   if(reset)graphCompositionFileReads.clear()
   if(!sid||!owner||entry.value==='drama'){graphCompositions.value=[];return}
@@ -600,14 +724,21 @@ async function readGraphCompositions(reset=false){
     if(state.poll)graphCompositionTimer=setTimeout(()=>{if(!document.hidden)void readGraphCompositions()},4000)
   }catch{/* 独立合成目录失败不破坏已读取的图片与视频节点，打开合成面板可显式重试。 */}
 }
-watch(()=>[session.value?.id,draftOwner.value],()=>{graphCompositions.value=[];void readGraphCompositions(true)})
-watch(compositionOpen,value=>{if(!value)void readGraphCompositions(true)})
+/** 合并同一事件波次触发的目录刷新；立即作废旧响应，避免旧会话的结果覆盖当前画布。 */
+function scheduleGraphCompositionRead(){
+  graphCompositionEpoch++
+  clearTimeout(graphCompositionSchedule)
+  clearTimeout(graphCompositionTimer)
+  graphCompositionSchedule=setTimeout(()=>{if(typeof document!=='undefined'&&!document.hidden)void readGraphCompositions(true)},80)
+}
+watch(()=>[session.value?.id,draftOwner.value],()=>{graphCompositions.value=[];scheduleGraphCompositionRead()})
+watch(compositionOpen,value=>{if(!value)scheduleGraphCompositionRead()})
 // 新任务收据主动唤醒原目录读取；轮询仅跟进原任务，不重新提交合成。
-watch(()=>graphRuns.value.map(run=>run.quick_composition?.job_id||'').filter(Boolean).join(','),()=>void readGraphCompositions(true))
+watch(()=>graphRuns.value.map(run=>run.quick_composition?.job_id||'').filter(Boolean).join(','),scheduleGraphCompositionRead)
 /** 隐藏标签页暂停请求，重新可见后补一次只读对账，不让轮询永久停在排队态。 */
-function resumeGraphCompositions(){if(!document.hidden)void readGraphCompositions(true)}
+function resumeGraphCompositions(){if(!document.hidden)scheduleGraphCompositionRead()}
 onMounted(()=>document.addEventListener('visibilitychange',resumeGraphCompositions))
-onBeforeUnmount(()=>{graphCompositionEpoch++;clearTimeout(graphCompositionTimer);document.removeEventListener('visibilitychange',resumeGraphCompositions)})
+onBeforeUnmount(()=>{graphCompositionEpoch++;clearTimeout(graphCompositionTimer);clearTimeout(graphCompositionSchedule);document.removeEventListener('visibilitychange',resumeGraphCompositions)})
 const graphPreviews=computed(()=>Object.fromEntries(Object.entries({...session.value?.reference_previews,...Object.assign({},...graphRuns.value.map(run=>run.reference_previews||{}))}).map(([key,value])=>[key,{...(value as WorkspacePreview),preview_url:(value as WorkspacePreview).preview_url?libraryService.previewUrl((value as WorkspacePreview).preview_url!):''}])))
 const graphReferences=computed(()=>mergeRoundReferences(roundReferences.value,references.value))
 /** 按画布来源只读重取文件元数据；失效链接不重生成、不重报价，也不重复扣费。 */
@@ -1236,7 +1367,13 @@ async function canvasAI(action:string,source:WorkspaceSource){
 function previewReference(version:string){const value=session.value?.reference_previews?.[version];if(value?.available)attachmentPreview.value={...value,preview_url:libraryService.previewUrl(value.preview_url||'')};else notice.value='该历史素材已失效或无权访问，原任务快照保持不变。'}
 const { $siteAsset: siteAsset } = useNuxtApp()
 const pickerOpen = ref(false), audioPickerOpen = ref(false), audioItems = ref<LibraryItem[]>([]), audioQuery = ref('')
+const pickerMounted=ref(false),stagePickerMounted=ref(false)
+watch(pickerOpen,open=>{if(open)pickerMounted.value=true},{flush:'sync'})
 const assetBrowserOpen=ref(false)
+// 画布入口使用非遮罩侧栏；输入框入口继续使用原有居中选择器。
+const assetBrowserFromCanvas=ref(false)
+// 切换账号或会话时销毁画布侧栏，避免旧会话的素材选择落到新会话。
+watch(()=>[draftOwner.value,session.value?.id],()=>{if(assetBrowserFromCanvas.value)assetBrowserOpen.value=false},{flush:'sync'})
 const assetScope = ref('personal'), assetCategory = ref(''), assetMedia = ref(''), assetCategories = ref<Array<{ code: string; name: string }>>([])
 const showMusicTools = ref(false), selectedResult = ref(0), notice = ref('')
 // 切换账号或会话立即销毁音频面板，避免旧来源与迟到操作回流到新的对话。
@@ -1287,6 +1424,7 @@ async function sendStageText(){
 }
 // 阶段选图使用既有资料库选择器，但固定图片类型，不与底部草稿的选图回调混用。
 const stagePickerOpen=ref(false)
+watch(stagePickerOpen,open=>{if(open)stagePickerMounted.value=true},{flush:'sync'})
 let finishStagePicker:((items:ComposerReference[])=>void)|undefined
 function selectStageImages():Promise<ComposerReference[]>{
   if(!requireLogin())return Promise.resolve([])
@@ -1400,7 +1538,7 @@ const questionInputExpanded=ref(false)
 /** 单题复用分页问卷外观，仍将原选项交给原回答入口，不增加执行或授权语义。 */
 const standaloneQuestionFields=computed(()=>{
   const question=planning.value?.question
-  if(!question||question.fields?.length||questionNeedsReference(question))return []
+  if(!question||question.fields?.length||question.kind==='style'||questionNeedsReference(question))return []
   return [{id:'single-question',text:question.text,kind:question.kind==='multiple'?'multiple' as const:question.options?.length?'single' as const:'text' as const,options:question.options||[],requires_input:questionNeedsText(question),required:true}]
 })
 const questionNeedsInput=computed(()=>questionInputExpanded.value||questionNeedsText(planning.value?.question))
@@ -1471,9 +1609,33 @@ watch([historyElement,historyContentElement,sessionLoading],async()=>{
 },{flush:'post'})
 onBeforeUnmount(()=>{historyResizeObserver?.disconnect();cancelAnimationFrame(historyScrollFrame)})
 /** 运行与媒体绑定同一消息组，避免生成后再次显示一遍相同的用户需求。 */
-const conversationRows=computed(()=>groupConversation(messages.value,assistantHistory.value,planning.value,session.value?.id))
+const {items:canvasActivity,error:canvasActivityError,reload:reloadCanvasActivity}=useCanvasActivity(()=>session.value?.id)
+const canvasExtractionId=ref('')
+watch(()=>session.value?.id,()=>{canvasExtractionId.value=''},{flush:'sync'})
+// 画布已经核对过当前文稿和提取回执；历史列表只是读取这些既有记录。
+function refreshCanvasActivity(extractionId:string){
+  canvasExtractionId.value=extractionId
+  void reloadCanvasActivity()
+}
+/** 手机端先显示画布，避免在隐藏容器上计算取景。 */
+async function locateCanvasActivity(id:string){
+  mobilePane.value='canvas'
+  await nextTick()
+  await agentCanvasRef.value?.locateExtraction(id.slice('extraction:'.length))
+}
+const conversationRows=computed(()=>groupConversation(messages.value,assistantHistory.value,planning.value,session.value?.id,canvasActivity.value))
 // 自动接续属于同一需求，保持真实阶段顺序，不重复开启助手回答。
 const conversationAnswers=computed(()=>continuousAnswers(conversationRows.value))
+const dramaReceipts=ref<Record<string,string>>({})
+const currentDramaRuns=computed(()=>[...conversationAnswers.value].reverse().find(answer=>answer.rows.some(row=>!row.activity))?.rows.flatMap(row=>row.run?[row.run]:[])||[])
+const currentDramaIds=computed(()=>new Set(currentDramaRuns.value.map(run=>run.id)))
+const dramaSteps=computed(()=>dramaProgressRows(currentDramaRuns.value,dramaReceipts.value))
+watch(()=>session.value?.id,()=>{dramaReceipts.value={}},{flush:'sync'})
+/** 只接纳当前连续需求中的同一修订，防止迟到请求改写新需求的进度。 */
+function rememberDramaReceipt(runId:string,revision:string,status:string){
+  if(currentDramaRuns.value.some(run=>run.id===runId&&run.drama_action?.revision===revision))
+    dramaReceipts.value[runId+':'+revision]=status
+}
 /** 内容增长引发的滚动事件不代表用户上翻；只有真实向上输入才暂停跟随。 */
 function browseHistoryDetails(){historyDetailsBrowsing=true;followLatest.value=false}
 function trackHistory(){const el=historyElement.value;if(el)followLatest.value=nextHistoryFollow(followLatest.value,el.scrollHeight-el.scrollTop-el.clientHeight,false,historyDetailsBrowsing)}
@@ -1506,7 +1668,7 @@ watch(()=>session.value?.id,async id=>{
     if(session.value?.id!==id)return
     assistantHistory.value=rows
     const latest=rows[rows.length-1]
-    if(!route.query.run&&!planning.value&&latest&&(hasSubmittedVideoPlan(latest)||hasSubmittedImagePlan(latest)||hasUnsubmittedImagePlan(latest)||(!latest.executed_request&&(['waiting','planning','ready'].includes(latest.status)||hasUnsubmittedVideoPlan(latest))))){
+    if(!route.query.run&&!planning.value&&latest&&(latest.drama_action?.status==='awaiting_confirmation'||latest.continuation?.enabled||hasSubmittedVideoPlan(latest)||hasSubmittedImagePlan(latest)||hasUnsubmittedImagePlan(latest)||(!latest.executed_request&&(['waiting','planning','ready'].includes(latest.status)||hasUnsubmittedVideoPlan(latest))))){
       planning.value=latest;assistantDraft=JSON.stringify(latest.draft)
     }
   }catch{/* 助手历史加载失败不阻断媒体作品。 */}
@@ -1914,12 +2076,15 @@ async function planDemand(options?:{mode?:'chat'|'skill'}) {
   assistantAccepted.value=false;assistantDraft=JSON.stringify(draft())
   const epoch=++assistantEpoch
   const requestId=crypto.randomUUID()
+  // 在调用前固定本次选择；发送期间重新选择文稿不被旧响应清除。
+  const sourceSelection=pendingStoryboardSource.value
   let acceptedId=''
   /** 接收与清理只作用于同一请求快照，连接恢复也走这一条路径。 */
   function acceptStarted(started:CreationRun){
     acceptedId=started.id
     if(planning.value&&planning.value.id!==started.id)assistantHistory.value=[...assistantHistory.value.filter(item=>item.id!==planning.value!.id),planning.value]
     planning.value=started;roundReferences.value=effectiveReferences
+    if(pendingStoryboardSource.value===sourceSelection)pendingStoryboardSource.value=null
     references.value=remainingReferences(references.value,sentReferences)
     if(prompt.value===requestDraft.prompt)setText('',[])
     else setText(prompt.value,submittedTextSegments(segments.value,references.value))
@@ -1927,18 +2092,14 @@ async function planDemand(options?:{mode?:'chat'|'skill'}) {
   }
   planningBusy.value=true
   try {
-    const started=await creationService.startRun(requestDraft,requestId,sid,undefined,parent,options?.mode,undefined,sentReferences.map(item=>item.version_id))
+    const started=await creationService.startRun(requestDraft,requestId,sid,undefined,parent,options?.mode,undefined,sentReferences.map(item=>item.version_id),sourceSelection?{node_id:sourceSelection.node_id,revision:sourceSelection.revision}:undefined)
     if(epoch!==assistantEpoch||!sameRunScope(sid,session.value?.id,started.session_id))return
     explicitSkillBoundary.value=false
     if(parameters.value.extra.requirement_boundary){const extra={...parameters.value.extra};delete extra.requirement_boundary;patchParameters({extra})}
     acceptStarted(started)
     await routerRun(started.id,started.session_id)
-    // 商品主图先作为阶段卡试点，其他技能及历史对话仍沿用旧链，不批量改写技能版本。
-    if(requestDraft.entry==='commerce'&&requestDraft.skill==='product'){
-      const stage=await creationService.beginStage(started.id)
-      if(epoch===assistantEpoch&&planning.value?.id===started.id)planning.value={...started,status:'waiting',collection_stage:stage}
-      return
-    }
+    // 新需求统一交给 Agent 分析完整输入并按缺失信息补问，不按商品入口预建固定问卷。
+    // 已存在的 collection_stage 仍由原回答与恢复分支处理，不改写历史问答或生成授权。
     const result=await creationService.advanceRun(started.id)
     if(epoch===assistantEpoch&&sameRunScope(sid,session.value?.id,started.session_id)){applyAssistantState(result);if(prompt.value===started.draft.prompt)setText('',[])}
   } catch(cause){if(epoch===assistantEpoch&&sameRunScope(sid,session.value?.id,planning.value?.session_id)){
@@ -1971,7 +2132,14 @@ function selectUserSkill(id:string){
   if(workflow)patchParameters({workflow})
 }
 async function routerRun(id: string,sid?:string|null) { await navigateTo({path:'/dashboard',query:{...route.query,...(sid?{session:sid}:{}),run:id}}) }
-async function answerPlanning(answer: string,fieldAnswers?:Record<string,string>,questionReferences:ComposerReference[]=[]) {
+/** 个人风格与平台风格分别提交：仅固定素材版本，不把封面URL或名称当注册风格合同。 */
+async function answerStyleReference(item:LibraryItem) {
+  const version=item.versions[0]
+  if(!version||item.media_type!=='image'||item.category!=='style')return
+  const reference:ComposerReference={item_id:item.id,version_id:version.id,purpose:'reference',name:item.name,media_type:'image',preview_url:libraryService.previewUrl(version.preview_url)}
+  await answerPlanning(`选择个人风格参考：${item.name}`,undefined,[reference],undefined,undefined,reference)
+}
+async function answerPlanning(answer: string,fieldAnswers?:Record<string,string>,questionReferences:ComposerReference[]=[],visualStyleId?:string,visualStyleVersion?:number,visualStyleReference?:ComposerReference) {
   if (!planning.value || planningBusy.value || !answer.trim()) return
   scrollHistoryBottom(true)
   const epoch=++assistantEpoch,run=planning.value,currentDraft=draft()
@@ -1987,7 +2155,7 @@ async function answerPlanning(answer: string,fieldAnswers?:Record<string,string>
   planning.value={...run,status:'planning',stream_text:'',response_phase:'queued',card:undefined,awaiting_calls:run.calls+(directComposition?0:1)}
   try {
     // 问卷确定携带字段答案；底部聊天仍只有文字，不把真实表单提交误判为插话后撤回答案。
-    const value=await creationService.answerRun(run.id,run.calls,answer,run.question_revision,answerDraft,fieldAnswers,questionReferences.length>0)
+    const value=await creationService.answerRun(run.id,run.calls,answer,run.question_revision,answerDraft,fieldAnswers,questionReferences.length>0&&!visualStyleReference,visualStyleId,visualStyleVersion,visualStyleReference?{item_id:visualStyleReference.item_id,version_id:visualStyleReference.version_id,purpose:visualStyleReference.purpose}:undefined)
     if(epoch!==assistantEpoch)return
     applyAssistantState(value);if(prompt.value===answer)setText('',[])
     answerText.value=''
@@ -2261,6 +2429,11 @@ async function chooseTemplate(item: CreationTemplate) {
 }
 async function sendWithContext() {
   if(!requireLogin())return
+  if(!active.value&&entry.value==='drama'&&dramaMode.value==='canvas'){await submitDramaCanvas();return}
+  if(allowChatScriptUpload.value&&scriptFile.value){
+    if(workInProgress.value||awaitingDecision.value)return
+    await submitDramaCanvas(true);return
+  }
   if(uploads.value.length){error.value=`请先完成或移除上传：${uploads.value.map(item=>item.name).join('、')}`;return}
   if(safetyDirectBusy.value)return
   if(annotationSubmitting.value||planningBusy.value||stoppingAssistant.value||planning.value?.status==='planning')return
@@ -2402,7 +2575,23 @@ function selectAssets(values: Array<{ item: LibraryItem; version: LibraryVersion
 }
 async function openAssets() {
   if(!requireLogin())return
+  assetBrowserFromCanvas.value=false
   assetBrowserOpen.value=true
+}
+/** 画布资料库复用现有固定版本引用逻辑，不隐式提交任务或修改已生成素材。 */
+async function openCanvasAssets() {
+  if(!requireLogin())return
+  if(assetBrowserOpen.value&&assetBrowserFromCanvas.value){assetBrowserOpen.value=false;return}
+  assetBrowserFromCanvas.value=true
+  assetBrowserOpen.value=true
+}
+const canvasAssetPlacementBusy=ref(false)
+/** 仅画布侧栏提供独立放置，普通选择仍沿用输入框素材引用。 */
+async function placeCanvasAsset(item:LibraryItem){
+  if(canvasAssetPlacementBusy.value||!agentCanvasRef.value)return
+  canvasAssetPlacementBusy.value=true
+  try{if(await agentCanvasRef.value.placeLibraryAsset(item))assetBrowserOpen.value=false}
+  finally{canvasAssetPlacementBusy.value=false}
 }
 async function searchAssets() {
   try { audioItems.value = (await libraryService.list({ scope: assetScope.value, category: assetCategory.value, media_type: entry.value === 'music' ? 'audio' : assetMedia.value, query: audioQuery.value })).items }
@@ -2480,7 +2669,7 @@ watch(()=>[route.query.run,catalog.value] as const,async ([id,directory])=>{
 
     <Teleport v-if="!skillsPage" defer to="#creation-topbar-nav">
       <!-- 会话恢复或编辑时不显示新建入口切换，避免误切正在处理的上下文。 -->
-      <nav v-if="!active && !sessionLoading && !sessionError" class="creation-entry-tabs" aria-label="创作用途"><button v-for="item in visibleCreationEntries" :key="item.id" :class="{ active: entry === item.id }" :aria-pressed="entry === item.id" :disabled="busy" @click="chooseEntry(item.id)">{{ item.label }}</button></nav>
+      <nav v-if="!active && !sessionLoading && !sessionError" class="creation-entry-tabs" aria-label="创作用途"><button v-for="item in visibleCreationEntries" :key="item.id" :class="{ active: entry === item.id }" :aria-pressed="entry === item.id" :disabled="busy||dramaModeBusy" @click="entry!==item.id&&chooseEntry(item.id)">{{ item.label }}</button></nav>
     </Teleport>
     <!-- 普通画布沿用中性双点加载，不再闪现旧双栏；短剧保留原占位。 -->
     <DashboardSkeleton v-if="sessionLoading" variant="conversation" :simple="entry!=='drama'" :layout="session?.id===pendingSession?(hasMedia?'media':'conversation'):'unknown'" :style="{'--creation-chat-width':`${chatWidth}px`}" aria-label="正在加载会话"/>
@@ -2499,15 +2688,18 @@ watch(()=>[route.query.run,catalog.value] as const,async ([id,directory])=>{
         <!-- 浮窗边缘仅负责尺寸；正文和原输入器始终复用同一实例。 -->
         <template v-if="floatingChat"><div v-for="edge in ['n','s','e','w','ne','nw','se','sw']" :key="edge" :class="['creation-chat-resize-handle',`edge-${edge}`]" aria-hidden="true" @pointerdown="startChatGesture($event,edge)" @pointermove="moveChatGesture" @pointerup="finishChatGesture" @pointercancel="finishChatGesture" @lostpointercapture="finishChatGesture"/></template>
         <SkillCenterPanel v-if="skillsPage&&!active" :trial-busy="directoryTrialBusy||loading||cloudDraft.restoring.value" @try="useDirectorySkill" @tool="showDigitalHumanSkill=true"/>
-        <template v-if="active"><header class="creation-chat-heading" @pointerdown="startChatGesture($event)" @pointermove="moveChatGesture" @pointerup="finishChatGesture" @pointercancel="finishChatGesture" @lostpointercapture="finishChatGesture">
+        <!-- 画布与剪辑共用完整对话面板；原消息、卡片、滚动跟随和浮窗手势保持原业务身份。 -->
+        <CreationConversationPanel :active="active" :history-element="el=>historyElement=el" :content-element="el=>historyContentElement=el" @scroll="trackHistory" @wheel="historyWheel" @history-key="historyKey" @touchstart="historyTouchStart" @touchmove="historyTouchMove" @history-pointer="historyScrollbar" @heading-down="startChatGesture($event)" @heading-move="moveChatGesture" @heading-up="finishChatGesture" @heading-cancel="finishChatGesture" @heading-capture-lost="finishChatGesture">
+        <template #heading>
           <!-- 普通画布只保留紧凑助手标识；项目标题已在工作区顶栏展示，短剧原标题不变。 -->
           <template v-if="floatingChat||mobileWorkspace"><span class="creation-chat-agent-label">Liv Agent</span><span class="creation-chat-heading-spacer" aria-hidden="true"/></template>
           <template v-else><UIcon name="i-lucide-messages-square"/><h2>{{ session?.title }}</h2></template>
-          <UTooltip text="本会话二次确认设置"><UButton icon="i-lucide-settings-2" variant="ghost" square aria-label="本会话确认设置" @click="rulesOpen=true"/></UTooltip><UTooltip v-if="hasMedia&&!mobileWorkspace" text="最小化对话"><UButton icon="i-lucide-minimize-2" variant="ghost" square aria-label="收起对话" @click="toggleChat(true)"/></UTooltip></header>
-          <div ref="historyElement" class="creation-chat-history liv-chat-v2" tabindex="0" @scroll.passive="trackHistory" @wheel.passive="historyWheel" @keydown="historyKey" @touchstart.passive="historyTouchStart" @touchmove.passive="historyTouchMove" @pointerdown="historyScrollbar">
-            <div ref="historyContentElement" class="creation-chat-content">
+          <UTooltip text="本会话二次确认设置"><UButton icon="i-lucide-settings-2" variant="ghost" square aria-label="本会话确认设置" @click="rulesOpen=true"/></UTooltip><UTooltip v-if="hasMedia&&!mobileWorkspace" text="最小化对话"><UButton icon="i-lucide-minimize-2" variant="ghost" square aria-label="收起对话" @click="toggleChat(true)"/></UTooltip></template>
+        <template #default>
             <div v-for="answer in conversationAnswers" :key="answer.key" class="liv-continuous-answer">
             <template v-for="(row,phaseIndex) in answer.rows" :key="row.key">
+<CanvasConversationActivity v-if="row.activity" :item="row.activity" :asset-available="row.activity.id==='extraction:'+canvasExtractionId" @view-script="agentCanvasRef?.viewScriptVersion($event)" @locate-assets="locateCanvasActivity"/>
+<template v-else>
 <article v-if="row.run && !row.active" class="liv-conversation-turn">
   <div v-if="!row.run.auto_continuation" class="liv-user-message"><CreationRunAttachments :run="row.run" @preview="attachmentPreview=$event"/><p>{{userBubbleText(row.run.draft.original_prompt || row.run.draft.prompt)}}</p></div>
   <section class="liv-assistant-message">
@@ -2528,6 +2720,7 @@ watch(()=>[route.query.run,catalog.value] as const,async ([id,directory])=>{
       <AssistantReply :text="row.run.card?.text || row.run.question?.text || row.run.stream_text || row.run.error || '已停止'"/>
       <Teleport defer :to="'#answer-results-'+answer.key"><CreationResultCard v-for="result in answerContinuationImages(row.run,answer.rows)" :key="`continued:${result.key}`" :item="result" @select="openContinuationImage"/></Teleport>
     </template>
+    <CanvasDramaActionCard v-if="row.run.drama_action&&(row.run.status!=='cancelled'||row.run.drama_action.result)" :key="row.run.id+':'+row.run.drama_action.revision" :run="row.run" :track-progress="currentDramaIds.has(row.run.id)" :disabled="planningBusy||busy" @updated="updateRecoveredFlow" @production-changed="agentCanvasRef?.refreshProduction()" @progress="(revision,status)=>rememberDramaReceipt(row.key,revision,status)"/>
   </section>
 </article>
 <section v-if="row.active && planning" class="creation-assistant-card" aria-label="Liv 创作助手"><div v-if="!planning.auto_continuation" class="liv-user-message"><CreationRunAttachments :run="planning" @preview="attachmentPreview=$event"/><p>{{userBubbleText(planning.draft.original_prompt || planning.draft.prompt)}}</p></div><header v-if="phaseIndex===0"><img class="liv-assistant-avatar" src="/creation-presets/liv-creative-seed.png" alt=""><b>Liv 创作助手</b><CreationRunTime :run="planning" :runs="answer.rows.flatMap(item=>item.run?[item.run]:[])"/></header>
@@ -2540,9 +2733,11 @@ watch(()=>[route.query.run,catalog.value] as const,async ([id,directory])=>{
   <!-- 此卡位于轮次循环中，使用函数引用固定当前实例，避免字符串 ref 被 Vue 收集为数组。 -->
   <CreationStageCard v-else-if="planning.collection_stage?.status==='collecting'" :ref="instance=>stageCard=instance as InstanceType<typeof CreationStageCard>|null" :key="planning.id" :state-key="`${auth.session.user?.id}:${planning.id}`" :stage="planning.collection_stage" :busy="planningBusy||busy||!!uploads.length" :references="collectionReferences" :save="saveCollectionStage" :reload="reloadCollectionStage" :upload="uploadStageImage" :select-images="selectStageImages" @preview="item=>attachmentPreview={available:true,name:item.name,media_type:'image',preview_url:item.preview_url}"/>
   <UButton v-else-if="planning.collection_stage?.status==='submitted' && planning.calls===0" :loading="planningBusy" :disabled="planningBusy" @click="continueCollectedStage">信息已收齐，继续分析</UButton>
+  <CreationStyleQuestion v-else-if="planning.status==='waiting' && planning.question?.kind==='style'" :key="planning.id+':'+planning.question_revision" :styles="catalog?.styles||[]" :recommendations="planning.question.style_recommendations" :title="planning.question.text" :busy="planningBusy||busy" :reference-allowed="references.length<12" @describe="text=>answerPlanning(text)" @reference="answerStyleReference" @select="item=>answerPlanning(`选择视觉风格：${item.display_name}`,undefined,[],item.style_id,item.style_version)"/>
   <CreationImagePlanCard :result-target="'#answer-results-'+answer.key" v-else-if="planning.image_plan" :key="planning.id" :run-id="planning.id" :quick-quote="true" :plan="planning.image_plan" :reference-previews="graphPreviews" :busy="planningBusy||busy" :draft-dirty="imagePlanDraftDirty(planning.id)" :readonly="planning.status!=='replied'||!!planning.superseded_by||!!planning.executed_request" :before-command="beforeImagePlanCommand" @updated="updateImagePlan" @open="openImagePlan(planning!.id,$event)" @retry="openRetryVideoPlan"/>
   <CreationVideoPlanCard :result-target="'#answer-results-'+answer.key" v-else-if="planning.creative_plan && planning.creative_plan.total_count>=1" :key="planning.id" :run-id="planning.id" :quick-quote="true" :plan="planning.creative_plan" :catalog="catalog" :busy="planningBusy||busy" :readonly="planning.status!=='replied'||!!planning.superseded_by||!!planning.executed_request" :skip-confirmation="rulesLoaded&&rules.video" :rules-ready="rulesLoaded" :rules-busy="rulesBusy" :rules-error="rulesError" @rule="changeConfirmationRule($event,'video')" @settings="rulesOpen=true" @updated="updateVideoPlan" @compose="compositionOpen=true" @compose-all="composeVideoWorkbench" @workbench="openVideoWorkbench" @retry="openRetryVideoPlan"/>
   <template v-else><div v-if="pendingUserAnswer && !pendingQuestionForm && !pendingAnswerAccepted" class="liv-user-message"><p>{{userBubbleText(pendingUserAnswer)}}</p></div><CreationThinkingIndicator :run="planning"/><AssistantReply v-if="planning.stream_text && ['planning','cancelled'].includes(planning.status)" :text="planning.stream_text"/><CreationQuestionPages v-if="(planning.status==='waiting'||planningBusy&&pendingQuestionForm&&!pendingAnswerAccepted) && planning.question?.fields?.length" :fields="planning.question.fields" :question-key="`${auth.session.user?.id}:${planning.id}:${planning.question_revision}`" :busy="planningBusy" @submit="answerPlanning"/><CreationReferenceQuestion v-if="planning.status==='waiting' && questionNeedsReference(planning.question) && !planning.question?.fields?.length" ref="referenceQuestionRef" :question-key="`${auth.session.user?.id}:${planning.id}:${planning.question_revision??planning.calls}`" :text="planning.question?.text||'请上传本次创作要参考的图片。'" :busy="planningBusy||busy" :upload="uploadStageImage" :restore="restoreQuestionImage" @submit="confirmQuestionReference"/><CreationQuestionPages v-if="(planning.status==='waiting'||planningBusy&&pendingQuestionForm&&!pendingAnswerAccepted) && standaloneQuestionFields.length" :fields="standaloneQuestionFields" title="请确认本次创作要求" single-answer allow-custom :question-key="`${auth.session.user?.id}:${planning.id}:${planning.question_revision}:single`" :busy="planningBusy" @submit="submitStandaloneAnswer($event)"/><template v-for="(turn,index) in planning.discussion" :key="`discussion:${index}`"><UCollapsible v-if="repeatsSubmittedQuestion(turn.user,planning.answers)" class="liv-prior-answer-reply" @update:open="browseHistoryDetails"><template #default="{open}"><UButton color="neutral" variant="ghost" :trailing-icon="open?'i-lucide-chevron-up':'i-lucide-chevron-down'">{{open?'收起此前回复':'查看此前回复'}}</UButton></template><template #content><AssistantReply :text="turn.reply"/></template></UCollapsible><template v-else><div class="liv-user-message"><p>{{userBubbleText(turn.user)}}</p></div><AssistantReply :text="turn.reply"/></template></template><AssistantReply v-if="planning.card" :text="planning.card.text"/><CreationConfirmationCard v-if="singleConfirmationProposal" :skip-confirmation="confirmationRuleChecked" :rules-ready="rulesLoaded" :rules-busy="rulesBusy" :rules-error="rulesError" @rule="changeConfirmationRule" :model="proposalModelLabel" :spec="proposalSpec" :target="confirmation?.target || planning.card?.target || target" :credits="confirmation?.credits" :has-quote="!!confirmation && confirmation.draft.parameters.extra.creation_run_id===planning.id" :sufficient="!!confirmation?.sufficient" :quoting="proposalQuoteBusy || sessionLoading || loading || cloudDraft.state.value==='loading'" :busy="busy || rulesBusy" :cancelling="proposalCancelBusy" :error="proposalQuoteError" @confirm="submit" @cancel="cancelProposal" @retry="quoteAssistantPlan()" @settings="rulesOpen=true"/><template v-else-if="planning.status==='ready' && planning.card?.type==='proposal' && !proposalSubmitted"><UButton class="liv-proposal-adopt" color="primary" :disabled="busy" @click="acceptAssistantPlan">继续整理生成任务</UButton></template><p v-if="countdown!==null" role="status">{{countdown}} 秒后生成 · {{confirmation?.credits}} 点 <UButton variant="soft" @click="stopCountdown">停止</UButton></p><p v-if="planning.status==='failed'" role="alert">{{planning.error}}</p></template>
+  <CanvasDramaActionCard v-if="planning.drama_action&&(planning.status!=='cancelled'||planning.drama_action.result)" :key="planning.id+':'+planning.drama_action.revision" :run="planning" :track-progress="currentDramaIds.has(planning.id)" :disabled="planningBusy||busy" @updated="updateRecoveredFlow" @production-changed="agentCanvasRef?.refreshProduction()" @progress="(revision,status)=>rememberDramaReceipt(row.key,revision,status)"/>
   <Teleport defer :to="'#answer-results-'+answer.key"><CreationResultCard v-for="result in answerContinuationImages(row.active?planning:undefined,answer.rows)" :key="`continued:${result.key}`" :item="result" @select="openContinuationImage"/></Teleport>
 </section>
               <Teleport defer :to="'#answer-results-'+answer.key"><CreationResultCard v-for="result in quickCompositionResults(row.active?planning:row.run)" :key="result.key" :item="result" :disabled="busy" @select="openQuickComposition(result)"/></Teleport>
@@ -2557,24 +2752,32 @@ watch(()=>[route.query.run,catalog.value] as const,async ([id,directory])=>{
               <Teleport defer :to="'#answer-results-'+answer.key"><CreationResultCard v-for="result in allResults.filter(value=>value.messageId===item.id)" :key="result.key" :item="result" :selected="selectedResultKey===result.key" :disabled="busy" @select="chooseSessionResult"/></Teleport></section>
           </article>
             </template>
+            </template>
             <!-- 同轮所有真实产物汇总到末尾；传送仅移动展示，不重建任务或媒体。 -->
-            <div :id="'answer-results-'+answer.key" class="liv-answer-results" aria-label="本轮产物"/>
+            <div v-if="!answer.rows[0]?.activity" :id="'answer-results-'+answer.key" class="liv-answer-results" aria-label="本轮产物"/>
             </div>
+            <UButton v-if="canvasActivityError" color="neutral" variant="ghost" @click="reloadCanvasActivity">{{canvasActivityError}} 重试</UButton>
             <section v-if="videoSwitch" class="creation-director-preview"><p>切换到视频并引用这张图</p><UButton @click="videoSwitch=null">取消</UButton><UButton :disabled="busy" @click="confirmVideoSwitch">确认切换，重新报价</UButton></section>
-            </div>
-          </div>
         </template>
+        <template #composer>
+        <CanvasDramaProgress v-if="active&&dramaSteps.length" :key="conversationAnswers.at(-1)?.key" :steps="dramaSteps"/>
         <div ref="homeComposerSlot" class="creation-composer-slot" :style="homeDockVisible ? {minHeight:`${homeComposerHeight}px`} : undefined">
         <!-- 隐藏独立的本轮参考栏，保留已发送素材及后续请求的引用上下文。 -->
         <UButton v-if="planning?.status==='planning' && planning.calls===0 && !planningBusy" color="neutral" variant="soft" @click="continuePendingPlanning">继续整理已接收需求</UButton>
-        <CreationComposer ref="composerRef" :loading="loading" :docked="homeDockVisible" :minimized="!homeComposerExpanded" :dock-style="homeDockStyle" @expand="expandHomeComposer" @collapse="homeComposerExpanded=false" :show-latest="active && !followLatest" @latest="latest" :annotation="annotationDraft" :working="workInProgress||awaitingDecision" :can-stop="canStopWork" :stop-reason="stopReason" @stop="cancelPlanning" show-planner :planning-busy="planningBusy||refiningPrompt" @plan="refineComposerPrompt" :uploads="uploads" @dismiss-upload="dismissUpload" :template-example="selectedTemplate" :entry="entry" :skill="skill" :prompt="prompt" :segments="segments" :references="composerReferences" :parameters="parameters" :catalog="catalog" :templates="templates" :busy="busy || refiningPrompt || loading || annotationSubmitting || directoryTrialBusy" :credit-label="creditLabel" :conversational="entry!=='drama'&&!assistantAccepted" :script-file="scriptFile" :compact="active" :models="models" :ratios="ratios" :resolutions="resolutions" :qualities="qualities" :duration-range="durationRange" :music-sources="musicSources"
-          :trial-pending="directoryTrialBusy" :can-undo-skill-prompt="canUndoSkillPrompt" :skill-prompt-undo-ready="skillPromptUndoReady" @undo-skill-prompt="undoSkillPrompt" @text="setText" @skill="selectUserSkill" @tool="$event==='digital-human'&&(showDigitalHumanSkill=true)" @parameters="selectParameters" @upload="receiveFiles" @replace="replaceReference" @assets="openAssets" @reference="mentionReference" @remove="removeReference" @reorder="reorder" @template="chooseTemplate" @send="sendWithContext" @script="scriptFile = $event">
+        <CreationComposer ref="composerRef" :loading="loading" :docked="homeDockVisible" :minimized="!homeComposerExpanded" :dock-style="homeDockStyle" @expand="expandHomeComposer" @collapse="homeComposerExpanded=false" :show-latest="active && !followLatest" @latest="latest" :annotation="annotationDraft" :working="workInProgress||awaitingDecision" :can-stop="canStopWork" :stop-reason="stopReason" @stop="cancelPlanning" show-planner :planning-busy="planningBusy||refiningPrompt" @plan="refineComposerPrompt" :uploads="uploads" @dismiss-upload="dismissUpload" :template-example="selectedTemplate" :entry="entry" :skill="skill" :prompt="prompt" :segments="segments" :references="composerReferences" :parameters="parameters" :catalog="catalog" :templates="templates" :busy="busy || dramaModeBusy || refiningPrompt || loading || annotationSubmitting || directoryTrialBusy" :send-action-label="!active&&entry==='drama'&&dramaMode==='canvas'?'保存剧本并进入画布':undefined" :credit-label="creditLabel" :conversational="entry!=='drama'&&!assistantAccepted" :script-file="scriptFile" :compact="active" :models="models" :ratios="ratios" :resolutions="resolutions" :qualities="qualities" :duration-range="durationRange" :music-sources="musicSources"
+          :allow-script-attachment="allowChatScriptUpload" :trial-pending="directoryTrialBusy" :can-undo-skill-prompt="canUndoSkillPrompt" :skill-prompt-undo-ready="skillPromptUndoReady" @undo-skill-prompt="undoSkillPrompt" @text="setText" @skill="selectUserSkill" @tool="$event==='digital-human'&&(showDigitalHumanSkill=true)" @parameters="selectParameters" @upload="receiveFiles" @replace="replaceReference" @assets="openAssets" @reference="mentionReference" @remove="removeReference" @reorder="reorder" @template="chooseTemplate" @send="sendWithContext" @script="scriptFile = $event">
+          <template #workflow-mode>
+            <UButton v-if="pendingStoryboardSource" color="neutral" variant="soft" icon="i-lucide-file-text" trailing-icon="i-lucide-x" :aria-label="`移除分镜文稿来源：${pendingStoryboardSource.title}，V${pendingStoryboardSource.revision}`" :disabled="workInProgress" @click="pendingStoryboardSource=null">{{pendingStoryboardSource.title}} · V{{pendingStoryboardSource.revision}}</UButton>
+            <URadioGroup v-if="!skillsPage&&!active&&entry==='drama'" v-model="dramaMode" :items="[...dramaModeOptions]" :disabled="busy||dramaModeBusy" orientation="horizontal" size="sm" aria-label="短剧制作模式" class="creation-drama-mode"/>
+          </template>
 <template #audio-source><div class="creation-audio-source flex-wrap"><UButton icon="i-lucide-music-2" color="neutral" variant="soft" :disabled="busy" @click="mvPickerOpen=true">{{references.some(item=>item.media_type==='audio')?'更换歌曲':'选择歌曲'}}</UButton><span class="creation-music-shortcut">没有音乐？试试 <UButton variant="link" class="creation-music-link" @click="openMusicGeneration">音乐生成</UButton></span><MvLyricAlignment :draft="mvAlignmentDraft" :audio-url="references[0]?.preview_url||roundReferences[0]?.preview_url" @confirmed="confirmMvLyrics"/></div></template>
         </CreationComposer>
         </div>
         <label v-if="target === 'music' && (['reference', 'remix'].includes(skill) || ((selectedSkill?.base_code||skill)==='free'&&references.length>0))" class="creation-rights"><UCheckbox :model-value="parameters.rightsConfirmed" label="我已获得参考音频的使用授权" @update:model-value="patchParameters({rightsConfirmed:!!$event})"/></label>
         <UButton v-if="savedMvDraft && !skill.startsWith('mv-')" color="neutral" variant="soft" @click="returnToMv">返回 MV 制作，选择具体曲目</UButton>
         <div v-if="!skillsPage && !active && entry!=='drama'" class="creation-quick-templates"><CreationQuickSkill v-for="item in recommendedSkills" :key="item.id" :skill="item" :active="skill===item.id" @preview="openSkillPreview" @use="useHomeSkill"/></div>
+        </template>
+        </CreationConversationPanel>
       </section></Transition>
       <div v-if="active" v-show="hasMedia && !chatCollapsed" class="creation-workspace-resizer" role="separator" aria-label="调整聊天区宽度" aria-orientation="vertical" tabindex="0" :aria-valuenow="chatWidth" :aria-valuemin="320" :aria-valuemax="560" @pointerdown="startResize" @pointermove="moveResize" @pointerup="finishResize" @pointercancel="finishResize" @lostpointercapture="resizing=false" @keydown="resizeKey" @dblclick="setChatWidth(340);finishResize()" />
       <section v-if="active" v-show="hasMedia" class="creation-results-column creation-canvas-column" :class="{'mobile-pane-hidden':!floatingChat&&mobilePane!=='canvas'}">
@@ -2586,7 +2789,10 @@ watch(()=>[route.query.run,catalog.value] as const,async ([id,directory])=>{
         <!-- 普通技能统一投影到画布；短剧的既有工作台和业务链路保持不变。 -->
         <ClientOnly v-if="entry!=='drama'&&session?.id&&draftOwner">
           <!-- 内联节点工具不遮挡其他音乐；编辑中的节点已由media-editor替换原播放器，不会产生双实例播放。 -->
-          <CreationAgentCanvas :key="`${draftOwner}:${session.id}`" ref="agentCanvasRef" :session-id="session.id" :owner-id="draftOwner" :runs="graphRuns" :messages="messages" :results="graphResults" :references="graphReferences" :previews="graphPreviews" :tasks="taskData" :activity="taskActivity" :compositions="graphCompositions" :audio-enabled="catalog?.capabilities?.platform.music.enabled??catalog?.music_operations.some(row=>row.operation==='generation'&&row.enabled)??false" :focus-id="graphFocusId" :tool-node-id="graphToolsOpen?graphToolNode?.id:undefined" :left-inset="canvasLeftInset" :bottom-inset="canvasBottomInset" :obstructions="canvasObstructions" :playback-enabled="!editingWorkspaceOpen&&!compositionOpen&&!rulesOpen&&(floatingChat||desktopWorkspace||mobilePane==='canvas')" :before-select="beforeSelectGraphNode" :busy="busy||planningBusy||graphPreparing" @select="selectGraphNode" @tools="openGraphTools" @generate="generateGraphNode" @retry="retryGraphPlanning" @refresh-file="refreshGraphFile" @compose="compositionOpen=true" @edit-workspace="editingWorkspaceOpen=true" @compositions-changed="readGraphCompositions" @upload="openAssets" @upload-audio="file=>upload([file])" @activity="graphActivity=$event">
+          <CreationAgentCanvas :key="`${draftOwner}:${session.id}`" ref="agentCanvasRef" :session-id="session.id" :stage-nav-target="desktopWorkspace&&!skillsPage?'#creation-topbar-nav':undefined" :owner-id="draftOwner" :runs="graphRuns" :messages="messages" :results="graphResults" :references="graphReferences" :previews="graphPreviews" :tasks="taskData" :activity="taskActivity" :compositions="graphCompositions" :asset-panel-open="assetBrowserOpen&&assetBrowserFromCanvas" :audio-enabled="catalog?.capabilities?.platform.music.enabled??catalog?.music_operations.some(row=>row.operation==='generation'&&row.enabled)??false" :focus-id="graphFocusId" :tool-node-id="graphToolsOpen?graphToolNode?.id:undefined" :left-inset="canvasLeftInset" :bottom-inset="canvasBottomInset" :obstructions="canvasObstructions" :playback-enabled="!editingWorkspaceOpen&&!compositionOpen&&!rulesOpen&&(floatingChat||desktopWorkspace||mobilePane==='canvas')" :before-select="beforeSelectGraphNode" :busy="busy||planningBusy||graphPreparing" @select="selectGraphNode" @tools="openGraphTools" @generate="generateGraphNode" @retry="retryGraphPlanning" @refresh-file="refreshGraphFile" @compose="compositionOpen=true" @edit-workspace="editingWorkspaceOpen=true" @compositions-changed="readGraphCompositions" @upload="openAssets" @assets="openCanvasAssets" @close-assets="assetBrowserFromCanvas&&(assetBrowserOpen=false)" @upload-audio="file=>upload([file])" @activity="graphActivity=$event" @canvas-activity-changed="refreshCanvasActivity" @discuss-script="discussCanvasScript">
+            <template #storyboard-source-action="{source,title,disabled,close}">
+              <UButton v-if="entry==='free'&&catalog?.skills.some(item=>item.id==='drama-storyboard')" color="neutral" variant="soft" icon="i-lucide-panels-top-left" :disabled="disabled||workInProgress" @click="chooseCanvasStoryboardSource(source,title,close)">用此文稿规划分镜</UButton>
+            </template>
             <!-- 原作品工具作为当前节点内部编辑子任务，无UModal遮罩；保留下方同一提示词输入框。 -->
             <template #media-editor="{node,toolTarget}">
               <CreationResultCanvas v-if="graphToolsOpen&&graphToolNode?.id===node.id" ref="canvasRef" inline-node :playback-enabled="!editingWorkspaceOpen&&!compositionOpen&&!rulesOpen&&!showMusicTools&&(floatingChat||desktopWorkspace||mobilePane==='canvas')" :toolbar-target="toolTarget" :versions="graphToolVersions" :selected="graphToolVersions[0]?.key||''" :save-busy="saveBusy" :favorite="graphFavorite" :can-favorite="graphToolNode?.data.source?.kind==='image'" :music-tools="musicToolOptions" :music-task-id="sourceTask?.id" @favorite="favoriteGraphNode" @music="makeMusicMv" @audio-tool="openCanvasMusicTool" @save="saveCanvas" @annotation="updateGraphAnnotation" @ai="graphMediaTool" @edit-video="openGraphVideoEditor" @notice="showGraphToolNotice"><template #video-actions><UButton icon="i-lucide-clapperboard" color="neutral" variant="ghost" @click="openGraphVideoEditor(graphToolVersions[0]?.source)">AI 剪辑</UButton></template><template #top-actions><UButton icon="i-lucide-x" square color="neutral" variant="ghost" aria-label="退出节点工具" @click="updateGraphToolsOpen(false)"/></template></CreationResultCanvas>
@@ -2647,9 +2853,9 @@ watch(()=>[route.query.run,catalog.value] as const,async ([id,directory])=>{
       </div>
       <template #footer><LivButton settings variant="secondary" :disabled="rulesBusy" @click="rulesOpen=false">取消</LivButton><LivButton settings variant="primary" :disabled="!rulesLoaded" :loading="rulesBusy" @click="saveConfirmationRules">保存</LivButton></template>
     </LivDialog>
-    <LibraryPicker v-model:open="pickerOpen" dark :kind="target === 'video' ? 'video' : 'image'" :model="parameters.model" :remaining="Math.max(0, Number(catalog?.profiles[target === 'video' ? 'product_video' : 'product_image']?.input_schema.max_reference_count || 0) - references.length)" @select="selectAssets" />
-    <LibraryPicker v-model:open="stagePickerOpen" dark homepage :kind="target==='video'?'video':'image'" media-type="image" :model="parameters.model" :remaining="Math.max(0,12-collectionReferences.length)" initial-category="product" @select="acceptStageImages" />
-    <div v-if="assetBrowserOpen" class="creation-modal-backdrop" @click.self="assetBrowserOpen=false"><section class="creation-asset-panel" style="padding:0;width:min(680px,100%)"><AssetLibraryPanel compact selectable :kind="target" :model="parameters.model" :existing="references" :max-references="Math.max(0,12-references.length)" :allowed-media-types="(selectedSkill?.base_code || skill)==='free'&&target==='music'?['audio']:selectedSkill?.media_types" @close="assetBrowserOpen=false" @advanced="assetBrowserOpen=false;pickerOpen=true" @select="selectAudio($event);assetBrowserOpen=false"/></section></div>
+    <LibraryPicker v-if="pickerMounted" v-model:open="pickerOpen" dark :kind="target === 'video' ? 'video' : 'image'" :model="parameters.model" :remaining="Math.max(0, Number(catalog?.profiles[target === 'video' ? 'product_video' : 'product_image']?.input_schema.max_reference_count || 0) - references.length)" @select="selectAssets" />
+    <LibraryPicker v-if="stagePickerMounted" v-model:open="stagePickerOpen" dark homepage :kind="target==='video'?'video':'image'" media-type="image" :model="parameters.model" :remaining="Math.max(0,12-collectionReferences.length)" initial-category="product" @select="acceptStageImages" />
+    <div v-if="assetBrowserOpen" :class="assetBrowserFromCanvas?'creation-canvas-assets':'creation-modal-backdrop'" @click.self="assetBrowserOpen=false"><section class="creation-asset-panel creation-shared-assets" :class="{'is-canvas-assets':assetBrowserFromCanvas}"><header v-if="assetBrowserFromCanvas" class="creation-canvas-assets-header"><strong>资料库</strong><UButton icon="i-lucide-x" color="neutral" variant="ghost" square aria-label="关闭资料库" @click="assetBrowserOpen=false"/></header><AssetLibraryPanel compact selectable :canvas-placement="assetBrowserFromCanvas" :placement-busy="canvasAssetPlacementBusy" :kind="target" :model="parameters.model" :existing="references" :max-references="Math.max(0,12-references.length)" :allowed-media-types="(selectedSkill?.base_code || skill)==='free'&&target==='music'?['audio']:selectedSkill?.media_types" @close="assetBrowserOpen=false" @advanced="assetBrowserOpen=false;pickerOpen=true" @place-canvas="placeCanvasAsset" @select="selectAudio($event);assetBrowserOpen=false"/></section></div>
     <div v-if="audioPickerOpen" class="creation-modal-backdrop" @click.self="audioPickerOpen = false"><section class="creation-asset-panel"><header><h2>资料库资产引用</h2><button aria-label="关闭" @click="audioPickerOpen = false"><UIcon name="i-lucide-x" /></button></header><div class="creation-filter"><button :class="{ active: assetScope === 'personal' }" @click="assetScope = 'personal'">个人资料</button><button :class="{ active: assetScope === 'public' }" @click="assetScope = 'public'">平台素材</button></div><div class="creation-asset-filters"><LivSelect v-model="assetCategory" aria-label="素材用途"><option value="">全部用途</option><option v-for="item in assetCategories" :key="item.code" :value="item.code">{{ item.name }}</option></LivSelect><LivSelect v-if="target !== 'music'" v-model="assetMedia" aria-label="素材类型"><option value="">全部类型</option><option value="image">图片</option><option value="video">视频</option><option value="audio">音频</option></LivSelect></div><input v-model="audioQuery" placeholder="搜索素材" @keyup.enter="searchAssets"><button @click="searchAssets">搜索</button><p v-if="!audioItems.length" class="creation-muted">暂时没有符合条件的素材，可以使用 ＋ 上传。</p><div class="creation-asset-grid"><button v-for="item in audioItems" :key="item.id" @click="selectAudio(item)"><img v-if="item.media_type === 'image' && item.versions[0]?.preview_url" :src="libraryService.previewUrl(item.versions[0].preview_url)" :alt="item.name"><UIcon v-else :name="item.media_type === 'audio' ? 'i-lucide-music' : 'i-lucide-file'" /><b>{{ item.name }}</b><small>{{ item.media_type }} · 固定版本 {{ item.versions[0]?.version_no }}</small></button></div></section></div>
     <!-- 口播作为内置工具技能使用专用接口，旧视频首页不再挂入创作工作台。 -->
     <LivDialog :open="showDigitalHumanSkill" title="数字人口播" width="xl" dark @update:open="showDigitalHumanSkill=$event"><ProductVideoWorkspacePanel v-if="showDigitalHumanSkill" digital-only :current-credit-balance="account.currentBalance" :default-video-model="parameters.model" @created="recordToolTask($event,'video');showDigitalHumanSkill=false"/></LivDialog>
@@ -2661,7 +2867,7 @@ watch(()=>[route.query.run,catalog.value] as const,async ([id,directory])=>{
     <Teleport to="body"><div v-if="attachmentPreview" ref="attachmentDialog" class="liv-reference-preview" role="dialog" aria-modal="true" :aria-label="attachmentPreview.name" tabindex="-1" @click.self="attachmentPreview=null" @keydown.esc="attachmentPreview=null"><button aria-label="关闭素材预览" @click="attachmentPreview=null">×</button><figure><img v-if="attachmentPreview.media_type==='image'" :src="attachmentPreview.preview_url" :alt="attachmentPreview.name"><video v-else-if="attachmentPreview.media_type==='video'" :src="attachmentPreview.preview_url" controls playsinline/><audio v-else-if="attachmentPreview.media_type==='audio'" :src="attachmentPreview.preview_url" controls/><a v-else :href="attachmentPreview.preview_url" target="_blank">打开文件</a><figcaption>{{attachmentPreview.name}}</figcaption></figure></div></Teleport>
     <CreationCaseViewer :item="selectedCase" :items="cases" :busy="replicaBusy" :error="replicaError" @close="selectedCase=null" @replica="makeSame" @select="openCase"/>
   <!-- 短片是紧凑片段计划，不使用旧画布宽度；横片也按容器约束完整显示。 -->
-  <CreationEditingWorkspace v-if="editingWorkspaceOpen&&session" :session-id="session.id" :assets="editingAssets" :initial-asset-key="graphToolsOpen?editingAssets.find(item=>item.url===graphToolNode?.data.url)?.key:undefined" :sources="compositionSources" :music-sources="compositionMusicSources" @close="editingWorkspaceOpen=false;readGraphCompositions(true)" @open-run="id=>{editingWorkspaceOpen=false;routerRun(id,session?.id)}"/>
+  <CreationEditingWorkspace v-if="editingWorkspaceOpen&&session" :session-id="session.id" :assets="editingAssets" :entry-composition-id="graphToolsOpen&&graphToolNode?.data.source?.kind==='composition'?graphToolNode.data.source.id:undefined" :initial-asset-key="graphToolsOpen?editingAssets.find(item=>item.url===graphToolNode?.data.url)?.key:undefined" :sources="compositionSources" :music-sources="compositionMusicSources" @close="editingWorkspaceOpen=false;readGraphCompositions(true)" @open-run="id=>{editingWorkspaceOpen=false;routerRun(id,session?.id)}"/>
   <LivDialog :open="compositionOpen" title="短片合成" width="md" dark @update:open="compositionOpen=$event"><CreationDeliveryPanel v-if="compositionOpen&&session" :key="`${draftOwner}:${session.id}`" :session-id="session.id" :sources="compositionSources" :music-sources="compositionMusicSources" @open-run="id=>{compositionOpen=false;routerRun(id,session?.id)}"/></LivDialog>
   <LivDialog v-if="mvPickerOpen" :open="mvPickerOpen" @update:open="!busy&&(mvPickerOpen=$event)" settings dark title="选择 MV 歌曲">
     <div class="mv-source-picker">

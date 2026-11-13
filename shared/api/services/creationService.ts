@@ -1,7 +1,7 @@
 import { request, buildProductImagePayload, buildProductVideoPayload, mapProductVideoTask } from '~/shared/api/adapters/httpAdapter'
 
 /** 只展示本条明确附带的素材；执行引用与上下文沿用仍独立保存在draft。 */
-export interface CreationRun {message_reference_versions?:string[]; /** 后台结果通知不是用户消息，不渲染重复用户气泡。 */ auto_continuation?:{origin:'task_results';parent_id:string;depth:number}; continuation?:{enabled:boolean;status:string;child_id?:string}}
+export interface CreationRun {message_reference_versions?:string[]; /** 后台结果通知不是用户消息，不渲染重复用户气泡。 */ auto_continuation?:{origin:'task_results'|'drama_production';parent_id:string;depth:number}; continuation?:{enabled:boolean;status:string;child_id?:string}}
 
 /** 工具收据用于只读过程展示，不能据此恢复执行参数或授予费用许可。 */
 export interface CreationRun {skill_agent_events?:import('~/features/creation/processEvents').CanvasToolEvent[]; /** 服务端确认的同会话需求续作，只用于画布来源追溯。 */ parent_run_id?:string|null; /** 对话快捷合成只引用原任务，完成状态由原服务重新核对。 */ quick_composition?:{job_id:string;output_id:string;status:string}}
@@ -11,6 +11,11 @@ export interface CreationRun { response_phase?:'queued'|'thinking'|'responding';
 /** 根图只公开阶段和待恢复命令身份，不将服务器执行参数或许可交给客户端重建。 */
 export type FlowAction='plan'|'edit'|'quote'|'prepare'|'confirm'|'materialize'|'compose'|'retry_composition'
 export interface CreationRun {flow_runtime?:{engine:'langgraph';version:string;skill_version:number;phase:string;sequence:number;events?:import('~/features/creation/processEvents').ProcessEvent[];pending_command?:{action:FlowAction;request_id:string}}}
+/** 短剧确认只携带本轮修订；金额和真正的执行令牌由原生产服务核验。 */
+export interface DramaStageAction {stage:'analyze_script'|'confirm_script'|'prepare_assets'|'generate_asset_images'|'lock_assets'|'plan_storyboards'|'previsualize_shots'|'generate_shots'|'select_take'|'render_episode';goal:string;revision:string;summary:string;credits:number|null;sufficient:boolean;status:string;label:string;project_id:string;result?:{job_id?:string;receipt?:string;batch_id?:string;run_id?:string;submission_id?:string}}
+export interface DramaRenderReceipt {id:string;status:string;output_url?:string|null;phase?:'queued'|'running';summary?:string}
+export interface StyleRecommendation {style_id:string;style_version:number;reason:string}
+export interface CreationRun {drama_action?:DramaStageAction}
 import type { ProductImageGeneratePayload } from '~/entities/product-image/types'
 import type { ProductVideoCreatePayload } from '~/entities/product-video/types'
 import type { MusicQuote, MusicTask } from '~/shared/api/services/musicService'
@@ -19,6 +24,12 @@ import type { CreationCatalog, CreationDraft, CreationEntryType, CreationMessage
 
 /** 会话只保存用户需求及任务编号，报价/扣点继续走现有业务服务。 */
 export const creationService = {
+  confirmDramaStage:(id:string,revision:string)=>request<DramaStageAction>(`/creation/runs/${id}/drama-action/confirm`,{method:'POST',body:{revision}}),
+  // 查询原成片任务，不触发任何重新提交。
+  dramaRenderReceipt:(id:string)=>request<DramaRenderReceipt>(`/creation/runs/${id}/drama-action/render`),
+  dramaStageReceipt:(id:string)=>request<DramaRenderReceipt>(`/creation/runs/${id}/drama-action/progress`),
+  dramaPrevisualReceipt:(id:string)=>request<DramaRenderReceipt>(`/creation/runs/${id}/drama-action/previsualization`),
+  dramaShotReceipt:(id:string)=>request<DramaRenderReceipt>(`/creation/runs/${id}/drama-action/shots`),
   // 原技能重新整理只创建新文字轮次，服务端固定版本/素材并强制重新确认费用。
   retryPlanning:(id:string,request_id:string,expected_calls:number)=>request<CreationRun>(`/creation/runs/${id}/retry-planning`,{method:'POST',body:{request_id,expected_calls}}),
   // 恢复必须由明确点击触发，刷新、历史读取及订阅不得调用此写接口。
@@ -115,14 +126,15 @@ export const creationService = {
   // 文本节点显式使用既有chat模式；不依赖上一次选中的媒体技能，也不获得媒体执行权限。
   // 链路修订只保护续作上下文，不代表费用授权；旧调用省略时按明确父运行兼容关联。
   // 本条附件身份与执行素材分离：文字续聊可沿用素材，但不能画成用户再次上传。
-  startRun: (draft: CreationDraft, request_id: string, session_id?: string,current_source?:WorkspaceSource,parent_run_id?:string|null,mode?:'chat'|'skill',chain?:{id:string;revision:number},message_reference_versions?:string[]) => request<CreationRun>('/creation/runs', {method:'POST',body:{draft,request_id,session_id,current_source,parent_run_id,chain_id:chain?.id,chain_revision:chain?.revision,message_reference_versions,mode:mode??(draft.skill?'skill':'chat'),deferred:true}}),
+  // 显式文稿来源只传身份和修订，完整原文由后端核权读取；未选择时不沿用旧文稿。
+  startRun: (draft: CreationDraft, request_id: string, session_id?: string,current_source?:WorkspaceSource,parent_run_id?:string|null,mode?:'chat'|'skill',chain?:{id:string;revision:number},message_reference_versions?:string[],storyboard_source?:import('~/features/creation/drama/standaloneStoryboard').StoryboardSourceSelection) => request<CreationRun>('/creation/runs', {method:'POST',body:{draft,request_id,session_id,current_source,parent_run_id,chain_id:chain?.id,chain_revision:chain?.revision,message_reference_versions,storyboard_source,mode:mode??(draft.skill?'skill':'chat'),deferred:true}}),
   // GET只读取已有成果，不能由刷新、轮询触发模型或新任务。
   getRunProgress: (runId:string) => request<CreationChainProgress>(`/creation/runs/${runId}/progress`),
   run: (id: string) => request<CreationRun>(`/creation/runs/${id}`),
   runByRequest: (id:string) => request<CreationRun>(`/creation/runs/by-request/${id}`),
   savePreview: (id:string,preview:DirectorPreview) => request<DirectorPreview>(`/creation/runs/${id}/preview`,{method:'PATCH',body:{title:preview.title,script:preview.script,expected_revision:preview.preview_revision||0}}),
   previousQuestion: (id:string,expected_calls:number,expected_revision?:number) => request<CreationRun>(`/creation/runs/${id}/back`,{method:'POST',body:{expected_calls,expected_revision}}),
-  answerRun: (id: string, expected_calls: number, answer: string,expected_revision?:number,draft?:CreationDraft,field_answers?:Record<string,string>,reference_submission=false) => request<CreationRun>(`/creation/runs/${id}/answer`, {method:'POST',body:{expected_calls,answer,expected_revision,draft,field_answers,reference_submission}}),
+  answerRun: (id: string, expected_calls: number, answer: string,expected_revision?:number,draft?:CreationDraft,field_answers?:Record<string,string>,reference_submission=false,visual_style_id?:string,visual_style_version?:number,visual_style_reference?:CreationDraft['references'][number]) => request<CreationRun>(`/creation/runs/${id}/answer`, {method:'POST',body:{expected_calls,answer,expected_revision,draft,field_answers,reference_submission,visual_style_id,visual_style_version,visual_style_reference}}),
   // 来源仅用于停止审计，不授予执行权限；服务端幂等保留首次停止记录。
   cancelRun: (id: string, source:'composer_stop'|'confirmation_defer'|'proposal_cancel'|'unspecified'='unspecified') => request<CreationRun>(`/creation/runs/${id}/cancel`, {method:'POST',body:{source}}),
   mv: (draft: CreationDraft) => request<DirectorPreview>('/creation/mv/prepare',{method:'POST',body:draft}),
@@ -144,6 +156,14 @@ export const creationService = {
     const body=new FormData();body.append('file',file);body.append('draft',JSON.stringify(draft))
     return request<DirectorPreview>('/drama/director-draft/file',{method:'POST',body})
   },
+  // 聊天和首页画布只提取原文，不创建标准模式的导演预览记录。
+  readScriptFile: (file:File) => {
+    const body=new FormData();body.append('file',file)
+    return request<{script:string}>('/creation/script-file/read',{method:'POST',body})
+  },
+  // 从同一会话内的固定剧本版本开启真实助手轮次；正文不进入用户气泡。
+  startScriptRun: (draft:CreationDraft,request_id:string,session_id:string,script_document_revision:number) =>
+    request<CreationRun>('/creation/runs',{method:'POST',body:{draft,request_id,session_id,script_document_revision,mode:'skill',parent_run_id:null,deferred:true,message_reference_versions:[]}}),
   prepareSkill: (draft: CreationDraft) => request<{ draft: CreationDraft; execution: SkillExecution; creation_context: string }>('/creation/skills/prepare', { method: 'POST', body: draft }),
   route: (draft: CreationDraft) => request<{ skill: string; target: CreationTarget; reason: string }>('/creation/route-preview', { method: 'POST', body: draft }),
   // 侧栏默认少量，项目目录按后端上限读取一百条会话。
@@ -199,4 +219,4 @@ export interface VideoPlan {flow_runtime?:CreationRun['flow_runtime'];review_req
 export interface MvAlignment {id:string;version_id:string;status:string;source:string;duration_ms:number;cues:MvLyricCue[];lyrics:string;input_revision:string;error:string;can_retry:boolean}
 /** 必填与补充文字框分别声明；历史字段缺少required时按必答兼容。 */
 export interface CreationQuestionField {id:string;text:string;kind:'text'|'single'|'multiple';options:string[];requires_input:boolean;required?:boolean}
-export interface CreationRun { task_input?:{schema_version:1;revision:number;prompt:string;skill:string;skill_version:number;target:CreationTarget;parameters:Partial<CreationDraft['parameters']>;references:CreationDraft['references']}; response_started_at?:string|null;response_finished_at?:string|null;response_elapsed_ms?:number|null;response_first_text_at?:string|null; stream_seq?:number; parent_run_id?:string|null;generation_prompt?:string; discussion?:Array<{user:string;reply:string}>; awaiting_calls?:number; executed_request?:unknown; question_revision?:number; created_at?:string; stream_text?:string; id: string; session_id?:string|null; status: string; calls: number; skill: string; version: number; draft: CreationDraft; restored_answer?:string; question?: {text:string;options:string[];requires_input?:boolean;fields?:CreationQuestionField[];kind?:'text'|'single'|'multiple'|'reference';label?:string;field_id?:string}; answers: Array<{question:string;answer:string;snapshot?:{fields?:CreationQuestionField[];kind?:string;text?:string;options?:string[]};field_answers?:Record<string,string>;reference_versions?:string[]}>; error?: string; preview?: DirectorPreview; revision?:number; card?:{artifact_title?:string;type:'reply'|'proposal';text:string;skill?:string;target?:string;model?:string} }
+export interface CreationRun { task_input?:{schema_version:1;revision:number;prompt:string;skill:string;skill_version:number;target:CreationTarget;parameters:Partial<CreationDraft['parameters']>;references:CreationDraft['references']}; response_started_at?:string|null;response_finished_at?:string|null;response_elapsed_ms?:number|null;response_first_text_at?:string|null; stream_seq?:number; parent_run_id?:string|null;generation_prompt?:string; discussion?:Array<{user:string;reply:string}>; awaiting_calls?:number; executed_request?:unknown; question_revision?:number; created_at?:string; stream_text?:string; id: string; session_id?:string|null; status: string; calls: number; skill: string; version: number; draft: CreationDraft; restored_answer?:string; question?: {text:string;options:string[];requires_input?:boolean;fields?:CreationQuestionField[];kind?:'text'|'single'|'multiple'|'reference'|'style';label?:string;field_id?:string;style_recommendations?:StyleRecommendation[]}; answers: Array<{question:string;answer:string;snapshot?:{fields?:CreationQuestionField[];kind?:string;text?:string;options?:string[]};field_answers?:Record<string,string>;reference_versions?:string[]}>; error?: string; preview?: DirectorPreview; revision?:number; card?:{artifact_title?:string;type:'reply'|'proposal';text:string;skill?:string;target?:string;model?:string} }

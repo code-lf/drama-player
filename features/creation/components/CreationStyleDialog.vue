@@ -5,7 +5,7 @@ import type {LibraryItem} from '~/entities/library/types'
 import {libraryService} from '~/shared/api/services/libraryService'
 import {fallbackDramaVisualStyleOptions} from '~/shared/constants/dramaVisualStyles'
 type VisualStyle=CreationCatalog['styles'][number]
-const props=defineProps<{open:boolean;styles:VisualStyle[];recent:string[];selected:string;busy?:boolean;referenceAllowed:boolean}>()
+const props=defineProps<{open:boolean;styles:VisualStyle[];recent:string[];selected:string;busy?:boolean;referenceAllowed:boolean;initialScope?:'all'|'mine'}>()
 const emit=defineEmits<{'update:open':[value:boolean];select:[value:VisualStyle];reference:[value:LibraryItem]}>()
 const {auth,requireLogin}=useWorkbenchAuth()
 const scope=ref('all'),query=ref(''),category=ref('全部'),rows=ref<LibraryItem[]>([]),page=ref(0),total=ref(0)
@@ -71,7 +71,12 @@ async function favorite(item:LibraryItem){
 /** 个人风格沿用素材引用权限，仅显式选择时回填，绝不自动提交生成。 */
 function selectPersonal(item:LibraryItem){if(props.busy||uploading.value)return;if(!props.referenceAllowed){error.value='当前技能不支持图片参考或参考数量已满，图片已保存在我的风格，可调整后使用。';return}recentPersonal.value=[item.id,...recentPersonal.value.filter(id=>id!==item.id)].slice(0,100);emit('reference',item)}
 watch([scope,query],()=>{if(props.open)void load()})
-watch(()=>props.open,value=>{if(value){query.value='';category.value='全部';void configure();void load()}else{++revision;loading.value=false}})
+watch(()=>props.open,value=>{if(value){
+  query.value='';category.value='全部'
+  // 问题卡的上传入口只改变浏览页签，沿用同一上传校验与用户选择。
+  if(props.initialScope)scope.value=props.initialScope
+  void configure();void load()
+}else{++revision;loading.value=false}})
 watch(()=>owner(),()=>{++revision;rows.value=[];recentPersonal.value=[];page.value=0;total.value=0;uploading.value=false;favoriteBusy.value='';if(props.open){void configure();void load()}})
 onBeforeUnmount(()=>{disposed=true;++revision})
 </script>

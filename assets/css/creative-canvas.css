@@ -33,8 +33,7 @@
 .creative-canvas .vue-flow__node{border:0;background:none;box-shadow:none}
 /* 分组仅是布局容器，边框不接收点击；只有可拖动标题与原Nuxt按钮位于交互层。 */
 .creative-group-layer{position:absolute;inset:0;pointer-events:none;z-index:3}
-.creative-group-frame{position:absolute;border:1px solid var(--ui-border);border-radius:20px;pointer-events:none}
-.creative-group-frame{border-color:var(--ui-text-dimmed)}
+.creative-group-frame{position:absolute;border:1px solid var(--liv-graph-frame-border);border-radius:20px;pointer-events:none}
 .creative-group-backdrops{position:absolute;inset:0;pointer-events:none}
 .creative-group-backdrops>div{position:absolute;border-radius:20px;background:var(--liv-canvas-group-surface)}
 /* 通知属于右下任务栈，不再各自绝对定位；固定缩略图避免全局预览样式把图挤没。 */
@@ -42,10 +41,34 @@
 .creative-canvas .creative-completion-notice>.liv-media-preview{display:grid;flex:0 0 var(--liv-canvas-task-thumb);width:var(--liv-canvas-task-thumb);height:var(--liv-canvas-task-thumb);max-width:var(--liv-canvas-task-thumb);max-height:var(--liv-canvas-task-thumb);border-radius:10px;contain:strict;isolation:isolate}
 .creative-canvas .creative-completion-notice>.liv-media-preview>img{display:block;transition:none;animation:none}
 .creative-completion-notice strong{font-size:14px;font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.creative-group-frame.is-selected{border-color:var(--liv-ui-primary-foreground)}
+/* 保持边框中性；选中反馈单独绘制，不改变框的尺寸或命中范围。 */
+.creative-group-frame.is-selected{outline:1px solid var(--liv-ui-primary-foreground);outline-offset:2px}
 /* 组框只在顶部边缘接收拖拽，不盖住成员节点。 */
 .creative-group-grip{position:absolute;inset:-5px 0 auto;height:16px;pointer-events:auto;touch-action:none;cursor:grab}
 .creative-group-grip:active{cursor:grabbing}
+/* 生产组拖动热区留在外缘，低倍率也不压住分类按钮。 */
+.creative-group-frame.is-production>.creative-group-grip{inset:-8px 0 auto;height:8px}
+.creative-production-links{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;fill:none;stroke:var(--ui-text-muted);stroke-opacity:.65;stroke-width:1.25}
+/* 标题页签和卡片共用画布比例，避免缩小组框时屏幕固定尺寸的按钮盖住卡片。 */
+.creative-production-panel{box-sizing:border-box;width:100%;padding:16px;display:grid;grid-template-rows:auto minmax(0,1fr);gap:16px;color:var(--ui-text)}
+.creative-asset-group-tabs{display:flex;gap:4px;pointer-events:auto}
+.creative-asset-group-tabs button{flex:none;min-height:32px;font-size:var(--liv-canvas-group-label-size);color:var(--ui-text)}
+.creative-production-scroll{min-height:0;overflow:auto;overscroll-behavior:contain;scrollbar-gutter:stable;pointer-events:auto}
+.creative-production-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px}
+.creative-production-grid>p{grid-column:1/-1;color:var(--ui-text-muted);font-size:var(--liv-canvas-group-label-size)}
+.creative-production-grid .creative-production-card{display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr);align-items:stretch;justify-content:stretch;gap:8px;height:236px;min-width:0;padding:12px;overflow:hidden;border:1px solid var(--liv-graph-frame-border);border-radius:12px;background:var(--ui-bg-elevated);text-align:left;color:var(--ui-text);pointer-events:auto;user-select:none}
+.creative-production-card-body{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;min-height:0}
+.creative-production-card-details{display:flex;flex-direction:column;gap:8px;min-width:0;padding:8px;border-radius:8px;background:var(--ui-bg-muted)}
+.creative-production-detail-label{margin-top:auto;font-size:var(--liv-canvas-group-label-size);color:var(--ui-text)}
+.creative-production-card:hover,.creative-production-card[aria-pressed="true"]{background:var(--ui-bg-muted)}
+.creative-production-card strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px}
+.creative-production-card small,.creative-production-copy,.creative-production-cover{color:var(--ui-text-muted);font-size:var(--liv-canvas-group-label-size)}
+/* 固定封面槽，图片与空占位都不改变卡片尺寸；说明独立排版。 */
+.creative-production-cover{position:relative;display:block;align-self:stretch;min-width:0;min-height:0;overflow:hidden;border-radius:8px;background:var(--ui-bg-muted)}
+.creative-production-cover .liv-media-preview-icon{width:32px;height:32px}
+.creative-production-placeholder{position:absolute;inset:auto 4px 12px;text-align:center}
+.creative-production-copy{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:4;overflow:hidden;white-space:normal}
+.creative-canvas .creative-group-summary{position:absolute;inset:16px;display:flex;align-items:center;justify-content:center;pointer-events:auto;color:var(--ui-text-muted);font-size:var(--liv-canvas-group-label-size)}
 /* 常驻组名只用小字；真实名称跟随缩放。选中后才展示正常命中尺寸的操作条。 */
 .creative-canvas .creative-group-label{position:absolute;left:0;bottom:calc(100% + 4px);display:block;min-height:0;max-width:360px;padding:0;border:0;border-radius:0;background:transparent;color:var(--ui-text-muted);font-size:var(--liv-canvas-group-label-size);font-weight:500;line-height:1.5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:auto;touch-action:none;cursor:grab}
 .creative-group-frame>header{position:absolute;left:0;bottom:calc(100% + 24px);display:flex;align-items:center;gap:2px;pointer-events:auto;width:max-content;max-width:calc(100vw - 32px);border-radius:24px;background:var(--ui-bg-elevated);border:1px solid var(--ui-border);padding:2px;font-size:12px;white-space:nowrap}
@@ -65,13 +88,56 @@
 /* 编辑仍在原节点内，增大到可操作宽度；图形库测量后同步连线及下方输入框锚点。 */
 /* 选中仅挂载原工具，不改变节点宽度；放大由显式双击的镜头操作承担。 */
 .creative-node.is-editing{width:var(--liv-graph-node-width)}
+/* 剧本保持大文稿版式；超长预览底部渐隐，完整原文从查看入口阅读。 */
+.creative-node.is-script-document{width:var(--liv-graph-script-width)}
+.creative-node.is-script-document .creative-node-body{background:var(--liv-graph-script-surface);border-radius:20px}
+.creative-node.is-script-document.is-selected .creative-node-body{outline:none}
+.creative-node.is-script-document .vue-flow__handle{opacity:0}
+.creative-node .creative-script-preview{box-sizing:border-box;height:var(--liv-graph-script-preview-height);width:100%;padding:28px 38px 34px;display:grid;grid-template-rows:auto minmax(0,1fr) auto;gap:26px}
+.creative-script-preview header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.creative-script-preview h2{margin:0;font-size:30px;font-weight:700;overflow-wrap:anywhere}
+.creative-script-preview header button{color:var(--liv-graph-script-ink)}
+.creative-script-preview footer{display:flex;justify-content:flex-end}
+.creative-script-preview footer button{border-radius:999px;background:var(--liv-graph-script-action);color:var(--liv-account-text)}
+.creative-script-excerpt{overflow:hidden;mask-image:linear-gradient(to bottom,black 86%,transparent)}
+.creative-script-preview .creative-node-text{max-height:none;padding:0;overflow:visible;font-size:15px;line-height:1.55;color:var(--liv-graph-script-ink)}
+.creative-drama-navigation{position:absolute;z-index:12;top:4px;left:calc(var(--liv-graph-left-inset,0px) + 12px);right:12px;display:flex;justify-content:safe center;align-items:center;gap:3px;overflow-x:auto;scrollbar-width:none;pointer-events:none}
+.creative-drama-navigation button{pointer-events:auto;white-space:nowrap;flex:none;font-size:12px;color:var(--ui-text-muted)}
+.creative-drama-navigation button::before{content:'';width:4px;height:4px;border-radius:50%;background:currentColor;opacity:.45}
+.creative-drama-navigation button[aria-current]{color:var(--ui-text)}
+.creative-drama-navigation button[aria-current]::before{opacity:1}
+.creative-drama-navigation ~ .creative-canvas-top{top:36px}
+/* 页头中的索引由三列布局居中，不再以聊天右边界或画布视口计算位置。 */
+.dashboard-shell.dashboard-shell--creation.is-session-immersive .dashboard-topbar>.dashboard-topbar-account-actions{--liv-topbar-control-height:var(--liv-workbench-account-control-height)}
+/* 底色只落在两个右侧圆角控件上，页头的空白区继续透出画布。 */
+.dashboard-shell.dashboard-shell--creation.is-session-immersive .dashboard-topbar :is(.announcement-bell,.dashboard-account-pill){background-color:var(--liv-graph-background)!important}
+@media(min-width:768px){
+  /* 会话外壳先于画布挂载，首帧就使用最终尺寸，避免从大号样式跳变。 */
+  .dashboard-shell.is-session-immersive{
+    --liv-session-header-height:var(--liv-desktop-topbar-height);
+  }
+  .dashboard-shell.dashboard-shell--creation.is-session-immersive .dashboard-topbar{
+    /* 空白处真正透明，不再铺单独的网格或实色层。 */
+    background:transparent!important;pointer-events:none;
+    display:grid;grid-template-columns:minmax(0,1fr) min(32%,420px) minmax(0,1fr);gap:8px;
+  }
+  .dashboard-shell.is-session-immersive .dashboard-topbar :is(.session-workspace-nav,.dashboard-topbar-account-actions,.creative-drama-navigation){pointer-events:auto}
+  .dashboard-shell.is-session-immersive .dashboard-topbar>.session-workspace-nav{
+    grid-column:1;grid-row:1;width:var(--liv-drama-header-title-width);max-width:100%;
+    height:var(--liv-canvas-header-title-height);border:0;background:var(--liv-graph-background);
+  }
+  .dashboard-shell.is-session-immersive .dashboard-topbar:has(.creative-drama-navigation)>.creation-topbar-nav{display:flex;grid-column:2;grid-row:1}
+  .dashboard-shell.is-session-immersive .dashboard-topbar>.dashboard-topbar-account-actions{grid-column:3;grid-row:1;justify-self:end}
+  .creation-topbar-nav>.creative-drama-navigation{position:static;width:100%;pointer-events:auto}
+}
+.creative-group-frame.is-production .creative-group-label{cursor:default;pointer-events:none}
 .creative-node.is-editing .creative-node-body{overflow:visible;border:0;background:transparent}
 .creative-node-inline-tools{width:100%;min-width:0}
 .creative-canvas .vue-flow__node:has(.creative-node.is-editing){z-index:20!important}
 .creative-node-heading{display:flex;align-items:center;gap:8px;height:32px;font-size:12px;color:var(--ui-text-muted)}
 .creative-node-heading>.iconify{flex:none}
 .creative-node-state{margin-left:auto;white-space:nowrap}
-.creative-node-body{position:relative;min-height:180px;border:1px solid var(--ui-border);border-radius:12px;overflow:hidden;background:var(--ui-bg-elevated);display:grid;place-items:center}
+.creative-node-body{position:relative;min-height:180px;border:1px solid var(--liv-graph-frame-border);border-radius:12px;overflow:hidden;background:var(--ui-bg-elevated);display:grid;place-items:center}
 .creative-node.is-selected .creative-node-body{outline:2px solid var(--liv-ui-primary-foreground);outline-offset:3px}
 .creative-node-body>img,.creative-node-body>video{display:block;width:100%;max-height:var(--liv-graph-media-height);object-fit:contain}
 .creative-node-body>.liv-media-preview{height:280px}
@@ -79,6 +145,8 @@
 .creative-node-body>audio{width:100%;max-width:100%}
 /* 音乐高度由紧凑播放器内容决定，不继承图片/视频的180px占位。 */
 .creative-node-body.is-audio{min-height:0;border:0;border-radius:0;background:transparent;overflow:visible;display:block}
+/* 音频边框画在播放器本体上，不包住外侧名称和格式。 */
+.creative-node-body.is-audio .music-mini-body{box-shadow:inset 0 0 0 1px var(--liv-graph-frame-border)}
 .creative-node.is-selected .creative-node-body.is-audio{outline:none}
 .creative-node.is-selected .creative-node-body.is-audio .music-mini-body{outline:2px solid var(--liv-account-text);outline-offset:2px}
 /* 音乐未选中时保留明确的媒体外观，不显示一片空白或同时展开多个播放器。 */
@@ -148,7 +216,16 @@
 .creative-canvas-list{position:absolute;z-index:8;top:16px;right:64px;bottom:16px;width:min(360px,calc(100% - 80px));display:flex;flex-direction:column;overflow:hidden;border:1px solid var(--ui-border);border-radius:24px;background:var(--liv-workspace-surface);box-shadow:0 8px 24px #0002}
 .creative-canvas-list header{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--ui-border)}
 .creative-canvas-list-filter{display:flex;gap:8px;padding:12px 16px}.creative-canvas-list-filter>div:last-child{flex:1;min-width:0}
-.creative-canvas-list-items{flex:1;min-height:0;overflow:auto;padding:4px 8px 12px}.creative-canvas-list-items>button{display:flex;width:100%;min-width:0;min-height:56px;justify-content:flex-start;gap:10px;padding:8px;text-align:left;border-radius:12px;color:var(--ui-text)}.creative-canvas-list-items>button:hover{background:var(--liv-account-raised)}.creative-canvas-list-items img,.creative-canvas-list-items .iconify{flex:none;width:40px;height:40px;border-radius:10px;object-fit:cover;background:var(--ui-bg-muted)}.creative-canvas-list-items .iconify{padding:10px;color:var(--ui-text-muted)}.creative-canvas-list-items button>span:last-child{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}.creative-canvas-list-items p{padding:16px;color:var(--ui-text-muted)}
+.creative-canvas-list-items{flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:4px;padding:4px 16px 16px}
+.creative-canvas-list-items>button{display:flex;flex:none;align-items:center;justify-content:flex-start;gap:10px;width:100%;min-width:0;min-height:56px;padding:6px 8px;text-align:left;border-radius:10px;color:var(--ui-text)}
+.creative-canvas-list-items>button:hover{background:var(--liv-account-raised)}
+.creative-canvas-list-preview{display:flex;flex:none;align-items:center;justify-content:center;width:40px;height:40px;overflow:hidden;border-radius:8px;background:var(--ui-bg-muted)}
+.creative-canvas-list-preview img,.creative-canvas-list-preview video{display:block;width:100%;height:100%;object-fit:cover}
+.creative-canvas-list-preview .iconify{width:17px;height:17px;color:var(--ui-text-muted)}
+.creative-canvas-list-copy{display:flex;flex:1;min-width:0;flex-direction:column;gap:2px}
+.creative-canvas-list-title,.creative-canvas-list-status{display:block;min-width:0;overflow:hidden;padding:0 4px;text-overflow:ellipsis;white-space:nowrap}
+.creative-canvas-list-title{font-size:13px}.creative-canvas-list-status{font-size:12px;color:var(--ui-text-muted)}
+.creative-canvas-list-items p{padding:16px;color:var(--ui-text-muted)}
 /* 仅空白画布使用选择光标，媒体与文本编辑控件保留自己的鼠标语义。 */
 .creative-canvas .vue-flow__pane{cursor:url('/icons/canvas-select-cursor.svg') 4 2,default}.creative-canvas .is-hand-tool .vue-flow__pane{cursor:grab}.creative-canvas .is-hand-tool .vue-flow__pane:active{cursor:grabbing}
 .creative-view-tools{position:absolute;right:12px;bottom:12px;display:flex;align-items:center;gap:4px;border:1px solid var(--ui-border);border-radius:999px;padding:4px;background:var(--ui-bg-elevated);font-size:12px}
@@ -255,7 +332,7 @@
 /* 桌面普通技能是整屏底图+聊天浮层，不再通过grid列挤窄画布；短剧与窄屏页签不受影响。 */
 @media(min-width:768px){
   /* 只释放普通技能外壳；首页、窄屏页签、短剧继续使用原有边距和高度。 */
-  .dashboard-shell.is-session-immersive .dashboard-main-content:has(.creation-workspace.is-floating-chat){padding:0!important;overflow:hidden}
+  .dashboard-shell.is-session-immersive .dashboard-main-content:has(.creation-workspace.is-floating-chat){padding:0!important;overflow:visible}
   /* 统一浮层有效宽度；单独解析min，避免嵌套算式被构建期calc插件误解析。 */
   .dashboard-shell.is-session-immersive .creation-studio .creation-workspace.is-floating-chat{--liv-graph-chat-effective-width:min(var(--creation-chat-width,var(--liv-workspace-chat-width)),calc(100% - 400px));display:block;position:relative;isolation:isolate;max-width:none;height:var(--liv-graph-workspace-height);margin:0}
   .creation-studio .creation-workspace.is-floating-chat>.creation-canvas-column{position:absolute;inset:0;width:100%;height:100%;z-index:0;border-radius:0;gap:0}
@@ -273,6 +350,12 @@
 .dashboard-shell.is-session-immersive .dashboard-main-content:has(.creation-workspace.is-floating-chat){padding:0!important;overflow:hidden}
 .dashboard-shell.is-session-immersive .creation-studio .creation-workspace.is-floating-chat{display:block!important;position:relative;isolation:isolate;height:var(--liv-graph-workspace-height)!important;max-width:none;margin:0}
 .creation-studio .creation-workspace.is-floating-chat>.creation-canvas-column{position:absolute;inset:0;width:100%;height:100%;z-index:0;border-radius:0}
+@media(min-width:768px){
+  /* 仅延展画布，不移动聊天区和页头控件。 */
+  .dashboard-shell.is-session-immersive .dashboard-main-content:has(.creation-workspace.is-floating-chat){overflow:visible}
+  .creation-studio .creation-workspace.is-floating-chat>.creation-canvas-column{top:calc(-1 * var(--liv-session-header-height));height:calc(100% + var(--liv-session-header-height))}
+  .is-floating-chat .creative-canvas-top{top:calc(var(--liv-session-header-height) + 12px)}
+}
 .creation-studio .creation-workspace.is-floating-chat>.creation-chat-column{position:absolute;left:var(--creation-chat-x);top:var(--creation-chat-y);bottom:auto;width:var(--creation-chat-width);height:var(--creation-chat-height);min-height:0;max-height:none;z-index:10;border:1px solid var(--liv-account-border);border-radius:var(--liv-graph-chat-radius);box-shadow:0 12px 48px #0004;overflow:hidden}
 /* 可见性由v-show与Transition管理，不能display:none!important截断收起动画。 */
 .creation-studio .creation-workspace.is-floating-chat>.creation-workspace-resizer{display:none!important}

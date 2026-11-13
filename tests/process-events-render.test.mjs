@@ -9,6 +9,16 @@ import {parse,compileScript} from 'vue/compiler-sfc'
 import {computed,createSSRApp,defineComponent,h} from 'vue'
 import {renderToString} from 'vue/server-renderer'
 
+test('方案预览标明未确认及实际进行图标，不生成确认按钮',async()=>{
+  const events=logic.exports.runProcessEvents({status:'planning',skill_agent_events:[{id:'partial',kind:'proposal_preview',status:'started',text:'雨后窗台上的白猫'}]})
+  const app=createSSRApp(component.exports.default,{events})
+  app.component('UIcon',defineComponent({props:['name'],setup:props=>()=>h('span',{'data-icon':props.name})}))
+  const html=await renderToString(app)
+  assert.ok(html.includes('尚未确认')&&html.includes('雨后窗台上的白猫'))
+  assert.ok(html.includes('i-lucide-loader-circle'))
+  assert.ok(!html.includes('确认执行'))
+})
+
 const read=path=>readFileSync(new URL('../'+path,import.meta.url),'utf8')
 const transpile=source=>ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText
 const require=createRequire(import.meta.url),logic={exports:{}},component={exports:{}}

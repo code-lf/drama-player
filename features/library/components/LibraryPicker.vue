@@ -112,7 +112,7 @@ watch(() => props.open, async value => {
   if(props.homepage){error.value='';return}
   try { categories.value = (await libraryService.configuration()).categories; await load() }
   catch (exception) { error.value = libraryErrorMessage(exception) }
-})
+},{immediate:true})
 watch([scope, category, mediaFilter], () => { ++documentRevision;documentBusy.value=false;documentDraft.value=null;previewRange.value='';page.value = 1; if (props.open&&!props.homepage) void load() })
 </script>
 

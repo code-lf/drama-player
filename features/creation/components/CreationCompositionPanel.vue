@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type {SessionResult} from '../resultCatalog'
-import {compositionErrors,compositionStatus,moveCompositionClip} from '../compositionState'
+import {compositionErrors,compositionStatus,moveCompositionClip,compositionDisplayClips,compositionDisplayRatio} from '../compositionState'
 import {videoCompositionService as api,type CompositionClip,type CompositionPlan,type CompositionJob} from '~/shared/api/services/videoCompositionService'
 import LibraryPicker from '~/features/library/components/LibraryPicker.vue'
 import {libraryService} from '~/shared/api/services/libraryService'
@@ -173,7 +173,7 @@ async function saveDraft(){
 async function history(reset=false){
   if(historyBusy.value)return
   historyBusy.value=true;const epoch=++historyEpoch
-  try{const page=await (props.outputId?api.outputJobs(props.sessionId,props.outputId):api.list(reset?0:offset.value));if(!alive||epoch!==historyEpoch)return;const ids=new Set(props.sources.map(s=>s.source.id));const matching=props.outputId?page:page.filter(j=>j.plan.clips.every(c=>c.reference?plan.value.clips.some(clip=>clip.reference?.version_id===c.reference.version_id):ids.has(c.task_id)));jobs.value=reset?matching:[...jobs.value,...matching.filter(j=>!jobs.value.some(old=>old.id===j.id))];offset.value=(reset?0:offset.value)+page.length;more.value=!props.outputId&&page.length===20}
+  try{const page=await (props.outputId?api.outputJobs(props.sessionId,props.outputId):api.list(reset?0:offset.value));if(!alive||epoch!==historyEpoch)return;const ids=new Set(props.sources.map(s=>s.source.id));const matching=props.outputId?page:page.filter(j=>compositionDisplayClips(j.plan).every(c=>c.reference?plan.value.clips.some(clip=>clip.reference?.version_id===c.reference.version_id):!!c.task_id&&ids.has(c.task_id)));jobs.value=reset?matching:[...jobs.value,...matching.filter(j=>!jobs.value.some(old=>old.id===j.id))];offset.value=(reset?0:offset.value)+page.length;more.value=!props.outputId&&page.length===20}
   catch(cause){if(alive&&epoch===historyEpoch)error.value=(cause as Error).message}
   finally{if(alive)historyBusy.value=false}
 }
@@ -244,8 +244,8 @@ onBeforeUnmount(()=>{backup();alive=false;clearTimeout(timer)})
     <div v-if="localConflict" class="flex flex-wrap gap-2"><UButton color="neutral" variant="outline" :disabled="busy" @click="resolveBackup(false)">使用云端片段计划</UButton><UButton :disabled="busy" @click="resolveBackup(true)">保留本机片段计划</UButton></div>
     <header class="flex flex-wrap gap-2"><h3 class="font-semibold">相关合成记录</h3><UButton variant="outline" color="neutral" :disabled="busy" @click="history(true)">刷新记录</UButton></header>
     <div class="liv-composition-media-list">
-    <article v-for="job in jobs" :key="job.id" class="liv-composition-media-card is-result rounded-xl border border-default space-y-2" :style="ratioStyle(job.id,job.plan.output.width/job.plan.output.height)">
-      <p>{{job.plan.clips.length}} 个片段 · {{compositionStatus(job)}}</p>
+    <article v-for="job in jobs" :key="job.id" class="liv-composition-media-card is-result rounded-xl border border-default space-y-2" :style="ratioStyle(job.id,compositionDisplayRatio(job.plan))">
+      <p>{{compositionDisplayClips(job.plan).length}} 个片段 · {{compositionStatus(job)}}</p>
       <video v-if="!linkedOnly&&job.status==='succeeded'&&job.output.public_url" :src="job.output.public_url" controls playsinline preload="metadata" class="liv-composition-video" @loadedmetadata="mediaRatio(job.id,$event)"/>
       <p v-if="job.error_message" role="alert">{{job.error_message}}</p>
       <UButton v-if="job.status==='failed'" color="neutral" variant="outline" :disabled="busy" @click="submit(job)">只重试合成</UButton>

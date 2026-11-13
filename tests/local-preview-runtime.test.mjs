@@ -5,14 +5,18 @@ import { test } from 'node:test'
 import { parse, compileTemplate } from 'vue/compiler-sfc'
 import { localPreviewEnv } from '../scripts/preview-local.mjs'
 
-test('本地验收启动只请求本机API且不修改父进程环境', () => {
-  const original = { NUXT_PUBLIC_API_BASE: 'https://example.invalid/api', PORT: '3001' }
+test('本地验收固定3000且只请求本机API，不修改父进程环境', () => {
+  const original = { NUXT_PUBLIC_API_BASE: 'https://example.invalid/api', PORT: '3001', NITRO_PORT: '3002', NITRO_HOST: '0.0.0.0' }
   const actual = localPreviewEnv(original)
   assert.equal(actual.NUXT_PUBLIC_API_BASE, '/api')
   assert.equal(actual.NUXT_API_SERVER_BASE, 'http://127.0.0.1:8000/api')
   assert.equal(actual.NUXT_PUBLIC_API_ADAPTER, 'http')
   assert.equal(actual.HOST, '127.0.0.1')
-  assert.equal(actual.PORT, '3001')
+  assert.equal(actual.NITRO_HOST, '127.0.0.1')
+  assert.equal(actual.PORT, '3000')
+  assert.equal(actual.NITRO_PORT, '3000')
+  assert.equal(original.PORT, '3001')
+  assert.equal(original.NITRO_PORT, '3002')
   assert.equal(original.NUXT_PUBLIC_API_BASE, 'https://example.invalid/api')
 })
 
